@@ -513,7 +513,8 @@ export function publicGallery({ items = [], featured = [], hasMore = false, page
       : item.kind === "video" && item.poster_asset_id
         ? `<img src="/p/${slug}/poster" alt="" loading="lazy" decoding="async">`
         : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
-    return `<li><a class="gallery-card" href="/p/${slug}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(item.kind)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(item.description)}</span>` : ""}</a></li>`;
+    const action = item.kind === "video" ? "Watch film →" : item.kind;
+    return `<li><a class="gallery-card" href="/p/${slug}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(item.description)}</span>` : ""}</a></li>`;
   }).join("");
   const cards = renderCards(items);
   const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));

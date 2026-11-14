@@ -376,7 +376,7 @@ dialog h2 { margin: 0; }
 .gallery-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 5px; }
 .gallery-card-copy { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; padding-top: .8rem; }
 .gallery-card-copy strong { font-size: 1.15rem; }
-.gallery-card-copy > span { color: var(--muted); text-transform: capitalize; font-size: .85rem; }
+.gallery-card-copy > span { color: var(--muted); text-transform: capitalize; font-size: .85rem; flex: none; white-space: nowrap; }
 .gallery-description { display: block; margin-top: .35rem; color: var(--muted); }
 .gallery-placeholder { display: flex; flex-direction: column; justify-content: space-between; align-self: stretch; justify-self: stretch; padding: 1.5rem; background: var(--paper-deep); }
 .gallery-placeholder strong { font-size: clamp(1.4rem, 2vw, 2rem); line-height: 1.1; }
