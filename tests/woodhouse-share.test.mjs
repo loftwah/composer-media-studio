@@ -5,7 +5,7 @@ import { createSession } from "../src/lib/auth.mjs";
 import { sha256Hex } from "../src/lib/util.mjs";
 import { PNG_1x1, setup } from "./harness.mjs";
 
-test("Share browsing and imports preserve source boundaries and deduplicate concurrent saves", async () => {
+test("Share browsing and imports preserve source boundaries and deduplicate concurrent saves", async (t) => {
   const { env, project } = await setup();
   env.WOODHOUSE_SHARE = "true";
   const origin = "https://woodhouse.loftwah.com";
@@ -21,13 +21,13 @@ test("Share browsing and imports preserve source boundaries and deduplicate conc
     original: { url: origin + "/campaign/source.png", sha256: hash },
   };
   const requests = [];
-  env.WOODHOUSE_SOURCE = { async fetch(url, options) {
+  t.mock.method(globalThis, "fetch", async (url, options) => {
     requests.push(String(url));
-    assert.equal(options.redirect, "error");
+    assert.equal(options.redirect, "manual");
     if (String(url) === asset.original.url) return new Response(PNG_1x1);
     if (String(url).endsWith("/first-print")) return Response.json({ version: 1, asset });
     return Response.json({ version: 1, assets: [asset], nextAfter: "second-print" });
-  } };
+  });
   const gallery = await worker.fetch(new Request("https://studio.test/portfolio?project=app-composer"), env);
   assert.equal(gallery.status, 200);
   assert.match(gallery.headers.get("content-security-policy"), /img-src [^;]*woodhouse\.loftwah\.com/);

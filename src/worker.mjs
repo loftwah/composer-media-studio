@@ -854,8 +854,8 @@ async function importWoodhouseAsset(env, project, shareId) {
   let asset;
   let bytes;
   try {
-    asset = await shareAsset(env, shareId);
-    bytes = await shareOriginal(env, asset, MAX_IMAGE_BYTES);
+    asset = await shareAsset(shareId);
+    bytes = await shareOriginal(asset, MAX_IMAGE_BYTES);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     console.warn("Woodhouse original request failed", error.message);
@@ -1123,7 +1123,7 @@ async function handlePublic(request, env, url) {
     let status = 200;
     try {
       const assetId = url.searchParams.get("asset");
-      view = assetId ? { asset: await shareAsset(env, assetId) } : await sharePage(env, url.searchParams);
+      view = assetId ? { asset: await shareAsset(assetId) } : await sharePage(url.searchParams);
     } catch (error) {
       status = error instanceof HttpError ? error.status : 503;
       if (status === 503) console.warn("Woodhouse catalogue request failed", error.message);
