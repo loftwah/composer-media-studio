@@ -725,6 +725,7 @@ function composeView() {
               <span class="shot-index">${index + 1}</span>
               <span class="shot-title">${esc(asset.title)}<br><span class="small">${compose.shotTrims[asset.id] ? `Using ${compose.shotTrims[asset.id].trimStartMs}–${compose.shotTrims[asset.id].trimEndMs} ms of original` : `${((asset.durationMs || 0) / 1000).toFixed(1)}s`} · ${asset.width}×${asset.height}</span></span>
               <span class="row">
+                <button type="button" class="secondary" data-action="compose-trim" data-id="${esc(asset.id)}" aria-label="Trim ${esc(asset.title)}" ${!asset.durationMs || !state.session?.actions.includes("edit") ? "disabled" : ""}>Trim</button>
                 <button class="quiet" data-action="compose-up" data-id="${esc(asset.id)}" aria-label="Move ${esc(asset.title)} earlier" ${index === 0 ? "disabled" : ""}>↑</button>
                 <button class="quiet" data-action="compose-down" data-id="${esc(asset.id)}" aria-label="Move ${esc(asset.title)} later" ${index === chosen.length - 1 ? "disabled" : ""}>↓</button>
                 <button class="quiet" data-action="compose-remove" data-id="${esc(asset.id)}">Remove</button>
@@ -990,15 +991,16 @@ function assetView() {
 
 /* ---------- dialogs ---------- */
 
-function ask({ title, copy, fields = [], submit = "Continue" }) {
+function ask({ title, copy, fields = [], submit = "Continue", media = "" }) {
   return new Promise((resolve) => {
     confirmDialog.querySelector("#confirm-title").textContent = title;
     confirmDialog.querySelector("#confirm-copy").innerHTML = `
+      ${media}
       <p class="small">${copy}</p>
       ${fields
         .map(
           (field) =>
-            `<label style="margin-top:0.6rem">${esc(field.label)}${field.type === "textarea" ? `<textarea name="${esc(field.name)}" maxlength="${field.maxlength ?? 400}" rows="3">${esc(field.value ?? "")}</textarea>` : `<input name="${esc(field.name)}" type="${esc(field.type ?? "text")}" value="${esc(field.value ?? "")}" maxlength="${field.maxlength ?? 200}" ${field.required ? "required" : ""}>`}</label>`,
+            `<label style="margin-top:0.6rem">${esc(field.label)}${field.type === "textarea" ? `<textarea name="${esc(field.name)}" maxlength="${field.maxlength ?? 400}" rows="3">${esc(field.value ?? "")}</textarea>` : `<input name="${esc(field.name)}" type="${esc(field.type ?? "text")}" value="${esc(field.value ?? "")}" maxlength="${field.maxlength ?? 200}" ${field.required ? "required" : ""} ${field.min !== undefined ? `min="${esc(field.min)}"` : ""} ${field.max !== undefined ? `max="${esc(field.max)}"` : ""} ${field.step !== undefined ? `step="${esc(field.step)}"` : ""}>`}</label>`,
         )
         .join("")}`;
     const form = confirmDialog.querySelector("#confirm-form");
@@ -1626,6 +1628,37 @@ async function handleAction(action, element, keyboard = false) {
       state.compose.shotIds = [...state.compose.shotIds, id];
       render();
       return;
+    case "compose-trim": {
+      const projectId = state.projectId;
+      const draft = state.compose;
+      const asset = state.project?.assets.find((item) => item.id === id && item.kind === "video");
+      const range = asset && shotRange(draft.shotTrims[id] ?? {}, asset);
+      if (!range || !draft.shotIds.includes(id)) { notify("This clip or its measured duration is unavailable.", "bad"); return; }
+      let start = String(range.start / 1000), end = String(range.end / 1000), problem = "";
+      while (true) {
+        const values = await ask({
+          title: `Trim ${asset.title}`,
+          media: `<video class="trim-preview" src="${esc(asset.file)}" controls playsinline preload="metadata" aria-label="Preview original clip"></video>`,
+          copy: `${problem ? `${esc(problem)}<br><br>` : ""}Preview the original clip, then choose the portion to keep. Times are seconds from the original start, to the nearest millisecond. The original and earlier renders stay unchanged. Changing the duration may require a new soundtrack mix; changing a song-linked shot can make its saved captions unavailable for this storyboard.`,
+          fields: [
+            { name: "start", label: "In point (seconds)", type: "number", value: start, required: true, min: 0, max: asset.durationMs / 1000, step: 0.001 },
+            { name: "end", label: "Out point (seconds)", type: "number", value: end, required: true, min: 0, max: asset.durationMs / 1000, step: 0.001 },
+          ],
+          submit: "Use this portion",
+        });
+        if (!values) return;
+        if (state.projectId !== projectId || state.view !== "project" || state.tab !== "assemble" || state.compose !== draft || !draft.shotIds.includes(id)) { notify("The storyboard changed while the trim was open. Review it before trying again.", "bad"); return; }
+        start = values.start; end = values.end;
+        const asMs = (value) => /^\d+(?:\.\d{1,3})?$/.test(value) ? Math.round(Number(value) * 1000) : NaN;
+        const shot = { trimStartMs: asMs(start), trimEndMs: asMs(end) };
+        if (!shotRange(shot, asset)) { problem = "Choose an in point before the out point within the original clip."; continue; }
+        draft.shotTrims[id] = shot;
+        render();
+        if (keyboard) [...app.querySelectorAll('[data-action="compose-trim"]')].find((button) => button.dataset.id === id)?.focus({ preventScroll: true });
+        notify("Trim applied to the storyboard draft. Save it when ready.");
+        return;
+      }
+    }
     case "compose-remove":
       state.compose.shotIds = state.compose.shotIds.filter((shotId) => shotId !== id);
       delete state.compose.shotTrims[id];

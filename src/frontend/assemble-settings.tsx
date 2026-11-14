@@ -316,6 +316,7 @@ export function Assemble({
                     </span>
                   </span>
                   <span className="row">
+                    <button type="button" className="secondary" data-action="compose-trim" data-id={asset.id} aria-label={`Trim ${asset.title}`} disabled={!canEdit || !asset.durationMs}>Trim</button>
                     <button
                       className="quiet"
                       data-action="compose-up"

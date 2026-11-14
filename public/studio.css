@@ -395,3 +395,5 @@ dialog h2 { margin: 0; }
 
 .public-credits { margin: 2rem 0; }
 .public-credits .licence-copy { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-width: 72ch; }
+
+.trim-preview { display:block; width:min(100%, 32rem); max-height:18rem; margin:0 auto 1rem; background:#111; object-fit:contain; }
