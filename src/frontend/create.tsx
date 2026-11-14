@@ -116,9 +116,8 @@ export function CreateWorkbench({
       )}
       {executionFailed && (
         <p className="notice warn">
-          The provider finished the last render with an error. The provider's
-          own message is recorded on the job; a new render is a separate request
-          and is not sent automatically.
+          The last render failed. The provider's message is saved with the job.
+          A new render is a separate request and will not be sent automatically.
         </p>
       )}
       <div className="grid two">

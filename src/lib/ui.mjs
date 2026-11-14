@@ -376,7 +376,7 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
   </ul>
 
   <h2>Publishing and withdrawing</h2>
-  <p>A published page exposes its title, description and media, plus a download link. Prompts, masks, other projects and filenames stay private. Withdrawing stops new visits immediately, but copies someone already downloaded cannot be recalled. Deleting media also withdraws any page using it.</p>
+  <p>A published page includes its title, description, media, download link and any eligible public source credits and links. Prompts, masks, other projects and filenames stay private. Withdrawing stops new visits immediately, but copies someone already downloaded cannot be recalled. Deleting media also withdraws any page using it.</p>
 
   <h2>Ownership and recovery</h2>
   <p>The studio keeps its metadata in D1, media in R2 and provider keys in its own secret storage. The project export contains the project record, references, prompts, generation history, costs and lineage without secrets. Media files download separately while they still exist. The export does not back up R2 files; download the media you need.</p>

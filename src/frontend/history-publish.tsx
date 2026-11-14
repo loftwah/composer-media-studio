@@ -227,8 +227,9 @@ export function Publish({ publications, origin }: PublishProps) {
         </button>
       </div>
       <p className="small">
-        Publishing creates a public page with only the title, description and
-        media. Prompts, other projects and private filenames stay private.
+        A published page includes its title, description, media, download link and
+        any eligible public source credits and links. Prompts, other projects and
+        private filenames stay private.
         Withdrawal stops new visits; downloads already taken cannot be recalled.
       </p>
       <div className="row">

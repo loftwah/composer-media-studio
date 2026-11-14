@@ -607,7 +607,7 @@ function createView() {
   return `
     ${fundingBlocked ? `<p class="notice warn">The studio's video provider refused the last request for funding. Image work and the library still work; add credit to the studio's own provider account before starting another clip.</p>` : ""}
     ${permissionBlocked ? `<p class="notice warn">The provider refused this account access to a request or result. Nothing was regenerated. Fix the studio's provider key or endpoint permission, then use Reconcile on the job; the saved request id is kept.</p>` : ""}
-    ${executionFailed ? `<p class="notice warn">The provider finished the last render with an error. The provider's own message is recorded on the job; a new render is a separate request and is not sent automatically.</p>` : ""}
+    ${executionFailed ? `<p class="notice warn">The last render failed. The provider's message is saved with the job. A new render is a separate request and will not be sent automatically.</p>` : ""}
     <div class="grid two">
       <div class="card">
         <p class="eyebrow">1 · Choose a starting point</p>
@@ -876,7 +876,7 @@ function publishView() {
   const publications = state.project.publications;
   return `
     <div class="spread"><h2 style="margin:0">Published pages</h2><button class="button" data-action="choose-publish">Publish a piece</button></div>
-    <p class="small">Publishing creates a public page with only the title, description and media. Prompts, other projects and private filenames stay private. Withdrawal stops new visits; downloads already taken cannot be recalled.</p>
+    <p class="small">A published page includes its title, description, media, download link and any eligible public source credits and links. Prompts, other projects and private filenames stay private. Withdrawal stops new visits; downloads already taken cannot be recalled.</p>
     <div class="row"><button class="secondary" data-action="publication-policy">First-party publishing settings</button><button class="secondary" data-action="publication-inventory">Review publication inventory</button></div>
     <div class="stack" style="margin-top:0.8rem">
       ${publications.length === 0 ? `<div class="card"><p style="margin:0">Nothing published yet.</p></div>` : ""}
@@ -1469,7 +1469,7 @@ async function handleAction(action, element, keyboard = false) {
       }
       const values = await ask({
         title: "Publish a piece",
-        copy: "Only the title, description and media become public. Choose an asset by its title.",
+        copy: "The public page includes the title, description, media, download link and any eligible public source credits and links. Choose an asset by its title.",
         fields: [
           { name: "assetTitle", label: `Asset (one of: ${assets.slice(0, 6).map((asset) => asset.title).join(" · ")})`, value: assets[0].title, required: true },
           { name: "title", label: "Public title", value: assets[0].title, required: true, maxlength: 100 },
@@ -1871,7 +1871,7 @@ async function publishAsset(assetId, title, description) {
   if (!asset) return;
   const values = await ask({
     title: "Publish this piece",
-    copy: "A public page is created with only the title, description and media. You can withdraw it later.",
+    copy: "The public page includes the title, description, media, download link and any eligible public source credits and links. You can withdraw it later.",
     fields: [
       { name: "title", label: "Public title", value: title ?? asset.title, required: true, maxlength: 100 },
       { name: "description", label: "Public description", type: "textarea", value: description ?? publicCaption(asset.caption), maxlength: 300 },

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { publicPage } from "../src/lib/ui.mjs";
+import { helpPage, publicPage } from "../src/lib/ui.mjs";
 import {
   extensionForMime,
   publicDestination,
@@ -259,4 +259,12 @@ test("Launch Kit download filenames match the supported still MIME", () => {
   assert.equal(extensionForMime("image/png"), "png");
   assert.equal(extensionForMime("image/webp"), "webp");
   assert.equal(extensionForMime("video/mp4"), "bin");
+});
+
+
+test("publication guidance acknowledges public source credits", () => {
+  const page = published({ attribution: [{ credit: "Example artist", sourceUrl: "https://woodhouse.loftwah.com/api/v1/assets/example", reuse: "unconfirmed" }] });
+  assert.match(page, /Example artist/);
+  assert.match(page, /Public source and provenance/);
+  assert.match(helpPage(), /eligible public source credits and links/);
 });
