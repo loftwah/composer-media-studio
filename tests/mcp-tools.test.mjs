@@ -161,3 +161,24 @@ test('MCP scene proposal previews without mutation and applies only its exact sc
  const applied=await client.callTool({name:'studio_apply_scene_proposal',arguments:{...base,reviewDigest:preview.structuredContent.reviewDigest,approved:true}});assert.equal(applied.isError,undefined,JSON.stringify(applied));assert.equal(applied.structuredContent.plan.revision,2);assert.equal(applied.structuredContent.plan.scenes[0].direction,'Brighter');const stale=await client.callTool({name:'studio_apply_scene_proposal',arguments:{...base,reviewDigest:preview.structuredContent.reviewDigest,approved:true}});assert.equal(stale.isError,true);
  } finally {await client.close();}
 });
+
+test('MCP preserves a private subject origin through explicit and legacy scene updates', async () => {
+  const { createSongPlan } = await import('../src/lib/song-plans.mjs');
+  const { saveSubject } = await import('../src/lib/subjects.mjs');
+  const {env,project}=await setup();
+  await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:4000});
+  await addAsset(env,project,{id:'asset_image1',kind:'image'});
+  await env.DB.prepare('UPDATE assets SET sha256=?1 WHERE id=?2').bind('a'.repeat(64),'asset_image1').run();
+  const subject=await saveSubject(env,project,{type:'person',name:'Fictional',traits:'',referenceAssetId:'asset_image1',referenceRole:'face',rightsConfirmed:true});
+  const plan=await createSongPlan(env,project,{songAssetId:'asset_song1',rightsConfirmed:true,title:'Plan',treatment:'',aspect:'16:9',startMs:0,endMs:4000,sceneCount:2});
+  const cookie='studio_session='+await createSession(env);
+  const client=await connect(async ({method,path,body})=>{const r=await worker.fetch(new Request('https://studio.test'+path,{method,headers:{cookie,origin:'https://studio.test','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env);return {status:r.status,body:await r.json()};});
+  try {
+    const fields={projectId:project.id,planId:plan.id,title:plan.title,treatment:plan.treatment,aspect:plan.aspect,startMs:plan.startMs,endMs:plan.endMs};
+    const result=await client.callTool({name:'studio_update_song_plan',arguments:{...fields,expectedRevision:1,scenes:plan.scenes.map((scene,i)=>i?scene:{...scene,subjectOrigin:{subjectId:subject.id,revision:1}})}});
+    assert.equal(result.isError,undefined,JSON.stringify(result)); assert.equal(result.structuredContent.plan.scenes[0].subjectOrigin.name,'Fictional');
+    const legacy=result.structuredContent.plan.scenes.map(({subjectOrigin,...scene})=>scene);
+    const saved=await client.callTool({name:'studio_update_song_plan',arguments:{...fields,expectedRevision:2,scenes:legacy}});
+    assert.equal(saved.isError,undefined,JSON.stringify(saved)); assert.equal(saved.structuredContent.plan.scenes[0].subjectOrigin.subjectId,subject.id);
+  } finally { await client.close(); }
+});

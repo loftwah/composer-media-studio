@@ -9,4 +9,7 @@ test('caption saves do not dirty scenes, but real scene edits stay dirty', () =>
   assert.equal(scenePlanChanged(draft, afterCaptionSave), false);
   assert.equal(scenePlanChanged({ ...draft, title: 'Edited' }, afterCaptionSave), true);
   assert.equal(scenePlanChanged({ ...draft, scenes: [{ ...scene, direction: 'Close' }] }, afterCaptionSave), true);
+  const withOrigin = { ...scene, subjectOrigin: {subjectId:'sub_example', revision:1, name:'Moss'} };
+  assert.equal(scenePlanChanged({ ...draft, scenes: [withOrigin] }, afterCaptionSave), true);
+  assert.equal(scenePlanChanged({ ...draft, scenes: [{ ...withOrigin, subjectOrigin:null }] }, { ...draft, scenes:[withOrigin] }), true);
 });

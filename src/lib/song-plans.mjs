@@ -14,7 +14,7 @@ async function asset(env, project, assetId, kind) {
 export function viewSongPlan(row) {
   return { id: row.id, projectId: row.project_id, songAssetId: row.song_asset_id, songSha256: row.song_sha256, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, ...safeJson(row.spec_json, {}) };
 }
-async function validateSpec(env, project, song, input) {
+async function validateSpec(env, project, song, input, previousScenes = [], newOrigins = []) {
   const startMs = integer(input.startMs, 'Start');
   const endMs = integer(input.endMs, 'End');
   if (startMs < 0 || endMs > song.duration_ms || endMs - startMs > 60000 || endMs - startMs < 2000) fail('Choose a 2–60 second segment within the saved song');
@@ -37,7 +37,22 @@ async function validateSpec(env, project, song, input) {
     const selectedTakeId = entry.selectedTakeId || null;
     if (referenceAssetId) await asset(env, project, referenceAssetId, 'image');
     if (selectedTakeId) await asset(env, project, selectedTakeId, 'video');
-    scenes.push({ id: entry.id, startMs: from, endMs: to, direction, referenceAssetId, selectedTakeId });
+    const previous = previousScenes.find(scene => scene.id === entry.id)?.subjectOrigin ?? null;
+    const requested = Object.hasOwn(entry, 'subjectOrigin') ? entry.subjectOrigin : previous;
+    let subjectOrigin = null;
+    if (requested !== null && requested !== undefined) {
+      if (!requested || typeof requested !== 'object' || Array.isArray(requested) || Object.keys(requested).some(key => !['subjectId','revision','name'].includes(key)) || !/^sub_[a-z0-9_]{1,80}$/.test(requested.subjectId ?? '') || !Number.isSafeInteger(requested.revision) || requested.revision < 1) fail('Choose a valid subject version');
+      if (previous && requested.subjectId === previous.subjectId && requested.revision === previous.revision) subjectOrigin = previous;
+      else {
+        const source = await env.DB.prepare(`SELECT s.spec_json FROM subject_versions s JOIN assets a ON a.id=s.reference_asset_id AND a.project_id=s.project_id AND a.kind='image' AND a.deleted_at IS NULL AND a.sha256=s.reference_sha256 WHERE s.subject_id=?1 AND s.project_id=?2 AND s.revision=?3`).bind(requested.subjectId,project.id,requested.revision).first();
+        if (!source) fail('Choose an available subject version from this project');
+        const name = safeJson(source.spec_json, {}).name;
+        if (typeof name !== 'string' || !name) fail('The subject version is invalid');
+        subjectOrigin = { subjectId: requested.subjectId, revision: requested.revision, name };
+        newOrigins.push(subjectOrigin);
+      }
+    }
+    scenes.push({ id: entry.id, startMs: from, endMs: to, direction, referenceAssetId, selectedTakeId, ...(subjectOrigin ? {subjectOrigin} : {}) });
     cursor = to;
   }
   if (cursor !== endMs) fail('Scenes must cover the whole chosen segment');
@@ -68,14 +83,20 @@ export async function updateSongPlan(env, project, planId, input, { reviewedRefe
   if (row.revision !== input.expectedRevision) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
-  const spec = await validateSpec(env, project, song, input);
-  const existingCaptions = safeJson(row.spec_json, {}).captions;
+  const previousSpec = safeJson(row.spec_json, {}), newOrigins = [];
+  const spec = await validateSpec(env, project, song, input, previousSpec.scenes ?? [], newOrigins);
+  const existingCaptions = previousSpec.captions;
   if (existingCaptions) spec.captions = validateCaptions(existingCaptions, spec.startMs, spec.endMs);
   let sql='UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5';
   const args=[JSON.stringify(spec),now(),planId,project.id,input.expectedRevision];
   if (reviewedReferences) {
     sql += ' AND EXISTS (SELECT 1 FROM assets WHERE id=?6 AND project_id=?4 AND sha256=?7 AND deleted_at IS NULL)'; args.push(song.id,song.sha256);
     for (const reference of reviewedReferences) { const n=args.length+1; sql += ` AND EXISTS (SELECT 1 FROM assets WHERE id=?${n} AND project_id=?4 AND kind=\'image\' AND sha256 IS ?${n+1} AND deleted_at IS NULL)`; args.push(reference.id,reference.sha256); }
+  }
+  for (const origin of newOrigins) {
+    const n=args.length+1;
+    sql += ` AND EXISTS (SELECT 1 FROM subject_versions s JOIN assets a ON a.id=s.reference_asset_id AND a.project_id=s.project_id AND a.kind='image' AND a.deleted_at IS NULL AND a.sha256=s.reference_sha256 WHERE s.subject_id=?${n} AND s.project_id=?4 AND s.revision=?${n+1})`;
+    args.push(origin.subjectId,origin.revision);
   }
   const updated = await env.DB.prepare(sql+' RETURNING *').bind(...args).first();
   if (!updated) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
