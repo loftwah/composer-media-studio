@@ -1,2 +1,4 @@
 .video-tool-player { display:block; width:min(100%,42rem); max-height:32rem; background:var(--paper-deep); }
 .video-tool-check { display:flex; gap:.6rem; align-items:center; }
+
+.video-tool-actions { display:flex; flex-wrap:wrap; gap:.75rem; }
