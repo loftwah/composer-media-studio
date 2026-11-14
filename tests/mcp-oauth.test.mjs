@@ -314,3 +314,35 @@ test('pruning removes expired authorization metadata and old inactive clients on
   for (const table of ['mcp_clients', 'mcp_codes', 'mcp_tokens', 'mcp_registration_limits']) assert.equal((await env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first()).n, 0);
   assert.equal((await env.DB.prepare('SELECT name FROM projects WHERE id=?1').bind(project.id).first()).name, 'Test studio');
 });
+
+test('promo brief tools obey OAuth project and edit scopes, revision checks and revocation without spending', async () => {
+  const {env,project}=await setup(); const cookie='studio_session='+await createSession(env);
+  const readToken=await flow(env,project,cookie,'studio.read');
+  const editToken=await flow(env,project,cookie,'studio.read studio.edit');
+  async function clientFor(token) {
+    const client=new Client({name:'fictional-promo-client',version:'1.0'},{versionNegotiation:{mode:'auto'}});
+    await client.connect(new StreamableHTTPClientTransport(new URL(resource),{requestInit:{headers:{authorization:'Bearer '+token}},fetch:(url,init)=>worker.fetch(new Request(url,init),env)}));return client;
+  }
+  const reader=await clientFor(readToken), editor=await clientFor(editToken);
+  const args={projectId:project.id,title:'Fictional promo',aspect:'9:16',targetSeconds:20,scenes:[{spoken:'Hello',visual:'Open'},{spoken:'Explore',visual:'Close'}]};
+  try {
+    const tools=(await editor.listTools()).tools;
+    assert.equal(tools.find(t=>t.name==='studio_list_promo_briefs').annotations.readOnlyHint,true);
+    assert.equal(tools.find(t=>t.name==='studio_create_promo_brief').annotations.readOnlyHint,false);
+    assert.equal((await reader.callTool({name:'studio_create_promo_brief',arguments:args})).isError,true);
+    const created=await editor.callTool({name:'studio_create_promo_brief',arguments:args});
+    assert.equal(created.isError,undefined,JSON.stringify(created));const brief=created.structuredContent.brief;assert.equal(brief.revision,1);
+    assert.equal((await reader.callTool({name:'studio_list_promo_briefs',arguments:{projectId:project.id}})).structuredContent.briefs[0].id,brief.id);
+    assert.equal((await reader.callTool({name:'studio_list_promo_briefs',arguments:{projectId:'prj_wrong'}})).isError,true);
+    const updateArgs={...args,briefId:brief.id,expectedRevision:1,title:'Updated fictional promo'};
+    assert.equal((await editor.callTool({name:'studio_update_promo_brief',arguments:updateArgs})).structuredContent.brief.revision,2);
+    assert.equal((await editor.callTool({name:'studio_update_promo_brief',arguments:updateArgs})).isError,true);
+    assert.equal((await reader.callTool({name:'studio_update_promo_brief',arguments:{...updateArgs,expectedRevision:2}})).isError,true);
+    assert.equal((await editor.callTool({name:'studio_create_promo_brief',arguments:{...args,unexpected:'secret'}})).isError,true);
+    assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+    assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM publications').first()).n,0);
+    const tokens=await env.DB.prepare('SELECT id FROM mcp_tokens ORDER BY rowid DESC LIMIT 1').first();
+    await env.DB.prepare('UPDATE mcp_tokens SET revoked_at=?1 WHERE id=?2').bind(Date.now(),tokens.id).run();
+    assert.equal((await call(env,'/mcp',{method:'POST',headers:{authorization:'Bearer '+editToken}})).status,401);
+  } finally {await reader.close();await editor.close();}
+});
