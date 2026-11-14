@@ -30,6 +30,7 @@ import {
   reconcileGeneration,
   saveGeneration,
 } from "./lib/jobs.mjs";
+import { createSongPlan, listSongPlans, updateSongPlan } from "./lib/song-plans.mjs";
 import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
@@ -487,6 +488,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
     if (rest === "assets" && method === "POST")
       return uploadAsset(request, env, project);
+
+    if (rest === "song-plans" && method === "GET") return json({ plans: await listSongPlans(env, project) });
+    if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);
+    const songPlanEdit = rest && rest.match(/^song-plans\/([a-z0-9_]+)$/);
+    if (songPlanEdit && method === "PATCH") return json({ plan: await updateSongPlan(env, project, songPlanEdit[1], await body(request)) });
 
     if (rest === "compositions" && method === "POST") {
       const input = await body(request);

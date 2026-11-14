@@ -4,7 +4,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createStudioMcpHandler } from '../src/mcp/tools.mjs';
 import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
-import { setup } from './harness.mjs';
+import { setup, addAsset } from './harness.mjs';
 
 async function connect(dispatch, versionNegotiation = { mode: 'auto' }) {
   const server = createStudioMcpHandler(dispatch);
@@ -28,7 +28,7 @@ test('MCP SDK discovers actual read tools and reads existing scoped Studio recor
     return { status: response.status, body: await response.json() };
   });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_models', 'studio_list_projects', 'studio_publish_asset', 'studio_rename_asset', 'studio_update_project', 'studio_update_storyboard', 'studio_withdraw_publication']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_models', 'studio_list_projects', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_update_project', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
   const state = await client.callTool({ name: 'studio_list_projects', arguments: {} });
   assert.equal(state.structuredContent.projects[0].id, project.id);
   const wrong = await client.callTool({ name: 'studio_get_project', arguments: { projectId: 'prj_other' } });
@@ -57,4 +57,25 @@ test('2025 handshake clients also discover the same tools', async () => {
   const result = await client.callTool({ name: 'studio_list_models', arguments: {} });
   assert.deepEqual(result.structuredContent, { models: [] });
   await client.close();
+});
+
+test('MCP song plans respect the project grant and share the real revisioned API state', async () => {
+  const { env, project } = await setup();
+  await addAsset(env, project, { id: 'asset_song1', kind: 'audio', durationMs: 40000 });
+  let cookie = 'studio_session=' + await createSession(env);
+  const scopedCookie = 'studio_session=' + await createSession(env, { mode: 'bridge', actor: 'user', workspace: 'workspace', project: project.id, actions: ['read'] });
+  const client = await connect(async ({ method, path, body }) => {
+    const response = await worker.fetch(new Request('https://studio.test' + path, { method, headers: { cookie, origin: 'https://studio.test', 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) }), env);
+    return { status: response.status, body: await response.json() };
+  });
+  try {
+    const created = await client.callTool({ name: 'studio_create_song_plan', arguments: { projectId: project.id, songAssetId: 'asset_song1', rightsConfirmed: true, title: 'Fictional song', aspect: '16:9', startMs: 0, endMs: 30000, sceneCount: 4 } });
+    assert.equal(created.isError, undefined, JSON.stringify(created));
+    assert.equal(created.structuredContent.plan.revision, 1);
+    cookie = scopedCookie;
+    const read = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: project.id } });
+    assert.equal(read.structuredContent.plans[0].id, created.structuredContent.plan.id);
+    const denied = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: 'prj_other' } });
+    assert.equal(denied.isError, true);
+  } finally { await client.close(); }
 });
