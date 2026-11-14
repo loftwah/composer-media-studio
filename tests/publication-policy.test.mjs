@@ -195,3 +195,50 @@ test("bounded generated ancestry can publish only when every no-mask link remain
   await env.DB.prepare('UPDATE assets SET parent_asset_id=?2 WHERE id=?1').bind(root.id,result.id).run();
   assert.equal(await publishCandidate(env,project.id,result.id),'attribution_review_required');
 });
+
+test("a verified Share-rooted chain preserves credit and rechecks every ancestor", async (t) => {
+  const {env,project}=await setup(); env.FIRST_PARTY_PUBLICATION_PROJECTS=project.id;
+  await env.DB.prepare("INSERT INTO publication_policies(project_id,enabled,enabled_at,attested_at) VALUES(?1,1,1,1)").bind(project.id).run();
+  const {PNG_1x1}=await import('./harness.mjs'); const {sha256Hex}=await import('../src/lib/util.mjs');
+  const hash=await sha256Hex(PNG_1x1);
+  const root=await addAsset(env,project,{id:'asset_share_root',kind:'image',source:'upload'});
+  await env.DB.prepare('UPDATE assets SET sha256=?2,caption=?3 WHERE id=?1').bind(root.id,hash,'https://woodhouse.loftwah.com/api/v1/assets/atlas-plate-20-foilbury\nPRIVATE SOURCE NOTE').run(); root.sha256=hash;
+  const middle=await generated(env,project,'share_mid','generated',Date.now()+1);
+  const output=await generated(env,project,'share_leaf','variant',Date.now()+1);
+  for(const [asset,gen,parent,model] of [[middle,'gen_share_mid',root,'studio-detail'],[output,'gen_share_leaf',middle,'studio-upscale']]) {
+    await env.DB.prepare('UPDATE assets SET parent_asset_id=?2 WHERE id=?1').bind(asset.id,parent.id).run();
+    await env.DB.prepare('UPDATE generations SET model=?2,request_json=?3 WHERE id=?1').bind(gen,model,JSON.stringify({referenceAssetId:parent.id,referenceSha256:parent.sha256,parentAssetId:null,maskAssetId:null,prompt:'PRIVATE PROMPT'})).run();
+  }
+  const record={version:1,asset:{id:'atlas-plate-20-foilbury',visibility:'public',reuse:'unconfirmed',credit:'Woodhouse · gpt-image-2.6-flare · Tabler Icons (MIT)',sourceUrl:'https://woodhouse.loftwah.com/source',original:{url:'https://woodhouse.loftwah.com/original.png'}}};
+  let mutateDuringFetch = false;
+  t.mock.method(globalThis,'fetch',async url => {
+    if (!String(url).endsWith('/original.png')) return Response.json(record);
+    if (mutateDuringFetch) await env.DB.prepare('UPDATE assets SET sha256=?2 WHERE id=?1').bind(middle.id,'changed-during-verification').run();
+    return new Response(PNG_1x1);
+  });
+  const racing=await generated(env,project,'share_racing','variant',Date.now()+1);
+  await env.DB.prepare('UPDATE assets SET parent_asset_id=?2 WHERE id=?1').bind(racing.id,middle.id).run();
+  await env.DB.prepare('UPDATE generations SET model=?2,request_json=?3 WHERE id=?1').bind('gen_share_racing','studio-upscale',JSON.stringify({referenceAssetId:middle.id,referenceSha256:middle.sha256,parentAssetId:null,maskAssetId:null})).run();
+  mutateDuringFetch=true;
+  assert.equal(await publishCandidate(env,project.id,racing.id),'skipped');
+  assert.equal(await env.DB.prepare('SELECT id FROM publications WHERE asset_id=?1').bind(racing.id).first(),null);
+  await env.DB.prepare('UPDATE assets SET sha256=?2 WHERE id=?1').bind(middle.id,middle.sha256).run(); mutateDuringFetch=false;
+  const {inventory}=await import('../src/lib/publication-policy.mjs');
+  assert.equal((await inventory(env,project.id)).items.find(x=>x.id===output.id).status,'source_verification_available');
+  assert.equal(await publishCandidate(env,project.id,output.id),'created');
+  const pub=await env.DB.prepare('SELECT * FROM publications WHERE asset_id=?1').bind(output.id).first();
+  assert.equal(JSON.parse(pub.attribution_json)[0].tablerMit,true); assert.doesNotMatch(pub.attribution_json,/PRIVATE/);
+  assert.match(await (await worker.fetch(new Request(`https://studio.test/p/${pub.slug}`),env)).text(),/Tabler Icons MIT licence/);
+  await env.DB.prepare('UPDATE publications SET listed=0 WHERE id=?1').bind(pub.id).run();
+  assert.equal(await publishCandidate(env,project.id,output.id,{automatic:true}),'existing');
+  assert.equal((await env.DB.prepare('SELECT listed FROM publications WHERE id=?1').bind(pub.id).first()).listed,0);
+  assert.equal(await publishCandidate(env,project.id,output.id),'existing');
+  await env.DB.prepare('UPDATE assets SET sha256=?2 WHERE id=?1').bind(middle.id,'changed').run();
+  assert.equal(await publishCandidate(env,project.id,output.id),'attribution_review_required');
+  await env.DB.prepare('UPDATE assets SET sha256=?2 WHERE id=?1').bind(middle.id,middle.sha256).run();
+  await env.DB.prepare('UPDATE generations SET request_json=?2 WHERE id=?1').bind('gen_share_mid',JSON.stringify({referenceAssetId:root.id,referenceSha256:hash,maskAssetId:'asset_unknown'})).run();
+  assert.equal(await publishCandidate(env,project.id,output.id),'attribution_review_required');
+  await env.DB.prepare('UPDATE generations SET request_json=?2 WHERE id=?1').bind('gen_share_mid',JSON.stringify({referenceAssetId:root.id,referenceSha256:hash,maskAssetId:null})).run();
+  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,revoked_at) VALUES('pub_share_prior',?1,?2,'share-prior','Old','',1,1,1)").bind(project.id,middle.id).run();
+  assert.equal(await publishCandidate(env,project.id,output.id),'attribution_review_required');
+});

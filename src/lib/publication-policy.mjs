@@ -87,11 +87,36 @@ const generatedChain = `EXISTS(WITH RECURSIVE chain(node_id,depth) AS (
     WHERE n.id IS NULL OR n.project_id!=a.project_id OR n.deleted_at IS NOT NULL OR ng.id IS NULL OR ng.project_id!=n.project_id OR ng.status!='saved' OR ng.deleted_at IS NOT NULL OR ng.output_asset_id IS NOT n.id OR COALESCE((${rootForChain} OR ${chainEdge}),0)=0
        OR EXISTS(SELECT 1 FROM publications prior WHERE prior.asset_id=n.id AND (prior.revoked_at IS NOT NULL OR prior.hidden=1))))`;
 
+// A second bounded chain may end at one public Share upload. Every other
+// node must be a saved, no-mask single-input generation with matching hash.
+const shareChain = `EXISTS(WITH RECURSIVE chain(node_id,depth) AS (
+    SELECT a.id,0 UNION ALL SELECT n.parent_asset_id,c.depth+1 FROM chain c JOIN assets n ON n.id=c.node_id
+    WHERE n.parent_asset_id IS NOT NULL AND c.depth<8
+  ) SELECT 1 WHERE EXISTS(SELECT 1 FROM chain c JOIN assets n ON n.id=c.node_id
+    WHERE c.depth>=2 AND n.project_id=a.project_id AND n.deleted_at IS NULL AND n.source='upload' AND n.parent_asset_id IS NULL
+      AND n.caption LIKE 'https://woodhouse.loftwah.com/api/v1/assets/%')
+  AND NOT EXISTS(SELECT 1 FROM chain c LEFT JOIN assets n ON n.id=c.node_id LEFT JOIN generations ng ON ng.id=n.generation_id
+    WHERE n.id IS NULL OR n.project_id!=a.project_id OR n.deleted_at IS NOT NULL
+      OR NOT (n.source='upload' AND n.parent_asset_id IS NULL AND n.caption LIKE 'https://woodhouse.loftwah.com/api/v1/assets/%'
+        OR (ng.id IS NOT NULL AND ng.project_id=n.project_id AND ng.status='saved' AND ng.deleted_at IS NULL AND ng.output_asset_id IS n.id AND COALESCE((${chainEdge}),0)=1))
+      OR EXISTS(SELECT 1 FROM publications prior WHERE prior.asset_id=n.id AND (prior.revoked_at IS NOT NULL OR prior.hidden=1))))`;
+
+// Recheck that the exact public original verified before the write is still
+// the root of this chain, not merely an unrelated asset with the same hash.
+function shareRootProof(idParam, hashParam, captionParam) {
+  return `EXISTS(WITH RECURSIVE chain(node_id,depth) AS (
+    SELECT a.id,0 UNION ALL SELECT n.parent_asset_id,c.depth+1 FROM chain c JOIN assets n ON n.id=c.node_id
+    WHERE n.parent_asset_id IS NOT NULL AND c.depth<8
+  ) SELECT 1 FROM chain c JOIN assets n ON n.id=c.node_id
+    WHERE c.depth>=2 AND n.id=${idParam} AND n.project_id=a.project_id AND n.deleted_at IS NULL
+      AND n.source='upload' AND n.parent_asset_id IS NULL AND n.sha256=${hashParam} AND n.caption=${captionParam})`;
+}
+
 export async function inventory(env, projectId, after = "") {
   const rows = await env.DB.prepare(`SELECT a.id,a.title,a.kind,a.source,a.created_at,
     CASE WHEN ${eligible} THEN 1 ELSE 0 END AS eligible,
     CASE WHEN ${eligible} AND (${attributionSafe} OR ${generatedChain}) THEN 1 ELSE 0 END AS attribution_safe,
-    CASE WHEN ${eligible} AND ${directReference} THEN 1 ELSE 0 END AS source_verifiable,
+    CASE WHEN ${eligible} AND (${directReference} OR ${shareChain}) THEN 1 ELSE 0 END AS source_verifiable,
     EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id AND p.revoked_at IS NOT NULL) AS withdrawn,
     EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id AND p.revoked_at IS NULL AND p.hidden=1) AS hidden,
     EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id AND p.revoked_at IS NULL) AS published
@@ -107,18 +132,28 @@ export async function publishCandidate(env, projectId, assetId, { automatic = fa
   if (!installationAllows(env, projectId)) return "not_allowed";
   const candidate = await env.DB.prepare(`SELECT a.parent_asset_id,g.request_json,ref.sha256 AS reference_sha256,ref.caption AS reference_caption,
     CASE WHEN ${attributionSafe} OR ${generatedChain} THEN 1 ELSE 0 END AS plain_safe,
-    CASE WHEN ${directReference} THEN 1 ELSE 0 END AS share_safe
+    CASE WHEN ${directReference} THEN 1 ELSE 0 END AS share_safe,
+    CASE WHEN ${shareChain} THEN 1 ELSE 0 END AS chain_safe
     FROM assets a JOIN generations g ON g.id=a.generation_id JOIN publication_policies policy ON policy.project_id=a.project_id AND policy.enabled=1
     LEFT JOIN assets ref ON ref.id=a.parent_asset_id AND ref.project_id=a.project_id
     WHERE a.id=?1 AND a.project_id=?2 AND ${eligible} AND (?3=0 OR g.created_at>policy.enabled_at)
     AND NOT EXISTS(SELECT 1 FROM publications w WHERE w.asset_id=a.id AND (w.revoked_at IS NOT NULL OR w.hidden=1))`).bind(assetId,projectId,automatic ? 1 : 0).first();
   if (!candidate) return "skipped";
-  if (!candidate.plain_safe && !candidate.share_safe) return "attribution_review_required";
+  if (!candidate.plain_safe && !candidate.share_safe && !candidate.chain_safe) return "attribution_review_required";
   // Automatic retries must not re-list existing pages, or make network calls for them.
   if (automatic && await env.DB.prepare("SELECT id FROM publications WHERE asset_id=?1 LIMIT 1").bind(assetId).first()) return "existing";
   let attribution = [];
+  let chainRoot = null;
   if (!candidate.plain_safe) {
-    attribution = await verifiedShareCredit({ caption: candidate.reference_caption, sha256: candidate.reference_sha256 });
+    if (candidate.chain_safe) {
+      chainRoot = await env.DB.prepare(`WITH RECURSIVE chain(node_id,depth) AS (
+        SELECT ?1,0 UNION ALL SELECT n.parent_asset_id,c.depth+1 FROM chain c JOIN assets n ON n.id=c.node_id
+        WHERE n.parent_asset_id IS NOT NULL AND c.depth<8
+      ) SELECT n.id,n.sha256,n.caption FROM chain c JOIN assets n ON n.id=c.node_id
+        WHERE c.depth>=2 AND n.project_id=?2 AND n.deleted_at IS NULL AND n.source='upload' AND n.parent_asset_id IS NULL LIMIT 1`).bind(assetId,projectId).first();
+      if (!chainRoot) return "attribution_review_required";
+    }
+    attribution = await verifiedShareCredit(chainRoot ?? { caption: candidate.reference_caption, sha256: candidate.reference_sha256 });
     if (!attribution) return "attribution_review_required";
   }
   const attributionJson = JSON.stringify(attribution);
@@ -127,9 +162,9 @@ export async function publishCandidate(env, projectId, assetId, { automatic = fa
   const proof = `g.request_json=?4 AND ((?5 IS NULL AND a.parent_asset_id IS NULL) OR (a.parent_asset_id=?5 AND EXISTS(SELECT 1 FROM assets ref WHERE ref.id=?5 AND ref.project_id=a.project_id AND ref.deleted_at IS NULL AND ref.sha256=?6 AND ref.caption=?7)))`;
   const active = await env.DB.prepare(`SELECT p.id FROM publications p JOIN assets a ON a.id=p.asset_id JOIN generations g ON g.id=a.generation_id
     JOIN publication_policies policy ON policy.project_id=a.project_id AND policy.enabled=1
-    WHERE a.id=?1 AND a.project_id=?2 AND ${eligible} AND (${attributionSafe} OR ${generatedChain} OR ${directReference}) AND ${proof} AND p.revoked_at IS NULL AND p.hidden=0
+    WHERE a.id=?1 AND a.project_id=?2 AND ${eligible} AND (${attributionSafe} OR ${generatedChain} OR ${directReference} OR (${shareChain} AND ${shareRootProof('?8','?9','?10')})) AND ${proof} AND p.revoked_at IS NULL AND p.hidden=0
     AND NOT EXISTS(SELECT 1 FROM publications w WHERE w.asset_id=a.id AND (w.revoked_at IS NOT NULL OR w.hidden=1))
-    AND (?3=0 OR g.created_at>policy.enabled_at) LIMIT 1`).bind(assetId, projectId, automatic ? 1 : 0, candidate.request_json, candidate.parent_asset_id, candidate.reference_sha256, candidate.reference_caption).first();
+    AND (?3=0 OR g.created_at>policy.enabled_at) LIMIT 1`).bind(assetId, projectId, automatic ? 1 : 0, candidate.request_json, candidate.parent_asset_id, candidate.reference_sha256, candidate.reference_caption, chainRoot?.id ?? null, chainRoot?.sha256 ?? null, chainRoot?.caption ?? null).first();
   if (active) {
     // A saved-job retry must never undo a deliberate unlisting. Only an
     // explicitly confirmed reconciliation may list an existing page.
@@ -137,13 +172,13 @@ export async function publishCandidate(env, projectId, assetId, { automatic = fa
     const result = await env.DB.prepare(`UPDATE publications SET listed=1,attribution_json=?3 WHERE id=?1 AND revoked_at IS NULL AND hidden=0 AND (attribution_json='[]' OR attribution_json=?3)
       AND EXISTS(SELECT 1 FROM publication_policies policy WHERE policy.project_id=?2 AND policy.enabled=1)
       AND NOT EXISTS(SELECT 1 FROM publications w WHERE w.asset_id=publications.asset_id AND (w.revoked_at IS NOT NULL OR w.hidden=1))
-      AND EXISTS(SELECT 1 FROM assets a JOIN generations g ON g.id=a.generation_id WHERE a.id=publications.asset_id AND a.project_id=?2 AND ${eligible} AND (${attributionSafe} OR ${generatedChain} OR ${directReference}) AND ${proof})`).bind(active.id, projectId, attributionJson, candidate.request_json, candidate.parent_asset_id, candidate.reference_sha256, candidate.reference_caption).run();
+      AND EXISTS(SELECT 1 FROM assets a JOIN generations g ON g.id=a.generation_id WHERE a.id=publications.asset_id AND a.project_id=?2 AND ${eligible} AND (${attributionSafe} OR ${generatedChain} OR ${directReference} OR (${shareChain} AND ${shareRootProof('?8','?9','?10')})) AND ${proof})`).bind(active.id, projectId, attributionJson, candidate.request_json, candidate.parent_asset_id, candidate.reference_sha256, candidate.reference_caption, chainRoot?.id ?? null, chainRoot?.sha256 ?? null, chainRoot?.caption ?? null).run();
     return (result.meta?.changes ?? result.changes ?? 0) > 0 ? "existing" : "skipped";
   }
   const result = await env.DB.prepare(`INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed,attribution_json)
     SELECT ?1,a.project_id,a.id,?2,CASE a.kind WHEN 'video' THEN 'Generated film' WHEN 'audio' THEN 'Generated sound' ELSE 'Generated image' END,'',a.delete_revision,?3,1,?7
     FROM assets a JOIN generations g ON g.id=a.generation_id JOIN publication_policies policy ON policy.project_id=a.project_id AND policy.enabled=1
-    WHERE a.id=?4 AND a.project_id=?5 AND ${eligible} AND (${attributionSafe} OR ${generatedChain} OR ${directReference}) AND g.request_json=?8 AND ((?9 IS NULL AND a.parent_asset_id IS NULL) OR (a.parent_asset_id=?9 AND EXISTS(SELECT 1 FROM assets ref WHERE ref.id=?9 AND ref.project_id=a.project_id AND ref.deleted_at IS NULL AND ref.sha256=?10 AND ref.caption=?11))) AND (?6=0 OR g.created_at>policy.enabled_at)
-    AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id)`).bind(id("pub"), slug(12), now(), assetId, projectId, automatic ? 1 : 0, attributionJson, candidate.request_json, candidate.parent_asset_id, candidate.reference_sha256, candidate.reference_caption).run();
+    WHERE a.id=?4 AND a.project_id=?5 AND ${eligible} AND (${attributionSafe} OR ${generatedChain} OR ${directReference} OR (${shareChain} AND ${shareRootProof('?12','?13','?14')})) AND g.request_json=?8 AND ((?9 IS NULL AND a.parent_asset_id IS NULL) OR (a.parent_asset_id=?9 AND EXISTS(SELECT 1 FROM assets ref WHERE ref.id=?9 AND ref.project_id=a.project_id AND ref.deleted_at IS NULL AND ref.sha256=?10 AND ref.caption=?11))) AND (?6=0 OR g.created_at>policy.enabled_at)
+    AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id)`).bind(id("pub"), slug(12), now(), assetId, projectId, automatic ? 1 : 0, attributionJson, candidate.request_json, candidate.parent_asset_id, candidate.reference_sha256, candidate.reference_caption, chainRoot?.id ?? null, chainRoot?.sha256 ?? null, chainRoot?.caption ?? null).run();
   return (result.meta?.changes ?? result.changes ?? 0) > 0 ? "created" : "skipped";
 }
