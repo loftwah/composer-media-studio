@@ -257,3 +257,26 @@ test("empty public home features only configured, active films until the gallery
   assert.match(populated, /listed-image/);
   assert.doesNotMatch(populated, /Selected public films|featured-film/);
 });
+
+test('public gallery filters only listed live work and keeps filters through pagination', async () => {
+  const { env, project } = await setup();
+  const video = await addAsset(env, project, { id: 'asset_filter_video', kind: 'video' });
+  const image = await addAsset(env, project, { id: 'asset_filter_image', kind: 'image' });
+  for (let i = 1; i <= 25; i++) await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed) VALUES(?1,?2,?3,?4,?5,'An ocean study',1,?6,1)")
+    .bind(`pub_filter_${i}`, project.id, video.id, `filter-film-${i}`, `Ocean film ${i}`, i).run();
+  for (const [id, assetId, listed, hidden, revoked] of [['still',image.id,1,0,null],['private',video.id,0,0,null],['hidden',video.id,1,1,null],['withdrawn',video.id,1,0,1]]) {
+    await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed,hidden,revoked_at) VALUES(?1,?2,?3,?4,'Ocean secret','',1,100,?5,?6,?7)")
+      .bind(`pub_${id}`,project.id,assetId,`filter-${id}`,listed,hidden,revoked).run();
+  }
+  const get = async path => (await worker.fetch(new Request(`https://studio.test${path}`),env)).text();
+  const first = await get('/gallery?q=OcEaN&kind=video&order=oldest');
+  assert.match(first, /href="\/p\/filter-film-1"/);
+  assert.doesNotMatch(first, /href="\/p\/filter-film-25"/);
+  assert.doesNotMatch(first, /href="\/p\/filter-(?:still|private|hidden|withdrawn)"/);
+  assert.match(first, /href="\/gallery\?q=OcEaN&amp;kind=video&amp;order=oldest&amp;page=2"/);
+  const second = await get('/gallery?q=OcEaN&kind=video&order=oldest&page=2');
+  assert.match(second, /href="\/p\/filter-film-25"/);
+  assert.doesNotMatch(second, /href="\/p\/filter-film-1"/);
+  assert.match(await get('/gallery?q=%25&kind=video'), /No published work matches these filters/);
+  assert.doesNotMatch(await get('/gallery?q=%3Cscript%3E'), /<script>/);
+});

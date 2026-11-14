@@ -397,3 +397,10 @@ dialog h2 { margin: 0; }
 .public-credits .licence-copy { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-width: 72ch; }
 
 .trim-preview { display:block; width:min(100%, 32rem); max-height:18rem; margin:0 auto 1rem; background:#111; object-fit:contain; }
+
+.gallery-controls { display:flex; flex-wrap:wrap; gap:.75rem; align-items:end; margin:0 0 2rem; }
+.gallery-controls label { display:grid; gap:.35rem; font-weight:700; }
+.gallery-controls label:first-child { flex:1 1 16rem; }
+.gallery-controls input, .gallery-controls select { width:100%; min-height:44px; }
+.gallery-controls button, .gallery-controls a { min-height:44px; }
+.gallery-controls a { display:inline-flex; align-items:center; }
