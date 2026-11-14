@@ -1,7 +1,8 @@
 // Local-only, bounded H.264/AAC MP4. No provider, uploads or background jobs.
 import { ALL_FORMATS, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from 'mediabunny';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
-import { captionLines, type CaptionSnapshot } from './local-captions.ts';
+import type { CaptionSnapshot } from './local-captions.ts';
+import { createCaptionPainter } from './caption-paint';
 import { shotRange } from '../../public/shot-trims.js';
 import { defaultFraming, framingNote, resolveFrame, type Framing } from './local-framing.ts';
 
@@ -57,18 +58,7 @@ export async function renderLocalMp4(composition: CompositionV1, assets: MediaAs
   if (!await canEncodeVideo('avc', { width, height, bitrate: 1200000 }) || (sound && !await canEncodeAudio('aac', { numberOfChannels: 2, sampleRate: 44100, bitrate: 128000 }))) throw new Error('This browser cannot encode the required H.264/AAC MP4. Try a current supported browser.');
   const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false }); if (!context) throw new Error('This browser cannot create a video canvas.');
-  const fontSize = Math.max(18, Math.round(Math.min(width, height) * .05));
-  const lineHeight = Math.round(fontSize * 1.3);
-  context.font = `600 ${fontSize}px system-ui, sans-serif`;
-  const prepared = captions?.cues.map(cue => ({ ...cue, lines: captionLines(cue.speaker ? `${cue.speaker}: ${cue.text}` : cue.text, width * .84 - 24, text => context.measureText(text).width) })) ?? [];
-  const paintCaption = (timeMs: number) => {
-    const cue = prepared.find(item => timeMs >= item.startMs - captions!.sourceStartMs && timeMs < item.endMs - captions!.sourceStartMs);
-    if (!cue) return;
-    const boxWidth=width*.84, boxHeight=cue.lines.length*lineHeight+20, x=(width-boxWidth)/2, y=height*.9-boxHeight;
-    context.save(); context.fillStyle='rgba(0,0,0,.88)'; context.fillRect(x,y,boxWidth,boxHeight);
-    context.font=`600 ${fontSize}px system-ui, sans-serif`; context.fillStyle='#fff'; context.textAlign='center'; context.textBaseline='middle';
-    cue.lines.forEach((line,index)=>context.fillText(line,width/2,y+10+lineHeight*(index+.5))); context.restore();
-  };
+  const paintCaption = createCaptionPainter(context, width, height, captions);
   const target = new BufferTarget();
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target });
   output.setMetadataTags({ comment: framingNote(outputFrame) });
