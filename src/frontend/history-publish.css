@@ -1,0 +1,13 @@
+.history-workspace > .spread h2,
+.publish-workspace > .spread h2 {
+  margin: 0;
+}
+.history-list {
+  margin-top: 0.8rem;
+}
+.history-list > .card p {
+  margin: 0;
+}
+.history-audio {
+  width: 100%;
+}

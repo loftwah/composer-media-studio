@@ -67,3 +67,13 @@ export interface CreateProps {
   model: ModelV1 | null; recipe: RecipeV1 | null; estimateMicro: number;
   fundingBlocked: boolean; permissionBlocked: boolean; executionFailed: boolean;
 }
+
+export interface GenerationV1 {
+  id: string; model: string; kind: string; status: string; prompt: string;
+  aspect: string | null; durationSeconds: number | null; assetId: string | null;
+  createdAt: string | number; costObservedMicro: number | null; costEstimateMicro: number;
+  error: { code: string; message: string } | null;
+}
+export interface PublicationV1 { id: string; title: string; path: string; createdAt: string | number }
+export interface HistoryProps { generations: GenerationV1[]; assets: MediaAssetV1[]; models: ModelV1[] }
+export interface PublishProps { publications: PublicationV1[]; origin: string }

@@ -164,6 +164,7 @@ async function boot() {
 
 async function loadProject(id) {
   const data = await api(`/api/projects/${id}`);
+  if (state.projectId !== id) return data;
   state.project = data.project;
   state.project.assets = data.assets;
   state.project.generations = data.generations;
@@ -259,6 +260,14 @@ function render() {
       renderReactCreate();
       mediaMounted = true;
     }
+    if (creativeHome && state.tab === "history" && state.project) {
+      renderReactHistory();
+      mediaMounted = true;
+    }
+    if (creativeHome && state.tab === "publish" && state.project) {
+      creativeHome.renderPublish(app.querySelector("#creative-media"), { publications: state.project.publications, origin: location.origin });
+      mediaMounted = true;
+    }
     attachDropzone();
     if (state.tab === "library") restoreShareImportDraft();
     if (state.tab === "create") attachMask();
@@ -280,6 +289,12 @@ function renderReactLibrary() {
   creativeHome.renderLibrary(app.querySelector("#creative-media"), {
     projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter,
     canImportShare: state.woodhouseShare && state.session?.actions.includes("edit"),
+  });
+}
+
+function renderReactHistory() {
+  creativeHome.renderHistory(app.querySelector("#creative-media"), {
+    generations: state.project.generations, assets: state.project.assets, models: state.models,
   });
 }
 
@@ -385,8 +400,8 @@ function projectView() {
       ${state.tab === "library" ? (creativeHome ? '<div id="creative-media"></div>' : libraryView()) : ""}
       ${state.tab === "create" ? (creativeHome ? '<div id="creative-media"></div>' : createView()) : ""}
       ${state.tab === "assemble" ? composeView() : ""}
-      ${state.tab === "history" ? historyView() : ""}
-      ${state.tab === "publish" ? publishView() : ""}
+      ${state.tab === "history" ? (creativeHome ? '<div id="creative-media"></div>' : historyView()) : ""}
+      ${state.tab === "publish" ? (creativeHome ? '<div id="creative-media"></div>' : publishView()) : ""}
       ${state.tab === "settings" ? settingsView() : ""}
     </section>`;
 }
@@ -394,7 +409,7 @@ function projectView() {
 function budgetStrip(budget) {
   const used = budget.spentMicro + budget.reservedMicro;
   const percent = budget.allowanceMicro > 0 ? Math.min(100, Math.round((used / budget.allowanceMicro) * 100)) : 0;
-  return `<div class="card" style="margin:1rem 0;padding:0.8rem 1rem">
+  return `<div class="card" data-budget-strip style="margin:1rem 0;padding:0.8rem 1rem">
     <div class="spread" style="margin-bottom:0.4rem">
       <span class="small"><strong>${money(budget.spentMicro)}</strong> spent · ${money(budget.reservedMicro)} reserved · ${money(budget.allowanceMicro)} monthly allowance</span>
       <span class="small">${esc(budget.period)} · ${percent}%</span>
@@ -1600,15 +1615,24 @@ async function publishAsset(assetId, title, description) {
 }
 
 async function refreshGeneration(id, manual = false) {
+  const projectId = state.projectId;
   const result = await api(`/api/generations/${id}`);
+  if (state.projectId !== projectId || state.project?.id !== projectId) return result.generation;
   replaceGeneration(result.generation);
   state.project.budget = result.budget;
-  const card = document.querySelector(`[data-job="${id}"]`);
-  if (card) card.outerHTML = jobCard(result.generation);
+  if (mediaMounted && state.view === "project" && state.tab === "history") renderReactHistory();
+  else {
+    const card = document.querySelector(`[data-job="${id}"]`);
+    if (card) card.outerHTML = jobCard(result.generation);
+  }
+  const budget = app.querySelector("[data-budget-strip]");
+  if (budget && state.view === "project") budget.outerHTML = budgetStrip(state.project.budget);
   if (manual) notify(`Status: ${result.generation.status}`);
   if (result.generation.status === "saved") {
-    await loadProject(state.projectId);
-    if (!isTyping()) render();
+    await loadProject(projectId);
+    if (state.projectId !== projectId || state.project?.id !== projectId) return result.generation;
+    if (mediaMounted && state.view === "project" && state.tab === "history") renderReactHistory();
+    else if (!isTyping()) render();
     notify("Result saved to the library.");
   }
   return result.generation;

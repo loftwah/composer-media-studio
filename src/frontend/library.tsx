@@ -1,7 +1,8 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import type { CreateProps, LibraryProps, MediaAssetV1, ViewerProps } from "./contracts";
+import type { CreateProps, HistoryProps, LibraryProps, MediaAssetV1, PublishProps, ViewerProps } from "./contracts";
 import { CreateWorkbench } from "./create";
+import { History, Publish } from "./history-publish";
 import "./library.css";
 
 const bytesLabel = (bytes: number) => !bytes ? "—" : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -62,4 +63,6 @@ let root: Root | undefined;
 export function renderLibrary(container: HTMLElement, props: LibraryProps): void { root ??= createRoot(container); flushSync(() => root!.render(<Library {...props}/>)); }
 export function renderViewer(container: HTMLElement, props: ViewerProps): void { root ??= createRoot(container); flushSync(() => root!.render(<AssetViewer {...props}/>)); }
 export function renderCreate(container: HTMLElement, props: CreateProps): void { root ??= createRoot(container); flushSync(() => root!.render(<CreateWorkbench {...props}/>)); }
+export function renderHistory(container: HTMLElement, props: HistoryProps): void { root ??= createRoot(container); flushSync(() => root!.render(<History {...props}/>)); }
+export function renderPublish(container: HTMLElement, props: PublishProps): void { root ??= createRoot(container); flushSync(() => root!.render(<Publish {...props}/>)); }
 export function unmountMedia(): void { if (root) { root.unmount(); root = undefined; } }
