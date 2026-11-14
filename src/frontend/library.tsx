@@ -58,14 +58,15 @@ type RenderReceipt = {
   output: { sha256: string };
 };
 
-function PrivateRenderReceipt({ assetId }: { assetId: string }) {
+function PrivateRenderReceipt({ assetId, reentryUrl }: { assetId: string; reentryUrl: string }) {
   const [receipt, setReceipt] = useState<RenderReceipt | null>(null);
-  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'missing' | 'error'>('idle');
+  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'missing' | 'signed-out' | 'error'>('idle');
   async function load() {
     if (state === 'loading' || state === 'ready' || state === 'missing') return;
     setState('loading');
     try {
       const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}/local-render-receipt`, { credentials: 'same-origin' });
+      if (response.status === 401) { setState('signed-out'); return; }
       if (response.status === 404) { setState('missing'); return; }
       const data = await response.json();
       if (!response.ok || !data.receipt) throw new Error('Receipt unavailable');
@@ -74,6 +75,7 @@ function PrivateRenderReceipt({ assetId }: { assetId: string }) {
   }
   return <details className="asset-technical" onToggle={event => { if (event.currentTarget.open) void load(); }}><summary>Private render receipt</summary>
     {state === 'loading' && <p role="status">Loading receipt…</p>}
+    {state === 'signed-out' && <p role="alert">Your Studio session has ended. <a href={reentryUrl}>{reentryUrl === "/studio" ? "Sign in to Studio" : "Continue with App Composer"}</a> to view this receipt.</p>}
     {state === 'missing' && <p>No private render receipt is recorded for this asset.</p>}
     {state === 'error' && <p role="alert">The receipt could not be loaded. <button type="button" className="quiet" onClick={() => void load()}>Try again</button></p>}
     {receipt && <><p>The server recorded the saved storyboard and source hashes. Framing, captions and rendering were reported by the browser; the server did not verify the rendered pixels.</p>
@@ -86,7 +88,19 @@ function PrivateRenderReceipt({ assetId }: { assetId: string }) {
   </details>;
 }
 
-function AssetViewer({ projectId, asset, still, launchKitUrl }: ViewerProps) {
+function AssetVideo({ asset, reentryUrl }: { asset: MediaAssetV1; reentryUrl: string }) {
+  const [error, setError] = useState<'signed-out' | 'unavailable' | null>(null);
+  async function reportError() {
+    try {
+      const response = await fetch('/api/session', { credentials: 'same-origin' });
+      const session = await response.json();
+      setError(session.signedIn === false ? 'signed-out' : 'unavailable');
+    } catch { setError('unavailable'); }
+  }
+  return <><video src={asset.file} controls playsInline preload="metadata" onError={() => void reportError()}/>{error === 'signed-out' && <p className="notice" role="alert">Your Studio session has ended. <a href={reentryUrl}>{reentryUrl === "/studio" ? "Sign in to Studio" : "Continue with App Composer"}</a> to play this video.</p>}{error === 'unavailable' && <p className="notice" role="alert">This video could not be played. Check your connection and try again.</p>}</>;
+}
+
+function AssetViewer({ projectId, asset, still, launchKitUrl, reentryUrl }: ViewerProps) {
   const back = `#/p/${encodeURIComponent(projectId)}/library`;
   if (!asset) return <p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a>.</p>;
   const isVideo = asset.kind === "video", isAudio = asset.kind === "audio";
@@ -94,11 +108,11 @@ function AssetViewer({ projectId, asset, still, launchKitUrl }: ViewerProps) {
   return <div className="asset-viewer">
     <p><a className="button secondary" data-viewer-back href={back}>← Back to library</a></p>
     <div className="viewer">
-      <div className="stage">{isVideo ? <video src={asset.file} controls playsInline preload="metadata"/> : isAudio ? <div className="audio-stage"><canvas width="840" height="200" data-waveform={asset.file} aria-hidden="true"/><audio src={asset.file} controls preload="metadata"/></div> : <img src={asset.file} alt={asset.title}/>}</div>
+      <div className="stage">{isVideo ? <AssetVideo key={asset.id} asset={asset} reentryUrl={reentryUrl}/> : isAudio ? <div className="audio-stage"><canvas width="840" height="200" data-waveform={asset.file} aria-hidden="true"/><audio src={asset.file} controls preload="metadata"/></div> : <img src={asset.file} alt={asset.title}/>}</div>
       <aside className="card stack"><div><p className="eyebrow">{asset.kind} · {asset.source}</p><h1 className="asset-viewer-title">{asset.title}</h1></div>
         {localRender ? <p>MP4 rendered on this device from a saved storyboard{asset.caption?.includes('; owner-confirmed captions') ? ', with saved captions' : ''}.</p> : asset.caption && <p>{asset.caption}</p>}
         <dl className="kv"><dt>Size</dt><dd>{bytesLabel(asset.bytes)}</dd>{Boolean(asset.width) && <><dt>Frame</dt><dd>{asset.width} × {asset.height}</dd></>}{Boolean(asset.durationMs) && <><dt>Duration</dt><dd>{(asset.durationMs! / 1000).toFixed(1)}s</dd></>}{isAudio && Boolean(asset.sampleRate) && <><dt>Audio</dt><dd>{asset.sampleRate} Hz · {asset.channels ?? "—"} channel{asset.channels === 1 ? "" : "s"}</dd></>}<dt>Type</dt><dd>{asset.mime}</dd><dt>Added</dt><dd>{dateLabel(asset.createdAt)}</dd></dl>
-        {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id}/>}
+        {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id} reentryUrl={reentryUrl}/>}
         <details className="asset-technical"><summary>Technical details</summary><dl className="kv"><dt>SHA-256</dt><dd>{asset.sha256}</dd></dl>{localRender && <p>{asset.caption}</p>}</details>
         <div className="row"><a className="button secondary" href={asset.download} download>Download</a><button type="button" className="secondary" data-action="rename-asset" data-id={asset.id}>Rename</button>{still && <button type="button" className="secondary" data-action="vary-asset" data-id={still.id}>{isVideo ? "Make a variation of its still" : "Make a variation"}</button>}</div>
         <div className="row"><button type="button" className="secondary" data-action="animate-asset" data-id={asset.id} disabled={asset.kind !== "image"}>Animate this still</button><button type="button" className="secondary" data-action="publish-asset" data-id={asset.id}>Publish page</button></div>

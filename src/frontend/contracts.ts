@@ -51,6 +51,7 @@ export interface ViewerProps {
   asset: MediaAssetV1 | null;
   still: MediaAssetV1 | null;
   launchKitUrl: string | null;
+  reentryUrl: string;
 }
 
 export interface RecipeControlV1 { key: string; label: string; type: string; default?: string | number; application?: string; options?: string[] }

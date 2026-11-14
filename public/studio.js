@@ -280,7 +280,7 @@ function render() {
       const asset = state.project?.assets.find((item) => item.id === state.assetId) ?? null;
       const still = asset?.reuseStillId ? state.project.assets.find((item) => item.id === asset.reuseStillId) ?? null : null;
       creativeHome.renderViewer(app.querySelector("#creative-media"), {
-        projectId: state.projectId, asset, still, launchKitUrl: state.destinations?.launchKitUrl ?? null,
+        projectId: state.projectId, asset, still, launchKitUrl: state.destinations?.launchKitUrl ?? null, reentryUrl: studioReentry(state.session),
       });
       mediaMounted = true;
     } else app.innerHTML = assetView();
@@ -373,6 +373,16 @@ function hasUnsavedStoryboard() {
   return draft.title !== saved.title || comparable(comparableShots(draftShots())) !== comparable(comparableShots(saved.shots)) ||
     comparable(draft.audioTracks) !== comparable(saved.audioTracks ?? []) ||
     (draft.audioAssetId ?? null) !== (saved.audioAssetId ?? null) || (draft.slateAssetId ?? null) !== (saved.slateAssetId ?? null);
+}
+
+function studioReentry(session) {
+  if (session?.mode === "bridge") {
+    try {
+      const origin = new URL(session.composerOrigin);
+      if (origin.protocol === "https:" && !origin.username && !origin.password) return `${origin.origin}/media-studio/studio`;
+    } catch { /* Use standalone sign-in if no valid Composer origin was configured. */ }
+  }
+  return "/studio";
 }
 
 function renderReactAssemble() {
