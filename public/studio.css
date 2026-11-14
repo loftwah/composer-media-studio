@@ -120,6 +120,8 @@ main { position: relative; z-index: 1; max-width: var(--max); margin: 0 auto; pa
 .button:active, button:active { transform: translateY(1px); }
 .button.secondary, button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
 .button.secondary:hover, button.secondary:hover { border-color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+button.secondary[data-action="kind"][aria-pressed="true"],
+button.secondary[data-action="edit-model"][aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .button.danger, button.danger, .button.danger:hover, button.danger:hover { background: var(--danger); border-color: var(--danger); color: var(--danger-ink); }
 .button.quiet, button.quiet { background: transparent; border-color: transparent; color: var(--ink-soft); padding-inline: 0.55rem; }
 button[disabled], .button[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; }
