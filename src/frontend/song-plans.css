@@ -33,3 +33,13 @@
 .song-fit-preview { margin-top: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: .75rem; }
 .song-fit-preview ol { padding-left: 1.5rem; }
 .song-fit-preview li { margin: .35rem 0; }
+.scene-direction-editor { display: grid; gap: .8rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.scene-direction-editor > p { margin: 0; max-width: 65ch; }
+.scene-direction-editor > button { justify-self: start; }
+.scene-direction-selection legend { font-weight: 700; margin-bottom: .5rem; }
+.scene-direction-preview { padding: 1rem; border: 1px solid var(--border); border-radius: .75rem; }
+.scene-direction-preview ol { padding-left: 1.5rem; }
+.scene-direction-preview li { margin: 1rem 0; }
+.scene-direction-preview dl { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .35rem .75rem; }
+.scene-direction-preview dt { color: var(--muted); }
+.scene-direction-preview dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
