@@ -149,6 +149,11 @@ export function videoClipPage({ revision = "dev" } = {}) {
 <body><div id="video-clip"><main id="main"><h1>Clip and frame a video</h1><p>JavaScript is required to edit video on your device.</p></main></div><script type="module" src="/video-clip.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
 }
 
+export function addMusicPage({ revision = "dev" } = {}) {
+  return `${head({ title: "Add music to a video — Media Studio", description: "Add music to video privately on your device.", extra: `<link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}">` })}
+<body><div id="add-music"><main id="main"><h1>Add music to a video</h1><p>JavaScript is required to edit video on your device.</p></main></div><script type="module" src="/add-music.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
+}
+
 export function loginPage({ next = "/", revision = "dev", bridged = false, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
   return `${head({
     title: "Sign in — Media Studio",
@@ -179,7 +184,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
     </form>
     ${bridged ? "</details>" : ""}
     ${woodhouseShare ? '<p><a href="/portfolio">Browse artwork from Woodhouse Share</a></p>' : ""}
-    <p><a href="/tools/audio-trim">Trim a song</a> · <a href="/tools/video-clip">Clip and frame a video</a> · no sign-in needed</p>
+    <p><a href="/tools/audio-trim">Trim a song</a> · <a href="/tools/video-clip">Clip and frame a video</a> · <a href="/tools/add-music">Add music</a> · no sign-in needed</p>
     <p class="small">This studio belongs to its own Cloudflare account and stores media in its own R2 bucket. It does not use your App Composer password.</p>
   </main>
 </div>

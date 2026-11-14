@@ -210,6 +210,9 @@ function Home({
           <a className="button secondary" href="/tools/video-clip">
             Clip video locally
           </a>
+          <a className="button secondary" href="/tools/add-music">
+            Add music locally
+          </a>
           <a className="button secondary" href="/help">
             Explore studio tools
           </a>
@@ -250,5 +253,10 @@ export { mountAudioTrim } from "./audio-trim";
 
 export async function mountVideoClip(container: HTMLElement) {
   const { mountVideoClip: mount } = await import("./video-clip");
+  mount(container);
+}
+
+export async function mountAddMusic(container: HTMLElement) {
+  const { mountAddMusic: mount } = await import("./add-music");
   mount(container);
 }
