@@ -201,7 +201,7 @@ legend { padding: 0 0.4rem; font-weight: 600; font-size: 0.85rem; }
 .status.bad { background: #f4d9d2; color: var(--danger); }
 .status.unknown { background: #e3e0f2; color: #4b3f7a; }
 
-.job { border: 1px solid var(--line); border-radius: 12px; padding: 0.85rem 1rem; background: var(--surface); display: grid; gap: 0.5rem; }
+.job { min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 12px; padding: 0.85rem 1rem; background: var(--surface); display: grid; gap: 0.5rem; }
 .job header { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; justify-content: space-between; }
 .job p { margin: 0; }
 .job .prompt { font-family: var(--display); font-size: 1rem; line-height: 1.4; }
