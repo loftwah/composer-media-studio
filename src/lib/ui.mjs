@@ -184,6 +184,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
 }
 
 export function publicPage({
+  listed = false,
   title,
   description,
   kind,
@@ -237,9 +238,9 @@ export function publicPage({
     url,
     kind: isVideo ? "video.other" : isAudio ? "music.song" : "website",
     theme: false,
-    extra: isVideo
+    extra: `${listed ? "" : '<meta name="robots" content="noindex">'}${isVideo
       ? `<meta property="og:video" content="${escapeHtml(origin + media)}"><meta property="og:video:type" content="${escapeHtml(mime)}">${durationMs ? `<meta property="video:duration" content="${Math.round(durationMs / 1000)}">` : ""}`
-      : "",
+      : ""}`,
   })}
 <body>
 <header class="site-header">
@@ -465,4 +466,25 @@ ${error ? `<h1>Share artwork</h1><p role="status">${escapeHtml(error)}</p><p><a 
 </main>
 </body>
 </html>`;
+}
+
+// The gallery uses listed publications; the home fallback uses only configured public films.
+export function publicGallery({ items = [], featured = [], hasMore = false, page = 1, home = false, woodhouseShare = false }) {
+  const renderCards = (entries) => entries.map((item) => {
+    const slug = encodeURIComponent(item.slug);
+    const title = escapeHtml(item.title);
+    const preview = item.kind === "image"
+      ? `<img src="/p/${slug}/media" alt="" loading="lazy" decoding="async">`
+      : item.kind === "video" && item.poster_asset_id
+        ? `<img src="/p/${slug}/poster" alt="" loading="lazy" decoding="async">`
+        : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
+    return `<li><a class="gallery-card" href="/p/${slug}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(item.kind)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(item.description)}</span>` : ""}</a></li>`;
+  }).join("");
+  const cards = renderCards(items);
+  const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));
+  return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio." })}
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="wordmark" href="/">${mark}<span>Media Studio</span></a><nav class="header-nav" aria-label="Main"><a href="/gallery">Gallery</a>${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}<a class="button secondary" href="/studio">Open Studio</a><button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button></nav></header>
+<main id="main" class="public-gallery"><section class="gallery-intro"><p class="eyebrow">Images · film · sound</p><h1>${home ? "Made to be seen." : "The public gallery."}</h1><p>${home ? "Explore work made and kept in Media Studio." : "Images, films and sound shared by their creators."}</p>${home ? '<a class="button" href="/gallery">Explore the gallery →</a>' : ""}</section>
+<section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><p class="eyebrow">Publications</p><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${items.length ? `<ul class="gallery-grid">${cards}</ul>` : '<p>No work has been added to the public gallery yet.</p>'}
+${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="/gallery?page=${page - 1}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="/gallery?page=${page + 1}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films while the public gallery is being populated.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? '<p><a href="/portfolio">See more featured films and artwork →</a></p>' : ""}</section>` : ""}</main></body></html>`;
 }

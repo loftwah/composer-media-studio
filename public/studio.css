@@ -353,3 +353,29 @@ dialog h2 { margin: 0; }
 .share-import form { max-width: 40rem; margin-top: .75rem; }
 .share-import input[type="checkbox"] { width: auto; }
 @media (max-width: 720px) { .share-detail { grid-template-columns: 1fr; } }
+
+/* Public publication gallery */
+.public-gallery { width: min(100% - 3rem, 1280px); margin: 0 auto; padding: clamp(3rem, 7vw, 7rem) 0; }
+.gallery-intro { max-width: 50rem; margin-bottom: clamp(4rem, 8vw, 7rem); }
+.gallery-intro h1 { font-size: clamp(3.2rem, 8vw, 7.5rem); line-height: .95; letter-spacing: -.055em; margin: .6rem 0 1.3rem; }
+.gallery-intro > p:not(.eyebrow) { font-size: clamp(1.1rem, 2vw, 1.45rem); color: var(--muted); }
+.gallery-intro .button { margin-top: 1rem; }
+.gallery-heading { align-items: end; margin-bottom: 1.5rem; }
+.gallery-heading h2 { font-size: clamp(2rem, 4vw, 3.2rem); margin: .25rem 0 0; }
+.gallery-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2rem 1.25rem; list-style: none; padding: 0; margin: 0; }
+.gallery-card { display: block; color: inherit; text-decoration: none; }
+.gallery-preview { position: relative; display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden; background: var(--paper-deep); border-radius: .65rem; }
+.gallery-preview img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; transition: transform .2s ease; }
+.gallery-card:hover .gallery-preview img { transform: scale(1.025); }
+.gallery-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 5px; }
+.gallery-card-copy { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; padding-top: .8rem; }
+.gallery-card-copy strong { font-size: 1.15rem; }
+.gallery-card-copy > span { color: var(--muted); text-transform: capitalize; font-size: .85rem; }
+.gallery-description { display: block; margin-top: .35rem; color: var(--muted); }
+.gallery-placeholder { display: flex; flex-direction: column; justify-content: space-between; align-self: stretch; justify-self: stretch; padding: 1.5rem; background: var(--paper-deep); }
+.gallery-placeholder strong { font-size: clamp(1.4rem, 2vw, 2rem); line-height: 1.1; }
+.gallery-pages { margin-top: 3rem; }
+.gallery-featured { margin-top: 4rem; }
+@media (max-width: 760px) { .public-gallery { width: min(100% - 2rem, 1280px); } .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .gallery-grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .gallery-preview img { transition: none; } }

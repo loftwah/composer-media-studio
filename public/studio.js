@@ -820,7 +820,8 @@ function publishView() {
         .map((publication) => `<article class="job">
           <header><strong>${esc(publication.title)}</strong><span class="small">${dateLabel(publication.createdAt)}</span></header>
           <p class="small"><a href="${esc(publication.path)}" target="_blank" rel="noopener">${esc(location.origin + publication.path)}</a></p>
-          <div class="row"><a class="button secondary" href="${esc(publication.path)}" target="_blank" rel="noopener">Open page</a><button class="quiet" data-action="revoke" data-id="${esc(publication.id)}">Withdraw</button></div>
+          <p class="small">${publication.hidden ? "Hidden from gallery · anyone with the link can view" : publication.listed ? "Listed in the public gallery" : "Unlisted · anyone with the link can view"}</p>
+          <div class="row"><button class="secondary" data-action="toggle-listing" data-id="${esc(publication.id)}">${publication.listed && !publication.hidden ? "Remove from gallery" : "Add to public gallery"}</button><a class="button secondary" href="${esc(publication.path)}" target="_blank" rel="noopener">Open page</a><button class="quiet" data-action="revoke" data-id="${esc(publication.id)}">Withdraw</button></div>
         </article>`)
         .join("")}
     </div>`;
@@ -1395,6 +1396,18 @@ async function handleAction(action, element) {
         return;
       }
       await publishAsset(asset.id, values.title, values.description);
+      return;
+    }
+    case "toggle-listing": {
+      const publication = state.project.publications.find((item) => item.id === id);
+      if (!publication) return;
+      const listed = !(publication.listed && !publication.hidden);
+      if (listed && !(await confirmAction("Add to the public gallery?", "This published page will be discoverable by anyone visiting the gallery. Its title, description and media are already available to anyone with its link.", "Add to gallery"))) return;
+      await api(`/api/publications/${id}`, { method: "PATCH", body: JSON.stringify(listed ? { listed, hidden: false } : { listed }) });
+      publication.listed = listed;
+      if (listed) publication.hidden = false;
+      render();
+      notify(listed ? "Added to the public gallery." : "Removed from the gallery; the public link still works.");
       return;
     }
     case "revoke": {

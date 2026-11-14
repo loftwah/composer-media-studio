@@ -184,3 +184,76 @@ test("Share browsing and imports preserve source boundaries and deduplicate conc
   assert.equal((await submit(payload)).status, 422);
   assert.ok(requests.every((url) => url.startsWith(origin + "/")));
 });
+
+test("public gallery requires explicit listing and honors removal, deletion and withdrawal", async () => {
+  const { env, project } = await setup();
+  const image = await addAsset(env, project, { id: "asset_gallery_image", kind: "image" });
+  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at) VALUES(?1,?2,?3,?4,?5,?6,1,1)")
+    .bind("pub_gallery", project.id, image.id, "gallery-piece", "A <piece>", "Public description").run();
+  const read = async (path = "/gallery") => (await worker.fetch(new Request(`https://studio.test${path}`), env)).text();
+  assert.doesNotMatch(await read(), /gallery-piece/);
+  assert.doesNotMatch(await read("/"), /gallery-piece/);
+  const unlistedPage = await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env);
+  assert.equal(unlistedPage.status, 200);
+  assert.match(await unlistedPage.text(), /<meta name="robots" content="noindex">/);
+  const cookie = "studio_session=" + (await createSession(env));
+  const patch = (listed) => worker.fetch(new Request("https://studio.test/api/publications/pub_gallery", { method: "PATCH", headers: { cookie, "content-type": "application/json", origin: "https://studio.test" }, body: JSON.stringify({ listed }) }), env);
+  assert.equal((await patch(true)).status, 200);
+  assert.match(await read(), /href="\/p\/gallery-piece"/);
+  assert.doesNotMatch(await (await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env)).text(), /<meta name="robots" content="noindex">/);
+  assert.match(await read("/"), /A &lt;piece&gt;/);
+  assert.equal((await patch(false)).status, 200);
+  assert.doesNotMatch(await read(), /gallery-piece/);
+  assert.equal((await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env)).status, 200);
+  await patch(true);
+  await env.DB.prepare("UPDATE publications SET hidden=1 WHERE id=?1").bind("pub_gallery").run();
+  assert.doesNotMatch(await read(), /gallery-piece/);
+  assert.match(await (await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env)).text(), /<meta name="robots" content="noindex">/);
+  const addHidden = await worker.fetch(new Request("https://studio.test/api/publications/pub_gallery", { method: "PATCH", headers: { cookie, "content-type": "application/json", origin: "https://studio.test" }, body: JSON.stringify({ listed: true, hidden: false }) }), env);
+  assert.equal(addHidden.status, 200);
+  assert.match(await read(), /href="\/p\/gallery-piece"/);
+  const afterAdd = await env.DB.prepare("SELECT listed,hidden FROM publications WHERE id=?1").bind("pub_gallery").first();
+  assert.equal(afterAdd.listed, 1);
+  assert.equal(afterAdd.hidden, 0);
+  await env.DB.prepare("UPDATE publications SET hidden=0,revoked_at=1 WHERE id=?1").bind("pub_gallery").run();
+  assert.doesNotMatch(await read(), /gallery-piece/);
+  assert.equal((await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env)).status, 404);
+});
+
+test("gallery pagination shows every listed publication without exposing unlisted work", async () => {
+  const { env, project } = await setup();
+  const image = await addAsset(env, project, { id: "asset_paged", kind: "image" });
+  for (let i = 1; i <= 25; i++) await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed) VALUES(?1,?2,?3,?4,?5,'',1,?6,1)")
+    .bind(`pub_page_${i}`, project.id, image.id, `page-piece-${i}`, `Piece ${i}`, i).run();
+  const first = await (await worker.fetch(new Request("https://studio.test/gallery"), env)).text();
+  const second = await (await worker.fetch(new Request("https://studio.test/gallery?page=2"), env)).text();
+  assert.match(first, /href="\/gallery\?page=2"/);
+  assert.doesNotMatch(first, /href="\/p\/page-piece-1"/);
+  assert.match(second, /href="\/p\/page-piece-1"/);
+  assert.match(second, /href="\/gallery\?page=1"/);
+  assert.doesNotMatch(second, /href="\/p\/page-piece-25"/);
+  const unauthenticated = await worker.fetch(new Request("https://studio.test/api/publications/pub_page_1", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ listed: false }) }), env);
+  assert.equal(unauthenticated.status, 401);
+  await env.DB.prepare("UPDATE assets SET deleted_at=1 WHERE id=?1").bind(image.id).run();
+  assert.doesNotMatch(await (await worker.fetch(new Request("https://studio.test/gallery"), env)).text(), /page-piece-/);
+});
+
+test("empty public home features only configured, active films until the gallery has listed work", async () => {
+  const { env, project } = await setup();
+  const video = await addAsset(env, project, { id: "asset_featured_film", kind: "video" });
+  const image = await addAsset(env, project, { id: "asset_featured_image", kind: "image" });
+  for (const [id, slug, hidden, revoked] of [["pub_featured", "featured-film", 0, null], ["pub_featured_hidden", "hidden-film", 1, null], ["pub_featured_revoked", "revoked-film", 0, 1], ["pub_private", "other-film", 0, null]]) {
+    await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,hidden,revoked_at) VALUES(?1,?2,?3,?4,?5,'',1,1,?6,?7)").bind(id, project.id, video.id, slug, slug, hidden, revoked).run();
+  }
+  env.PUBLIC_SHOWCASE_SLUGS = "featured-film,hidden-film,revoked-film";
+  const home = async () => (await worker.fetch(new Request("https://studio.test/"), env)).text();
+  const fallback = await home();
+  assert.match(fallback, /Selected public films/);
+  assert.match(fallback, /href="\/p\/featured-film"/);
+  assert.doesNotMatch(fallback, /hidden-film|revoked-film|other-film/);
+  assert.doesNotMatch(await (await worker.fetch(new Request("https://studio.test/gallery"), env)).text(), /featured-film/);
+  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed) VALUES(?1,?2,?3,?4,?5,'',1,1,1)").bind("pub_listed", project.id, image.id, "listed-image", "Listed image").run();
+  const populated = await home();
+  assert.match(populated, /listed-image/);
+  assert.doesNotMatch(populated, /Selected public films|featured-film/);
+});

@@ -253,7 +253,11 @@ export function Publish({ publications, origin }: PublishProps) {
                 {publication.path}
               </a>
             </p>
+            <p className="small">{publication.hidden ? "Hidden from gallery · anyone with the link can view" : publication.listed ? "Listed in the public gallery" : "Unlisted · anyone with the link can view"}</p>
             <div className="row">
+              <button type="button" className="secondary" data-action="toggle-listing" data-id={publication.id}>
+                {publication.listed && !publication.hidden ? "Remove from gallery" : "Add to public gallery"}
+              </button>
               <a
                 className="button secondary"
                 href={publication.path}

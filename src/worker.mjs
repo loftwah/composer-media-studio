@@ -36,7 +36,7 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage } from "./lib/ui.mjs";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, publicGallery } from "./lib/ui.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
@@ -200,6 +200,15 @@ async function homeShowcase(env) {
     LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
     WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
   return rows.filter(Boolean).slice(0, 3).map((row) => ({ slug: row.slug, title: row.title, description: row.description, mime: row.mime, hasPoster: Boolean(row.poster_asset_id) }));
+}
+
+async function publicCatalogue(env, page = 1, limit = 24) {
+  const result = await env.DB.prepare(`SELECT p.slug,p.title,p.description,p.created_at,a.kind,a.mime,
+    poster.id AS poster_asset_id FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
+    LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
+    WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL
+    ORDER BY p.created_at DESC,p.id DESC LIMIT ?1 OFFSET ?2`).bind(limit + 1, (page - 1) * limit).all();
+  return { items: result.results.slice(0, limit), hasMore: result.results.length > limit };
 }
 
 async function projectSummary(env, project) {
@@ -451,6 +460,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           description: publication.description,
           assetId: publication.asset_id,
           posterAssetId: publication.poster_asset_id,
+          listed: Boolean(publication.listed),
+          hidden: Boolean(publication.hidden),
           path: `/p/${publication.slug}`,
           createdAt: publication.created_at,
         })),
@@ -763,13 +774,19 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   const publicationMatch = path.match(/^\/api\/publications\/([a-z0-9_]+)$/);
   if (publicationMatch && method === "PATCH") {
     const input = await body(request);
-    if (typeof input.hidden !== "boolean") throw new HttpError(400, "Send hidden: true or false", "invalid");
+    if (typeof input.listed !== "boolean" && typeof input.hidden !== "boolean") throw new HttpError(400, "Send listed or hidden as a boolean", "invalid");
     const row = await env.DB.prepare("SELECT id,project_id FROM publications WHERE id=?1 AND revoked_at IS NULL").bind(publicationMatch[1]).first();
     if (!row) throw new HttpError(404, "Publication not found", "not_found");
     if (session.mode !== "owner" && session.project && row.project_id !== session.project)
       throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
-    await env.DB.prepare("UPDATE publications SET hidden=?2 WHERE id=?1").bind(row.id, input.hidden ? 1 : 0).run();
-    return json({ id: row.id, hidden: input.hidden });
+    if (typeof input.listed === "boolean" && typeof input.hidden === "boolean") {
+      await env.DB.prepare("UPDATE publications SET listed=?2,hidden=?3 WHERE id=?1").bind(row.id, input.listed ? 1 : 0, input.hidden ? 1 : 0).run();
+    } else if (typeof input.listed === "boolean") {
+      await env.DB.prepare("UPDATE publications SET listed=?2 WHERE id=?1").bind(row.id, input.listed ? 1 : 0).run();
+    } else {
+      await env.DB.prepare("UPDATE publications SET hidden=?2 WHERE id=?1").bind(row.id, input.hidden ? 1 : 0).run();
+    }
+    return json({ id: row.id, listed: input.listed, hidden: input.hidden });
   }
   if (publicationMatch && method === "DELETE") {
     const row = await env.DB.prepare("SELECT id,project_id FROM publications WHERE id=?1").bind(publicationMatch[1]).first();
@@ -1077,6 +1094,7 @@ async function handlePublic(request, env, url) {
     const html = publicPage({
       title: publication.title,
       description: publication.description,
+      listed: Boolean(publication.listed) && !publication.hidden,
       kind: publication.asset_kind,
       mime: publication.asset_mime,
       width: publication.width,
@@ -1182,6 +1200,12 @@ async function handlePublic(request, env, url) {
   if (path === "/tools/audio-trim") {
     return new Response(audioTrimPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
   }
+  if (path === "/gallery") {
+    const rawPage = url.searchParams.get("page") ?? "1";
+    const page = /^[1-9][0-9]{0,4}$/.test(rawPage) ? Number(rawPage) : 1;
+    const catalogue = await publicCatalogue(env, page);
+    return new Response(publicGallery({ ...catalogue, page, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+  }
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" },
@@ -1189,10 +1213,12 @@ async function handlePublic(request, env, url) {
   }
   if (path === "/" || path === "/studio") {
     const session = await readSession(env, request);
-    if (!session)
-      return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), {
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-      });
+    if (!session) {
+      if (path === "/studio") return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+      const catalogue = await publicCatalogue(env, 1, 6);
+      const featured = catalogue.items.length ? [] : await homeShowcase(env);
+      return new Response(publicGallery({ ...catalogue, featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+    }
     return new Response(shell({
       revision: BUILD.revision,
       session,
