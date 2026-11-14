@@ -168,6 +168,21 @@ fn label(value: impl Into<String>, size: f32, color: Color) -> El {
         .color(color)
         .wrap_anywhere()
 }
+fn media_time(seconds: f64) -> String {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return "–:––".into();
+    }
+    let seconds = seconds.floor() as u64;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+fn media_position(elapsed: f64, duration: Option<f64>) -> String {
+    format!(
+        "{} / {}",
+        media_time(elapsed),
+        duration.map(media_time).unwrap_or_else(|| "–:––".into())
+    )
+}
 fn view(s: &State, _: &mut Cx<State>) -> El {
     let paper = colour("#f4f0e8");
     let ink = colour("#17181b");
@@ -252,7 +267,12 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
             col()
                 .gap(6.0)
                 .child(label(
-                    format!("{} · {} · {:.1}s", s.media_name, state, media.time()),
+                    format!(
+                        "{} · {} · {}",
+                        s.media_name,
+                        state,
+                        media_position(media.time(), media.duration())
+                    ),
                     14.0,
                     ink,
                 ))
@@ -434,7 +454,11 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
         changed = true;
     }
     if let Some(player) = &s.media {
-        let observed = format!("{:?}:{:.1}", player.state(), player.time());
+        let observed = format!(
+            "{:?}:{}",
+            player.state(),
+            media_position(player.time(), player.duration())
+        );
         if observed != s.media_observed {
             s.media_observed = observed;
             changed = true;
@@ -485,6 +509,13 @@ fn main() {
 mod ui_tests {
     use super::*;
     use rune::{Env, Runtime};
+    #[test]
+    fn local_timing_uses_only_known_finite_duration() {
+        assert_eq!(media_position(65.9, Some(125.0)), "1:05 / 2:05");
+        assert_eq!(media_position(0.0, None), "0:00 / –:––");
+        assert_eq!(media_position(f64::NAN, Some(f64::INFINITY)), "–:–– / –:––");
+        assert_eq!(media_time(-1.0), "–:––");
+    }
     #[test]
     fn invalid_drop_and_cancel_invalidate_pending_selection() {
         let (sender, receiver) = mpsc::channel();
