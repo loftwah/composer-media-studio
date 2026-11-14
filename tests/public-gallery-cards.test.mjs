@@ -24,7 +24,7 @@ test('gallery cards shorten source URLs while the published detail retains the f
   assert.doesNotMatch(card, /https:\/\/woodhouse\.example\/api\/assets\/new-074/);
   assert.match(card, /href="\/p\/film_source"/);
   const detail = publicPage({origin:'https://studio.example',slug:'film_source',title:'LDraw motion',description,kind:'video',mime:'video/mp4',media:'/film.mp4',download:'/film.mp4'});
-  assert.match(detail, /Source: https:\/\/woodhouse\.example\/api\/assets\/new-074\. Original by Woodhouse\./);
+  assert.match(detail, /Source: <a href="https:\/\/woodhouse\.example\/api\/assets\/new-074">https:\/\/woodhouse\.example\/api\/assets\/new-074<\/a>\. Original by Woodhouse\./);
 });
 
 

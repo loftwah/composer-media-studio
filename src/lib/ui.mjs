@@ -7,6 +7,32 @@ const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width=
 
 const styles = "/studio.css";
 
+// Only explicit web addresses become links; all authored text remains escaped.
+function linkPublicDescription(value) {
+  const text = String(value);
+  const urls = /(?<![\w@:/])https?:\/\/[^\s<>"']+/gi;
+  let html = "", cursor = 0;
+  for (const match of text.matchAll(urls)) {
+    let candidate = match[0];
+    const unmatchedClosing = () => {
+      const pairs = { ")": "(", "]": "[", "}": "{" };
+      const close = candidate.at(-1), open = pairs[close];
+      return open && [...candidate].filter((c) => c === close).length > [...candidate].filter((c) => c === open).length;
+    };
+    while (/[.,!?;:]$/.test(candidate) || unmatchedClosing()) candidate = candidate.slice(0, -1);
+    let safe = false;
+    try {
+      const url = new URL(candidate);
+      safe = ["http:", "https:"].includes(url.protocol) && Boolean(url.hostname) && !url.username && !url.password && !candidate.includes("\\");
+    } catch {}
+    if (!safe) continue;
+    html += escapeHtml(text.slice(cursor, match.index));
+    html += `<a href="${escapeHtml(candidate)}">${escapeHtml(candidate)}</a>`;
+    cursor = match.index + candidate.length;
+  }
+  return html + escapeHtml(text.slice(cursor));
+}
+
 function head({
   title,
   description,
@@ -291,7 +317,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
 <main class="public-page" id="main">
   <p class="eyebrow">Published from Media Studio</p>
   <h1>${escapeHtml(title)}</h1>
-  ${description ? `<p class="lede">${escapeHtml(description)}</p>` : ""}
+  ${description ? `<p class="lede">${linkPublicDescription(description)}</p>` : ""}
   <figure style="margin:1.4rem 0">
     <div class="media${isVideo ? " media-video" : ""}"${videoFrameStyle}>
       ${

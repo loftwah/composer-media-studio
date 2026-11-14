@@ -57,6 +57,18 @@ function published(overrides = {}) {
   });
 }
 
+test("public descriptions link safe explicit web URLs while escaping authored text", () => {
+  const description = 'Credit <img src=x onerror=alert(1)> (https://example.test/a_(b)?x=1&y=2). Also http://example.test/path! javascript:https://evil.test and https://user:pass@example.test/';
+  const html = published({ description });
+  const lede = html.match(/<p class="lede">(.*?)<\/p>/s)[1];
+  assert.match(lede, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(lede, /\(<a href="https:\/\/example\.test\/a_\(b\)\?x=1&amp;y=2">https:\/\/example\.test\/a_\(b\)\?x=1&amp;y=2<\/a>\)\./);
+  assert.match(lede, /<a href="http:\/\/example\.test\/path">http:\/\/example\.test\/path<\/a>!/);
+  assert.match(lede, /javascript:https:\/\/evil\.test/);
+  assert.doesNotMatch(lede, /href="(?:javascript:|https:\/\/(?:evil|user:pass))/);
+  assert.match(lede, /https:\/\/user:pass@example\.test\//);
+});
+
 test("public video reserves its known frame without applying it to audio or unknown dimensions", () => {
   const video = published({ kind: "video", mime: "video/mp4", width: 768, height: 1344 });
   assert.match(video, /class="media media-video" style="width:min\(100%,[\d.]+vh\)"/);
