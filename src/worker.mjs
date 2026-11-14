@@ -32,6 +32,7 @@ import {
   saveGeneration,
 } from "./lib/jobs.mjs";
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
+import { previewSceneProposal, applySceneProposal } from "./lib/scene-proposals.mjs";
 import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
@@ -342,6 +343,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/^\/api\/generations\/[a-z0-9_]+$/.test(path) && method === "DELETE") action = "edit";
   if (/^\/api\/generations\/[a-z0-9_]+\/(cancel|reconcile|save-retry)$/.test(path)) action = "generate";
   if (/\/export$/.test(path)) action = "read";
+  if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/scene-proposal\/preview$/.test(path)) action = "read";
 
   const session = scopedAgent ?? await requireSession(env, request, action);
   if (scopedAgent && !can(session, action))
@@ -562,6 +564,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
     if (rest === "song-plans" && method === "GET") return json({ plans: await listSongPlans(env, project) });
     if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);
+    const sceneProposal = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/scene-proposal\/(preview|apply)$/);
+    if (sceneProposal && method === "POST") {
+      const input=await body(request,16384);
+      return json(sceneProposal[2] === "preview" ? await previewSceneProposal(env,project,sceneProposal[1],input) : await applySceneProposal(env,project,sceneProposal[1],input));
+    }
     const songStoryboard = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/storyboard$/);
     if (songStoryboard && method === "POST") {
       const result = await createStoryboardFromSongPlan(env, project, songStoryboard[1], await body(request));

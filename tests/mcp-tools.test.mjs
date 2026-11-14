@@ -28,7 +28,7 @@ test('MCP SDK discovers actual read tools and reads existing scoped Studio recor
     return { status: response.status, body: await response.json() };
   });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_footage_plan', 'studio_create_promo_brief', 'studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_export_song_captions', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_footage_plans', 'studio_list_models', 'studio_list_projects', 'studio_list_promo_briefs', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_storyboard_from_song_plan', 'studio_update_footage_plan', 'studio_update_project', 'studio_update_promo_brief', 'studio_update_song_captions', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_apply_scene_proposal', 'studio_create_footage_plan', 'studio_create_promo_brief', 'studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_export_song_captions', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_footage_plans', 'studio_list_models', 'studio_list_projects', 'studio_list_promo_briefs', 'studio_list_song_plans', 'studio_preview_scene_proposal', 'studio_publish_asset', 'studio_rename_asset', 'studio_storyboard_from_song_plan', 'studio_update_footage_plan', 'studio_update_project', 'studio_update_promo_brief', 'studio_update_song_captions', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
   const state = await client.callTool({ name: 'studio_list_projects', arguments: {} });
   assert.equal(state.structuredContent.projects[0].id, project.id);
   const wrong = await client.callTool({ name: 'studio_get_project', arguments: { projectId: 'prj_other' } });
@@ -151,4 +151,13 @@ test('MCP turns an authorised ready song plan into the same saved storyboard wit
     assert.equal(stale.isError,true);
     assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
   } finally { await client.close(); }
+});
+
+test('MCP scene proposal previews without mutation and applies only its exact scoped revision',async()=>{
+ const {env,project}=await setup(); await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:30000}); const cookie='studio_session='+await createSession(env);
+ const client=await connect(async({method,path,body})=>{const response=await worker.fetch(new Request('https://studio.test'+path,{method,headers:{cookie,origin:'https://studio.test','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env);return {status:response.status,body:await response.json()};});
+ try {const created=await client.callTool({name:'studio_create_song_plan',arguments:{projectId:project.id,songAssetId:'asset_song1',rightsConfirmed:true,title:'Test',aspect:'16:9',startMs:0,endMs:10000,sceneCount:2}});const plan=created.structuredContent.plan; const base={projectId:project.id,planId:plan.id,expectedRevision:1,changes:[{sceneId:plan.scenes[0].id,direction:'Brighter'}]};
+ const preview=await client.callTool({name:'studio_preview_scene_proposal',arguments:base});assert.equal(preview.isError,undefined,JSON.stringify(preview));assert.equal(preview.structuredContent.proposal.changes[0].before.direction,'');assert.equal(preview.structuredContent.proposal.changes[0].after.direction,'Brighter');
+ const applied=await client.callTool({name:'studio_apply_scene_proposal',arguments:{...base,reviewDigest:preview.structuredContent.reviewDigest,approved:true}});assert.equal(applied.isError,undefined,JSON.stringify(applied));assert.equal(applied.structuredContent.plan.revision,2);assert.equal(applied.structuredContent.plan.scenes[0].direction,'Brighter');const stale=await client.callTool({name:'studio_apply_scene_proposal',arguments:{...base,reviewDigest:preview.structuredContent.reviewDigest,approved:true}});assert.equal(stale.isError,true);
+ } finally {await client.close();}
 });

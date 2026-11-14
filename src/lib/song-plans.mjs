@@ -61,7 +61,7 @@ export async function listSongPlans(env, project) {
   const rows = await env.DB.prepare('SELECT * FROM song_plans WHERE project_id=?1 ORDER BY updated_at DESC').bind(project.id).all();
   return rows.results.map(viewSongPlan);
 }
-export async function updateSongPlan(env, project, planId, input) {
+export async function updateSongPlan(env, project, planId, input, { reviewedReferences = null } = {}) {
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) fail('Provide the revision you last read');
   const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first();
   if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
@@ -71,7 +71,13 @@ export async function updateSongPlan(env, project, planId, input) {
   const spec = await validateSpec(env, project, song, input);
   const existingCaptions = safeJson(row.spec_json, {}).captions;
   if (existingCaptions) spec.captions = validateCaptions(existingCaptions, spec.startMs, spec.endMs);
-  const updated = await env.DB.prepare('UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5 RETURNING *').bind(JSON.stringify(spec), now(), planId, project.id, input.expectedRevision).first();
+  let sql='UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5';
+  const args=[JSON.stringify(spec),now(),planId,project.id,input.expectedRevision];
+  if (reviewedReferences) {
+    sql += ' AND EXISTS (SELECT 1 FROM assets WHERE id=?6 AND project_id=?4 AND sha256=?7 AND deleted_at IS NULL)'; args.push(song.id,song.sha256);
+    for (const reference of reviewedReferences) { const n=args.length+1; sql += ` AND EXISTS (SELECT 1 FROM assets WHERE id=?${n} AND project_id=?4 AND kind=\'image\' AND sha256 IS ?${n+1} AND deleted_at IS NULL)`; args.push(reference.id,reference.sha256); }
+  }
+  const updated = await env.DB.prepare(sql+' RETURNING *').bind(...args).first();
   if (!updated) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
   return viewSongPlan(updated);
 }
