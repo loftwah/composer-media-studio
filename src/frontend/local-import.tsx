@@ -51,7 +51,7 @@ export function LocalImport({ blob, filename, operation, onBusyChange }: { blob:
       if (!response.ok || !/^asset_[a-z0-9_]+$/.test(data?.asset?.id ?? "")) throw new Error("Studio did not confirm the import.");
       setAsset(data.asset.id); setState("saved"); setMessage("Imported as a new private library asset. Your local result and originals are unchanged.");
     } catch (error) {
-      if (attempted.current) { setState("uncertain"); setMessage("Import could not be confirmed. Check the selected Studio library before trying again; the local download remains available."); }
+      if (attempted.current) { setState("uncertain"); setMessage("We could not confirm the import. Check the selected Studio library before trying again; your local download is still available."); }
       else { setState("ready"); setMessage(error instanceof Error ? error.message : "Could not read the local result."); }
     } finally { lock.current = false; onBusyChange(false); }
   }
