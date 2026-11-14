@@ -1,4 +1,5 @@
 import { encodeWav } from "./wav.js";
+import { isLocalRenderProvenance, publicCaption } from "./asset-caption.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -885,6 +886,7 @@ function assetView() {
   if (!asset) return `<p class="notice">That asset is no longer in the library. <a href="#/p/${esc(state.projectId)}/library">Back to the library</a>.</p>`;
   const isVideo = asset.kind === "video";
   const isAudio = asset.kind === "audio";
+  const localRender = isLocalRenderProvenance(asset.caption);
   // The server resolves this from stored same-project relationships; the client
   // never guesses a poster from a filename or title.
   const still = asset.reuseStillId ? state.project.assets.find((item) => item.id === asset.reuseStillId) : null;
@@ -913,7 +915,7 @@ function assetView() {
       <div class="stage">${isVideo ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video>` : isAudio ? `<div class="audio-stage"><canvas width="840" height="200" data-waveform="${esc(asset.file)}" aria-hidden="true"></canvas><audio src="${esc(asset.file)}" controls preload="metadata"></audio></div>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}">`}</div>
       <aside class="card stack">
         <div><p class="eyebrow">${esc(asset.kind)} · ${esc(asset.source)}</p><h1 style="font-size:1.7rem">${esc(asset.title)}</h1></div>
-        ${asset.caption ? `<p>${esc(asset.caption)}</p>` : ""}
+        ${localRender ? `<p>MP4 rendered on this device from a saved storyboard${asset.caption.includes("; owner-confirmed captions from song plan ") ? ", with saved captions" : ""}.</p>` : asset.caption ? `<p>${esc(asset.caption)}</p>` : ""}
         <dl class="kv">
           <dt>Size</dt><dd>${bytesLabel(asset.bytes)}</dd>
           ${asset.width ? `<dt>Frame</dt><dd>${asset.width} × ${asset.height}</dd>` : ""}
@@ -921,8 +923,8 @@ function assetView() {
           ${isAudio && asset.sampleRate ? `<dt>Audio</dt><dd>${asset.sampleRate} Hz · ${asset.channels ?? "—"} channel${asset.channels === 1 ? "" : "s"}</dd>` : ""}
           <dt>Type</dt><dd>${esc(asset.mime)}</dd>
           <dt>Added</dt><dd>${dateLabel(asset.createdAt)}</dd>
-          <dt>SHA-256</dt><dd style="word-break:break-all;font-size:0.72rem">${esc(asset.sha256)}</dd>
         </dl>
+        <details class="asset-technical"><summary>Technical details</summary><dl class="kv"><dt>SHA-256</dt><dd>${esc(asset.sha256)}</dd></dl>${localRender ? `<p>${esc(asset.caption)}</p>` : ""}</details>
         <div class="row">
           <a class="button secondary" href="${esc(asset.download)}" download>Download</a>
           <button class="secondary" data-action="rename-asset" data-id="${esc(asset.id)}">Rename</button>
@@ -1739,7 +1741,7 @@ async function publishAsset(assetId, title, description) {
     copy: "A public page is created with only the title, description and media. You can withdraw it later.",
     fields: [
       { name: "title", label: "Public title", value: title ?? asset.title, required: true, maxlength: 100 },
-      { name: "description", label: "Public description", type: "textarea", value: description ?? asset.caption, maxlength: 300 },
+      { name: "description", label: "Public description", type: "textarea", value: description ?? publicCaption(asset.caption), maxlength: 300 },
       ...(asset.kind === "video" && asset.parentAssetId
         ? [{ name: "posterAssetId", label: "Poster asset id (leave as is)", value: asset.parentAssetId, maxlength: 80 }]
         : []),
