@@ -279,7 +279,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
 <header class="site-header public-piece-header">
   <a class="wordmark" href="${escapeHtml(origin)}/" aria-label="Media Studio home">${mark}<span>Media Studio</span>${brandByline()}</a>
   <nav class="header-nav" aria-label="Published piece">
-    <a href="${escapeHtml(galleryBack)}">← Back to gallery</a>
+    <a href="${escapeHtml(origin + galleryBack)}">← Back to gallery</a>
     ${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     ${buildUrl ? `<a href="${escapeHtml(buildUrl)}">Build your own</a>` : ""}
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false" hidden>Dark</button>

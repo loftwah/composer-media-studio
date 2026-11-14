@@ -204,9 +204,9 @@ test("public gallery requires explicit listing and honors removal, deletion and 
   assert.match(await read("/"), /A &lt;piece&gt;/);
   const back = encodeURIComponent('/gallery?q=Bubbles&kind=video&order=oldest&page=2');
   const piece = await read(`/p/gallery-piece?back=${back}`);
-  assert.match(piece, /href="\/gallery\?q=Bubbles&amp;kind=video&amp;order=oldest&amp;page=2"/);
+  assert.match(piece, /href="https:\/\/studio\.test\/gallery\?q=Bubbles&amp;kind=video&amp;order=oldest&amp;page=2"/);
   const malicious = await read(`/p/gallery-piece?back=${encodeURIComponent('https://example.com')}`);
-  assert.match(malicious, /href="\/gallery">← Back to gallery/);
+  assert.match(malicious, /href="https:\/\/studio\.test\/gallery">← Back to gallery/);
   assert.equal((await patch(false)).status, 200);
   assert.doesNotMatch(await read(), /gallery-piece/);
   assert.equal((await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env)).status, 200);
