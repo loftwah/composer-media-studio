@@ -13,3 +13,14 @@ test('public film cards make playback discoverable while preserving credit and p
   assert.match(html, /Artwork credit/);
   assert.match(html, /href="\/p\/image_one"/);
 });
+
+test('gallery cards shorten source URLs while the published detail retains the full authored text', async () => {
+  const { publicPage } = await import('../src/lib/ui.mjs');
+  const description = 'A six-second study. Source: https://woodhouse.example/api/assets/new-074. Original by Woodhouse.';
+  const card = publicGallery({items:[{slug:'film_source',kind:'video',title:'LDraw motion',description}]});
+  assert.match(card, /Source: see full description\. Original by Woodhouse\./);
+  assert.doesNotMatch(card, /https:\/\/woodhouse\.example\/api\/assets\/new-074/);
+  assert.match(card, /href="\/p\/film_source"/);
+  const detail = publicPage({origin:'https://studio.example',slug:'film_source',title:'LDraw motion',description,kind:'video',mime:'video/mp4',media:'/film.mp4',download:'/film.mp4'});
+  assert.match(detail, /Source: https:\/\/woodhouse\.example\/api\/assets\/new-074\. Original by Woodhouse\./);
+});

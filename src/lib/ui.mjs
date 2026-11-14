@@ -509,6 +509,14 @@ ${error ? `<h1>Share artwork</h1><p role="status">${escapeHtml(error)}</p><p><a 
 }
 
 // The gallery uses listed publications; the home fallback uses only configured public films.
+// Keep the published description unchanged; cards point readers to its full version.
+function galleryDescription(description) {
+  return description.replace(/https?:\/\/[^\s<>"']+/gi, url => {
+    const punctuation = url.match(/[.,;!?]+$/)?.[0] || "";
+    return `see full description${punctuation}`;
+  });
+}
+
 export function publicGallery({ items = [], featured = [], hasMore = false, page = 1, home = false, woodhouseShare = false, query = "", kind = "", order = "newest" }) {
   const pageHref = (number) => {
     const params = new URLSearchParams();
@@ -530,7 +538,7 @@ export function publicGallery({ items = [], featured = [], hasMore = false, page
         : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
     const action = item.kind === "video" ? "Watch film →" : item.kind;
     const pieceHref = `/p/${slug}${home || (!query && !kind && order !== "oldest" && page === 1) ? "" : `?back=${encodeURIComponent(pageHref(page))}`}`;
-    return `<li><a class="gallery-card" href="${escapeHtml(pieceHref)}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(item.description)}</span>` : ""}</a></li>`;
+    return `<li><a class="gallery-card" href="${escapeHtml(pieceHref)}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(galleryDescription(item.description))}</span>` : ""}</a></li>`;
   }).join("");
   const cards = renderCards(items);
   const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));
