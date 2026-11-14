@@ -74,7 +74,8 @@ test("a tampered or expired bridge token is refused", async () => {
     actions: ["read"],
     exp: Date.now() + 60_000,
   });
-  assert.equal(await readBridgeToken(env, token.replace(/.$/, "0")), null);
+  const changed = token.slice(0, -1) + (token.endsWith("0") ? "1" : "0");
+  assert.equal(await readBridgeToken(env, changed), null);
   const expired = await bridge({
     aud: "media-studio",
     sub: "acct-123",
