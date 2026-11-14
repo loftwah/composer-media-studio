@@ -34,3 +34,13 @@ test('public home offers configured next steps while standalone installations om
   const standalone = publicGallery({home: true});
   assert.doesNotMatch(standalone, /Build your own studio|Read the story/);
 });
+
+test('home highlights an existing published preview without changing the gallery', () => {
+  const items = [ { slug: 'still', kind: 'image', title: 'Still' }, { slug: 'film', kind: 'video', title: 'A <film>', poster_asset_id: 'poster' } ];
+  const home = publicGallery({home:true, items});
+  assert.match(home, /class="gallery-hero-art" href="\/p\/film"/);
+  assert.match(home, /A &lt;film&gt;/);
+  assert.match(home, /class="gallery-card" href="\/p\/still"/);
+  assert.doesNotMatch(publicGallery({items}), /gallery-hero-art/);
+  assert.doesNotMatch(publicGallery({home:true,items:[{slug:'audio',kind:'audio',title:'Sound'}]}), /gallery-hero-art/);
+});

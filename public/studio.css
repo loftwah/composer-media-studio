@@ -383,7 +383,17 @@ dialog h2 { margin: 0; }
 .public-gallery { width: min(100% - 3rem, 1280px); margin: 0 auto; padding: clamp(3rem, 7vw, 7rem) 0; }
 .gallery-intro { max-width: 50rem; margin-bottom: clamp(4rem, 8vw, 7rem); }
 .gallery-intro h1 { font-size: clamp(3.2rem, 8vw, 7.5rem); line-height: .95; letter-spacing: -.055em; margin: .6rem 0 1.3rem; }
-.gallery-intro > p:not(.eyebrow) { font-size: clamp(1.1rem, 2vw, 1.45rem); color: var(--muted); }
+.gallery-intro-copy > p:not(.eyebrow) { font-size: clamp(1.1rem, 2vw, 1.45rem); color: var(--muted); }
+.gallery-intro--art { max-width: none; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .85fr); gap: clamp(2rem, 6vw, 6rem); align-items: center; }
+.gallery-hero-art { display: grid; color: var(--ink); text-decoration: none; min-width: 0; }
+.gallery-hero-art img { display: block; width: 100%; height: clamp(20rem, 38vw, 34rem); object-fit: contain; background: var(--paper-deep); border-radius: .65rem; }
+.gallery-hero-art > span { display: grid; grid-template-columns: 1fr auto; gap: .25rem 1rem; padding: .9rem 0; border-bottom: 2px solid var(--accent); }
+.gallery-hero-art small { grid-column: 1 / -1; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; font-size: .72rem; }
+.gallery-hero-art strong { font-size: 1.1rem; }
+.gallery-hero-art > span > span { color: var(--muted); }
+.gallery-hero-art:hover strong { text-decoration: underline; text-underline-offset: .2em; }
+.gallery-hero-art:focus-visible { outline: 3px solid var(--accent); outline-offset: 5px; }
+@media (max-width: 760px) { .gallery-intro--art { grid-template-columns: 1fr; gap: 2rem; } .gallery-hero-art img { height: min(75vw, 27rem); } }
 .gallery-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.25rem; margin-top: 1.75rem; }
 .public-gallery--catalogue { padding-top: clamp(2rem, 4vw, 3.5rem); }
 .public-gallery--catalogue .gallery-intro { margin-bottom: clamp(2rem, 4vw, 3rem); }
