@@ -67,3 +67,8 @@
 .scene-media-grid p { margin:0; overflow-wrap:anywhere; }
 .scene-media-grid > p { grid-column:1 / -1; }
 @media (max-width: 480px) { .scene-media-grid { grid-template-columns:1fr; } }
+
+.scene-caption-context > summary { cursor:pointer; min-height:44px; align-content:center; font-weight:700; }
+.scene-caption-context > p { max-width:65ch; }
+.scene-caption-context ol { list-style:none; padding:0; margin:.6rem 0; display:grid; gap:.5rem; }
+.song-scenes .scene-caption-context li { display:grid; gap:.2rem; padding:.5rem 0; white-space:pre-wrap; overflow-wrap:anywhere; }
