@@ -1,0 +1,5 @@
+.local-render { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.local-render summary { cursor: pointer; font-weight: 700; min-height: 44px; align-content: center; }
+.local-render p { max-width: 70ch; }
+.local-render-result { display: grid; gap: .75rem; margin-top: 1rem; }
+.local-render-result video { width: min(100%, 36rem); max-height: 28rem; background: #111; }

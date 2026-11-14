@@ -1,3 +1,4 @@
+import { LocalRenderer } from "./local-render-ui";
 import { FootagePlans } from "./footage-plans";
 import { SongPlans } from "./song-plans";
 import type {
@@ -52,12 +53,16 @@ const labels: Record<string, [string, string]> = {
 };
 
 function CompositionCard({
+  projectId,
+  canEdit,
   composition,
   generations,
   assets,
   assemblyCost,
   socialCost,
 }: {
+  projectId: string;
+  canEdit: boolean;
   composition: CompositionV1;
   generations: ComposeGenerationV1[];
   assets: MediaAssetV1[];
@@ -120,11 +125,11 @@ function CompositionCard({
           Edit shots
         </button>
       </div>
+      <LocalRenderer projectId={projectId} composition={composition} assets={assets} canEdit={canEdit} />
       <div className="render-list">
         {renders.length === 0 && (
           <p className="small" style={{ margin: 0 }}>
-            No render yet. Rendering copies the participating clips and audio to
-            the render provider for this job only.
+            No provider render yet. Provider rendering copies the participating clips and audio for that job.
           </p>
         )}
         {renders.map((g) => {
@@ -526,6 +531,8 @@ export function Assemble({
         {compositions.map((c) => (
           <CompositionCard
             key={c.id}
+            projectId={projectId}
+            canEdit={canEdit}
             composition={c}
             generations={generations}
             assets={assets}

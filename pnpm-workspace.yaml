@@ -1,3 +1,10 @@
 allowBuilds:
   esbuild: true
   workerd: true
+# Grandfather only these exact, already pinned and deployed Studio main versions.
+# Remove both exceptions after 2026-11-14 17:05 UTC, when they pass the 24h gate.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeExclude:
+  - wrangler@4.162.0
+  - miniflare@5.20261113.0-beta
