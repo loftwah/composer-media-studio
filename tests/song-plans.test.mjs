@@ -45,15 +45,16 @@ test('manual captions survive scene edits and export relative SRT and WebVTT wit
   const {env,project}=await setup(); await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:40000});
   const plan=await createSongPlan(env,project,input);
   const captions=await updateSongCaptions(env,project,plan.id,{expectedRevision:1,rightsConfirmed:true,cues:[
-    {id:'cue_002',startMs:11000,endMs:12500,text:'<hello> & goodbye',speaker:'Singer'},
+    {id:'cue_002',startMs:11000,endMs:12500,text:'<hello> & goodbye',speaker:'Singer & guest'},
     {id:'cue_001',startMs:2000,endMs:3000,text:'First line',speaker:''},
   ]});
   assert.equal(captions.revision,2); assert.equal(captions.captions.cues[0].id,'cue_001');
   const vtt=await exportSongCaptions(env,project,plan.id,'vtt');
   assert.match(vtt.content,/WEBVTT\n\ncue_001\n00:00:01\.000 --> 00:00:02\.000\nFirst line/);
-  assert.match(vtt.content,/00:00:10\.000 --> 00:00:11\.500\nSinger: &lt;hello&gt; &amp; goodbye/);
+  assert.match(vtt.content,/00:00:10\.000 --> 00:00:11\.500\nSinger &amp; guest: &lt;hello&gt; &amp; goodbye/);
   const srt=await exportSongCaptions(env,project,plan.id,'srt');
   assert.match(srt.content,/1\n00:00:01,000 --> 00:00:02,000\nFirst line/);
+  assert.match(srt.content,/00:00:10,000 --> 00:00:11,500\nSinger & guest: &lt;hello&gt; & goodbye/);
   const edited=await updateSongPlan(env,project,plan.id,{...captions,title:'Revised',expectedRevision:2});
   assert.deepEqual(edited.captions,captions.captions);
   await assert.rejects(updateSongCaptions(env,project,plan.id,{expectedRevision:2,rightsConfirmed:true,cues:[]}),e=>e.status===409);

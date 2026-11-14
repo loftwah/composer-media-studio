@@ -111,7 +111,9 @@ export async function updateSongCaptions(env, project, planId, input) {
   if (!updated) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
   return viewSongPlan(updated);
 }
-const escapeCaption = (value) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+// WebVTT parses character references; SRT readers such as FFmpeg show them
+// literally. Keep ordinary ampersands in SRT while still neutralising markup.
+const escapeCaption = (value, format) => (format === 'vtt' ? value.replaceAll('&', '&amp;') : value).replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 function stamp(ms, format) {
   const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60, fraction = ms % 1000;
   const two = n => String(n).padStart(2, '0');
@@ -125,6 +127,6 @@ export async function exportSongCaptions(env, project, planId, format) {
   const spec = safeJson(row.spec_json, {});
   const captions = validateCaptions(spec.captions, spec.startMs, spec.endMs);
   if (!captions || !captions.cues.length) throw new HttpError(404, 'This plan has no saved captions', 'not_found');
-  const blocks = captions.cues.map((cue, i) => `${format === 'srt' ? i + 1 : cue.id}\n${stamp(cue.startMs-spec.startMs, format)} --> ${stamp(cue.endMs-spec.startMs, format)}\n${cue.speaker ? escapeCaption(cue.speaker) + ': ' : ''}${escapeCaption(cue.text)}\n`).join('\n');
+  const blocks = captions.cues.map((cue, i) => `${format === 'srt' ? i + 1 : cue.id}\n${stamp(cue.startMs-spec.startMs, format)} --> ${stamp(cue.endMs-spec.startMs, format)}\n${cue.speaker ? escapeCaption(cue.speaker, format) + ': ' : ''}${escapeCaption(cue.text, format)}\n`).join('\n');
   return { format, content: `${format === 'vtt' ? 'WEBVTT\n\n' : ''}${blocks}`, revision: row.revision };
 }
