@@ -1,5 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
+import { useState } from "react";
 import type { AssembleProps, CreateProps, HistoryProps, LibraryProps, MediaAssetV1, PublishProps, SettingsProps, ViewerProps } from "./contracts";
 import { CreateWorkbench } from "./create";
 import { Assemble, Settings } from "./assemble-settings";
@@ -46,6 +47,45 @@ function Library({ projectId, assets, query, filter, canImportShare, comparing, 
   </div>;
 }
 
+type RenderReceipt = {
+  storyboard: { id: string; updatedAt: number };
+  shots: { assetId: string; sha256: string; startMs: number; endMs: number }[];
+  totalMs: number;
+  soundtrack: { assetId: string; sha256: string } | null;
+  tracks: { assetId: string; sha256: string; role: string; startMs: number; trimStartMs: number; trimEndMs: number; gainDb: number; fadeInMs: number; fadeOutMs: number }[];
+  captions: { planId: string; revision: number; songAssetId: string; songSha256: string } | null;
+  framing: { aspect: string; fit: string };
+  output: { sha256: string };
+};
+
+function PrivateRenderReceipt({ assetId }: { assetId: string }) {
+  const [receipt, setReceipt] = useState<RenderReceipt | null>(null);
+  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'missing' | 'error'>('idle');
+  async function load() {
+    if (state === 'loading' || state === 'ready' || state === 'missing') return;
+    setState('loading');
+    try {
+      const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}/local-render-receipt`, { credentials: 'same-origin' });
+      if (response.status === 404) { setState('missing'); return; }
+      const data = await response.json();
+      if (!response.ok || !data.receipt) throw new Error('Receipt unavailable');
+      setReceipt(data.receipt); setState('ready');
+    } catch { setState('error'); }
+  }
+  return <details className="asset-technical" onToggle={event => { if (event.currentTarget.open) void load(); }}><summary>Private render receipt</summary>
+    {state === 'loading' && <p role="status">Loading receipt…</p>}
+    {state === 'missing' && <p>No private render receipt is recorded for this asset.</p>}
+    {state === 'error' && <p role="alert">The receipt could not be loaded. <button type="button" className="quiet" onClick={() => void load()}>Try again</button></p>}
+    {receipt && <><p>The server recorded the saved storyboard and source hashes. Framing, captions and rendering were reported by the browser; the server did not verify the rendered pixels.</p>
+      <dl className="kv"><dt>Storyboard</dt><dd>{receipt.storyboard.id} · version {receipt.storyboard.updatedAt}</dd><dt>Frame</dt><dd>{receipt.framing.aspect} · {receipt.framing.fit === 'cover' ? 'centre crop' : 'show whole shot'}</dd><dt>Duration</dt><dd>{(receipt.totalMs / 1000).toFixed(1)}s</dd><dt>Output SHA-256</dt><dd>{receipt.output.sha256}</dd></dl>
+      <p><strong>Shots and saved source hashes</strong></p><ol>{receipt.shots.map((shot, i) => <li key={i}>{shot.assetId} · {shot.startMs}–{shot.endMs} ms<br/>SHA-256 {shot.sha256}</li>)}</ol>
+      {receipt.soundtrack && <p>Mixed soundtrack: {receipt.soundtrack.assetId}<br/>SHA-256 {receipt.soundtrack.sha256}</p>}
+      {receipt.tracks.length > 0 && <><p><strong>Soundtrack sources</strong></p><ul>{receipt.tracks.map((track, i) => <li key={i}>{track.role}: {track.assetId} · {track.trimStartMs}–{track.trimEndMs} ms · starts {track.startMs} ms · gain {track.gainDb} dB · fades {track.fadeInMs}/{track.fadeOutMs} ms<br/>SHA-256 {track.sha256}</li>)}</ul></>}
+      {receipt.captions && <p>Saved captions: plan {receipt.captions.planId}, revision {receipt.captions.revision}; song {receipt.captions.songAssetId}<br/>SHA-256 {receipt.captions.songSha256}</p>}
+    </>}
+  </details>;
+}
+
 function AssetViewer({ projectId, asset, still, launchKitUrl }: ViewerProps) {
   const back = `#/p/${encodeURIComponent(projectId)}/library`;
   if (!asset) return <p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a>.</p>;
@@ -56,8 +96,9 @@ function AssetViewer({ projectId, asset, still, launchKitUrl }: ViewerProps) {
     <div className="viewer">
       <div className="stage">{isVideo ? <video src={asset.file} controls playsInline preload="metadata"/> : isAudio ? <div className="audio-stage"><canvas width="840" height="200" data-waveform={asset.file} aria-hidden="true"/><audio src={asset.file} controls preload="metadata"/></div> : <img src={asset.file} alt={asset.title}/>}</div>
       <aside className="card stack"><div><p className="eyebrow">{asset.kind} · {asset.source}</p><h1 className="asset-viewer-title">{asset.title}</h1></div>
-        {localRender ? <p>MP4 rendered on this device from a saved storyboard{asset.caption?.includes('; owner-confirmed captions from song plan ') ? ', with saved captions' : ''}.</p> : asset.caption && <p>{asset.caption}</p>}
+        {localRender ? <p>MP4 rendered on this device from a saved storyboard{asset.caption?.includes('; owner-confirmed captions') ? ', with saved captions' : ''}.</p> : asset.caption && <p>{asset.caption}</p>}
         <dl className="kv"><dt>Size</dt><dd>{bytesLabel(asset.bytes)}</dd>{Boolean(asset.width) && <><dt>Frame</dt><dd>{asset.width} × {asset.height}</dd></>}{Boolean(asset.durationMs) && <><dt>Duration</dt><dd>{(asset.durationMs! / 1000).toFixed(1)}s</dd></>}{isAudio && Boolean(asset.sampleRate) && <><dt>Audio</dt><dd>{asset.sampleRate} Hz · {asset.channels ?? "—"} channel{asset.channels === 1 ? "" : "s"}</dd></>}<dt>Type</dt><dd>{asset.mime}</dd><dt>Added</dt><dd>{dateLabel(asset.createdAt)}</dd></dl>
+        {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id}/>}
         <details className="asset-technical"><summary>Technical details</summary><dl className="kv"><dt>SHA-256</dt><dd>{asset.sha256}</dd></dl>{localRender && <p>{asset.caption}</p>}</details>
         <div className="row"><a className="button secondary" href={asset.download} download>Download</a><button type="button" className="secondary" data-action="rename-asset" data-id={asset.id}>Rename</button>{still && <button type="button" className="secondary" data-action="vary-asset" data-id={still.id}>{isVideo ? "Make a variation of its still" : "Make a variation"}</button>}</div>
         <div className="row"><button type="button" className="secondary" data-action="animate-asset" data-id={asset.id} disabled={asset.kind !== "image"}>Animate this still</button><button type="button" className="secondary" data-action="publish-asset" data-id={asset.id}>Publish page</button></div>

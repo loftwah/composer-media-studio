@@ -8,7 +8,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ blob: Blob; url: string; caption: string; captioned: boolean; framing: string } | null>(null);
+  const [result, setResult] = useState<{ blob: Blob; url: string; caption: string; captioned: boolean; framing: string; receiptId: string | null } | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'uncertain'>('idle');
   const [savedAssetId, setSavedAssetId] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(false);
@@ -44,6 +44,18 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
         snapshot=structuredClone(current); media=structuredClone(projectData.assets);
         captions=resolveCaptionSnapshot(snapshot,media,planData.plans.find((item: {id:string})=>item.id===snapshot.originSongPlan?.id));
       }
+      let receiptId: string | null = null;
+      if (canEdit) {
+        setStatus('Recording the saved storyboard snapshot…');
+        const receiptResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}/compositions/${encodeURIComponent(snapshot.id)}/local-render-receipts`, {
+          method: 'POST', credentials: 'same-origin', signal: task.signal,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ expectedUpdatedAt: snapshot.updatedAt, includeCaptions: Boolean(captions), framing: chosenFraming }),
+        });
+        const receiptData = await receiptResponse.json().catch(() => ({}));
+        if (!receiptResponse.ok || typeof receiptData.receipt?.id !== 'string') throw new Error(receiptData.error?.message || 'Could not record this saved storyboard. Reload it and try again.');
+        receiptId = receiptData.receipt.id;
+      }
       const first = media.find(asset => asset.id === snapshot.shots[0]?.assetId);
       if (!first) throw new Error('The first clip is no longer available.');
       const frame = resolveFrame(chosenFraming, first);
@@ -53,8 +65,8 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
       if (preview.current) URL.revokeObjectURL(preview.current);
       const url = URL.createObjectURL(blob); preview.current = url; saveAttempt.current = false; setSaveState('idle'); setSavedAssetId('');
       const frameDescription = framingNote(frame);
-      const caption = `Browser MP4 from storyboard ${snapshot.id}, saved version ${snapshot.updatedAt ?? snapshot.createdAt}; ${frameDescription}${captions ? `; owner-confirmed captions from song plan ${captions.planId} revision ${captions.revision}; source song SHA256 ${snapshot.originSongPlan?.songSha256}` : ''}; clips ${snapshot.shots.map(s => `${s.assetId}${s.trimStartMs !== undefined ? ` (${s.trimStartMs}–${s.trimEndMs}ms)` : ''}`).join(', ')}; soundtrack ${snapshot.audioAssetId ?? 'none'}.`;
-      setResult({blob,url,caption,captioned:Boolean(captions),framing:frameDescription}); setStatus('MP4 ready to preview or download.');
+      const caption = `Browser MP4 from saved storyboard; ${frameDescription}${captions ? '; owner-confirmed captions' : ''}. ${receiptId ? 'Source evidence is in the private render receipt.' : 'No private render receipt was created.'}`;
+      setResult({blob,url,caption,captioned:Boolean(captions),framing:frameDescription,receiptId}); setStatus('MP4 ready to preview or download.');
     } catch (err) { if (task.signal.aborted) setStatus('Local render cancelled.'); else setError((err as Error).message || 'The local render failed.'); }
     finally { if (controller.current === task) controller.current = null; setBusy(false); }
   };
@@ -64,7 +76,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     setSaveState('saving'); setError('');
     const form = new FormData();
     form.set('file', new File([result.blob], 'studio-local-render.mp4', { type: 'video/mp4' }));
-    form.set('title', `Local render — ${composition.title}`.slice(0, 100)); form.set('caption', result.caption.slice(0,400));
+    form.set('title', `Local render — ${composition.title}`.slice(0, 100)); form.set('caption', result.caption); if (result.receiptId) form.set('localRenderReceiptId', result.receiptId);
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/assets`, { method: 'POST', credentials: 'same-origin', body: form });
       const data = await response.json().catch(() => ({}));
