@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 
 import {
   buildCompositionSpec,
+  cacheSlateOnComposition,
   createComposition,
   createGeneration,
   createRender,
@@ -160,6 +161,10 @@ test("stale and legacy clients cannot overwrite trim versions or replay an old p
   const edited = await updateComposition(env, project, original, {title:'Trimmed',shots:trimShots,expectedUpdatedAt:original.updated_at});
   assert.ok(edited.updatedAt > original.updated_at);
   const current = await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(made.id).first();
+  assert.equal(await cacheSlateOnComposition(env, original, 'asset_slate_video'), false);
+  const afterStaleCache = await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(made.id).first();
+  assert.equal(afterStaleCache.spec_json, current.spec_json);
+  assert.equal(afterStaleCache.updated_at, current.updated_at);
   await assert.rejects(updateComposition(env,project,current,{title:'Stale',shots,expectedUpdatedAt:original.updated_at}),e=>e.status===409 && e.code==='revision_conflict');
   await assert.rejects(updateComposition(env,project,current,{title:'Old client',shots:[shots[1],shots[0]]}),e=>e.status===409 && e.code==='revision_conflict');
   await assert.rejects(createRender(env,project,current,{model:'studio-assembly',clientRequestId:'req_before_trim'}),e=>e.code==='provider_shot_trim_unsupported');
@@ -167,6 +172,17 @@ test("stale and legacy clients cannot overwrite trim versions or replay an old p
   const competing=await Promise.allSettled(['Writer A','Writer B'].map(title=>updateComposition(env,project,current,{title,shots:trimShots,expectedUpdatedAt:current.updated_at})));
   assert.equal(competing.filter(result=>result.status==='fulfilled').length,1);
   assert.equal(competing.filter(result=>result.status==='rejected' && result.reason.code==='revision_conflict').length,1);
+});
+
+test('slate cache updates only the version it read and advances the version', async () => {
+  const { env, project } = await setup();
+  for (const id of ['asset_clip01','asset_clip02']) await addAsset(env,project,{id,kind:'video',durationMs:6000});
+  const made = await createComposition(env,project,{title:'Slate',shots:[{assetId:'asset_clip01'},{assetId:'asset_clip02'}]});
+  const before = await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(made.id).first();
+  assert.equal(await cacheSlateOnComposition(env,before,'asset_slate_video'),true);
+  const after = await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(made.id).first();
+  assert.equal(JSON.parse(after.spec_json).slateVideoAssetId,'asset_slate_video');
+  assert.ok(after.updated_at > before.updated_at);
 });
 
 test("an edited composition keeps the manifest its earlier render used", async () => {
