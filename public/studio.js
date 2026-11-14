@@ -964,24 +964,30 @@ function ask({ title, copy, fields = [], submit = "Continue" }) {
     // A previous submission must not turn an Escape or backdrop dismissal into OK.
     confirmDialog.returnValue = "";
     const isEdited = () => [...form.querySelectorAll("input, textarea")].some((input) => input.value !== input.defaultValue);
-    const onBackdrop = (event) => {
-      if (event.target !== confirmDialog) return;
-      const rect = confirmDialog.getBoundingClientRect();
-      if (event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) return;
-      // Do not silently discard anything typed into a form.
-      if (!isEdited()) confirmDialog.close("cancel");
-    };
-    const onCancel = (event) => {
-      if (!isEdited()) return;
-      event.preventDefault();
+    const explainDraft = () => {
       let message = form.querySelector("[data-dialog-draft-status]");
       if (!message) {
         message = document.createElement("p");
         message.dataset.dialogDraftStatus = "";
         message.setAttribute("role", "status");
+        message.className = "small";
+        message.style.marginTop = "0.6rem";
         form.querySelector("#confirm-copy").append(message);
       }
       message.textContent = "Your edits are still here. Choose Cancel to discard them.";
+    };
+    const onBackdrop = (event) => {
+      if (event.target !== confirmDialog) return;
+      const rect = confirmDialog.getBoundingClientRect();
+      if (event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) return;
+      // Do not silently discard anything typed into a form.
+      if (isEdited()) explainDraft();
+      else confirmDialog.close("cancel");
+    };
+    const onCancel = (event) => {
+      if (!isEdited()) return;
+      event.preventDefault();
+      explainDraft();
     };
     const finish = (value) => {
       confirmDialog.removeEventListener("close", onClose);
