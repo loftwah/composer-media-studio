@@ -2,7 +2,7 @@ import { encodeWav } from "./wav.js";
 import { isLocalRenderProvenance, publicCaption } from "./asset-caption.js";
 import { shotRange } from "./shot-trims.js";
 import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.js";
-import { prepareVoiceDraft, restoreCreateDraft, switchCreateProject, createEventBelongsToProject } from "./voice-handoff.js";
+import { prepareVoiceDraft, restoreCreateDraft, switchCreateProject, createEventBelongsToProject, hasCreateDraftChanges, shouldWarnCreateDrafts } from "./voice-handoff.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -28,9 +28,10 @@ const shareImportDrafts = new Map();
 // Displaced Create drafts stay project-scoped and recoverable for this tab's lifetime.
 const priorCreateDrafts = new Map();
 const projectCreateDrafts = new Map();
+const projectCreateDefaults = new Map();
 let createProjectId = null;
 window.addEventListener("beforeunload", (event) => {
-  if (projectCreateDrafts.size || [...priorCreateDrafts.values()].some((drafts) => drafts.length)) event.preventDefault();
+  if (shouldWarnCreateDrafts(projectCreateDrafts, priorCreateDrafts, state.create, projectCreateDefaults.get(createProjectId))) event.preventDefault();
 });
 // Comparison is an in-memory view of existing same-project images, not a saved collection.
 const comparisons = new Map();
@@ -215,7 +216,7 @@ async function loadProject(id) {
   state.project.publications = data.publications;
   state.project.compositions = data.compositions ?? [];
   state.project.budget = data.budget;
-  state.create = switchCreateProject(projectCreateDrafts, createProjectId, state.create, id, defaultCreate);
+  state.create = switchCreateProject(projectCreateDrafts, projectCreateDefaults, createProjectId, state.create, id, defaultCreate);
   createProjectId = id;
   return data;
 }
@@ -412,11 +413,13 @@ function renderReactAssemble() {
     if (!state.project || state.project.id !== projectId || state.projectId !== projectId || createProjectId !== projectId || state.view !== "project" || state.tab !== "assemble" || !state.session?.actions.includes("edit")) return "Reopen this studio before preparing narration.";
     try {
       const { previous, voice } = prepareVoiceDraft(state.create, script, modelById("studio-voice"));
-      const drafts = priorCreateDrafts.get(projectId) ?? [];
-      drafts.push(previous); priorCreateDrafts.set(projectId, drafts);
+      if (hasCreateDraftChanges(previous, projectCreateDefaults.get(projectId))) {
+        const drafts = priorCreateDrafts.get(projectId) ?? [];
+        drafts.push(previous); priorCreateDrafts.set(projectId, drafts);
+      }
       state.create = voice;
       location.hash = `#/p/${projectId}/create`;
-      notify("Narration draft prepared. Earlier Create draft is available above; no request was sent.");
+      notify(priorCreateDrafts.get(projectId)?.length ? "Narration draft prepared. Earlier Create drafts are available above; no request was sent." : "Narration draft prepared. No request was sent.");
       return null;
     } catch (error) { return error.message; }
   }, onAssetSaved: (asset) => {
@@ -1189,11 +1192,12 @@ async function handleAction(action, element, keyboard = false) {
       const drafts = priorCreateDrafts.get(state.projectId) ?? [];
       const value = document.querySelector("#prior-create-draft")?.value;
       if (value === undefined) return;
-      const { restored, remaining } = restoreCreateDraft(drafts, Number(value), state.create);
-      priorCreateDrafts.set(state.projectId, remaining);
+      const preserveCurrent = hasCreateDraftChanges(state.create, projectCreateDefaults.get(state.projectId));
+      const { restored, remaining } = restoreCreateDraft(drafts, Number(value), state.create, preserveCurrent);
+      if (remaining.length) priorCreateDrafts.set(state.projectId, remaining); else priorCreateDrafts.delete(state.projectId);
       state.create = restored;
       render();
-      notify("Draft restored. The draft you just left is also available above.");
+      notify(preserveCurrent ? "Draft restored. The draft you just left is also available above." : "Draft restored.");
       return;
     }
     case "discard-create-drafts": {
