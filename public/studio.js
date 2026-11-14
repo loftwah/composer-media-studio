@@ -1,3 +1,4 @@
+import { mergeRestyleResponse } from "./restyle-history.js";
 import { encodeWav } from "./wav.js";
 import { isLocalRenderProvenance, publicCaption, shareImportProvenance } from "./asset-caption.js";
 import { shotRange } from "./shot-trims.js";
@@ -1861,6 +1862,17 @@ async function handleAction(action, element, keyboard = false) {
       return;
   }
 }
+
+// React's restyle submit shares the same project cache as Create and History.
+// Update only the matching project, without rerendering the active editor.
+window.addEventListener("studio:restyle-submitted", (event) => {
+  const { projectId, result } = event.detail ?? {};
+  if (state.projectId !== projectId || !mergeRestyleResponse(state.project, projectId, result)) return;
+  if (mediaMounted && state.view === "project" && state.tab === "history") renderReactHistory();
+  // Poll for the current job and budget instead of applying an admission
+  // snapshot that could be older than another request's budget update.
+  startPolling();
+});
 
 function replaceGeneration(generation) {
   const index = state.project.generations.findIndex((item) => item.id === generation.id);

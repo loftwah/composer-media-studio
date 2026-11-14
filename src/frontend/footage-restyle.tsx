@@ -43,6 +43,7 @@ export function FootageRestyle({ projectId, assetId }: { projectId: string; asse
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/generations`, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request.current), signal: controller.signal });
       const data = await response.json(); if (!response.ok) throw new Error(data.error?.message || 'Request could not be submitted.');
+      window.dispatchEvent(new CustomEvent('studio:restyle-submitted', { detail: { projectId, result: data } }));
       setDone(true); setStatus(`Job ${data.generation.status}. Follow its progress in History.`);
     } catch (error) { setStatus(`${error instanceof Error ? error.message : 'Request result unavailable.'} Retry uses the same request ID; check History before starting another.`); }
     finally { if (task.current === controller) { task.current = null; setBusy(false); } }
