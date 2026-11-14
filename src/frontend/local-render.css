@@ -3,3 +3,5 @@
 .local-render p { max-width: 70ch; }
 .local-render-result { display: grid; gap: .75rem; margin-top: 1rem; }
 .local-render-result video { width: min(100%, 36rem); max-height: 28rem; background: #111; }
+.local-caption-option { display: flex; align-items: start; gap: .6rem; margin: .8rem 0; }
+.local-caption-option input { flex: none; width: auto; margin-top: .25rem; }

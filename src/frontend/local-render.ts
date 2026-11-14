@@ -1,6 +1,7 @@
 // Local-only, bounded H.264/AAC MP4. No provider, uploads or background jobs.
 import { ALL_FORMATS, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from 'mediabunny';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
+import { captionLines, type CaptionSnapshot } from './local-captions.ts';
 
 const MAX_INPUT = 128 * 1024 * 1024;
 const MAX_OUTPUT = 64 * 1024 * 1024;
@@ -40,7 +41,7 @@ export function validateLocalInputs(composition: CompositionV1, assets: MediaAss
   if ([...clips, ...(sound ? [sound] : [])].some(asset => !Number.isSafeInteger(asset.bytes) || asset.bytes <= 0) || clips.reduce((sum, asset) => sum + asset.bytes, sound?.bytes ?? 0) > MAX_INPUT) throw new Error('The selected media exceeds the 128 MiB local input limit or has an unknown size.');
   return { clips, totalMs, sound };
 }
-export async function renderLocalMp4(composition: CompositionV1, assets: MediaAssetV1[], signal: AbortSignal, progress: (message: string) => void): Promise<Blob> {
+export async function renderLocalMp4(composition: CompositionV1, assets: MediaAssetV1[], signal: AbortSignal, progress: (message: string) => void, captions?: CaptionSnapshot): Promise<Blob> {
   if (typeof VideoEncoder === 'undefined') throw new Error('This browser does not support the required video encoder.');
   const { clips, totalMs, sound } = validateLocalInputs(composition, assets);
   if (sound && typeof AudioEncoder === 'undefined') throw new Error('This browser does not support the required audio encoder.');
@@ -51,6 +52,18 @@ export async function renderLocalMp4(composition: CompositionV1, assets: MediaAs
   if (!await canEncodeVideo('avc', { width, height, bitrate: 1200000 }) || (sound && !await canEncodeAudio('aac', { numberOfChannels: 2, sampleRate: 44100, bitrate: 128000 }))) throw new Error('This browser cannot encode the required H.264/AAC MP4. Try a current supported browser.');
   const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false }); if (!context) throw new Error('This browser cannot create a video canvas.');
+  const fontSize = Math.max(18, Math.round(Math.min(width, height) * .05));
+  const lineHeight = Math.round(fontSize * 1.3);
+  context.font = `600 ${fontSize}px system-ui, sans-serif`;
+  const prepared = captions?.cues.map(cue => ({ ...cue, lines: captionLines(cue.speaker ? `${cue.speaker}: ${cue.text}` : cue.text, width * .84 - 24, text => context.measureText(text).width) })) ?? [];
+  const paintCaption = (timeMs: number) => {
+    const cue = prepared.find(item => timeMs >= item.startMs - captions!.sourceStartMs && timeMs < item.endMs - captions!.sourceStartMs);
+    if (!cue) return;
+    const boxWidth=width*.84, boxHeight=cue.lines.length*lineHeight+20, x=(width-boxWidth)/2, y=height*.9-boxHeight;
+    context.save(); context.fillStyle='rgba(0,0,0,.88)'; context.fillRect(x,y,boxWidth,boxHeight);
+    context.font=`600 ${fontSize}px system-ui, sans-serif`; context.fillStyle='#fff'; context.textAlign='center'; context.textBaseline='middle';
+    cue.lines.forEach((line,index)=>context.fillText(line,width/2,y+10+lineHeight*(index+.5))); context.restore();
+  };
   const target = new BufferTarget();
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target });
   const video = new CanvasSource(canvas, { codec: 'avc', bitrate: 1200000 }); output.addVideoTrack(video, { frameRate: FPS });
@@ -92,6 +105,7 @@ export async function renderLocalMp4(composition: CompositionV1, assets: MediaAs
             checkAbort(signal);
             if (!sample) throw new Error(`${clip.title} has a missing video frame.`);
             context.drawImage(sample.canvas, 0, 0, width, height);
+            paintCaption((cursor + frame / FPS) * 1000);
             await video.add(cursor + frame / FPS, Math.min(1 / FPS, duration - frame / FPS), { keyFrame: frame === 0 });
             frame++;
           }
