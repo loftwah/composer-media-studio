@@ -107,6 +107,8 @@ small, .small { font-size: 0.82rem; color: var(--muted); }
 .header-nav .button, .header-nav .apps-trigger { font-size: .88rem; }
 .site-header .app-launcher .apps-trigger { background: var(--accent-bright); border-color: var(--accent-bright); color: #17181b; }
 .site-header .app-launcher .apps-trigger:hover { background: #ff8545; border-color: #ff8545; color: #17181b; }
+.theme-toggle { border: 1px solid var(--line); border-radius: 999px; padding: .4rem .7rem; background: transparent; color: var(--ink-soft); font-size: .78rem !important; }
+.theme-toggle:hover { border-color: var(--ink); color: var(--ink); }
 .header-nav .theme-toggle { min-height: 36px !important; margin-left: .35rem; border: 1px solid var(--line); border-radius: 999px !important; padding: .4rem .8rem !important; background: transparent; color: var(--ink-soft); font-size: .78rem !important; }
 .header-nav .theme-toggle:hover { border-color: var(--accent); }
 .session-context { flex-basis: 100%; margin: 0; padding: .2rem 0 0; font: 500 .72rem/1.4 ui-monospace, monospace; letter-spacing: .03em; color: var(--muted); }
