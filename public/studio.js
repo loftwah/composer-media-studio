@@ -1,6 +1,7 @@
 import { encodeWav } from "./wav.js";
 import { isLocalRenderProvenance, publicCaption } from "./asset-caption.js";
 import { shotRange } from "./shot-trims.js";
+import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -430,7 +431,7 @@ function restoreShareImportDraft() {
 function renderReactCreate() {
   const create = state.create;
   const models = state.models.filter((model) => model.kind === create.kind);
-  const model = modelById(create.model) ?? models[0] ?? null;
+  const model = modelById(create.model);
   const images = state.project.assets.filter((asset) => asset.kind === "image");
   creativeHome.renderCreate(app.querySelector("#creative-media"), {
     create, models, model, images,
@@ -593,7 +594,7 @@ function createView() {
   const create = state.create;
   const recipes = state.project.recipes.filter((recipe) => recipe.kind === create.kind);
   const models = state.models.filter((model) => model.kind === create.kind && (model.references > 0 ? true : true));
-  const model = modelById(create.model) ?? models[0];
+  const model = modelById(create.model);
   const recipe = recipeBySlug(create.recipeSlug);
   const images = state.project.assets.filter((asset) => asset.kind === "image");
   const selectedReference = images.find((asset) => asset.id === create.referenceAssetId);
@@ -627,7 +628,7 @@ function createView() {
         <hr style="border:0;border-top:1px solid var(--line);margin:1rem 0">
         <div class="stack">
           <label>Model
-            <select data-input="model">${models.map((item) => `<option value="${esc(item.id)}" ${item.id === create.model ? "selected" : ""}>${esc(item.label)} — ${esc(item.provider)}</option>`).join("")}</select>
+            <select data-input="model">${model ? "" : '<option value="" selected disabled>No compatible model</option>'}${models.map((item) => `<option value="${esc(item.id)}" ${item.id === create.model ? "selected" : ""}>${esc(item.label)} — ${esc(item.provider)}</option>`).join("")}</select>
           </label>
           <p class="small" style="margin:0">${esc(model?.description ?? "")}<br>${esc(model?.costBasis ?? "")}</p>
         </div>
@@ -670,12 +671,13 @@ function createView() {
       </div>
     </div>
     <div class="card" style="margin-top:1rem">
+      ${recipe && !recipeModelCompatible(recipe, model) ? '<p class="notice warn">This recipe needs a model that accepts a reference still. Choose a compatible model or another recipe.</p>' : ""}
       <div class="spread">
         <div>
           <p class="eyebrow" style="margin-bottom:0.2rem">3 · Review and submit</p>
           <p class="small" style="margin:0">${esc(model?.label ?? "No model")} · ${create.kind === "video" ? `${esc(String(create.durationSeconds))}s` : create.kind === "audio" ? (model?.audio?.mode === "speech" ? "narration" : `${esc(String(create.durationSeconds))}s`) : esc(create.aspect)} · estimated <strong>${money(estimate())}</strong></p>
         </div>
-        <button class="button" data-action="submit-create" ${(needsReference && !create.referenceAssetId) || (needsMask && !create.maskAssetId) || (promptRequired && !create.prompt.trim()) ? "disabled" : ""}>${create.kind === "video" ? "Animate this still" : create.kind === "audio" ? "Generate sound" : model?.edit === "fill" ? "Apply fill" : model?.edit === "cutout" ? "Remove background" : model?.edit === "upscale" ? "Upscale still" : "Create image"} · ${money(estimate())}</button>
+        <button class="button" data-action="submit-create" ${!recipeModelCompatible(recipe, model) || (needsReference && !create.referenceAssetId) || (needsMask && !create.maskAssetId) || (promptRequired && !create.prompt.trim()) ? "disabled" : ""}>${create.kind === "video" ? "Animate this still" : create.kind === "audio" ? "Generate sound" : model?.edit === "fill" ? "Apply fill" : model?.edit === "cutout" ? "Remove background" : model?.edit === "upscale" ? "Upscale still" : "Create image"} · ${money(estimate())}</button>
       </div>
       <p class="small" style="margin:0.6rem 0 0">Each submit starts one new request. A repeat with the same request id is replayed without another submission. Video runs asynchronously; you can leave this page and come back.</p>
     </div>`;
@@ -1161,7 +1163,7 @@ async function handleAction(action, element, keyboard = false) {
       if (recipe) {
         state.create.controls = {};
         state.create.prompt = promptFromRecipe(recipe, {});
-        state.create.model = recipe.kind === "video" ? (state.project.defaults.videoModel ?? "hailuo-standard") : (recipe.model ?? "studio-draft");
+        Object.assign(state.create, recipeModelSettings(recipe, state.models, state.create, recipe.kind === "video" ? state.project.defaults.videoModel : null));
       }
       renderKeepingCreateFocus(element);
       return;
@@ -1173,11 +1175,7 @@ async function handleAction(action, element, keyboard = false) {
       state.create.kind = recipe.kind;
       state.create.controls = {};
       state.create.prompt = promptFromRecipe(recipe, {});
-      state.create.model = recipe.model ?? state.create.model;
-      const aspectControl = recipe.controls.find((control) => control.key === "aspect");
-      if (aspectControl?.default) state.create.aspect = aspectControl.default;
-      const durationControl = recipe.controls.find((control) => control.key === "duration");
-      if (durationControl?.default) state.create.durationSeconds = Number(durationControl.default);
+      Object.assign(state.create, recipeModelSettings(recipe, state.models, state.create));
       renderKeepingCreateFocus(element);
       return;
     }
@@ -1820,6 +1818,10 @@ async function submitCreate() {
     notify("Choose an available model before creating.", "bad");
     return;
   }
+  if (!recipeModelCompatible(recipeBySlug(create.recipeSlug), model)) {
+    notify("Choose a model that supports this recipe's reference, or choose another recipe.", "bad");
+    return;
+  }
   if (model?.promptRequired !== false && !create.prompt.trim()) {
     notify("Describe what you want to create.", "bad");
     return;
@@ -2418,7 +2420,7 @@ function updateCreateSubmit() {
   const button = app.querySelector('[data-action="submit-create"]');
   if (!button || !state.create) return;
   const model = modelById(state.create.model);
-  button.disabled = !model || (model.references > 0 && !state.create.referenceAssetId)
+  button.disabled = !recipeModelCompatible(recipeBySlug(state.create.recipeSlug), model) || (model.references > 0 && !state.create.referenceAssetId)
     || (model.mask && !state.create.maskAssetId)
     || (model.promptRequired !== false && !state.create.prompt.trim());
 }

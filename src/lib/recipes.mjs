@@ -103,6 +103,7 @@ export function projectRecipes(projectId, rows) {
       title: recipe.title,
       description: recipe.description,
       kind: recipe.kind,
+      model: recipe.model,
       promptTemplate: recipe.promptTemplate,
       controls: recipe.controls,
       version: 1,

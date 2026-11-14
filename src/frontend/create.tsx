@@ -1,4 +1,5 @@
 import type { CreateProps, RecipeV1, CreateStateV1 } from "./contracts";
+import { recipeModelCompatible } from "../../public/recipe-selection.js";
 import "./create.css";
 
 const money = (micro: number) => {
@@ -211,6 +212,7 @@ export function CreateWorkbench({
             <label>
               Model
               <select data-input="model" defaultValue={create.model}>
+                {!model && <option value="" disabled>No compatible model</option>}
                 {models.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.label} — {item.provider}
@@ -423,6 +425,7 @@ export function CreateWorkbench({
         </section>
       </div>
       <div className="card create-review">
+        {recipe && !recipeModelCompatible(recipe, model) && <p className="notice warn">This recipe needs a model that accepts a reference still. Choose a compatible model or another recipe.</p>}
         <div className="spread">
           <div>
             <h2 className="create-section-title">Review and submit</h2>
@@ -443,7 +446,7 @@ export function CreateWorkbench({
             className="button"
             data-action="submit-create"
             disabled={
-              !model ||
+              !recipeModelCompatible(recipe, model) ||
               (needsReference && !create.referenceAssetId) ||
               (needsMask && !create.maskAssetId) ||
               (promptRequired && !create.prompt.trim())
