@@ -1,3 +1,4 @@
+import { ClipPoster } from "./clip-poster";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -86,7 +87,7 @@ function VideoClip() {
       <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);change();}}><option value="portrait">9:16 · 360 × 640</option><option value="landscape">16:9 · 640 × 360</option><option value="square">1:1 · 480 × 480</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);change();}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);change();}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · 1.2 Mbps video. Export requires compatible browser codecs. Crop is centred; preview the result before saving.</p>
       {!busy ? <button type="button" disabled={importing} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your clip</h2><video className="video-tool-player" src={result} controls playsInline aria-label="Finished video"/><a className="button" href={result} download={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`}>Save MP4</a>{resultBlob && <LocalImport key={result} blob={resultBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`} operation="clip and frame" onBusyChange={setImporting}/>}</div>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your clip</h2><ClipPoster key={`poster:${result}`} src={result} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip`}/><a className="button" href={result} download={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`}>Save MP4</a>{resultBlob && <LocalImport key={`import:${result}`} blob={resultBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`} operation="clip and frame" onBusyChange={setImporting}/>}</div>}
     </section></main>;
 }
 export function mountVideoClip(container: HTMLElement) { createRoot(container).render(<VideoClip />); }
