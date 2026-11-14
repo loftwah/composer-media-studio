@@ -33,6 +33,7 @@ import {
 } from "./lib/jobs.mjs";
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
+import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
@@ -443,6 +444,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         referenceAssetId: safeJson(row.request_json, {}).referenceAssetId ?? null,
       }));
       const assetRows = assets.results;
+      const receiptRows = await env.DB.prepare("SELECT r.output_asset_id FROM local_render_receipts r JOIN assets a ON a.id=r.output_asset_id AND a.project_id=r.project_id WHERE r.project_id=?1 AND a.deleted_at IS NULL").bind(project.id).all();
+      const receiptAssetIds = new Set(receiptRows.results.map(row => row.output_asset_id));
       const reuseById = new Map(
         assetRows.map((asset) => [
           asset.id,
@@ -473,7 +476,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return json({
         project: await projectSummary(env, project),
         assets: assetRows.map((asset) =>
-          assetView(asset, { reuseStillId: reuseById.get(asset.id)?.id ?? null }),
+          assetView(asset, { reuseStillId: reuseById.get(asset.id)?.id ?? null, hasLocalRenderReceipt: receiptAssetIds.has(asset.id) }),
         ),
         compositions: compositions.results.map((composition) => ({
           id: composition.id,
@@ -560,6 +563,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return json({ composition: await createComposition(env, project, input) }, 201);
     }
 
+    const receiptStart = rest && rest.match(/^compositions\/([a-z0-9_]+)\/local-render-receipts$/);
+    if (receiptStart && method === "POST") return json({ receipt: await createLocalRenderReceipt(env, project, receiptStart[1], await body(request, 4096)) }, 201);
     const compositionEdit = rest && rest.match(/^compositions\/([a-z0-9_]+)$/);
     if (compositionEdit && method === "PATCH") {
       const composition = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2")
@@ -701,7 +706,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     }
   }
 
-  const assetMatch = path.match(/^\/api\/assets\/([a-z0-9_]+)(?:\/(file|download|publish))?$/);
+  const assetMatch = path.match(/^\/api\/assets\/([a-z0-9_]+)(?:\/(file|download|publish|local-render-receipt))?$/);
   if (assetMatch) {
     const [, assetId, action] = assetMatch;
     const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
@@ -709,7 +714,17 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     if (session.mode !== "owner" && session.project && asset.project_id !== session.project)
       throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
 
-    if (!action && method === "GET") return json({ asset: assetView(asset) });
+    if (action === "local-render-receipt" && method === "GET") {
+      if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
+      const receipt = await env.DB.prepare("SELECT snapshot_json,created_at FROM local_render_receipts WHERE output_asset_id=?1 AND project_id=?2").bind(asset.id,asset.project_id).first();
+      if (!receipt) throw new HttpError(404, "No local render receipt for this asset", "not_found");
+      return json({ receipt: { ...safeJson(receipt.snapshot_json, {}), createdAt: receipt.created_at, output: { assetId: asset.id, sha256: asset.sha256, bytes: asset.bytes, mime: asset.mime } } });
+    }
+
+    if (!action && method === "GET") {
+      const receipt = await env.DB.prepare("SELECT id FROM local_render_receipts WHERE output_asset_id=?1 AND project_id=?2").bind(asset.id,asset.project_id).first();
+      return json({ asset: assetView(asset, { hasLocalRenderReceipt: Boolean(receipt) }) });
+    }
 
 
     if (!action && method === "PATCH") {
@@ -720,7 +735,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       await env.DB.prepare("UPDATE assets SET title=?2,caption=?3,updated_at=?4 WHERE id=?1 AND deleted_at IS NULL")
         .bind(asset.id, title, caption, now())
         .run();
-      return json({ asset: assetView(await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(asset.id).first()) });
+      const receipt = await env.DB.prepare("SELECT id FROM local_render_receipts WHERE output_asset_id=?1 AND project_id=?2").bind(asset.id,asset.project_id).first();
+      return json({ asset: assetView(await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(asset.id).first(), { hasLocalRenderReceipt: Boolean(receipt) }) });
     }
 
     if (!action && method === "DELETE") {
@@ -940,9 +956,19 @@ async function uploadAsset(request, env, project) {
     throw new HttpError(413, `Keep uploads under ${MAX_VIDEO_BYTES / 1024 / 1024} MiB`, "too_large");
 
   const title = String(form.get("title") ?? "").trim() || file.name.replace(/\.[^.]+$/, "").slice(0, 100);
+  const receiptId = form.get("localRenderReceiptId");
+  let receipt = null;
+  if (receiptId !== null) {
+    if (typeof receiptId !== "string" || !/^lrr_[a-f0-9]{32}$/.test(receiptId)) throw new HttpError(400, "Invalid local render receipt");
+    receipt = await env.DB.prepare("SELECT * FROM local_render_receipts WHERE id=?1 AND project_id=?2").bind(receiptId,project.id).first();
+    if (!receipt) throw new HttpError(404, "Local render receipt not found", "not_found");
+    const bound = await env.DB.prepare("SELECT id FROM assets WHERE id=?1 AND project_id=?2").bind(receipt.output_asset_id,project.id).first();
+    if (!bound && receipt.expires_at < now()) throw new HttpError(409, "This render receipt expired. Start a new render.", "receipt_expired");
+  }
   return storeAsset(env, project, new Uint8Array(await file.arrayBuffer()), {
     mime: file.type, title, caption: String(form.get("caption") ?? ""),
     parent: form.get("parentAssetId") ? String(form.get("parentAssetId")) : null,
+    ...(receipt ? { importId: receipt.output_asset_id, localReceipt: true, caption: "", parent: null } : {}),
   });
 }
 
@@ -975,7 +1001,7 @@ async function importWoodhouseAsset(env, project, shareId) {
   });
 }
 
-async function storeAsset(env, project, bytes, { mime, title, caption, parent = null, importId, hash }) {
+async function storeAsset(env, project, bytes, { mime, title, caption, parent = null, importId, hash, localReceipt = false }) {
   const sniffed = sniffMedia(bytes, mime);
   if (!sniffed.kind)
     throw new HttpError(
@@ -987,6 +1013,7 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
     sniffed.kind === "image" ? MAX_IMAGE_BYTES : sniffed.kind === "audio" ? MAX_AUDIO_BYTES : MAX_VIDEO_BYTES;
   if (bytes.length > limit)
     throw new HttpError(413, `${sniffed.kind === "image" ? "Images" : sniffed.kind === "audio" ? "Audio" : "Videos"} must stay under ${limit / 1024 / 1024} MiB`, "too_large");
+  if (localReceipt && sniffed.mime !== "video/mp4") throw new HttpError(415, "A local render receipt requires an MP4", "unsupported_type");
 
   let size;
   if (sniffed.kind === "image") {
@@ -1017,7 +1044,7 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
   try {
     await env.DB.prepare(
       `INSERT INTO assets(id,project_id,kind,r2_key,mime,bytes,width,height,duration_ms,sample_rate,channels,sha256,title,caption,source,parent_asset_id,created_at,updated_at)
-       VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'upload',?15,?16,?16)${importId ? " ON CONFLICT(id) DO NOTHING" : ""}`,
+       ${localReceipt ? "SELECT" : "VALUES("}?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'upload',?15,?16,?16${localReceipt ? " WHERE EXISTS (SELECT 1 FROM local_render_receipts WHERE output_asset_id=?1 AND project_id=?2 AND expires_at>=?16)" : ")"}${importId ? " ON CONFLICT(id) DO NOTHING" : ""}`,
     )
       .bind(
         assetId,
@@ -1043,9 +1070,11 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
     throw error;
   }
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
+  if (!asset && localReceipt) { await env.MEDIA.delete(key); throw new HttpError(409, "This render receipt expired. Start a new render.", "receipt_expired"); }
   if (asset.r2_key !== key) await env.MEDIA.delete(key);
+  if (localReceipt && asset.sha256 !== hash) throw new HttpError(409, "This receipt is already bound to different output bytes.", "receipt_already_bound");
   if (asset.deleted_at) throw new HttpError(409, "This imported original was previously removed from this project.");
-  return json({ asset: assetView(asset) }, asset.r2_key === key ? 201 : 200);
+  return json({ asset: assetView(asset, { hasLocalRenderReceipt: localReceipt }) }, asset.r2_key === key ? 201 : 200);
 }
 
 async function handlePublic(request, env, url) {
