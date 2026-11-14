@@ -1173,7 +1173,26 @@ async function handlePublic(request, env, url) {
           ? `/p/${publication.slug}/poster`
           : null;
     const destinations = sharingDestinations(env);
+    // Only permit a local gallery return; never turn a public link into an open redirect.
+    let galleryBack = "/gallery";
+    const requestedBack = url.searchParams.get("back");
+    if (requestedBack && requestedBack.length <= 2048 && requestedBack.startsWith("/gallery?")) {
+      const backUrl = new URL(requestedBack, url.origin);
+      if (backUrl.origin === url.origin && backUrl.pathname === "/gallery") {
+        const params = new URLSearchParams();
+        const query = (backUrl.searchParams.get("q") ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
+        const kind = backUrl.searchParams.get("kind");
+        const order = backUrl.searchParams.get("order");
+        const page = backUrl.searchParams.get("page");
+        if (query) params.set("q", query);
+        if (["image", "video", "audio"].includes(kind)) params.set("kind", kind);
+        if (order === "oldest") params.set("order", order);
+        if (page && /^[1-9][0-9]{0,4}$/.test(page)) params.set("page", page);
+        if (params.size) galleryBack += `?${params}`;
+      }
+    }
     const html = publicPage({
+      galleryBack,
       title: publication.title,
       description: publication.description,
       listed: Boolean(publication.listed) && !publication.hidden,

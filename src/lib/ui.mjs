@@ -195,6 +195,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
 
 export function publicPage({
   attribution = [],
+  galleryBack = "/gallery",
   listed = false,
   title,
   description,
@@ -278,7 +279,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
 <header class="site-header public-piece-header">
   <a class="wordmark" href="${escapeHtml(origin)}/" aria-label="Media Studio home">${mark}<span>Media Studio</span>${brandByline()}</a>
   <nav class="header-nav" aria-label="Published piece">
-    <a href="${escapeHtml(origin)}/gallery">← Back to gallery</a>
+    <a href="${escapeHtml(galleryBack)}">← Back to gallery</a>
     ${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     ${buildUrl ? `<a href="${escapeHtml(buildUrl)}">Build your own</a>` : ""}
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false" hidden>Dark</button>
@@ -525,7 +526,8 @@ export function publicGallery({ items = [], featured = [], hasMore = false, page
         ? `<img src="/p/${slug}/poster" alt="" loading="lazy" decoding="async">`
         : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
     const action = item.kind === "video" ? "Watch film →" : item.kind;
-    return `<li><a class="gallery-card" href="/p/${slug}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(item.description)}</span>` : ""}</a></li>`;
+    const pieceHref = `/p/${slug}${home || (!query && !kind && order !== "oldest" && page === 1) ? "" : `?back=${encodeURIComponent(pageHref(page))}`}`;
+    return `<li><a class="gallery-card" href="${escapeHtml(pieceHref)}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(item.description)}</span>` : ""}</a></li>`;
   }).join("");
   const cards = renderCards(items);
   const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));

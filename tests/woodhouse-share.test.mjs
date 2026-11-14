@@ -202,6 +202,11 @@ test("public gallery requires explicit listing and honors removal, deletion and 
   assert.match(await read(), /href="\/p\/gallery-piece"/);
   assert.doesNotMatch(await (await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env)).text(), /<meta name="robots" content="noindex">/);
   assert.match(await read("/"), /A &lt;piece&gt;/);
+  const back = encodeURIComponent('/gallery?q=Bubbles&kind=video&order=oldest&page=2');
+  const piece = await read(`/p/gallery-piece?back=${back}`);
+  assert.match(piece, /href="\/gallery\?q=Bubbles&amp;kind=video&amp;order=oldest&amp;page=2"/);
+  const malicious = await read(`/p/gallery-piece?back=${encodeURIComponent('https://example.com')}`);
+  assert.match(malicious, /href="\/gallery">← Back to gallery/);
   assert.equal((await patch(false)).status, 200);
   assert.doesNotMatch(await read(), /gallery-piece/);
   assert.equal((await worker.fetch(new Request("https://studio.test/p/gallery-piece"), env)).status, 200);
@@ -229,7 +234,7 @@ test("gallery pagination shows every listed publication without exposing unliste
   const second = await (await worker.fetch(new Request("https://studio.test/gallery?page=2"), env)).text();
   assert.match(first, /href="\/gallery\?page=2"/);
   assert.doesNotMatch(first, /href="\/p\/page-piece-1"/);
-  assert.match(second, /href="\/p\/page-piece-1"/);
+  assert.match(second, /href="\/p\/page-piece-1\?back=/);
   assert.match(second, /href="\/gallery\?page=1"/);
   assert.doesNotMatch(second, /href="\/p\/page-piece-25"/);
   const unauthenticated = await worker.fetch(new Request("https://studio.test/api/publications/pub_page_1", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ listed: false }) }), env);
@@ -270,13 +275,13 @@ test('public gallery filters only listed live work and keeps filters through pag
   }
   const get = async path => (await worker.fetch(new Request(`https://studio.test${path}`),env)).text();
   const first = await get('/gallery?q=OcEaN&kind=video&order=oldest');
-  assert.match(first, /href="\/p\/filter-film-1"/);
-  assert.doesNotMatch(first, /href="\/p\/filter-film-25"/);
+  assert.match(first, /href="\/p\/filter-film-1\?back=/);
+  assert.doesNotMatch(first, /href="\/p\/filter-film-25\?back=/);
   assert.doesNotMatch(first, /href="\/p\/filter-(?:still|private|hidden|withdrawn)"/);
   assert.match(first, /href="\/gallery\?q=OcEaN&amp;kind=video&amp;order=oldest&amp;page=2"/);
   const second = await get('/gallery?q=OcEaN&kind=video&order=oldest&page=2');
-  assert.match(second, /href="\/p\/filter-film-25"/);
-  assert.doesNotMatch(second, /href="\/p\/filter-film-1"/);
+  assert.match(second, /href="\/p\/filter-film-25\?back=/);
+  assert.doesNotMatch(second, /href="\/p\/filter-film-1\?back=/);
   assert.match(await get('/gallery?q=%25&kind=video'), /No published work matches these filters/);
   assert.doesNotMatch(await get('/gallery?q=%3Cscript%3E'), /<script>/);
 });
