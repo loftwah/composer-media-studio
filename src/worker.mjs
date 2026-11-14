@@ -34,6 +34,7 @@ import {
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
+import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.mjs";
 import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
@@ -553,6 +554,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
     if (rest === "footage-plans" && method === "GET") return json({ plans: await listFootagePlans(env, project) });
     if (rest === "footage-plans" && method === "POST") return json({ plan: await createFootagePlan(env, project, await body(request)) }, 201);
+    const footageReceiptStart = rest && rest.match(/^footage-plans\/([a-z0-9_]+)\/export-receipts$/);
+    if (footageReceiptStart && method === "POST") return json({ receipt: await createFootageExportReceipt(env, project, footageReceiptStart[1], await body(request, 4096)) }, 201);
     const footagePlanEdit = rest && rest.match(/^footage-plans\/([a-z0-9_]+)$/);
     if (footagePlanEdit && method === "PATCH") return json({ plan: await updateFootagePlan(env, project, footagePlanEdit[1], await body(request)) });
 
@@ -724,13 +727,20 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     }
   }
 
-  const assetMatch = path.match(/^\/api\/assets\/([a-z0-9_]+)(?:\/(file|download|publish|local-render-receipt))?$/);
+  const assetMatch = path.match(/^\/api\/assets\/([a-z0-9_]+)(?:\/(file|download|publish|local-render-receipt|footage-export-receipt))?$/);
   if (assetMatch) {
     const [, assetId, action] = assetMatch;
     const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
     if (!asset) throw new HttpError(404, "Asset not found", "not_found");
     if (session.mode !== "owner" && session.project && asset.project_id !== session.project)
       throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
+
+    if (action === "footage-export-receipt" && method === "GET") {
+      if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
+      const receipt = await env.DB.prepare("SELECT snapshot_json,created_at FROM footage_export_receipts WHERE output_asset_id=?1 AND project_id=?2").bind(asset.id,asset.project_id).first();
+      if (!receipt) throw new HttpError(404, "No footage export receipt for this asset", "not_found");
+      return json({ receipt: { ...safeJson(receipt.snapshot_json, {}), createdAt: receipt.created_at, output: { assetId: asset.id, sha256: asset.sha256, bytes: asset.bytes, mime: asset.mime } } });
+    }
 
     if (action === "local-render-receipt" && method === "GET") {
       if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
@@ -983,10 +993,18 @@ async function uploadAsset(request, env, project) {
     const bound = await env.DB.prepare("SELECT id FROM assets WHERE id=?1 AND project_id=?2").bind(receipt.output_asset_id,project.id).first();
     if (!bound && receipt.expires_at < now()) throw new HttpError(409, "This render receipt expired. Start a new render.", "receipt_expired");
   }
+  const footageId = form.get("footageExportReceiptId");
+  let footageReceipt = null;
+  if (footageId !== null) {
+    if (receipt || typeof footageId !== "string" || !/^fer_[a-f0-9]{32}$/.test(footageId)) throw new HttpError(400, "Invalid footage receipt");
+    footageReceipt = await env.DB.prepare("SELECT * FROM footage_export_receipts WHERE id=?1 AND project_id=?2").bind(footageId,project.id).first();
+    if (!footageReceipt) throw new HttpError(404, "Footage receipt not found", "not_found");
+  }
   return storeAsset(env, project, new Uint8Array(await file.arrayBuffer()), {
     mime: file.type, title, caption: String(form.get("caption") ?? ""),
     parent: form.get("parentAssetId") ? String(form.get("parentAssetId")) : null,
     ...(receipt ? { importId: receipt.output_asset_id, localReceipt: true, caption: "", parent: null } : {}),
+    ...(footageReceipt ? { importId: footageReceipt.output_asset_id, footageReceipt, caption: "", parent: footageReceipt.source_asset_id } : {}),
   });
 }
 
@@ -1019,7 +1037,7 @@ async function importWoodhouseAsset(env, project, shareId) {
   });
 }
 
-async function storeAsset(env, project, bytes, { mime, title, caption, parent = null, importId, hash, localReceipt = false }) {
+async function storeAsset(env, project, bytes, { mime, title, caption, parent = null, importId, hash, localReceipt = false, footageReceipt = null }) {
   const sniffed = sniffMedia(bytes, mime);
   if (!sniffed.kind)
     throw new HttpError(
@@ -1031,7 +1049,7 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
     sniffed.kind === "image" ? MAX_IMAGE_BYTES : sniffed.kind === "audio" ? MAX_AUDIO_BYTES : MAX_VIDEO_BYTES;
   if (bytes.length > limit)
     throw new HttpError(413, `${sniffed.kind === "image" ? "Images" : sniffed.kind === "audio" ? "Audio" : "Videos"} must stay under ${limit / 1024 / 1024} MiB`, "too_large");
-  if (localReceipt && sniffed.mime !== "video/mp4") throw new HttpError(415, "A local render receipt requires an MP4", "unsupported_type");
+  if ((localReceipt || footageReceipt) && sniffed.mime !== "video/mp4") throw new HttpError(415, "A local render receipt requires an MP4", "unsupported_type");
 
   let size;
   if (sniffed.kind === "image") {
@@ -1049,6 +1067,10 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
     size = { width: video.width, height: video.height, durationMs: video.durationMs };
   }
 
+  if (footageReceipt) {
+    const snap = safeJson(footageReceipt.snapshot_json, {});
+    if (size.width !== snap.framing?.width || size.height !== snap.framing?.height || !Number.isFinite(size.durationMs) || Math.abs(size.durationMs - snap.totalMs) > 150) throw new HttpError(400, "The MP4 dimensions or duration differ from the saved export.", "invalid_output");
+  }
   hash ??= await sha256Hex(bytes);
   const assetId = importId ?? id("asset");
   const storageId = importId ? id("asset") : assetId;
@@ -1062,7 +1084,7 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
   try {
     await env.DB.prepare(
       `INSERT INTO assets(id,project_id,kind,r2_key,mime,bytes,width,height,duration_ms,sample_rate,channels,sha256,title,caption,source,parent_asset_id,created_at,updated_at)
-       ${localReceipt ? "SELECT" : "VALUES("}?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'upload',?15,?16,?16${localReceipt ? " WHERE EXISTS (SELECT 1 FROM local_render_receipts WHERE output_asset_id=?1 AND project_id=?2 AND expires_at>=?16)" : ")"}${importId ? " ON CONFLICT(id) DO NOTHING" : ""}`,
+       ${localReceipt || footageReceipt ? "SELECT" : "VALUES("}?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'upload',?15,?16,?16${localReceipt ? " WHERE EXISTS (SELECT 1 FROM local_render_receipts WHERE output_asset_id=?1 AND project_id=?2 AND expires_at>=?16)" : footageReceipt ? " WHERE EXISTS (SELECT 1 FROM footage_export_receipts r JOIN footage_plans p ON p.id=r.plan_id AND p.project_id=r.project_id AND p.revision=r.plan_revision JOIN assets source ON source.id=r.source_asset_id AND source.project_id=r.project_id AND source.sha256=r.source_sha256 AND source.deleted_at IS NULL WHERE r.output_asset_id=?1 AND r.project_id=?2 AND r.expires_at>=?16)" : ")"}${importId ? " ON CONFLICT(id) DO NOTHING" : ""}`,
     )
       .bind(
         assetId,
@@ -1088,9 +1110,9 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
     throw error;
   }
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
-  if (!asset && localReceipt) { await env.MEDIA.delete(key); throw new HttpError(409, "This render receipt expired. Start a new render.", "receipt_expired"); }
+  if (!asset && (localReceipt || footageReceipt)) { await env.MEDIA.delete(key); throw new HttpError(409, "This render receipt expired. Start a new render.", "receipt_expired"); }
   if (asset.r2_key !== key) await env.MEDIA.delete(key);
-  if (localReceipt && asset.sha256 !== hash) throw new HttpError(409, "This receipt is already bound to different output bytes.", "receipt_already_bound");
+  if ((localReceipt || footageReceipt) && asset.sha256 !== hash) throw new HttpError(409, "This receipt is already bound to different output bytes.", "receipt_already_bound");
   if (asset.deleted_at) throw new HttpError(409, "This imported original was previously removed from this project.");
   return json({ asset: assetView(asset, { hasLocalRenderReceipt: localReceipt }) }, asset.r2_key === key ? 201 : 200);
 }

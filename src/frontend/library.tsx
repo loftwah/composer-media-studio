@@ -1,6 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AssembleProps, CreateProps, HistoryProps, LibraryProps, MediaAssetV1, PublishProps, SettingsProps, ViewerProps } from "./contracts";
 import { CreateWorkbench } from "./create";
 import { Assemble, Settings } from "./assemble-settings";
@@ -88,6 +88,14 @@ function PrivateRenderReceipt({ assetId, reentryUrl }: { assetId: string; reentr
   </details>;
 }
 
+type FootageReceipt = { plan: { id: string; revision: number }; source: { assetId: string; sha256: string; startMs: number; endMs: number }; framing: { aspect: string; fit: string; quality: string; width: number; height: number }; output: { sha256: string } };
+function PrivateFootageReceipt({ assetId }: { assetId: string }) {
+  const [receipt, setReceipt] = useState<FootageReceipt | null>(null);
+  useEffect(() => { const controller = new AbortController(); void fetch(`/api/assets/${encodeURIComponent(assetId)}/footage-export-receipt`, {credentials:'same-origin',signal:controller.signal}).then(response => response.ok ? response.json() : null).then(data => { if (data?.receipt) setReceipt(data.receipt); }).catch(() => {}); return () => controller.abort(); }, [assetId]);
+  if (!receipt) return null;
+  return <details className="asset-technical"><summary>Private source receipt</summary><p>The server checked the saved source and cut-map revision. The browser reported the render; the server did not verify its pixels.</p><dl className="kv"><dt>Cut map</dt><dd>{receipt.plan.id} · revision {receipt.plan.revision}</dd><dt>Source</dt><dd>{receipt.source.assetId} · {receipt.source.startMs}–{receipt.source.endMs} ms</dd><dt>Source SHA-256</dt><dd>{receipt.source.sha256}</dd><dt>Frame</dt><dd>{receipt.framing.width} × {receipt.framing.height} · {receipt.framing.fit}</dd><dt>Output SHA-256</dt><dd>{receipt.output.sha256}</dd></dl></details>;
+}
+
 function AssetVideo({ asset, reentryUrl }: { asset: MediaAssetV1; reentryUrl: string }) {
   const [error, setError] = useState<'signed-out' | 'unavailable' | null>(null);
   async function reportError() {
@@ -113,6 +121,7 @@ function AssetViewer({ projectId, asset, still, launchKitUrl, reentryUrl }: View
         {localRender ? <p>MP4 rendered on this device from a saved storyboard{asset.caption?.includes('; owner-confirmed captions') ? ', with saved captions' : ''}.</p> : asset.caption && <p>{asset.caption}</p>}
         <dl className="kv"><dt>Size</dt><dd>{bytesLabel(asset.bytes)}</dd>{Boolean(asset.width) && <><dt>Frame</dt><dd>{asset.width} × {asset.height}</dd></>}{Boolean(asset.durationMs) && <><dt>Duration</dt><dd>{(asset.durationMs! / 1000).toFixed(1)}s</dd></>}{isAudio && Boolean(asset.sampleRate) && <><dt>Audio</dt><dd>{asset.sampleRate} Hz · {asset.channels ?? "—"} channel{asset.channels === 1 ? "" : "s"}</dd></>}<dt>Type</dt><dd>{asset.mime}</dd><dt>Added</dt><dd>{dateLabel(asset.createdAt)}</dd></dl>
         {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id} reentryUrl={reentryUrl}/>}
+        {isVideo && <PrivateFootageReceipt key={asset.id} assetId={asset.id}/>}
         <details className="asset-technical"><summary>Technical details</summary><dl className="kv"><dt>SHA-256</dt><dd>{asset.sha256}</dd></dl>{localRender && <p>{asset.caption}</p>}</details>
         <div className="row"><a className="button secondary" href={asset.download} download>Download</a><button type="button" className="secondary" data-action="rename-asset" data-id={asset.id}>Rename</button>{still && <button type="button" className="secondary" data-action="vary-asset" data-id={still.id}>{isVideo ? "Make a variation of its still" : "Make a variation"}</button>}</div>
         <div className="row"><button type="button" className="secondary" data-action="animate-asset" data-id={asset.id} disabled={asset.kind !== "image"}>Animate this still</button><button type="button" className="secondary" data-action="publish-asset" data-id={asset.id}>Publish page</button></div>
