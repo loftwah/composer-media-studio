@@ -505,7 +505,17 @@ ${error ? `<h1>Share artwork</h1><p role="status">${escapeHtml(error)}</p><p><a 
 }
 
 // The gallery uses listed publications; the home fallback uses only configured public films.
-export function publicGallery({ items = [], featured = [], hasMore = false, page = 1, home = false, woodhouseShare = false }) {
+export function publicGallery({ items = [], featured = [], hasMore = false, page = 1, home = false, woodhouseShare = false, query = "", kind = "", order = "newest" }) {
+  const pageHref = (number) => {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (kind) params.set("kind", kind);
+    if (order === "oldest") params.set("order", order);
+    params.set("page", String(number));
+    return `/gallery?${params}`;
+  };
+  const option = (value, label, selected) => `<option value="${value}"${selected ? " selected" : ""}>${label}</option>`;
+  const controls = `<form class="gallery-controls" action="/gallery" method="get"><label>Search titles and descriptions<input type="search" name="q" value="${escapeHtml(query)}" maxlength="80" placeholder="Search public work"></label><label>Media<select name="kind">${option("", "All media", !kind)}${option("image", "Images", kind === "image")}${option("video", "Video", kind === "video")}${option("audio", "Audio", kind === "audio")}</select></label><label>Order<select name="order">${option("newest", "Newest first", order !== "oldest")}${option("oldest", "Oldest first", order === "oldest")}</select></label><button type="submit">Find work</button>${query || kind || order === "oldest" ? '<a href="/gallery">Clear filters</a>' : ""}</form>`;
   const renderCards = (entries) => entries.map((item) => {
     const slug = encodeURIComponent(item.slug);
     const title = escapeHtml(item.title);
@@ -522,6 +532,6 @@ export function publicGallery({ items = [], featured = [], hasMore = false, page
   return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio." })}
 <body><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="wordmark" href="/">${mark}<span>Media Studio</span></a><nav class="header-nav" aria-label="Main"><a href="/gallery">Gallery</a>${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}<a class="button secondary" href="/studio">Open Studio</a><button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button></nav></header>
 <main id="main" class="public-gallery"><section class="gallery-intro"><p class="eyebrow">Images · film · sound</p><h1>${home ? "Made to be seen." : "The public gallery."}</h1><p>${home ? "Explore work made and kept in Media Studio." : "Images, films and sound shared by their creators."}</p>${home ? '<a class="button" href="/gallery">Explore the gallery →</a>' : ""}</section>
-<section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><p class="eyebrow">Publications</p><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${items.length ? `<ul class="gallery-grid">${cards}</ul>` : '<p>No work has been added to the public gallery yet.</p>'}
-${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="/gallery?page=${page - 1}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="/gallery?page=${page + 1}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films while the public gallery is being populated.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? '<p><a href="/portfolio">See more featured films and artwork →</a></p>' : ""}</section>` : ""}</main></body></html>`;
+<section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><p class="eyebrow">Publications</p><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${items.length ? `<ul class="gallery-grid">${cards}</ul>` : query || kind ? '<p>No published work matches these filters.</p>' : '<p>No work has been added to the public gallery yet.</p>'}
+${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(pageHref(page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(pageHref(page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films while the public gallery is being populated.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? '<p><a href="/portfolio">See more featured films and artwork →</a></p>' : ""}</section>` : ""}</main></body></html>`;
 }

@@ -207,12 +207,15 @@ async function homeShowcase(env) {
   return rows.filter(Boolean).slice(0, 3).map((row) => ({ slug: row.slug, title: row.title, description: row.description, mime: row.mime, hasPoster: Boolean(row.poster_asset_id) }));
 }
 
-async function publicCatalogue(env, page = 1, limit = 24) {
+async function publicCatalogue(env, page = 1, limit = 24, { query = "", kind = "", order = "newest" } = {}) {
+  const direction = order === "oldest" ? "ASC" : "DESC";
   const result = await env.DB.prepare(`SELECT p.slug,p.title,p.description,p.created_at,a.kind,a.mime,
     poster.id AS poster_asset_id FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
     LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
     WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL
-    ORDER BY p.created_at DESC,p.id DESC LIMIT ?1 OFFSET ?2`).bind(limit + 1, (page - 1) * limit).all();
+      AND (?1 = '' OR instr(lower(p.title), lower(?1)) > 0 OR instr(lower(p.description), lower(?1)) > 0)
+      AND (?2 = '' OR a.kind = ?2)
+    ORDER BY p.created_at ${direction},p.id ${direction} LIMIT ?3 OFFSET ?4`).bind(query, kind, limit + 1, (page - 1) * limit).all();
   return { items: result.results.slice(0, limit), hasMore: result.results.length > limit };
 }
 
@@ -1289,8 +1292,12 @@ async function handlePublic(request, env, url) {
   if (path === "/gallery") {
     const rawPage = url.searchParams.get("page") ?? "1";
     const page = /^[1-9][0-9]{0,4}$/.test(rawPage) ? Number(rawPage) : 1;
-    const catalogue = await publicCatalogue(env, page);
-    return new Response(publicGallery({ ...catalogue, page, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+    const query = (url.searchParams.get("q") ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
+    const requestedKind = url.searchParams.get("kind") ?? "";
+    const kind = ["image", "video", "audio"].includes(requestedKind) ? requestedKind : "";
+    const order = url.searchParams.get("order") === "oldest" ? "oldest" : "newest";
+    const catalogue = await publicCatalogue(env, page, 24, { query, kind, order });
+    return new Response(publicGallery({ ...catalogue, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
