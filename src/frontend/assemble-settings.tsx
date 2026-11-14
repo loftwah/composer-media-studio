@@ -101,6 +101,11 @@ function CompositionCard({
           include the latest edits; earlier results are kept.
         </p>
       )}
+      <details><summary>Review saved shot timings</summary><ol>{composition.shots.map((shot, index) => {
+        const asset = assets.find((item) => item.id === shot.assetId);
+        const range = shotRange(shot, asset);
+        return <li key={`${shot.assetId}-${index}`}>{asset?.title ?? "Unavailable clip"}: {range ? `${range.start}–${range.end} ms of ${asset!.durationMs} ms` : "unavailable or invalid range"}</li>;
+      })}</ol></details>
       <div className="row">
         <button
           className="button secondary"

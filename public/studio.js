@@ -788,6 +788,7 @@ function compositionCard(composition) {
       <span class="small">${dateLabel(composition.createdAt)}</span>
     </header>
     ${changedSinceRender(composition, renders) ? `<p class="small" style="margin:0"><strong>Changed since the last render.</strong> Render again to include the latest edits; earlier results are kept.</p>` : ""}
+    <details><summary>Review saved shot timings</summary><ol>${composition.shots.map((shot) => { const asset = state.project.assets.find((item) => item.id === shot.assetId); const range = shotRange(shot, asset); return `<li>${esc(asset?.title ?? "Unavailable clip")}: ${range ? `${range.start}–${range.end} ms of ${asset.durationMs} ms` : "unavailable or invalid range"}</li>`; }).join("")}</ol></details>
     <div class="row">
       <button class="button secondary" data-action="compose-render" data-variant="assembly" data-id="${esc(composition.id)}" ${pending || hasTrims ? "disabled" : ""}>Render master · ${money(renderEstimate("assembly"))}</button>
       <button class="button secondary" data-action="compose-render" data-variant="social" data-id="${esc(composition.id)}" ${pending || hasTrims ? "disabled" : ""} title="The selected order, composed into a 720 × 1280 (9:16) master with the saved sound, after a one-second vertical slate">Make 9:16 cut · ${money(renderEstimate("social"))}</button>
@@ -1642,6 +1643,7 @@ async function handleAction(action, element, keyboard = false) {
         slateAssetId: state.compose.slateAssetId || null,
       };
       const editingId = state.compose.editingId;
+      const projectId = state.projectId;
       if (editingId) {
         let result;
         try {
@@ -1650,7 +1652,21 @@ async function handleAction(action, element, keyboard = false) {
             body: JSON.stringify({ ...payload, expectedUpdatedAt: state.compose.expectedUpdatedAt }),
           });
         } catch (error) {
-          if (error.status === 409) { notify("This storyboard changed elsewhere. Your draft is still here; review the latest version before saving.", "bad"); return; }
+          if (error.status === 409) {
+            try {
+              const latest = await api(`/api/projects/${projectId}`);
+              if (state.projectId !== projectId || !state.project || !Array.isArray(latest.compositions) || !Array.isArray(latest.assets)) throw new Error("Could not refresh storyboard list");
+              state.project.compositions = latest.compositions;
+              state.project.assets = latest.assets;
+              if (state.view === "project" && state.tab === "assemble") {
+                if (mediaMounted) renderReactAssemble(); else render();
+              }
+              notify("This storyboard changed elsewhere. Your draft is still here. Review saved shot timings below; copy your edits before using Edit shots to load the latest version.", "bad");
+            } catch {
+              notify("This storyboard changed elsewhere. Your draft is still here; copy it before reloading to review the latest version.", "bad");
+            }
+            return;
+          }
           throw error;
         }
         state.project.compositions = (state.project.compositions ?? []).map((item) =>
