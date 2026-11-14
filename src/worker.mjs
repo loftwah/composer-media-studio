@@ -191,6 +191,16 @@ function generationView(generation, extra = {}) {
   };
 }
 
+// Only explicitly configured, still-published films are safe for the home gallery.
+async function homeShowcase(env) {
+  const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 8);
+  const rows = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime
+    FROM publications p JOIN assets a ON a.id=p.asset_id
+    LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
+    WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
+  return rows.filter(Boolean).slice(0, 3).map((row) => ({ slug: row.slug, title: row.title, description: row.description, mime: row.mime, hasPoster: Boolean(row.poster_asset_id) }));
+}
+
 async function projectSummary(env, project) {
   const counts = await env.DB.prepare(
     "SELECT kind, COUNT(*) AS n FROM assets WHERE project_id=?1 AND deleted_at IS NULL GROUP BY kind",
@@ -333,6 +343,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       : results;
     return json({
       projects: await Promise.all(visible.map((project) => projectSummary(env, project))),
+      showcase: await homeShowcase(env),
       models: publicModels(),
       videosConfigured: Boolean(env.FAL_KEY),
       allowanceDefaultMicro: Number(env.MONTHLY_ALLOWANCE_MICRO) || 5_000_000,

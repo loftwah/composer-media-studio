@@ -12,6 +12,8 @@ export interface HomeProps {
   projects: ProjectSummaryV1[];
   videosConfigured: boolean;
   woodhouseShare: boolean;
+  canEdit: boolean;
+  showcase: { slug: string; title: string; description: string; mime: string; hasPoster: boolean }[];
 }
 
 /** Read-only media contract returned by GET /api/projects/:id. */

@@ -23,6 +23,7 @@ const state = {
   videosConfigured: false,
   destinations: {},
   woodhouseShare: false,
+  showcase: [],
   session: null,
   filter: "all",
   query: "",
@@ -165,6 +166,7 @@ async function boot() {
   state.videosConfigured = data.videosConfigured;
   state.destinations = data.destinations ?? {};
   state.woodhouseShare = data.woodhouseShare === true;
+  state.showcase = data.showcase ?? [];
   const route = parseHash();
   state.view = route.view;
   state.projectId = route.projectId ?? null;
@@ -263,6 +265,7 @@ function render() {
         projects: state.projects,
         videosConfigured: state.videosConfigured,
         woodhouseShare: state.woodhouseShare,
+        showcase: state.showcase, canEdit: state.session?.actions.includes("edit") ?? false,
       });
     } else app.innerHTML = homeView();
   } else if (state.view === "asset") {
@@ -2300,6 +2303,7 @@ window.addEventListener("hashchange", async () => {
   if (route.view === "home") {
     const data = await api("/api/state");
     state.projects = data.projects;
+    state.showcase = data.showcase ?? [];
     render();
     return;
   }

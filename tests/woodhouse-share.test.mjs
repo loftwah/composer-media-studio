@@ -43,6 +43,81 @@ test("showcase lists only currently published live videos and honours withdrawal
   assert.doesNotMatch(await (await read()).text(), /example-film/);
 });
 
+test("home examples include only configured, live published videos and explicit posters", async () => {
+  const { env, project } = await setup();
+  const video = await addAsset(env, project, {
+    id: "asset_home_video",
+    kind: "video",
+  });
+  const poster = await addAsset(env, project, {
+    id: "asset_home_poster",
+    kind: "image",
+  });
+  env.PUBLIC_SHOWCASE_SLUGS = "home-film,withdrawn-film,hidden-film";
+  await env.DB.prepare(
+    "INSERT INTO publications(id,project_id,asset_id,poster_asset_id,slug,title,description,asset_revision,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,1,1)",
+  )
+    .bind(
+      "pub_home",
+      project.id,
+      video.id,
+      poster.id,
+      "home-film",
+      "Public work",
+      "Public description",
+    )
+    .run();
+  await env.DB.prepare(
+    "INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,revoked_at) VALUES(?1,?2,?3,?4,?5,?6,1,1,1)",
+  )
+    .bind(
+      "pub_hidden",
+      project.id,
+      video.id,
+      "withdrawn-film",
+      "Withdrawn",
+      "Private",
+    )
+    .run();
+  await env.DB.prepare(
+    "INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,hidden) VALUES(?1,?2,?3,?4,?5,?6,1,1,1)",
+  )
+    .bind(
+      "pub_home_hidden",
+      project.id,
+      video.id,
+      "hidden-film",
+      "Hidden",
+      "Not listed",
+    )
+    .run();
+  const cookie = "studio_session=" + (await createSession(env));
+  const state = await worker.fetch(
+    new Request("https://studio.test/api/state", { headers: { cookie } }),
+    env,
+  );
+  const result = await state.json();
+  assert.deepEqual(result.showcase, [
+    {
+      slug: "home-film",
+      title: "Public work",
+      description: "Public description",
+      mime: "video/mp4",
+      hasPoster: true,
+    },
+  ]);
+  await env.DB.prepare("UPDATE assets SET deleted_at=1 WHERE id=?1")
+    .bind(poster.id)
+    .run();
+  const without = await (
+    await worker.fetch(
+      new Request("https://studio.test/api/state", { headers: { cookie } }),
+      env,
+    )
+  ).json();
+  assert.equal(without.showcase[0].hasPoster, false);
+});
+
 test("Share browsing and imports preserve source boundaries and deduplicate concurrent saves", async (t) => {
   const { env, project } = await setup();
   env.WOODHOUSE_SHARE = "true";
