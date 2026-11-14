@@ -9,6 +9,8 @@ let mediaMounted = false;
 let bootReady = false;
 let libraryReturn = null;
 const shareImportDrafts = new Map();
+// Comparison is an in-memory view of existing same-project images, not a saved collection.
+const comparisons = new Map();
 
 const state = {
   view: "home",
@@ -31,11 +33,26 @@ const state = {
   mask: null,
 };
 
-// The original workbench remains in place while the home surface migrates.
-// A missing bundle falls back to the existing home rather than hiding projects.
+// A missing bundle falls back to the existing workbench rather than hiding it.
+// Upgrade a deep-linked library or viewer once loading completes and the view is idle.
 const creativeModuleReady = import(`/creative/home.js${new URL(import.meta.url).search}`)
-  .then((module) => { creativeHome = module; if (bootReady && state.view === "home") render(); })
+  .then((module) => { creativeHome = module; if (bootReady && state.view === "home") render(); else upgradeFallbackWhenIdle(); })
   .catch(() => console.warn("Creative home unavailable; using the existing project browser."));
+
+function upgradeFallbackWhenIdle() {
+  if (!bootReady || !creativeHome || mediaMounted || !state.project) return;
+  if (!(state.view === "asset" || (state.view === "project" && state.tab === "library"))) return;
+  // Keep a focused control, open dialog, playing preview or selected file intact.
+  if (app.contains(document.activeElement) || document.querySelector("dialog[open]") ||
+      [...app.querySelectorAll("video, audio")].some((media) => !media.paused) ||
+      [...app.querySelectorAll('input[type="file"]')].some((input) => input.files?.length)) return;
+  const scrollY = window.scrollY;
+  render(); // Saves and restores any Share import draft and the library query.
+  window.scrollTo(0, scrollY);
+}
+// Focus can move within the app on focusout, so check after the new focus settles.
+document.addEventListener("focusout", () => setTimeout(upgradeFallbackWhenIdle, 0));
+app.addEventListener("pause", upgradeFallbackWhenIdle, true);
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (character) =>
@@ -304,8 +321,11 @@ function render() {
 }
 
 function renderReactLibrary() {
+  const comparison = comparisons.get(state.projectId) ?? { active: false, ids: [] };
+  comparison.ids = comparison.ids.filter((id) => state.project.assets.some((asset) => asset.id === id && asset.kind === "image"));
+  comparisons.set(state.projectId, comparison);
   creativeHome.renderLibrary(app.querySelector("#creative-media"), {
-    projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter,
+    projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter, comparing: comparison.active, compareIds: comparison.ids,
     canImportShare: state.woodhouseShare && state.session?.actions.includes("edit"),
   });
 }
@@ -990,6 +1010,31 @@ async function handleAction(action, element) {
       state.tab = element.dataset.tab;
       location.hash = `#/p/${state.projectId}/${state.tab}`;
       return;
+    case "compare-mode": {
+      const comparison = comparisons.get(state.projectId) ?? { active: false, ids: [] };
+      comparison.active = !comparison.active;
+      comparisons.set(state.projectId, comparison);
+      renderReactLibrary();
+      drawWaveforms();
+      return;
+    }
+    case "compare-toggle": {
+      const comparison = comparisons.get(state.projectId);
+      const asset = state.project.assets.find((item) => item.id === id && item.kind === "image");
+      if (!comparison || !asset) return;
+      if (comparison.ids.includes(id)) comparison.ids = comparison.ids.filter((item) => item !== id);
+      else if (comparison.ids.length < 2) comparison.ids.push(id);
+      renderReactLibrary();
+      drawWaveforms();
+      return;
+    }
+    case "compare-clear": {
+      const comparison = comparisons.get(state.projectId);
+      if (comparison) comparison.ids = [];
+      renderReactLibrary();
+      drawWaveforms();
+      return;
+    }
     case "filter":
       state.filter = element.dataset.filter;
       if (mediaMounted && state.view === "project" && state.tab === "library") {

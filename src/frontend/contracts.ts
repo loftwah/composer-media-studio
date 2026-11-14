@@ -40,6 +40,8 @@ export interface LibraryProps {
   query: string;
   filter: "all" | "image" | "video" | "audio";
   canImportShare: boolean;
+  comparing: boolean;
+  compareIds: string[];
 }
 export interface ViewerProps {
   projectId: string;
