@@ -36,14 +36,15 @@ const state = {
 };
 
 // A missing bundle falls back to the existing workbench rather than hiding it.
-// Upgrade a deep-linked library or viewer once loading completes and the view is idle.
+// Upgrade a deep-linked library, viewer or untouched assembly once loading completes.
 const creativeModuleReady = import(`/creative/home.js${new URL(import.meta.url).search}`)
   .then((module) => { creativeHome = module; if (bootReady && state.view === "home") render(); else upgradeFallbackWhenIdle(); })
   .catch(() => console.warn("Creative home unavailable; using the existing project browser."));
 
 function upgradeFallbackWhenIdle() {
   if (!bootReady || !creativeHome || mediaMounted || !state.project) return;
-  if (!(state.view === "asset" || (state.view === "project" && state.tab === "library"))) return;
+  const assemblyUntouched = state.view === "project" && state.tab === "assemble" && !state.compose.title && !state.compose.shotIds.length && !state.compose.audioTracks.length && !state.compose.editingId;
+  if (!(state.view === "asset" || (state.view === "project" && state.tab === "library") || assemblyUntouched)) return;
   // Keep a focused control, open dialog, playing preview or selected file intact.
   if (app.contains(document.activeElement) || document.querySelector("dialog[open]") ||
       [...app.querySelectorAll("video, audio")].some((media) => !media.paused) ||
@@ -335,7 +336,7 @@ function renderReactLibrary() {
 }
 
 function renderReactAssemble() {
-  creativeHome.renderAssemble(app.querySelector("#creative-media"), { compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social") });
+  creativeHome.renderAssemble(app.querySelector("#creative-media"), { projectId: state.projectId, canEdit: Boolean(state.session?.actions.includes("edit")), compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social") });
 }
 
 function renderReactHistory() {

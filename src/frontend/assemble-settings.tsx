@@ -1,3 +1,4 @@
+import { SongPlans } from "./song-plans";
 import type {
   AssembleProps,
   CompositionV1,
@@ -222,6 +223,8 @@ function CompositionCard({
 }
 
 export function Assemble({
+  projectId,
+  canEdit,
   compose,
   assets,
   compositions,
@@ -239,6 +242,7 @@ export function Assemble({
   const total = chosen.reduce((sum, a) => sum + (a.durationMs || 0), 0);
   return (
     <>
+      <SongPlans key={projectId} projectId={projectId} assets={assets} canEdit={canEdit} />
       <div className="spread">
         <h2 style={{ margin: 0 }}>Storyboard and assembly</h2>
         <span className="small">
