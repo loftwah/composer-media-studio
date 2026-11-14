@@ -12,6 +12,7 @@ import {
   verifyComposerGrant,
 } from "../src/lib/auth.mjs";
 import { setup } from "./harness.mjs";
+import worker from "../src/worker.mjs";
 
 const env = {
   SESSION_SECRET: "test-session-secret-that-is-long-enough",
@@ -64,6 +65,23 @@ test("a bridge token carries the actor, workspace, project and actions", async (
   assert.equal(claim.project, "prj_abc123");
   assert.deepEqual(claim.actions, ["read", "generate"]);
   assert.equal(claim.revision, 4);
+});
+
+test("handoff admits only explicit null or valid project scope", async () => {
+  const fixture=await setup(); const runtime={...fixture.env,BRIDGE_SECRET:env.BRIDGE_SECRET,COMPOSER_ORIGIN:env.COMPOSER_ORIGIN};
+  const base={aud:'media-studio',sub:'acct-123',workspace:'ws-personal',actions:['read'],exp:Date.now()+60_000};
+  for (const project of [undefined,42,{},'', 'not/a/project']) {
+    const claim={...base,jti:crypto.randomUUID()}; if(project !== undefined) claim.project=project;
+    const token=await bridge(claim);
+    assert.equal(await readBridgeToken(runtime,token),null);
+    const response=await worker.fetch(new Request('https://studio.test/api/bridge',{method:'POST',headers:{'content-type':'application/json',origin:'https://studio.test'},body:JSON.stringify({token})}),runtime);
+    assert.equal(response.status,401);
+  }
+  const token=await bridge({...base,project:null,jti:crypto.randomUUID()});
+  const response=await worker.fetch(new Request('https://studio.test/api/bridge',{method:'POST',headers:{'content-type':'application/json',origin:'https://studio.test'},body:JSON.stringify({token})}),runtime);
+  assert.equal(response.status,200);
+  const session=await readSession(runtime,new Request('https://studio.test/api/state',{headers:{cookie:response.headers.get('set-cookie')}}));
+  assert.equal(session.project,null); assert.equal(session.projectClaimExplicit,true);
 });
 
 test("a tampered or expired bridge token is refused", async () => {
@@ -129,6 +147,7 @@ test("a handoff can only be consumed once", async () => {
     workspace: "ws-personal",
     actions: ["read"],
     jti: "handoff-one",
+    project: null,
     exp: Date.now() + 60_000,
   });
   const claim = await readBridgeToken(runtime, token);

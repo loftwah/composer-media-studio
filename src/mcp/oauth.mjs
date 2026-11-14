@@ -77,14 +77,16 @@ async function requestParams(env, request, params) {
 }
 async function projectAllowed(env, session, project, scopes = ['studio.read']) {
   if (!session || !scopes.every(scope => can(session, SCOPE_ACTIONS[scope]))) return false;
-  if (session.mode !== 'owner' && (!session.project || session.project !== project)) return false;
+  // A null bridge project is the existing workspace-wide Studio grant. The
+  // issued MCP token below is still bound to the one project selected here.
+  if (session.mode !== 'owner' && !(session.project === project || (session.project === null && session.projectClaimExplicit === true))) return false;
   const row = await env.DB.prepare('SELECT id FROM projects WHERE id=?1').bind(project).first();
   if (!row) return false;
   if (session.mode !== 'owner') for (const scope of scopes) await verifyComposerGrant(env, session, SCOPE_ACTIONS[scope]);
   return true;
 }
 function issuer(session) {
-  return { mode: session.mode, actor: session.actor, workspace: session.workspace, project: session.project, revision: session.revision, actions: session.actions };
+  return { mode: session.mode, actor: session.actor, workspace: session.workspace, project: session.project, projectClaimExplicit: session.projectClaimExplicit === true, revision: session.revision, actions: session.actions };
 }
 function sameIssuer(a, b) { return a.mode === b.mode && a.actor === b.actor && a.workspace === b.workspace && (a.mode === 'owner' || a.project === b.project); }
 function challengeDigest(verifier) {
@@ -150,9 +152,14 @@ export async function oauthRoute(request, env, url) {
     if (!valid) return content('<h1>Connection request is invalid</h1><p>Return to your agent and start the connection again.</p>', 400);
     if (request.method === 'GET') {
       const rows = await env.DB.prepare('SELECT id,name FROM projects ORDER BY updated_at DESC').all();
-      const projects = session.mode === 'owner' ? rows.results : rows.results.filter(p => p.id === session.project);
+      const projects = session.mode === 'owner' || (session.project === null && session.projectClaimExplicit === true) ? rows.results : rows.results.filter(p => p.id === session.project);
       if (!valid.scopes.every(scope => can(session, SCOPE_ACTIONS[scope]))) return content('<h1>Permission unavailable</h1><p>Your current Studio access does not include every requested action.</p>', 403);
       if (session.mode !== 'owner') for (const scope of valid.scopes) await verifyComposerGrant(env, session, SCOPE_ACTIONS[scope]);
+      if (session.mode !== 'owner' && session.project === null && session.projectClaimExplicit !== true) {
+        let reentry = '';
+        try { const url = new URL(env.COMPOSER_ORIGIN); if (url.protocol === 'https:' && !url.username && !url.password) reentry = `<p><a href="${escapeHtml(url.origin + '/media-studio/studio')}">Reopen Studio from App Composer</a></p>`; } catch {}
+        return content(`<h1>Reopen Media Studio</h1><p>Open Studio from App Composer, then restart this connection to choose a project.</p>${reentry}`, 403);
+      }
       const options = projects.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
       const permissions = valid.scopes.map(scope => ({ 'studio.read': 'Read project records, prompts, captions, assets and exports', 'studio.edit': 'Edit project settings and save compositions or imports', 'studio.generate': 'Make paid generation requests within the spending limit you set below', 'studio.publish': 'Publish and withdraw project media without further Studio approval' })[scope]);
       const capField = valid.scopes.includes('studio.generate') ? '<label>Maximum estimated spend for this connection (US dollars) <input name="spend_cap_usd" type="number" min="0.01" max="100" step="0.01" required></label><p>The agent may make multiple requests up to this limit without another Studio approval. Provider charges may differ from estimates; the project allowance also applies. This connection expires after 30 minutes.</p>' : '';

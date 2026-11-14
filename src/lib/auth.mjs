@@ -62,6 +62,7 @@ export async function createSession(env, claims = {}) {
     workspace: typeof claims.workspace === "string" ? claims.workspace.slice(0, 64) : null,
     workspaceName: typeof claims.workspaceName === "string" ? claims.workspaceName.slice(0, 80) : null,
     project: typeof claims.project === "string" ? claims.project.slice(0, 64) : null,
+    projectClaimExplicit: mode === "bridge" && claims.projectClaimExplicit === true,
     actions: mode === "owner" ? [...ACTIONS] : normaliseActions(claims.actions),
     revision: Number.isSafeInteger(claims.revision) ? claims.revision : 0,
     issued: now(),
@@ -114,6 +115,7 @@ export async function readBridgeToken(env, token) {
     const claim = decode(payload);
     if (!claim || claim.aud !== "media-studio") return null;
     if (typeof claim.sub !== "string" || !claim.sub) return null;
+    if (!Object.hasOwn(claim, "project") || !(claim.project === null || (typeof claim.project === "string" && /^[a-z0-9_]{4,64}$/.test(claim.project)))) return null;
     if (typeof claim.exp !== "number") return null;
     // A handoff may express its expiry in seconds or milliseconds. Normalise
     // rather than reject a correct token minted by the other side.

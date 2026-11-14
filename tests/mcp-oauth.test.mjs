@@ -6,12 +6,62 @@ import { createSession } from '../src/lib/auth.mjs';
 import { setup, addAsset, jpeg } from './harness.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import { pruneMcpRecords, reserveMcpSpend } from '../src/mcp/oauth.mjs';
 
 const base = 'https://studio.test';
 const resource = base + '/mcp';
 const challenge = async (s) => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))).toString('base64url');
 async function call(env, path, init = {}) { return worker.fetch(new Request(base + path, init), env); }
+
+test('workspace-wide bridge consent creates only a selected-project token and rechecks the grant', async (t) => {
+  const { env, project } = await setup();
+  await env.DB.prepare("INSERT INTO projects(id,name,slug,creative_direction,visibility,defaults_json,created_at,updated_at) VALUES('prj_second','Second studio','second','','private','{}',1,1)").run();
+  env.COMPOSER_ORIGIN='https://composer.test'; env.BRIDGE_SECRET='fictional-bridge-secret-at-least-thirty-two';
+  let active = true, checks = 0;
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    checks++; const claim=JSON.parse(init.body);
+    return Response.json({ok:active,actor:claim.actor,workspace:claim.workspace,actions:['read']}, {status:active?200:403});
+  });
+  const makeCookie = async (projectId, explicit = true) => 'studio_session=' + await createSession(env,{mode:'bridge',actor:'alice',workspace:'team',project:projectId,projectClaimExplicit:explicit,actions:['read']});
+  const workspace = await makeCookie(null), scoped = await makeCookie(project.id);
+  const oldWorkspace = await makeCookie(null, false);
+  const payload=JSON.parse(Buffer.from(workspace.slice('studio_session='.length).split('.')[0],'base64url').toString());
+  delete payload.project;
+  const encoded=Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const malformed='studio_session='+encoded+'.'+createHmac('sha256',env.SESSION_SECRET).update(encoded).digest('hex');
+  const reg = await call(env,'/mcp/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({client_name:'Fixture',redirect_uris:['http://127.0.0.1:43210/callback'],token_endpoint_auth_method:'none'})});
+  const {client_id}=await reg.json(), verifier='x'.repeat(64);
+  const params=new URLSearchParams({response_type:'code',client_id,redirect_uri:'http://127.0.0.1:43210/callback',code_challenge:await challenge(verifier),code_challenge_method:'S256',resource,scope:'studio.read',state:'fixture'});
+  const page = async cookie => call(env,'/mcp/authorize?'+params,{headers:{cookie}});
+  const workspacePage=await (await page(workspace)).text();
+  assert.match(workspacePage, new RegExp(`value="${project.id}"`)); assert.match(workspacePage,/value="prj_second"/);
+  const oldPage=await page(oldWorkspace); assert.equal(oldPage.status,403);
+  assert.match(await oldPage.text(),/href="https:\/\/composer\.test\/media-studio\/studio"/);
+  const scopedPage=await (await page(scoped)).text();
+  assert.match(scopedPage,new RegExp(`value="${project.id}"`)); assert.doesNotMatch(scopedPage,/value="prj_second"/);
+  const malformedPage=await (await page(malformed)).text();
+  assert.doesNotMatch(malformedPage,new RegExp(`value="${project.id}"`)); assert.doesNotMatch(malformedPage,/value="prj_second"/);
+  const approve = (cookie,id) => call(env,'/mcp/authorize',{method:'POST',headers:{cookie,origin:base},body:new URLSearchParams({...Object.fromEntries(params),project:id,decision:'allow'})});
+  assert.equal((await approve(scoped,'prj_second')).status,403);
+  assert.equal((await approve(malformed,project.id)).status,403);
+  assert.equal((await approve(oldWorkspace,project.id)).status,403);
+  active=false; assert.equal((await page(workspace)).status,403); assert.equal((await approve(workspace,project.id)).status,403); active=true;
+  const before=checks; const approved=await approve(workspace,project.id); assert.equal(approved.status,303); assert.ok(checks>before);
+  const code=new URL(approved.headers.get('location')).searchParams.get('code');
+  const exchange=()=>call(env,'/mcp/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,client_id,redirect_uri:'http://127.0.0.1:43210/callback',code_verifier:verifier,resource})});
+  active=false; assert.notEqual((await exchange()).status,200); active=true;
+  // Failed exchange may consume the code; use a fresh confirmed flow.
+  const token=await flow(env, project, workspace);
+  const client=new Client({name:'workspace-test',version:'1'},{versionNegotiation:{mode:'auto'}});
+  const transport=new StreamableHTTPClientTransport(new URL(resource),{requestInit:{headers:{authorization:'Bearer '+token}},fetch:(url,init)=>worker.fetch(new Request(url,init),env)});
+  await client.connect(transport);
+  const list=await client.callTool({name:'studio_list_projects',arguments:{}});
+  assert.deepEqual(list.structuredContent.projects.map(p=>p.id),[project.id]);
+  assert.equal((await client.callTool({name:'studio_get_project',arguments:{projectId:'prj_second'}})).isError,true);
+  active=false; const denied=await call(env,'/mcp',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}}})});
+  assert.notEqual(denied.status,200); await client.close();
+});
 async function flow(env, project, cookie, scope = 'studio.read', spendCap = '0.01') {
   const register = await call(env, '/mcp/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'Fictional agent', redirect_uris: ['http://127.0.0.1:43210/callback'], token_endpoint_auth_method: 'none' }) });
   assert.equal(register.status, 201);

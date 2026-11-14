@@ -295,6 +295,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       workspace: claim.workspace,
       workspaceName: claim.workspaceName,
       project: claim.project,
+      projectClaimExplicit: true,
       actions: claim.actions,
       revision: claim.revision,
     });
@@ -1324,6 +1325,7 @@ async function handlePublic(request, env, url) {
       workspace: claim.workspace,
       workspaceName: claim.workspaceName,
       project: claim.project,
+      projectClaimExplicit: true,
       actions: claim.actions,
       revision: claim.revision,
     });
