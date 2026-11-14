@@ -32,10 +32,35 @@ test('bridge rejects stale plans, unavailable or mis-timed takes, cross-project 
   await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:1}),e=>e.status===409);
   await assert.rejects(createStoryboardFromSongPlan(env,{id:'prj_other'},plan.id,{expectedRevision:2}),e=>e.status===404);
   await env.DB.prepare('UPDATE assets SET duration_ms=5200 WHERE id=?1').bind('asset_take01').run();
-  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2}),e=>e.code==='take_duration_mismatch');
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2}),e=>e.code==='take_trim_confirmation_required');
   await env.DB.prepare('UPDATE assets SET duration_ms=5000 WHERE id=?1').bind('asset_take01').run();
   const result=await createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2});
   const row=await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(result.composition.id).first();
   await assert.rejects(createRender(env,project,row,{clientRequestId:'req_end_trim'}),e=>e.code==='mix_required');
   assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+});
+
+test('a longer take requires explicit trim consent and freezes its exact source interval', async () => {
+  const {env,project,plan}=await fixture(0);
+  await env.DB.prepare('UPDATE assets SET duration_ms=5200 WHERE id=?1').bind('asset_take01').run();
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2}), e=>e.code==='take_trim_confirmation_required');
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM compositions').first()).n,0);
+  const made=await createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true});
+  assert.equal(made.composition.totalMs,20000);
+  assert.deepEqual({start:made.composition.shots[0].trimStartMs,end:made.composition.shots[0].trimEndMs,duration:made.composition.shots[0].durationMs},{start:0,end:5000,duration:5000});
+  assert.equal(made.composition.originSongPlan.revision,2);
+  assert.equal(made.composition.originSongPlan.scenes[0].trimStartMs,0);
+  assert.equal(made.composition.originSongPlan.scenes[0].trimEndMs,5000);
+  assert.equal('trimStartMs' in made.composition.originSongPlan.scenes[1],false);
+  const again=await createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true});
+  assert.equal(again.created,false); assert.equal(again.composition.id,made.composition.id);
+  const row=await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(made.composition.id).first();
+  await assert.rejects(createRender(env,project,row,{clientRequestId:'req_trim_song'}),e=>e.code==='provider_shot_trim_unsupported');
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+});
+
+test('a short selected take is refused even when trim is approved', async () => {
+  const {env,project,plan}=await fixture(0);
+  await env.DB.prepare('UPDATE assets SET duration_ms=4900 WHERE id=?1').bind('asset_take01').run();
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true}),e=>e.code==='take_duration_mismatch');
 });

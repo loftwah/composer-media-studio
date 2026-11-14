@@ -1170,18 +1170,26 @@ export async function createStoryboardFromSongPlan(env, project, planId, input) 
   if (!Array.isArray(song.scenes) || song.scenes.length < 2 || song.scenes.length > 6)
     throw new HttpError(400, "Choose two to six scenes", "invalid_shots");
   const shots = [];
+  const originScenes = [];
   for (const [index, scene] of song.scenes.entries()) {
     if (!scene.selectedTakeId) throw new HttpError(400, `Choose a saved take for scene ${index + 1} first`, "take_required");
     const take = await loadAssetRow(env, project.id, scene.selectedTakeId);
     if (!take || take.kind !== "video") throw new HttpError(400, `The take for scene ${index + 1} is unavailable`, "take_unavailable");
-    if (Number(take.duration_ms) !== scene.endMs - scene.startMs)
-      throw new HttpError(400, `Scene ${index + 1} is ${((scene.endMs - scene.startMs) / 1000).toFixed(3)}s but its take is ${(Number(take.duration_ms) / 1000).toFixed(3)}s. Adjust the scene or choose a matching take; this renderer cannot trim shots.`, "take_duration_mismatch");
-    shots.push({ assetId: take.id });
+    const sceneMs = scene.endMs - scene.startMs;
+    const takeMs = Number(take.duration_ms);
+    if (!Number.isSafeInteger(sceneMs) || sceneMs <= 0 || !Number.isSafeInteger(takeMs) || takeMs < sceneMs)
+      throw new HttpError(400, `Scene ${index + 1} needs a take at least as long as its timing. Choose a longer take or adjust the scene.`, "take_duration_mismatch");
+    const needsTrim = takeMs > sceneMs;
+    if (needsTrim && input.allowTrim !== true)
+      throw new HttpError(400, `Scene ${index + 1} has a longer take. Confirm using its first ${(sceneMs / 1000).toFixed(3)} seconds before making the storyboard.`, "take_trim_confirmation_required");
+    const trim = needsTrim ? { trimStartMs: 0, trimEndMs: sceneMs } : {};
+    shots.push({ assetId: take.id, ...trim });
+    originScenes.push({ id: scene.id, selectedTakeId: scene.selectedTakeId, startMs: scene.startMs, endMs: scene.endMs, ...trim });
   }
   const spec = await buildCompositionSpec(env, project, {
     title: song.title, shots, audioTracks: [{ assetId: source.id, role: "music", startMs: 0, trimStartMs: song.startMs, trimEndMs: song.endMs, gainDb: 0, fadeInMs: 0, fadeOutMs: 0 }],
   });
-  spec.originSongPlan = { id: plan.id, revision, songSha256: plan.song_sha256, sourceStartMs: song.startMs, sourceEndMs: song.endMs, scenes: song.scenes.map(scene => ({ id: scene.id, selectedTakeId: scene.selectedTakeId, startMs: scene.startMs, endMs: scene.endMs })) };
+  spec.originSongPlan = { id: plan.id, revision, songSha256: plan.song_sha256, sourceStartMs: song.startMs, sourceEndMs: song.endMs, scenes: originScenes };
   const compositionId = `cmp_song_${plan.id}_${revision}`;
   let existing = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(compositionId, project.id).first();
   if (existing) return { composition: { id: existing.id, projectId: existing.project_id, createdAt: existing.created_at, updatedAt: existing.updated_at, ...safeJson(existing.spec_json, {}) }, created: false };
