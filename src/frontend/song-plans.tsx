@@ -7,6 +7,7 @@ import { scenePlanChanged } from './song-plan-dirty';
 import { nextCaptionSlot } from './caption-slot';
 import { splitCaption } from './caption-split';
 import { previewSceneReferences, type ReferenceMode } from './scene-reference';
+import { SubjectLibrary, previewSubjectChanges } from './subject-library';
 
 type Scene = { id: string; startMs: number; endMs: number; direction: string; referenceAssetId: string | null; selectedTakeId: string | null };
 type Cue = { id: string; startMs: number; endMs: number; text: string; speaker: string };
@@ -102,6 +103,7 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard }: { projec
         </form>}</div>
         <div><h3>Saved plans</h3>{plans.length === 0 ? <p>No saved song plans yet.</p> : <ul className="song-plan-list">{plans.map(plan => <li key={plan.id}><button type="button" className="secondary" aria-pressed={saved?.id === plan.id} onClick={() => { if (mayLeave()) { open(plan); setError(''); setMessage(''); } }}><strong>{plan.title}</strong><span>{plan.scenes.length} scenes · revision {plan.revision}</span></button></li>)}</ul>}</div>
       </div>
+      <SubjectLibrary projectId={projectId} planId={draft?.id ?? null} scenes={draft?.scenes ?? []} images={images} canEdit={canEdit} conflict={conflict} onApply={(subject, proposal) => setDraft(current => { if (!current) return current; const result = previewSubjectChanges(current.scenes, subject, proposal, images); if (result.error) return current; const edits = new Map(result.edits.map(edit => [edit.id, edit])); return { ...current, scenes: current.scenes.map(scene => { const edit = edits.get(scene.id); return edit ? { ...scene, direction: edit.after, referenceAssetId: edit.afterRef } : scene; }) }; })}/>
       {draft && saved && <div className="song-editor"><div className="song-editor-heading"><div><h3>{saved.title}</h3><p className="small">Revision {saved.revision} · source times are measured from the beginning of the song.</p></div><span className="small">{changedPlan || changedCues || changedDirection || changedReference ? 'Unsaved changes' : 'Saved'}</span></div>
         <fieldset disabled={!canEdit || busy} className="song-editor-fields"><label>Plan title<input maxLength={80} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label><label>Treatment<textarea maxLength={1200} value={draft.treatment} onChange={e => setDraft({ ...draft, treatment: e.target.value })} placeholder="What should the film feel like?" /></label><label>Frame<select value={draft.aspect} onChange={e => setDraft({ ...draft, aspect: e.target.value })}><option value="16:9">Landscape 16:9</option><option value="9:16">Portrait 9:16</option><option value="1:1">Square 1:1</option></select></label>
         <h4>Scenes</h4><p className="small">Keep scenes in order with no gaps or overlaps. These are plans, not generated clips.</p>

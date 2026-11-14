@@ -43,3 +43,11 @@
 .scene-direction-preview dl { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .35rem .75rem; }
 .scene-direction-preview dt { color: var(--muted); }
 .scene-direction-preview dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.subject-library { margin: 1.25rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; }
+.subject-library > summary { cursor: pointer; font-weight: 700; min-height: 44px; align-content: center; }
+.subject-library fieldset { min-width: 0; }
+.subject-summary { display: flex; align-items: start; gap: .75rem; margin: .8rem 0; overflow-wrap: anywhere; }
+.subject-summary img { width: 5rem; height: 5rem; flex: none; object-fit: contain; background: var(--surface); border-radius: 8px; }
+.subject-summary p { margin: .25rem 0; }
+.subject-library .scene-direction-editor { margin-top: 1rem; }
