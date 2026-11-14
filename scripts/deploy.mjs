@@ -5,6 +5,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { verifyLiveRelease } from "./live-release.mjs";
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
@@ -77,14 +78,11 @@ const wranglerSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url
 const wranglerConfig = JSON.parse(wranglerSource);
 const originUrl = String(process.env.PUBLIC_ORIGIN ?? wranglerConfig.vars.PUBLIC_ORIGIN).replace(/\/$/, "");
 if (!originUrl.startsWith("https://")) fail("PUBLIC_ORIGIN must be an HTTPS origin");
-const health = await fetch(`${originUrl}/healthz`, { headers: { "cache-control": "no-cache" } });
-if (!health.ok) fail(`live health check failed (${health.status})`);
-const payload = await health.json();
-if (payload.revision !== head)
-  fail(`live revision ${payload.revision} does not match released source ${head}`);
-
-const built = await (await fetch(`${originUrl}/build.json`, { headers: { "cache-control": "no-cache" } })).json();
-if (built.revision !== head) fail("build.json does not match released source");
+try {
+  await verifyLiveRelease({ origin: originUrl, expected: head });
+} catch (error) {
+  fail(error.message);
+}
 
 console.log(`released ${head.slice(0, 12)} at ${builtAt}`);
 console.log(`live: ${originUrl}/healthz`);
