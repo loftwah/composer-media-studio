@@ -318,6 +318,14 @@ dialog h2 { margin: 0; }
 .share-film-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
 .share-film-grid figure { margin: 0; min-width: 0; }
 .share-film-grid video { display: block; width: 100%; height: clamp(240px, 34vw, 460px); object-fit: contain; background: #111; }
+.film-placeholder { display:flex; flex-direction:column; justify-content:center; align-items:flex-start; gap:1rem; width:100%; height:clamp(240px,34vw,460px); padding:clamp(1.4rem,3vw,2.5rem); border:1px solid var(--line); border-radius:10px; background:var(--paper-deep); color:var(--ink); text-decoration:none; }
+.film-placeholder:hover { border-color:var(--accent); }
+.film-placeholder:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+.film-placeholder-kind { font-size:.8rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-soft); }
+.film-placeholder > strong { font-family:var(--display); font-size:clamp(1.35rem,2.3vw,2rem); line-height:1.14; overflow-wrap:anywhere; }
+.film-placeholder-action { display:flex; align-items:center; gap:.55rem; font-weight:700; }
+.film-play-icon { width:2rem; height:2rem; border-radius:50%; background:var(--ink); color:var(--paper); display:grid; place-items:center; }
+.film-placeholder-note { font-size:.8rem; color:var(--muted); }
 .share-film-grid figcaption { padding-top: .75rem; }
 .share-film-grid figcaption p { color: var(--ink-soft); margin: .4rem 0; }
 @media (max-width: 720px) { .share-film-grid { grid-template-columns: 1fr; } }

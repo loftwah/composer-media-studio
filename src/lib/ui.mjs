@@ -401,6 +401,16 @@ function shareDetail(asset, context) {
     </div>`;
 }
 
+function showcaseFilm(film) {
+  const slug = encodeURIComponent(film.slug);
+  const title = escapeHtml(film.title);
+  const duration = Number(film.duration_ms) > 0 ? `${(film.duration_ms / 1000).toFixed(0)} sec` : "Video";
+  const preview = film.poster_asset_id
+    ? `<video controls playsinline preload="none" poster="/p/${slug}/poster" aria-label="${title}"><source src="/p/${slug}/media" type="${escapeHtml(film.mime)}"><a href="/p/${slug}">Open ${title}</a></video>`
+    : `<a class="film-placeholder" href="/p/${slug}" aria-label="Open ${title}"><span class="film-placeholder-kind">${escapeHtml(duration)} · Published film</span><strong>${title}</strong><span class="film-placeholder-action"><span class="film-play-icon" aria-hidden="true"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M7 4.5v11l8-5.5z" fill="currentColor"/></svg></span>Open film</span><span class="film-placeholder-note">No preview still provided</span></a>`;
+  return `<figure>${preview}<figcaption><strong>${title}</strong><p>${escapeHtml(film.description || "")}</p><a href="/p/${slug}">Open the published piece</a></figcaption></figure>`;
+}
+
 export function woodhouseGallery({ asset, assets = [], query = "", project = "", after, nextAfter, error, films = [] }) {
   const filters = new URLSearchParams();
   if (query) filters.set("q", query);
@@ -431,7 +441,7 @@ ${error ? `<h1>Share artwork</h1><p role="status">${escapeHtml(error)}</p><p><a 
       <p>Browse public artwork, production captures and alternate editions. Each entry links to its original, credit and source notes.</p>
       <a href="${shareOrigin}/share/">Open Woodhouse Share ↗</a>
     </section>
-    ${films.length ? `<section class="share-films" aria-labelledby="share-films-title"><h2 id="share-films-title">Made in Media Studio</h2><p>Watch published work and follow each piece to its source and details.</p><div class="share-film-grid">${films.map((film) => `<figure><video controls playsinline preload="none"${film.poster_asset_id ? ` poster="/p/${encodeURIComponent(film.slug)}/poster"` : ""} aria-label="${escapeHtml(film.title)}"><source src="/p/${encodeURIComponent(film.slug)}/media" type="${escapeHtml(film.mime)}"><a href="/p/${encodeURIComponent(film.slug)}">Open ${escapeHtml(film.title)}</a></video><figcaption><strong>${escapeHtml(film.title)}</strong><p>${escapeHtml(film.description || "")}</p><a href="/p/${encodeURIComponent(film.slug)}">Open the published piece</a></figcaption></figure>`).join("")}</div></section>` : ""}
+    ${films.length ? `<section class="share-films" aria-labelledby="share-films-title"><h2 id="share-films-title">Made in Media Studio</h2><p>Watch published work and follow each piece to its source and details.</p><div class="share-film-grid">${films.map(showcaseFilm).join("")}</div></section>` : ""}
     <form class="share-filters" action="/portfolio" method="get" role="search">
       <label>Search artwork <input name="q" type="search" maxlength="100" value="${escapeHtml(query)}"></label>
       <label>Project <select name="project">
