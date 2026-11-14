@@ -26,16 +26,35 @@ export async function setPolicy(env, projectId, enabled, rightsConfirmed) {
 const eligible = `a.deleted_at IS NULL AND a.source IN ('generated','variant','assembled')
   AND g.id=a.generation_id AND g.project_id=a.project_id AND g.status='saved' AND g.deleted_at IS NULL AND g.output_asset_id=a.id`;
 
+// Only documented, reference-free generation shapes can be published without
+// source attribution. Fail closed on legacy/unknown records, references, edits
+// and assembled media until their full public credit and licence are available.
+const attributionSafe = `a.source='generated' AND a.parent_asset_id IS NULL AND g.composition_id IS NULL
+  AND g.model IN ('studio-print','studio-film','studio-draft','studio-quick','studio-score','studio-voice','studio-effect')
+  AND CASE WHEN json_valid(g.request_json) THEN
+    json_type(g.request_json)='object'
+    AND json_type(g.request_json,'$.referenceAssetId')='null'
+    AND json_type(g.request_json,'$.parentAssetId')='null'
+    AND json_type(g.request_json,'$.maskAssetId')='null'
+    AND json_type(g.request_json,'$.compositionId') IS NULL
+    AND json_type(g.request_json,'$.shots') IS NULL
+    AND json_type(g.request_json,'$.audioAssetId') IS NULL
+    AND json_type(g.request_json,'$.audioTracks') IS NULL
+    AND json_type(g.request_json,'$.slateAssetId') IS NULL
+    AND json_type(g.request_json,'$.slateVideoAssetId') IS NULL
+  ELSE 0 END`;
+
 export async function inventory(env, projectId, after = "") {
   const rows = await env.DB.prepare(`SELECT a.id,a.title,a.kind,a.source,a.created_at,
     CASE WHEN ${eligible} THEN 1 ELSE 0 END AS eligible,
+    CASE WHEN ${eligible} AND ${attributionSafe} THEN 1 ELSE 0 END AS attribution_safe,
     EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id AND p.revoked_at IS NOT NULL) AS withdrawn,
     EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id AND p.revoked_at IS NULL AND p.hidden=1) AS hidden,
     EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id AND p.revoked_at IS NULL) AS published
     FROM assets a LEFT JOIN generations g ON g.id=a.generation_id WHERE a.project_id=?1 AND a.id>?2
     ORDER BY a.id LIMIT 26`).bind(projectId, after).all();
   const page = rows.results.slice(0, 25);
-  return { items: page.map((a) => ({ id:a.id, title:a.title, kind:a.kind, source:a.source, status: !a.eligible ? "ineligible" : a.withdrawn ? "withdrawn" : a.hidden ? "hidden" : a.published ? "existing" : "candidate" })), nextAfter: rows.results.length > 25 ? page.at(-1).id : null };
+  return { items: page.map((a) => ({ id:a.id, title:a.title, kind:a.kind, source:a.source, status: !a.eligible ? "ineligible" : a.withdrawn ? "withdrawn" : a.hidden ? "hidden" : !a.attribution_safe ? "attribution_review_required" : a.published ? "existing" : "candidate" })), nextAfter: rows.results.length > 25 ? page.at(-1).id : null };
 }
 
 // Recheck eligibility and policy in the write statement, serialising competing
@@ -44,7 +63,7 @@ export async function publishCandidate(env, projectId, assetId, { automatic = fa
   if (!installationAllows(env, projectId)) return "not_allowed";
   const active = await env.DB.prepare(`SELECT p.id FROM publications p JOIN assets a ON a.id=p.asset_id JOIN generations g ON g.id=a.generation_id
     JOIN publication_policies policy ON policy.project_id=a.project_id AND policy.enabled=1
-    WHERE a.id=?1 AND a.project_id=?2 AND ${eligible} AND p.revoked_at IS NULL AND p.hidden=0
+    WHERE a.id=?1 AND a.project_id=?2 AND ${eligible} AND ${attributionSafe} AND p.revoked_at IS NULL AND p.hidden=0
     AND NOT EXISTS(SELECT 1 FROM publications w WHERE w.asset_id=a.id AND (w.revoked_at IS NOT NULL OR w.hidden=1))
     AND (?3=0 OR g.created_at>policy.enabled_at) LIMIT 1`).bind(assetId, projectId, automatic ? 1 : 0).first();
   if (active) {
@@ -54,13 +73,13 @@ export async function publishCandidate(env, projectId, assetId, { automatic = fa
     const result = await env.DB.prepare(`UPDATE publications SET listed=1 WHERE id=?1 AND revoked_at IS NULL AND hidden=0
       AND EXISTS(SELECT 1 FROM publication_policies policy WHERE policy.project_id=?2 AND policy.enabled=1)
       AND NOT EXISTS(SELECT 1 FROM publications w WHERE w.asset_id=publications.asset_id AND (w.revoked_at IS NOT NULL OR w.hidden=1))
-      AND EXISTS(SELECT 1 FROM assets a JOIN generations g ON g.id=a.generation_id WHERE a.id=publications.asset_id AND a.project_id=?2 AND ${eligible})`).bind(active.id, projectId).run();
+      AND EXISTS(SELECT 1 FROM assets a JOIN generations g ON g.id=a.generation_id WHERE a.id=publications.asset_id AND a.project_id=?2 AND ${eligible} AND ${attributionSafe})`).bind(active.id, projectId).run();
     return (result.meta?.changes ?? result.changes ?? 0) > 0 ? "existing" : "skipped";
   }
   const result = await env.DB.prepare(`INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed)
     SELECT ?1,a.project_id,a.id,?2,CASE a.kind WHEN 'video' THEN 'Generated film' WHEN 'audio' THEN 'Generated sound' ELSE 'Generated image' END,'',a.delete_revision,?3,1
     FROM assets a JOIN generations g ON g.id=a.generation_id JOIN publication_policies policy ON policy.project_id=a.project_id AND policy.enabled=1
-    WHERE a.id=?4 AND a.project_id=?5 AND ${eligible} AND (?6=0 OR g.created_at>policy.enabled_at)
+    WHERE a.id=?4 AND a.project_id=?5 AND ${eligible} AND ${attributionSafe} AND (?6=0 OR g.created_at>policy.enabled_at)
     AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id)`).bind(id("pub"), slug(12), now(), assetId, projectId, automatic ? 1 : 0).run();
   return (result.meta?.changes ?? result.changes ?? 0) > 0 ? "created" : "skipped";
 }

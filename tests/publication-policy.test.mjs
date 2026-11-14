@@ -8,7 +8,7 @@ import { setup, addAsset } from "./harness.mjs";
 async function generated(env, project, suffix, source = "generated", created = 1) {
   const asset = await addAsset(env, project, { id:`asset_${suffix}`, kind:"image", source });
   await env.DB.prepare(`INSERT INTO generations(id,project_id,client_request_id,kind,recipe_id,provider,model,request_json,status,output_asset_id,cost_estimate_micro,cost_reserved_micro,created_at,updated_at)
-    VALUES(?1,?2,?3,'image','recipe','test','model','{"prompt":"private prompt"}','saved',?4,0,0,?5,?5)`).bind(`gen_${suffix}`,project.id,`req_${suffix}`,asset.id,created).run();
+    VALUES(?1,?2,?3,'image','recipe','test','studio-print','{"prompt":"private prompt","referenceAssetId":null,"parentAssetId":null,"maskAssetId":null}','saved',?4,0,0,?5,?5)`).bind(`gen_${suffix}`,project.id,`req_${suffix}`,asset.id,created).run();
   await env.DB.prepare("UPDATE assets SET generation_id=?2,caption='private caption' WHERE id=?1").bind(asset.id,`gen_${suffix}`).run();
   return asset;
 }
@@ -30,13 +30,13 @@ test("first-party policy requires installation and project opt-in, protects with
   env.FIRST_PARTY_PUBLICATION_PROJECTS = project.id;
   assert.equal((await request("publication-policy","PUT",{enabled:true})).status,400);
   const inv = await (await request("publication-inventory")).json();
-  assert.deepEqual(Object.fromEntries(inv.items.map(x=>[x.id,x.status])), {asset_a:"candidate",asset_assembled:"candidate",asset_existing:"existing",asset_hidden:"hidden",asset_upload:"ineligible",asset_variant:"candidate",asset_withdrawn:"withdrawn"});
+  assert.deepEqual(Object.fromEntries(inv.items.map(x=>[x.id,x.status])), {asset_a:"candidate",asset_assembled:"attribution_review_required",asset_existing:"existing",asset_hidden:"hidden",asset_upload:"ineligible",asset_variant:"attribution_review_required",asset_withdrawn:"withdrawn"});
   assert.equal((await request("publication-policy","PUT",{enabled:true,rightsConfirmed:true})).status,200);
   const assetIds = [a.id,variant.id,assembled.id,withdrawn.id,hidden.id,existing.id,upload.id];
   assert.equal((await request("publication-reconcile","POST",{assetIds,confirm:true})).status,400);
   const payload={assetIds,confirm:true,rightsConfirmed:true};
   const results=(await (await request("publication-reconcile","POST",payload)).json()).results;
-  assert.deepEqual(results.map(x=>x.result),["created","created","created","skipped","skipped","existing","skipped"]);
+  assert.deepEqual(results.map(x=>x.result),["created","skipped","skipped","skipped","skipped","existing","skipped"]);
   const existingAfter=await env.DB.prepare("SELECT slug,listed FROM publications WHERE id='pub_existing'").first();
   assert.equal(existingAfter.slug,"slug-existing"); assert.equal(existingAfter.listed,1);
   const newPublication=await env.DB.prepare("SELECT title,description FROM publications WHERE asset_id=?1").bind(a.id).first();
@@ -87,4 +87,32 @@ test("read-only project sessions cannot inspect or change publication policy", a
     const response=await worker.fetch(new Request(`https://studio.test/api/projects/${project.id}/${path}`,{headers:{cookie}}),env);
     assert.equal(response.status,403);
   }
+});
+
+test("reference-derived and incomplete provenance never auto-publishes or lists without attribution", async () => {
+  const {env,project}=await setup(); env.FIRST_PARTY_PUBLICATION_PROJECTS=project.id;
+  await env.DB.prepare("INSERT INTO publication_policies(project_id,enabled,enabled_at,attested_at) VALUES(?1,1,1,1)").bind(project.id).run();
+  const reference=await addAsset(env,project,{id:"asset_source",kind:"image",source:"upload"});
+  await env.DB.prepare("UPDATE assets SET caption='Woodhouse · Tabler Icons (MIT) — PRIVATE' WHERE id=?1").bind(reference.id).run();
+  const linked=await generated(env,project,"linked","generated",Date.now()+1);
+  const hiddenLink=await generated(env,project,"hiddenlink","generated",Date.now()+1);
+  const incomplete=await generated(env,project,"incomplete","generated",Date.now()+1);
+  const malformed=await generated(env,project,"malformed","generated",Date.now()+1);
+  const unknown=await generated(env,project,"unknownmodel","generated",Date.now()+1);
+  await env.DB.prepare("UPDATE assets SET parent_asset_id=?2 WHERE id=?1").bind(linked.id,reference.id).run();
+  await env.DB.prepare("UPDATE generations SET request_json=?2 WHERE id=?1").bind("gen_hiddenlink",JSON.stringify({referenceAssetId:reference.id,parentAssetId:null,maskAssetId:null})).run();
+  await env.DB.prepare("UPDATE generations SET request_json='{}' WHERE id=?1").bind("gen_incomplete").run();
+  await env.DB.prepare("UPDATE generations SET request_json='not json' WHERE id=?1").bind("gen_malformed").run();
+  await env.DB.prepare("UPDATE generations SET model='future-unknown-model' WHERE id=?1").bind("gen_unknownmodel").run();
+  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at) VALUES('pub_linked',?1,?2,'original-linked','Existing page','Existing credit',1,1)").bind(project.id,linked.id).run();
+  for(const a of [linked,hiddenLink,incomplete,malformed,unknown]) {
+    assert.equal(await publishCandidate(env,project.id,a.id,{automatic:true}),"skipped");
+    assert.equal(await publishCandidate(env,project.id,a.id),"skipped");
+  }
+  const {inventory}=await import("../src/lib/publication-policy.mjs");
+  const items=(await inventory(env,project.id)).items;
+  for(const a of [linked,hiddenLink,incomplete,malformed,unknown]) assert.equal(items.find(x=>x.id===a.id).status,"attribution_review_required");
+  const unchanged=await env.DB.prepare("SELECT slug,description,listed FROM publications WHERE id='pub_linked'").first();
+  assert.deepEqual({...unchanged},{slug:"original-linked",description:"Existing credit",listed:0});
+  assert.doesNotMatch(JSON.stringify(items),/PRIVATE|Tabler/);
 });
