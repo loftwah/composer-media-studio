@@ -1,4 +1,5 @@
 import { captionPlayheadProposal } from './caption-playhead.mjs';
+import { parseSongTime } from './song-time';
 import { useEffect, useRef, useState } from 'react';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
 import './song-plans.css';
@@ -39,8 +40,9 @@ async function request(path: string, method = 'GET', body?: unknown) {
   if (!response.ok) { const error = new Error(data?.error?.message ?? `Request failed (${response.status})`) as Error & { status: number; code?: string }; error.status = response.status; error.code = data?.error?.code; throw error; }
   return data;
 }
-function TimeField({ label, value, onCommit }: { label: string; value: number; onCommit: (n: number) => void }) {
-  return <label>{label} <span className="small">seconds</span><input type="number" min="0" step="0.001" defaultValue={seconds(value)} key={value} onBlur={e => onCommit(milliseconds(e.currentTarget.value))} /></label>;
+export function TimeField({ label, value, onCommit }: { label: string; value: number; onCommit: (n: number) => void }) {
+  const [message, setMessage] = useState('');
+  return <label>{label} <span className="small">seconds</span><input type="number" min="0" step="0.001" defaultValue={seconds(value)} key={value} onChange={() => setMessage('')} onBlur={e => { const next = parseSongTime(e.currentTarget.value); if (next === null) { e.currentTarget.value = seconds(value); setMessage('Time unchanged. Enter a non-negative time with up to three decimal places.'); return; } setMessage(''); onCommit(next); }} />{message && <span className="small" role="status">{message}</span>}</label>;
 }
 export function TakeRangePreview({ take, index, startMs, endMs, valid, sourceFootage = false }: { take: MediaAssetV1; index: number; startMs: number; endMs: number; valid: boolean; sourceFootage?: boolean }) {
   const video = useRef<HTMLVideoElement | null>(null);
