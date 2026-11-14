@@ -3,6 +3,9 @@
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 const confirmDialog = document.querySelector("#confirm");
+let creativeHome = null;
+let homeMounted = false;
+let bootReady = false;
 
 const state = {
   view: "home",
@@ -24,6 +27,12 @@ const state = {
   polling: null,
   mask: null,
 };
+
+// The original workbench remains in place while the home surface migrates.
+// A missing bundle falls back to the existing home rather than hiding projects.
+import(`/creative/home.js${new URL(import.meta.url).search}`)
+  .then((module) => { creativeHome = module; if (bootReady && state.view === "home") render(); })
+  .catch(() => console.warn("Creative home unavailable; using the existing project browser."));
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (character) =>
@@ -144,6 +153,7 @@ async function boot() {
     if (state.view === "asset") state.assetId = route.assetId;
     await loadProject(state.projectId);
   }
+  bootReady = true;
   render();
   startPolling();
 }
@@ -210,10 +220,22 @@ function promptFromRecipe(recipe, values) {
 
 function render() {
   if (state.view === "home") {
-    app.innerHTML = homeView();
+    if (creativeHome) {
+      if (!homeMounted) {
+        app.innerHTML = '<div id="creative-home"></div>';
+        homeMounted = true;
+      }
+      creativeHome.renderHome(app.querySelector("#creative-home"), {
+        projects: state.projects,
+        videosConfigured: state.videosConfigured,
+        woodhouseShare: state.woodhouseShare,
+      });
+    } else app.innerHTML = homeView();
   } else if (state.view === "asset") {
+    if (homeMounted) { creativeHome.unmountHome(); homeMounted = false; }
     app.innerHTML = assetView();
   } else {
+    if (homeMounted) { creativeHome.unmountHome(); homeMounted = false; }
     app.innerHTML = projectView();
     attachDropzone();
     if (state.tab === "create") attachMask();

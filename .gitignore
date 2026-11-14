@@ -1,4 +1,6 @@
 node_modules/
+public/creative/
+.playwright-cli/
 .wrangler/
 dist/
 .tmp/

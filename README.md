@@ -48,7 +48,9 @@ Optional video on a local or deployed studio: `npx wrangler secret put FAL_KEY`.
 
 Optional public destinations: `PUBLIC_BUILD_URL` ("Build your own Media Studio"), `PUBLIC_STORY_URL` ("See how this was made") and `LAUNCH_KIT_URL` ("Open Launch Kit"). Each is a plain HTTPS installation variable; omit an independent studio's absent destination and the link is not rendered. Invalid, non-HTTPS or credential-bearing values are ignored.
 
-`pnpm check` runs the focused unit and persistence tests. `pnpm deploy` refuses a dirty tree or unpushed main, runs the checks once, deploys, and verifies the live revision.
+`pnpm check` checks the strict TypeScript frontend and runs the unit and persistence tests. The project browser is progressively migrating to React, TypeScript, Vite and Tailwind; project and asset workbenches still use the existing client and server APIs. `pnpm dev` builds the frontend before starting the local Worker. `pnpm deploy` refuses a dirty tree or unpushed main, runs the checks and frontend build once, deploys, and verifies the live revision. The build output in `public/creative/` is generated, not a second data store or service.
+
+The Apps launcher is the locally committed Composer distribution and source at App Composer revision `202c3dd16c5585210ac8186d36d21ebe4ac27aaa`; it needs no runtime asset fetch from Composer. `node scripts/launcher-assets.mjs --check` verifies its authored TypeScript against the shipped controller. A configured HTTPS `COMPOSER_ORIGIN` selects the Composer task destination; independently maintained app destinations remain those in the reviewed launcher source and can be changed by an installation owner before re-emitting it with `--write`.
 
 ## Ownership boundaries
 

@@ -74,10 +74,15 @@ function brandByline() {
 
 function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, helpHref = "/help" }) {
   const bridged = session?.mode === "bridge";
+  let launcherHome = null;
+  try {
+    const candidate = new URL(composerOrigin);
+    if (candidate.protocol === "https:" && !candidate.username && !candidate.password) launcherHome = candidate.origin + "/";
+  } catch { /* The launcher is optional when no valid Composer origin is configured. */ }
   const context = session
     ? `<p class="session-context"><span>${bridged ? "Opened from App Composer" : "Standalone owner session"}</span>${
         session.actorName ? ` · ${escapeHtml(session.actorName)}` : ""
-      }${session.workspaceName ? ` · ${escapeHtml(session.workspaceName)}` : ""}${
+      }${session.workspaceName && session.workspaceName !== session.actorName ? ` · ${escapeHtml(session.workspaceName)}` : ""}${
         session.project ? ` · project ${escapeHtml(session.project)}` : ""
       }</p>`
     : "";
@@ -89,11 +94,17 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
     <a href="#/">Projects</a>
     ${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}
     <a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener">Help</a>
+    ${launcherHome ? '<div class="app-launcher"><button type="button" class="secondary apps-trigger" data-open-apps aria-label="Open apps" title="Apps and shortcuts (Ctrl/Cmd+K)" aria-haspopup="dialog"><span>Apps</span><kbd>Ctrl K</kbd></button></div>' : ""}
     <button class="quiet" id="signout" type="button">Sign out</button>
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
   </nav>
   ${context}
-</header>`;
+</header>${launcherHome ? `<dialog data-composer-home="${escapeHtml(launcherHome)}" id="app-navigation" aria-labelledby="app-navigation-title">
+  <div class="dialog-heading"><h2 id="app-navigation-title">Apps and shortcuts</h2><button type="button" data-close-apps autofocus>Close</button></div>
+  <label>Find an app or task<input type="search" placeholder="App name, Get Ready, Init…" autocomplete="off"></label>
+  <p class="small" role="status" aria-live="polite"></p><ul></ul>
+  <a class="launcher-all" href="${escapeHtml(new URL("apps", launcherHome).href)}">Browse all apps</a>
+</dialog><script src="/brand/launcher.js" defer></script>` : ""}`;
 }
 
 export function shell({ revision, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
@@ -101,7 +112,7 @@ export function shell({ revision, session = null, composerOrigin = null, storyUr
     title: "Media Studio — make, assemble and keep images, video and sound",
     description:
       "An independent studio for uploads, image generation, reference variations, masked fills, background removal, upscaling, image-to-video, generated music, narration and effects, bounded multi-track assembly, saved compositions and deliberate publishing.",
-    extra: `<meta name="robots" content="noindex">`,
+    extra: `<meta name="robots" content="noindex"><link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}"><link rel="stylesheet" href="/brand/launcher.css">`,
   })}
 <body>
 <a class="skip" href="#main">Skip to content</a>

@@ -46,6 +46,7 @@ if (manifest.repository !== originRepository)
 
 console.log(`checking ${head.slice(0, 12)}…`);
 run(["pnpm", "check"]);
+run(["pnpm", "build:frontend"]);
 
 if (dryRun) {
   console.log("dry run: checks passed; nothing uploaded");
