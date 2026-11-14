@@ -93,13 +93,15 @@ function JobCard({
       </p>
       {asset && (
         <div className="result">
+          {(asset.kind === "video" || asset.kind === "audio") && asset.durationMs != null && <p className="small">Saved file: {(asset.durationMs / 1000).toFixed(2)}s</p>}
           {asset.kind === "video" ? (
-            <video src={asset.file} controls playsInline preload="metadata" />
+            <video src={asset.file} controls playsInline preload="none" aria-label={`Play ${asset.title}`} />
           ) : asset.kind === "audio" ? (
             <audio
               src={asset.file}
               controls
-              preload="metadata"
+              preload="none"
+              aria-label={`Play ${asset.title}`}
               className="history-audio"
             />
           ) : (

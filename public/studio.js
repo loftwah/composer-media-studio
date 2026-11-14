@@ -925,7 +925,7 @@ function jobCard(generation) {
     </header>
     <p class="prompt">${esc(generation.prompt)}</p>
     <p class="small">${esc(generation.aspect ?? "")} ${generation.durationSeconds ? `· ${generation.durationSeconds}s` : ""} ${generation.error ? `· ${esc(generation.error.message)}` : ""}</p>
-    ${asset ? `<div class="result">${asset.kind === "video" ? `<video src="${esc(asset.file)}" controls preload="metadata"></video>` : asset.kind === "audio" ? `<audio src="${esc(asset.file)}" controls preload="metadata" style="width:100%"></audio>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}" loading="lazy">`}</div>` : ""}
+    ${asset ? `<div class="result">${["audio", "video"].includes(asset.kind) && asset.durationMs != null ? `<p class="small">Saved file: ${(asset.durationMs / 1000).toFixed(2)}s</p>` : ""}${asset.kind === "video" ? `<video src="${esc(asset.file)}" controls playsinline preload="none" aria-label="Play ${esc(asset.title)}"></video>` : asset.kind === "audio" ? `<audio src="${esc(asset.file)}" controls preload="none" aria-label="Play ${esc(asset.title)}" style="width:100%"></audio>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}" loading="lazy">`}</div>` : ""}
     <div class="row">
       ${asset ? `<button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open result</button>${generation.model !== "kling-o1-restyle" ? `<button class="secondary" data-action="reuse-job" data-id="${esc(generation.id)}">Reuse settings</button>` : ""}` : ""}
       ${pending && generation.kind === "video" ? `<button class="secondary" data-action="refresh-job" data-id="${esc(generation.id)}">Refresh</button>` : ""}
