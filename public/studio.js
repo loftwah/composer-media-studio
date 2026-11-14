@@ -532,7 +532,7 @@ function projectView() {
         <p class="small" style="margin:0">${esc(project.creativeDirection || "No creative direction saved yet.")}</p>
       </div>
       <div class="row">
-        <a class="button secondary" href="/api/projects/${esc(project.id)}/export" download>Export</a>
+        <div><a class="button secondary" href="/api/projects/${esc(project.id)}/export" download>Export project</a><p class="small">Includes private lyrics and subject history; not a restore.</p></div>
         <button class="button" data-action="tab" data-tab="create">Create</button>
       </div>
     </div>
@@ -962,7 +962,7 @@ function settingsView() {
         </div>
         <div class="row"><input name="referenceTitle" placeholder="Reference title" maxlength="100"><input name="referenceUrl" type="url" placeholder="https://…"><button class="secondary" type="button" data-action="add-reference">Add</button></div>
         <hr style="border:0;border-top:1px solid var(--line);margin:0.5rem 0">
-        <p class="small">Ownership: this studio owns its D1 metadata, R2 media and provider keys. Export downloads the project record, prompts and lineage without secrets. Media files download separately while they still exist.</p>
+        <p class="small">The export includes private prompts, lyrics, scene directions and subject and reference history. Text and links may contain sensitive information; Studio provider keys and session cookies are excluded. Share it carefully. It cannot restore a project; download media files separately while they still exist.</p>
         <a class="button secondary" href="/api/projects/${esc(project.id)}/export" download>Download project export</a>
       </div>
     </form>`;

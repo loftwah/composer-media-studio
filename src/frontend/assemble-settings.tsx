@@ -687,8 +687,11 @@ export function Settings({ project, draft }: SettingsProps) {
         />
         <p className="small">
           Ownership: this studio owns its D1 metadata, R2 media and provider
-          keys. Export downloads the project record, prompts and lineage without
-          secrets. Media files download separately while they still exist.
+          keys. The export includes private prompts, lyrics, scene directions and
+          subject and reference history. Text and links may contain sensitive
+          information; Studio provider keys and session cookies are excluded.
+          Share it carefully. It cannot restore a project; download media files
+          separately while they still exist.
         </p>
         <a
           className="button secondary"

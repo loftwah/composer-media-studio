@@ -67,7 +67,7 @@ The Apps launcher is the locally committed Composer distribution and source at A
 - Media bytes live in the studio's R2 bucket; metadata in its D1 database.
 - Composer receives a source pin, not credentials. The studio runs after detaching Composer and has no licence callback.
 - Deleting media withdraws pages using it. A tombstone prevents a late provider result from restoring deleted media.
-- The project export includes project, references, prompts, lineage, costs and publications but never secrets or media bytes. Media downloads are separate; an export is not an R2 backup.
+- The private project export includes project records, references, prompts, lineage, costs, publications, subject versions and song plans (which may contain lyrics and scene directions), but not Studio provider keys, session cookies or media bytes. User-authored text and links can still contain sensitive information; share it carefully. Media downloads are separate; the export is not an R2 backup or an importable restore.
 
 See [the reuse note](docs/darkroom-assessment.md) for the bounded Darkroom decision and [the deployment notes](docs/deployment.md).
 
