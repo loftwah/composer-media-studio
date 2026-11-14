@@ -1,3 +1,4 @@
+import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ALL_FORMATS, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from "mediabunny";
@@ -79,35 +80,37 @@ function AddMusic() {
   const [video,setVideo] = useState<File | null>(null), [music,setMusic] = useState<File | null>(null);
   const [videoUrl,setVideoUrl] = useState(""), [musicUrl,setMusicUrl] = useState(""), [result,setResult] = useState("");
   const [offset,setOffset] = useState(0), [volume,setVolume] = useState(80), [busy,setBusy] = useState(false), [message,setMessage] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (musicUrl) URL.revokeObjectURL(musicUrl); }, [musicUrl]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => controller.current?.abort(), []);
   function choose(file: File | undefined, kind: "video" | "music") {
-    setResult(""); setMessage("");
+    setResult(""); setResultBlob(null); setMessage("");
     if (kind === "video") { setVideo(file ?? null); setVideoUrl(file ? URL.createObjectURL(file) : ""); }
     else { setMusic(file ?? null); setMusicUrl(file ? URL.createObjectURL(file) : ""); }
   }
   async function run() {
     if (!video || !music || busy) return;
-    const abort = new AbortController(); controller.current = abort; setBusy(true); setResult(""); setMessage("Checking codecs and files…");
-    try { const blob = await makeFilm(video,music,offset,volume/100,abort.signal,setMessage); check(abort.signal); setResult(URL.createObjectURL(blob)); setMessage("Your film is ready to play and save."); }
+    const abort = new AbortController(); controller.current = abort; setBusy(true); setResult(""); setResultBlob(null); setMessage("Checking codecs and files…");
+    try { const blob = await makeFilm(video,music,offset,volume/100,abort.signal,setMessage); check(abort.signal); setResultBlob(blob); setResult(URL.createObjectURL(blob)); setMessage("Your film is ready to play and save."); }
     catch (error) { setMessage(error instanceof Error && error.name === "AbortError" ? "Export cancelled. Your originals are unchanged." : error instanceof Error ? error.message : "Could not make the film on this device."); }
     finally { controller.current = null; setBusy(false); }
   }
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Add music to a video</h1><p>Make a new MP4 from your own video and music. Files stay on this device; no sign-in, upload or paid generation is needed.</p></header>
     <section className="trim-work" aria-labelledby="inputs-title"><h2 id="inputs-title">Choose your files</h2>
-      <label className="trim-file">Video<input type="file" accept="video/mp4,video/webm" disabled={busy} onChange={e => choose(e.target.files?.[0],"video")}/></label>
+      <label className="trim-file">Video<input type="file" accept="video/mp4,video/webm" disabled={busy || importing} onChange={e => choose(e.target.files?.[0],"video")}/></label>
       <p className="trim-note">Up to 60 seconds and 128 MB. The original video soundtrack is replaced by your chosen music.</p>
       {video && <><p><strong>{video.name}</strong></p><video className="video-tool-player" src={videoUrl} controls playsInline aria-label="Original video"/></>}
-      <label className="trim-file">Music or spoken audio<input type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy} onChange={e => choose(e.target.files?.[0],"music")}/></label>
+      <label className="trim-file">Music or spoken audio<input type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy || importing} onChange={e => choose(e.target.files?.[0],"music")}/></label>
       <p className="trim-note">Use audio you have permission to use, up to 3 minutes and 16 MB. If the selected audio ends early, the remaining video is silent.</p>
       {music && <><p><strong>{music.name}</strong></p><audio controls src={musicUrl} aria-label="Original music"/></>}
-      <div className="trim-fields"><label>Music start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));setResult("");}}/></label><label>Music volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));setResult("");}}/></label></div>
+      <div className="trim-fields"><label>Music start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));setResult(""); setResultBlob(null);}}/></label><label>Music volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));setResult(""); setResultBlob(null);}}/></label></div>
       <p className="trim-note">Export uses H.264/AAC MP4 in a compatible browser. Video is fitted within 640 × 360, 360 × 640 or 480 × 480; bars may be added. Preview the finished film before saving.</p>
-      {!busy ? <button type="button" disabled={!video || !music} onClick={()=>void run()}>Make MP4</button> : <button type="button" className="secondary" onClick={()=>{controller.current?.abort();setMessage("Cancelling…");}}>Cancel export</button>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a><p className="trim-note">Your originals are unchanged. Save the MP4 here, then upload it from your <a href="/studio">Studio library</a>.</p></div>}
+      {!busy ? <button type="button" disabled={!video || !music || importing} onClick={()=>void run()}>Make MP4</button> : <button type="button" className="secondary" onClick={()=>{controller.current?.abort();setMessage("Cancelling…");}}>Cancel export</button>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/>}</div>}
     </section></main>;
 }
 export function mountAddMusic(container: HTMLElement) { createRoot(container).render(<AddMusic/>); }
