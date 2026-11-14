@@ -28,3 +28,8 @@
 .song-storyboard h4 { margin: 0; }
 .song-storyboard p { max-width: 65ch; }
 .song-storyboard button + button { margin-left: .5rem; }
+.song-fit { border-top: 1px solid var(--border); padding-top: 1rem; }
+.song-fit > p, .song-fit-preview p { max-width: 65ch; }
+.song-fit-preview { margin-top: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: .75rem; }
+.song-fit-preview ol { padding-left: 1.5rem; }
+.song-fit-preview li { margin: .35rem 0; }
