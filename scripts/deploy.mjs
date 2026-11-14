@@ -46,7 +46,9 @@ if (manifest.repository !== originRepository)
 
 console.log(`checking ${head.slice(0, 12)}…`);
 run(["pnpm", "check"]);
-run(["pnpm", "build:frontend"]);
+// `check` already runs TypeScript against this exact clean source revision.
+// Build directly so the release does not repeat the same typecheck.
+run(["pnpm", "exec", "vite", "build"]);
 
 if (dryRun) {
   console.log("dry run: checks passed; nothing uploaded");
