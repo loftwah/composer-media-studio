@@ -23,3 +23,8 @@
 .song-captions > p { max-width: 65ch; }
 .song-downloads a { font-weight: 700; }
 @media (max-width: 700px) { .song-plan-columns { grid-template-columns: 1fr; } }
+
+.song-storyboard { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
+.song-storyboard h4 { margin: 0; }
+.song-storyboard p { max-width: 65ch; }
+.song-storyboard button + button { margin-left: .5rem; }

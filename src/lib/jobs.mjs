@@ -1145,10 +1145,56 @@ export async function createComposition(env, project, input) {
   return { id: compositionId, projectId: project.id, ...spec, createdAt: timestamp };
 }
 
+/** Save a revision-checked song plan as an ordinary editable storyboard.
+ * This only saves metadata: it does not submit, mix, render or spend. */
+export async function createStoryboardFromSongPlan(env, project, planId, input) {
+  const revision = input.expectedRevision;
+  if (!Number.isSafeInteger(revision) || revision < 1)
+    throw new HttpError(400, "Provide the plan revision you last read", "invalid_revision");
+  const plan = await env.DB.prepare("SELECT * FROM song_plans WHERE id=?1 AND project_id=?2").bind(planId, project.id).first();
+  if (!plan) throw new HttpError(404, "Song plan not found", "not_found");
+  if (plan.revision !== revision) throw new HttpError(409, "This plan changed. Reload it before making a storyboard.", "revision_conflict");
+  const source = await loadAssetRow(env, project.id, plan.song_asset_id);
+  if (!source || source.kind !== "audio" || source.sha256 !== plan.song_sha256)
+    throw new HttpError(409, "The source song is no longer available or has changed", "song_unavailable");
+  const song = safeJson(plan.spec_json, {});
+  if (!Array.isArray(song.scenes) || song.scenes.length < 2 || song.scenes.length > 6)
+    throw new HttpError(400, "Choose two to six scenes", "invalid_shots");
+  const shots = [];
+  for (const [index, scene] of song.scenes.entries()) {
+    if (!scene.selectedTakeId) throw new HttpError(400, `Choose a saved take for scene ${index + 1} first`, "take_required");
+    const take = await loadAssetRow(env, project.id, scene.selectedTakeId);
+    if (!take || take.kind !== "video") throw new HttpError(400, `The take for scene ${index + 1} is unavailable`, "take_unavailable");
+    if (Number(take.duration_ms) !== scene.endMs - scene.startMs)
+      throw new HttpError(400, `Scene ${index + 1} is ${((scene.endMs - scene.startMs) / 1000).toFixed(3)}s but its take is ${(Number(take.duration_ms) / 1000).toFixed(3)}s. Adjust the scene or choose a matching take; this renderer cannot trim shots.`, "take_duration_mismatch");
+    shots.push({ assetId: take.id });
+  }
+  const spec = await buildCompositionSpec(env, project, {
+    title: song.title, shots, audioTracks: [{ assetId: source.id, role: "music", startMs: 0, trimStartMs: song.startMs, trimEndMs: song.endMs, gainDb: 0, fadeInMs: 0, fadeOutMs: 0 }],
+  });
+  spec.originSongPlan = { id: plan.id, revision, songSha256: plan.song_sha256, sourceStartMs: song.startMs, sourceEndMs: song.endMs, scenes: song.scenes.map(scene => ({ id: scene.id, selectedTakeId: scene.selectedTakeId, startMs: scene.startMs, endMs: scene.endMs })) };
+  const compositionId = `cmp_song_${plan.id}_${revision}`;
+  let existing = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(compositionId, project.id).first();
+  if (existing) return { composition: { id: existing.id, projectId: existing.project_id, createdAt: existing.created_at, updatedAt: existing.updated_at, ...safeJson(existing.spec_json, {}) }, created: false };
+  const timestamp = now();
+  const created = await env.DB.prepare(`INSERT OR IGNORE INTO compositions(id,project_id,title,spec_json,created_at,updated_at)
+    SELECT ?1,?2,?3,?4,?5,?5 WHERE EXISTS (SELECT 1 FROM song_plans WHERE id=?6 AND project_id=?2 AND revision=?7) RETURNING *`)
+    .bind(compositionId, project.id, spec.title, JSON.stringify(spec), timestamp, plan.id, revision).first();
+  if (!created) {
+    existing = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(compositionId, project.id).first();
+    if (!existing) throw new HttpError(409, "This plan changed. Reload it before making a storyboard.", "revision_conflict");
+  }
+  const row = created || existing;
+  return { composition: { id: row.id, projectId: row.project_id, createdAt: row.created_at, updatedAt: row.updated_at, ...safeJson(row.spec_json, {}) }, created: Boolean(created) };
+}
+
 /** Editing keeps the composition id, so earlier renders still point at the cut
  * they were made from and the manifest is never rewritten retroactively. */
 export async function updateComposition(env, project, composition, input) {
   const spec = await buildCompositionSpec(env, project, input);
+  // This is historical origin, not a claim that later edits still match the plan.
+  const originSongPlan = safeJson(composition.spec_json, {}).originSongPlan;
+  if (originSongPlan) spec.originSongPlan = originSongPlan;
   await env.DB.prepare("UPDATE compositions SET title=?2,spec_json=?3,updated_at=?4 WHERE id=?1 AND project_id=?5")
     .bind(composition.id, spec.title, JSON.stringify(spec), now(), project.id)
     .run();
@@ -1180,12 +1226,16 @@ export async function createRender(env, project, composition, input) {
   if (existing) return { generation: existing, created: false };
 
   const spec = safeJson(composition.spec_json, { shots: [], audioAssetId: null, audioTracks: [], totalMs: 0 });
-  if (
-    (spec.audioTracks ?? []).some(
-      (track) => track.trimStartMs || track.gainDb || track.fadeInMs || track.fadeOutMs || track.startMs,
-    ) &&
-    !spec.audioAssetId
-  ) {
+  let needsMix = (spec.audioTracks ?? []).some(
+    (track) => track.trimStartMs || track.gainDb || track.fadeInMs || track.fadeOutMs || track.startMs,
+  );
+  if (!spec.audioAssetId && !needsMix) {
+    for (const track of spec.audioTracks ?? []) {
+      const audio = await loadAssetRow(env, project.id, track.assetId);
+      if (!audio || track.trimEndMs < Number(audio.duration_ms)) { needsMix = true; break; }
+    }
+  }
+  if (needsMix && !spec.audioAssetId) {
     // The compose endpoint has no per-track in-point, gain or fade fields.
     // The interface mixes those deterministically in the browser and saves
     // the result as audioAssetId; a direct API caller must do the same.

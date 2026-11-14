@@ -19,6 +19,7 @@ import {
   budgetSnapshot,
   cancelGeneration,
   createComposition,
+  createStoryboardFromSongPlan,
   createGeneration,
   createRender,
   dispatchGeneration,
@@ -538,6 +539,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
     if (rest === "song-plans" && method === "GET") return json({ plans: await listSongPlans(env, project) });
     if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);
+    const songStoryboard = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/storyboard$/);
+    if (songStoryboard && method === "POST") {
+      const result = await createStoryboardFromSongPlan(env, project, songStoryboard[1], await body(request));
+      return json(result, result.created ? 201 : 200);
+    }
     const songCaptions = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/captions$/);
     if (songCaptions && method === "PATCH") return json({ plan: await updateSongCaptions(env, project, songCaptions[1], await body(request)) });
     if (songCaptions && method === "GET") {

@@ -226,6 +226,7 @@ function CompositionCard({
 export function Assemble({
   projectId,
   canEdit,
+  onSongStoryboard,
   compose,
   assets,
   compositions,
@@ -244,7 +245,7 @@ export function Assemble({
   return (
     <>
       <FootagePlans key={`footage-${projectId}`} projectId={projectId} assets={assets} canEdit={canEdit} />
-      <SongPlans key={projectId} projectId={projectId} assets={assets} canEdit={canEdit} />
+      <SongPlans key={projectId} projectId={projectId} assets={assets} canEdit={canEdit} onStoryboard={onSongStoryboard} />
       <div className="spread">
         <h2 style={{ margin: 0 }}>Storyboard and assembly</h2>
         <span className="small">

@@ -28,7 +28,7 @@ test('MCP SDK discovers actual read tools and reads existing scoped Studio recor
     return { status: response.status, body: await response.json() };
   });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_footage_plan', 'studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_export_song_captions', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_footage_plans', 'studio_list_models', 'studio_list_projects', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_update_footage_plan', 'studio_update_project', 'studio_update_song_captions', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_footage_plan', 'studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_export_song_captions', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_footage_plans', 'studio_list_models', 'studio_list_projects', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_storyboard_from_song_plan', 'studio_update_footage_plan', 'studio_update_project', 'studio_update_song_captions', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
   const state = await client.callTool({ name: 'studio_list_projects', arguments: {} });
   assert.equal(state.structuredContent.projects[0].id, project.id);
   const wrong = await client.callTool({ name: 'studio_get_project', arguments: { projectId: 'prj_other' } });
@@ -109,5 +109,26 @@ test('MCP footage cut maps use existing authorised project and cannot read anoth
     assert.equal(read.structuredContent.plans[0].id,created.structuredContent.plan.id);
     const denied=await client.callTool({name:'studio_list_footage_plans',arguments:{projectId:'prj_other'}});
     assert.equal(denied.isError,true);
+  } finally { await client.close(); }
+});
+
+test('MCP turns an authorised ready song plan into the same saved storyboard without spending', async () => {
+  const { createSongPlan, updateSongPlan } = await import('../src/lib/song-plans.mjs');
+  const { env, project } = await setup();
+  await addAsset(env, project, { id: 'asset_song1', kind: 'audio', durationMs: 20000 });
+  for (let i = 1; i <= 4; i++) await addAsset(env, project, { id: `asset_take0${i}`, kind: 'video', durationMs: 5000 });
+  const plan = await createSongPlan(env, project, { songAssetId: 'asset_song1', rightsConfirmed: true, title: 'Fictional film', aspect: '16:9', startMs: 0, endMs: 20000, sceneCount: 4 });
+  await updateSongPlan(env, project, plan.id, { ...plan, expectedRevision: 1, scenes: plan.scenes.map((scene, i) => ({ ...scene, selectedTakeId: `asset_take0${i+1}` })) });
+  const cookie = 'studio_session=' + await createSession(env);
+  const client = await connect(async ({method, path, body}) => {
+    const response = await worker.fetch(new Request('https://studio.test' + path, { method, headers: { cookie, origin: 'https://studio.test', 'content-type': 'application/json' }, ...(body ? {body: JSON.stringify(body)} : {}) }), env);
+    return { status: response.status, body: await response.json() };
+  });
+  try {
+    const first = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2}});
+    assert.equal(first.isError,undefined,JSON.stringify(first)); assert.equal(first.structuredContent.created,true);
+    const again = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2}});
+    assert.equal(again.structuredContent.created,false); assert.equal(again.structuredContent.composition.id,first.structuredContent.composition.id);
+    assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
   } finally { await client.close(); }
 });

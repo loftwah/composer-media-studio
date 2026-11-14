@@ -335,8 +335,22 @@ function renderReactLibrary() {
   });
 }
 
+function hasUnsavedStoryboard() {
+  const draft = state.compose;
+  const saved = (state.project?.compositions ?? []).find((item) => item.id === draft.editingId);
+  if (!saved) return Boolean(draft.title.trim() || draft.shotIds.length || draft.audioTracks.length || draft.audioAssetId || draft.slateAssetId);
+  const comparable = (value) => JSON.stringify(value);
+  return draft.title !== saved.title || comparable(draft.shotIds) !== comparable(saved.shots.map((shot) => shot.assetId)) ||
+    comparable(draft.audioTracks) !== comparable(saved.audioTracks ?? []) ||
+    (draft.audioAssetId ?? null) !== (saved.audioAssetId ?? null) || (draft.slateAssetId ?? null) !== (saved.slateAssetId ?? null);
+}
+
 function renderReactAssemble() {
-  creativeHome.renderAssemble(app.querySelector("#creative-media"), { projectId: state.projectId, canEdit: Boolean(state.session?.actions.includes("edit")), compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social") });
+  creativeHome.renderAssemble(app.querySelector("#creative-media"), { projectId: state.projectId, canEdit: Boolean(state.session?.actions.includes("edit")), onSongStoryboard: (composition) => {
+    if (!state.project || state.project.id !== composition.projectId || state.view !== "project" || state.tab !== "assemble") return;
+    state.project.compositions = [composition, ...(state.project.compositions ?? []).filter((item) => item.id !== composition.id)];
+    renderReactAssemble();
+  }, compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social") });
 }
 
 function renderReactHistory() {
@@ -1589,6 +1603,7 @@ async function handleAction(action, element) {
       render();
       return;
     case "compose-load": {
+      if (hasUnsavedStoryboard() && !window.confirm("Discard unsaved storyboard changes and load the saved version?")) return;
       const composition = (state.project.compositions ?? []).find((item) => item.id === id);
       if (!composition) return;
       state.compose = {
