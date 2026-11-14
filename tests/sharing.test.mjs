@@ -201,7 +201,10 @@ test("a published still gives a signed-out visitor the build journey", () => {
   assert.match(html, /href="https:\/\/media\.loftwah\.com\/studio">Owner sign-in<\/a>/);
   assert.match(html, /href="https:\/\/media\.loftwah\.com\/gallery">← Back to gallery<\/a>/);
   assert.doesNotMatch(html, /visit the studio/);
-  assert.doesNotMatch(html, /<script/);
+  assert.match(html, /<script src="\/theme\.js" defer><\/script>/);
+  assert.doesNotMatch(html, /<script(?! src="\/theme\.js" defer><\/script>)/);
+  assert.match(html, /class="quiet theme-toggle"[^>]* hidden>/);
+  assert.match(html, /Download image/);
 });
 
 test("an installation without destinations still has a useful page and no dead end", () => {

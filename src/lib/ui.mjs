@@ -270,18 +270,18 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
     imageHeight: ogImageHeight,
     url,
     kind: isVideo ? "video.other" : isAudio ? "music.song" : "website",
-    theme: false,
     extra: `${listed ? "" : '<meta name="robots" content="noindex">'}${isVideo
       ? `<meta property="og:video" content="${escapeHtml(origin + media)}"><meta property="og:video:type" content="${escapeHtml(mime)}">${durationMs ? `<meta property="video:duration" content="${Math.round(durationMs / 1000)}">` : ""}`
       : ""}`,
   })}
 <body>
-<header class="site-header">
+<header class="site-header public-piece-header">
   <a class="wordmark" href="${escapeHtml(origin)}/" aria-label="Media Studio home">${mark}<span>Media Studio</span>${brandByline()}</a>
   <nav class="header-nav" aria-label="Published piece">
     <a href="${escapeHtml(origin)}/gallery">← Back to gallery</a>
     ${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     ${buildUrl ? `<a href="${escapeHtml(buildUrl)}">Build your own</a>` : ""}
+    <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false" hidden>Dark</button>
   </nav>
 </header>
 <main class="public-page" id="main">

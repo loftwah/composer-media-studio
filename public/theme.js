@@ -17,6 +17,7 @@ function sync() {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", dark ? "#17181b" : "#f4f0e8");
   for (const button of document.querySelectorAll(".theme-toggle")) {
+    button.hidden = false;
     button.textContent = dark ? "Light" : "Dark";
     button.setAttribute("aria-pressed", String(dark));
     button.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");

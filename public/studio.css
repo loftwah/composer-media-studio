@@ -230,6 +230,11 @@ dialog h2 { margin: 0; }
 .asset-technical summary { cursor: pointer; font-weight: 700; }
 .asset-technical p, .asset-technical dd { overflow-wrap: anywhere; }
 
+.public-piece-header .theme-toggle[hidden] { display: none; }
+@media (max-width: 480px) {
+  .public-piece-header .header-nav { gap: 0.35rem; }
+  .public-piece-header .header-nav a, .public-piece-header .header-nav button { font-size: 0.82rem; }
+}
 .public-page { max-width: 980px; }
 .public-page .media { background: #1d201c; border-radius: 4px; overflow: hidden; }
 .public-page .media img, .public-page .media video { width: 100%; display: block; max-height: 82vh; object-fit: contain; }
