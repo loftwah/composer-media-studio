@@ -1,5 +1,6 @@
 import { encodeWav } from "./wav.js";
 import { isLocalRenderProvenance, publicCaption } from "./asset-caption.js";
+import { shotRange } from "./shot-trims.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -31,7 +32,7 @@ const state = {
   filter: "all",
   query: "",
   create: null,
-  compose: { shotIds: [], audioAssetId: null, audioTracks: [], slateAssetId: null, title: "", editingId: null },
+  compose: { shotIds: [], shotTrims: {}, audioAssetId: null, audioTracks: [], slateAssetId: null, title: "", editingId: null },
   busy: false,
   polling: null,
   mask: null,
@@ -337,12 +338,39 @@ function renderReactLibrary() {
   });
 }
 
+function draftShots() {
+  return state.compose.shotIds.map((assetId) => ({ assetId, ...(state.compose.shotTrims[assetId] ?? {}) }));
+}
+
+function draftDuration() {
+  return draftShots().reduce((sum, shot) => {
+    const asset = state.project?.assets.find((item) => item.id === shot.assetId);
+    return sum + (shotRange(shot, asset)?.durationMs ?? 0);
+  }, 0);
+}
+
+function staleMixedBed() {
+  if (!state.compose.audioAssetId) return false;
+  const bed = state.project?.assets.find((asset) => asset.id === state.compose.audioAssetId);
+  return !bed?.durationMs || Math.abs(bed.durationMs - draftDuration()) > 100;
+}
+
+function comparableShots(shots) {
+  return shots.map((shot) => {
+    const asset = state.project?.assets.find((item) => item.id === shot.assetId);
+    const range = shotRange(shot, asset);
+    return range && (range.start !== 0 || range.end !== asset.durationMs)
+      ? { assetId: shot.assetId, trimStartMs: range.start, trimEndMs: range.end }
+      : { assetId: shot.assetId };
+  });
+}
+
 function hasUnsavedStoryboard() {
   const draft = state.compose;
   const saved = (state.project?.compositions ?? []).find((item) => item.id === draft.editingId);
   if (!saved) return Boolean(draft.title.trim() || draft.shotIds.length || draft.audioTracks.length || draft.audioAssetId || draft.slateAssetId);
   const comparable = (value) => JSON.stringify(value);
-  return draft.title !== saved.title || comparable(draft.shotIds) !== comparable(saved.shots.map((shot) => shot.assetId)) ||
+  return draft.title !== saved.title || comparable(comparableShots(draftShots())) !== comparable(comparableShots(saved.shots)) ||
     comparable(draft.audioTracks) !== comparable(saved.audioTracks ?? []) ||
     (draft.audioAssetId ?? null) !== (saved.audioAssetId ?? null) || (draft.slateAssetId ?? null) !== (saved.slateAssetId ?? null);
 }
@@ -668,7 +696,7 @@ function composeView() {
   const clips = project.assets.filter((asset) => asset.kind === "video" && asset.source !== "assembled");
   const audio = project.assets.filter((asset) => asset.kind === "audio");
   const chosen = compose.shotIds.map((shotId) => clips.find((asset) => asset.id === shotId)).filter(Boolean);
-  const totalMs = chosen.reduce((sum, asset) => sum + (asset.durationMs || 0), 0);
+  const totalMs = draftDuration();
   const compositions = project.compositions ?? [];
   const overLimit = totalMs > 60000;
   return `
@@ -685,7 +713,7 @@ function composeView() {
           <ol class="shot-list">
             ${chosen.map((asset, index) => `<li>
               <span class="shot-index">${index + 1}</span>
-              <span class="shot-title">${esc(asset.title)}<br><span class="small">${((asset.durationMs || 0) / 1000).toFixed(1)}s · ${asset.width}×${asset.height}</span></span>
+              <span class="shot-title">${esc(asset.title)}<br><span class="small">${compose.shotTrims[asset.id] ? `Using ${compose.shotTrims[asset.id].trimStartMs}–${compose.shotTrims[asset.id].trimEndMs} ms of original` : `${((asset.durationMs || 0) / 1000).toFixed(1)}s`} · ${asset.width}×${asset.height}</span></span>
               <span class="row">
                 <button class="quiet" data-action="compose-up" data-id="${esc(asset.id)}" aria-label="Move ${esc(asset.title)} earlier" ${index === 0 ? "disabled" : ""}>↑</button>
                 <button class="quiet" data-action="compose-down" data-id="${esc(asset.id)}" aria-label="Move ${esc(asset.title)} later" ${index === chosen.length - 1 ? "disabled" : ""}>↓</button>
@@ -720,11 +748,11 @@ function composeView() {
             <button class="secondary" type="button" data-action="mix-add" ${compose.audioTracks.length >= 4 ? "disabled" : ""}>Add track</button>
             <button class="button" type="button" data-action="mix-render" ${compose.audioTracks.length === 0 ? "disabled" : ""}>Mix soundtrack</button>
           </div>
-          ${compose.audioAssetId ? `<p class="small" style="margin:0.4rem 0 0">Mixed bed: ${esc(audio.find((item) => item.id === compose.audioAssetId)?.title ?? compose.audioAssetId)}. Rendering uses this saved WAV; the separate tracks remain in the composition manifest.</p>` : ""}
+          ${compose.audioAssetId ? `<p class="small" style="margin:0.4rem 0 0">Mixed bed: ${esc(audio.find((item) => item.id === compose.audioAssetId)?.title ?? compose.audioAssetId)}. Rendering uses this saved WAV; the separate tracks remain in the composition manifest.</p><button class="quiet" type="button" data-action="mix-clear">Remove mixed bed</button>${staleMixedBed() ? `<p class="notice warn">The mixed bed does not match the shot durations. Mix again or remove the bed before saving.</p>` : ""}` : ""}
         </div>
         ${audio.length === 0 ? `<p class="small" style="margin:0">Upload or generate sound in Create to add music, narration or an effect.</p>` : ""}
         <div class="row">
-          <button class="button" data-action="compose-save" ${chosen.length < 2 || overLimit ? "disabled" : ""}>${compose.editingId ? "Save changes" : "Save storyboard"}</button>
+          <button class="button" data-action="compose-save" ${chosen.length < 2 || overLimit || staleMixedBed() ? "disabled" : ""}>${compose.editingId ? "Save changes" : "Save storyboard"}</button>
           ${compose.editingId ? `<button class="quiet" data-action="compose-new">Start a new storyboard</button>` : ""}
         </div>
         ${overLimit ? `<p class="small" style="margin:0;color:var(--bad)">Keep the cut under 60 seconds to stay inside the bounded render.</p>` : ""}
@@ -753,17 +781,20 @@ function compositionCard(composition) {
   const master = renders.filter((generation) => generation.variant === "assembly" && generation.status === "saved" && generation.assetId).at(-1);
   const social = renders.filter((generation) => generation.variant === "social");
   const pending = renders.some(isPending);
+  const hasTrims = composition.shots.some((shot) => shot.trimStartMs !== undefined || shot.trimEndMs !== undefined);
   return `<article class="job">
     <header>
       <div class="row"><strong>${esc(composition.title)}</strong><span class="small">${composition.shots.length} shots · ${(composition.totalMs / 1000).toFixed(1)}s${composition.audioAssetId ? " · mixed bed" : ""}${composition.audioTracks?.length ? ` · ${composition.audioTracks.length} source tracks` : ""}</span></div>
       <span class="small">${dateLabel(composition.createdAt)}</span>
     </header>
     ${changedSinceRender(composition, renders) ? `<p class="small" style="margin:0"><strong>Changed since the last render.</strong> Render again to include the latest edits; earlier results are kept.</p>` : ""}
+    <details><summary>Review saved shot timings</summary><ol>${composition.shots.map((shot) => { const asset = state.project.assets.find((item) => item.id === shot.assetId); const range = shotRange(shot, asset); return `<li>${esc(asset?.title ?? "Unavailable clip")}: ${range ? `${range.start}–${range.end} ms of ${asset.durationMs} ms` : "unavailable or invalid range"}</li>`; }).join("")}</ol></details>
     <div class="row">
-      <button class="button secondary" data-action="compose-render" data-variant="assembly" data-id="${esc(composition.id)}" ${pending ? "disabled" : ""}>Render master · ${money(renderEstimate("assembly"))}</button>
-      <button class="button secondary" data-action="compose-render" data-variant="social" data-id="${esc(composition.id)}" ${pending ? "disabled" : ""} title="The selected order, composed into a 720 × 1280 (9:16) master with the saved sound, after a one-second vertical slate">Make 9:16 cut · ${money(renderEstimate("social"))}</button>
+      <button class="button secondary" data-action="compose-render" data-variant="assembly" data-id="${esc(composition.id)}" ${pending || hasTrims ? "disabled" : ""}>Render master · ${money(renderEstimate("assembly"))}</button>
+      <button class="button secondary" data-action="compose-render" data-variant="social" data-id="${esc(composition.id)}" ${pending || hasTrims ? "disabled" : ""} title="The selected order, composed into a 720 × 1280 (9:16) master with the saved sound, after a one-second vertical slate">Make 9:16 cut · ${money(renderEstimate("social"))}</button>
       <button class="quiet" data-action="compose-load" data-id="${esc(composition.id)}">Edit shots</button>
     </div>
+    ${hasTrims ? `<p class="small">Paid provider rendering cannot preserve these trims. The local MP4 renderer requires the current Studio interface.</p>` : ""}
     <div class="render-list">
       ${renders.length === 0 ? `<p class="small" style="margin:0">No render yet. Rendering copies the participating clips and audio to the render provider for this job only.</p>` : ""}
       ${renders.map((generation) => {
@@ -1575,6 +1606,11 @@ async function handleAction(action, element, keyboard = false) {
       }
       return;
     }
+    case "mix-clear":
+      state.compose.audioAssetId = null;
+      notify("Mixed bed removed from this draft. Its saved audio and source tracks are unchanged.");
+      render();
+      return;
     case "compose-add":
       if (state.compose.shotIds.includes(id)) return;
       state.compose.shotIds = [...state.compose.shotIds, id];
@@ -1582,6 +1618,7 @@ async function handleAction(action, element, keyboard = false) {
       return;
     case "compose-remove":
       state.compose.shotIds = state.compose.shotIds.filter((shotId) => shotId !== id);
+      delete state.compose.shotTrims[id];
       render();
       return;
     case "compose-up":
@@ -1596,24 +1633,47 @@ async function handleAction(action, element, keyboard = false) {
       return;
     }
     case "compose-save": {
+      if (staleMixedBed()) { notify("Mix again or remove the mismatched mixed bed before saving.", "bad"); return; }
       const title = state.compose.title.trim() || "Untitled storyboard";
       const payload = {
         title,
-        shots: state.compose.shotIds.map((shotId) => ({ assetId: shotId })),
+        shots: draftShots(),
         audioAssetId: state.compose.audioAssetId || null,
         audioTracks: state.compose.audioTracks,
         slateAssetId: state.compose.slateAssetId || null,
       };
       const editingId = state.compose.editingId;
+      const projectId = state.projectId;
       if (editingId) {
-        const result = await api(`/api/projects/${state.projectId}/compositions/${editingId}`, {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        });
+        let result;
+        try {
+          result = await api(`/api/projects/${state.projectId}/compositions/${editingId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ ...payload, expectedUpdatedAt: state.compose.expectedUpdatedAt }),
+          });
+        } catch (error) {
+          if (error.status === 409) {
+            try {
+              const latest = await api(`/api/projects/${projectId}`);
+              if (state.projectId !== projectId || !state.project || !Array.isArray(latest.compositions) || !Array.isArray(latest.assets)) throw new Error("Could not refresh storyboard list");
+              state.project.compositions = latest.compositions;
+              state.project.assets = latest.assets;
+              if (state.view === "project" && state.tab === "assemble") {
+                if (mediaMounted) renderReactAssemble(); else render();
+              }
+              notify("This storyboard changed elsewhere. Your draft is still here. Review saved shot timings below; copy your edits before using Edit shots to load the latest version.", "bad");
+            } catch {
+              notify("This storyboard changed elsewhere. Your draft is still here; copy it before reloading to review the latest version.", "bad");
+            }
+            return;
+          }
+          throw error;
+        }
         state.project.compositions = (state.project.compositions ?? []).map((item) =>
           item.id === editingId ? { ...item, ...result.composition } : item,
         );
         state.compose.editingId = editingId;
+        state.compose.expectedUpdatedAt = result.composition.updatedAt;
         notify("Storyboard updated. Earlier renders still belong to it.");
       } else {
         const result = await api(`/api/projects/${state.projectId}/compositions`, {
@@ -1622,13 +1682,14 @@ async function handleAction(action, element, keyboard = false) {
         });
         state.project.compositions = [result.composition, ...(state.project.compositions ?? [])];
         state.compose.editingId = result.composition.id;
+        state.compose.expectedUpdatedAt = result.composition.updatedAt;
         notify("Storyboard saved. Render it when you are ready.");
       }
       render();
       return;
     }
     case "compose-new":
-      state.compose = { shotIds: [], audioAssetId: null, audioTracks: [], slateAssetId: null, title: "", editingId: null };
+      state.compose = { shotIds: [], shotTrims: {}, audioAssetId: null, audioTracks: [], slateAssetId: null, title: "", editingId: null };
       render();
       return;
     case "compose-load": {
@@ -1637,11 +1698,13 @@ async function handleAction(action, element, keyboard = false) {
       if (!composition) return;
       state.compose = {
         shotIds: composition.shots.map((shot) => shot.assetId),
+        shotTrims: Object.fromEntries(composition.shots.filter((shot) => shot.trimStartMs !== undefined && shot.trimEndMs !== undefined).map((shot) => [shot.assetId, { trimStartMs: shot.trimStartMs, trimEndMs: shot.trimEndMs }])),
         audioAssetId: composition.audioAssetId ?? null,
-        audioTracks: composition.audioTracks ?? [],
+        audioTracks: structuredClone(composition.audioTracks ?? []),
         slateAssetId: composition.slateAssetId ?? null,
         title: composition.title,
         editingId: composition.id,
+        expectedUpdatedAt: composition.updatedAt,
       };
       render();
       notify("Loaded into the cut. Saving updates this storyboard and keeps its earlier renders.");
@@ -1651,6 +1714,10 @@ async function handleAction(action, element, keyboard = false) {
       const variant = element.dataset.variant === "social" ? "social" : "assembly";
       const composition = (state.project.compositions ?? []).find((item) => item.id === id);
       if (!composition) return;
+      if (composition.shots.some((shot) => shot.trimStartMs !== undefined || shot.trimEndMs !== undefined)) {
+        notify("Paid provider rendering cannot preserve these trims. Use the local MP4 renderer.", "bad");
+        return;
+      }
       const master = state.project.generations
         .filter((generation) => generation.compositionId === composition.id && generation.variant === "assembly" && generation.status === "saved" && generation.assetId)
         .at(-1);
@@ -2009,6 +2076,10 @@ function maskedCanvasBlob(canvas) {
 
 async function mixSoundtrack() {
   const tracks = state.compose.audioTracks;
+  if (state.compose.shotIds.length < 2) {
+    notify("Add at least two shots before mixing to their duration.", "bad");
+    return;
+  }
   if (!tracks.length) {
     notify("Add at least one audio track first.", "bad");
     return;
@@ -2019,8 +2090,8 @@ async function mixSoundtrack() {
     return;
   }
   const totalMs = Math.max(
-    1000,
-    state.compose.shotIds.reduce((sum, id) => sum + (state.project.assets.find((asset) => asset.id === id)?.durationMs || 0), 0),
+    1,
+    draftDuration(),
   );
   const sampleRate = 44100;
   const context = new OfflineAudioContext(2, Math.ceil((totalMs / 1000) * sampleRate), sampleRate);
@@ -2103,10 +2174,11 @@ async function ensureSlate(composition) {
     method: "PATCH",
     body: JSON.stringify({
       title: composition.title,
-      shots: composition.shots.map((shot) => ({ assetId: shot.assetId })),
+      shots: composition.shots.map(({ assetId, trimStartMs, trimEndMs }) => ({ assetId, ...(trimStartMs !== undefined && trimEndMs !== undefined ? { trimStartMs, trimEndMs } : {}) })),
       audioAssetId: composition.audioAssetId || null,
       audioTracks: composition.audioTracks ?? [],
       slateAssetId: asset.id,
+      expectedUpdatedAt: composition.updatedAt,
     }),
   });
   state.project.compositions = (state.project.compositions ?? []).map((item) =>

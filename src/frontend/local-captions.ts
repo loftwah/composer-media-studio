@@ -1,4 +1,5 @@
 import type { CompositionV1, MediaAssetV1 } from './contracts';
+import { shotRange } from '../../public/shot-trims.js';
 
 export type CaptionCue = { id: string; startMs: number; endMs: number; text: string; speaker: string };
 export type CaptionSnapshot = { planId: string; revision: number; sourceStartMs: number; cues: CaptionCue[] };
@@ -15,7 +16,8 @@ export function resolveCaptionSnapshot(composition: CompositionV1, assets: Media
   for (const [i, scene] of plan.scenes.entries()) {
     const expected=origin.scenes[i], shot=composition.shots[i];
     const clip=assets.find(asset => asset.id === shot?.assetId && asset.kind === 'video');
-    if (!expected || scene.id !== expected.id || scene.selectedTakeId !== expected.selectedTakeId || scene.startMs !== expected.startMs || scene.endMs !== expected.endMs || scene.startMs !== cursor || scene.endMs <= cursor || shot?.assetId !== scene.selectedTakeId || clip?.durationMs !== scene.endMs-scene.startMs) throw new Error(`Scene ${i+1} no longer matches its saved take or timing. Make a new storyboard before using captions.`);
+    const range=shot && shotRange(shot, clip), frozen=expected && shotRange(expected, clip);
+    if (!expected || scene.id !== expected.id || scene.selectedTakeId !== expected.selectedTakeId || scene.startMs !== expected.startMs || scene.endMs !== expected.endMs || scene.startMs !== cursor || scene.endMs <= cursor || shot?.assetId !== scene.selectedTakeId || !range || !frozen || range.start !== frozen.start || range.end !== frozen.end || range.durationMs !== scene.endMs-scene.startMs) throw new Error(`Scene ${i+1} no longer matches its saved take or timing. Make a new storyboard before using captions.`);
     cursor=scene.endMs;
   }
   if (cursor !== plan.endMs || composition.totalMs !== plan.endMs-plan.startMs) throw new Error('The storyboard duration no longer matches the song segment.');
