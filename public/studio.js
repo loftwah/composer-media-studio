@@ -255,6 +255,10 @@ function render() {
       renderReactLibrary();
       mediaMounted = true;
     }
+    if (creativeHome && state.tab === "create" && state.project) {
+      renderReactCreate();
+      mediaMounted = true;
+    }
     attachDropzone();
     if (state.tab === "library") restoreShareImportDraft();
     if (state.tab === "create") attachMask();
@@ -301,6 +305,24 @@ function restoreShareImportDraft() {
   details.open = draft.open;
   form.elements.assetId.value = draft.assetId;
   form.elements.reuseConfirmed.checked = draft.reuseConfirmed;
+}
+
+function renderReactCreate() {
+  const create = state.create;
+  const models = state.models.filter((model) => model.kind === create.kind);
+  const model = modelById(create.model) ?? models[0] ?? null;
+  const images = state.project.assets.filter((asset) => asset.kind === "image");
+  creativeHome.renderCreate(app.querySelector("#creative-media"), {
+    create, models, model, images,
+    recipes: state.project.recipes.filter((recipe) => recipe.kind === create.kind),
+    recipe: recipeBySlug(create.recipeSlug),
+    selectedReference: images.find((asset) => asset.id === create.referenceAssetId) ?? null,
+    maskAsset: state.project.assets.find((asset) => asset.id === create.maskAssetId) ?? null,
+    estimateMicro: estimate(),
+    fundingBlocked: state.project.generations.some((job) => job.error?.code === "provider_funding"),
+    permissionBlocked: state.project.generations.some((job) => ["provider_permission", "provider_auth"].includes(job.error?.code)),
+    executionFailed: state.project.generations.some((job) => job.error?.code === "provider_execution"),
+  });
 }
 
 function homeView() {
@@ -361,7 +383,7 @@ function projectView() {
     </nav>
     <section role="tabpanel" aria-label="${esc(state.tab)}">
       ${state.tab === "library" ? (creativeHome ? '<div id="creative-media"></div>' : libraryView()) : ""}
-      ${state.tab === "create" ? createView() : ""}
+      ${state.tab === "create" ? (creativeHome ? '<div id="creative-media"></div>' : createView()) : ""}
       ${state.tab === "assemble" ? composeView() : ""}
       ${state.tab === "history" ? historyView() : ""}
       ${state.tab === "publish" ? publishView() : ""}
@@ -1005,6 +1027,10 @@ async function handleAction(action, element) {
       if (state.create.maskAssetId) state.create.maskAssetId = null;
       render();
       return;
+    case "toggle-references":
+      state.create.showAllReferences = !state.create.showAllReferences;
+      render();
+      return;
     case "mask-clear": {
       if (!maskPainter) return;
       const { maskCanvas, canvas, sourceCanvas } = maskPainter;
@@ -1492,6 +1518,10 @@ async function saveSettings(overrides = {}) {
 async function submitCreate() {
   const create = state.create;
   const model = modelById(create.model);
+  if (!model) {
+    notify("Choose an available model before creating.", "bad");
+    return;
+  }
   if (model?.promptRequired !== false && !create.prompt.trim()) {
     notify("Describe what you want to create.", "bad");
     return;
@@ -1684,16 +1714,21 @@ async function uploadBlob(blob, title, caption = "") {
 /* ---------- mask and outpaint ---------- */
 
 let maskPainter = null;
+const maskDrafts = new Map();
 
 function attachMask() {
+  maskPainter = null;
   const canvas = document.querySelector("#mask-canvas");
   const create = state.create;
   if (!canvas || !create?.referenceAssetId) return;
   const asset = state.project.assets.find((item) => item.id === create.referenceAssetId);
   if (!asset) return;
+  const projectId = state.projectId;
+  const draftKey = `${projectId}:${asset.id}`;
   const source = new Image();
   source.crossOrigin = "anonymous";
   source.onload = () => {
+    if (!canvas.isConnected || state.projectId !== projectId || state.create?.referenceAssetId !== asset.id || !modelById(state.create.model)?.mask) return;
     const max = 1024;
     const scale = Math.min(1, max / Math.max(source.naturalWidth, source.naturalHeight));
     const width = Math.max(64, Math.round(source.naturalWidth * scale));
@@ -1714,6 +1749,15 @@ function attachMask() {
     const maskContext = maskCanvas.getContext("2d");
     maskContext.fillStyle = "#000";
     maskContext.fillRect(0, 0, width, height);
+    const savedDraft = maskDrafts.get(draftKey);
+    if (savedDraft && savedDraft.width === width && savedDraft.height === height) {
+      maskContext.drawImage(savedDraft, 0, 0);
+      context.save();
+      context.globalCompositeOperation = "screen";
+      context.drawImage(maskCanvas, 0, 0);
+      context.restore();
+    }
+    maskDrafts.set(draftKey, maskCanvas);
 
     let drawing = false;
     let brush = Number(document.querySelector("#mask-brush")?.value ?? 48);
@@ -2072,7 +2116,10 @@ app.addEventListener("input", (event) => {
       if (grid) grid.innerHTML = visibleAssets().map(assetCard).join("");
     }
   }
-  if (input.dataset.input === "prompt") state.create.prompt = input.value;
+  if (input.dataset.input === "prompt") {
+    state.create.prompt = input.value;
+    updateCreateSubmit();
+  }
   if (input.dataset.input === "control") {
     state.create.controls[input.dataset.key] = input.value;
     const recipe = recipeBySlug(state.create.recipeSlug);
@@ -2080,9 +2127,19 @@ app.addEventListener("input", (event) => {
       state.create.prompt = promptFromRecipe(recipe, state.create.controls);
       const prompt = document.querySelector('[data-input="prompt"]');
       if (prompt) prompt.value = state.create.prompt;
+      updateCreateSubmit();
     }
   }
 });
+
+function updateCreateSubmit() {
+  const button = app.querySelector('[data-action="submit-create"]');
+  if (!button || !state.create) return;
+  const model = modelById(state.create.model);
+  button.disabled = !model || (model.references > 0 && !state.create.referenceAssetId)
+    || (model.mask && !state.create.maskAssetId)
+    || (model.promptRequired !== false && !state.create.prompt.trim());
+}
 
 app.addEventListener("submit", async (event) => {
   const importForm = event.target.closest('[data-form="woodhouse-import"]');

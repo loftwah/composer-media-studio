@@ -53,4 +53,4 @@ export function unmountHome(): void {
   if (root) { root.unmount(); root = undefined; }
 }
 
-export { renderLibrary, renderViewer, unmountMedia } from "./library";
+export { renderLibrary, renderViewer, renderCreate, unmountMedia } from "./library";

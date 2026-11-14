@@ -1,6 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import type { LibraryProps, MediaAssetV1, ViewerProps } from "./contracts";
+import type { CreateProps, LibraryProps, MediaAssetV1, ViewerProps } from "./contracts";
+import { CreateWorkbench } from "./create";
 import "./library.css";
 
 const bytesLabel = (bytes: number) => !bytes ? "—" : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -60,4 +61,5 @@ function AssetViewer({ projectId, asset, still, launchKitUrl }: ViewerProps) {
 let root: Root | undefined;
 export function renderLibrary(container: HTMLElement, props: LibraryProps): void { root ??= createRoot(container); flushSync(() => root!.render(<Library {...props}/>)); }
 export function renderViewer(container: HTMLElement, props: ViewerProps): void { root ??= createRoot(container); flushSync(() => root!.render(<AssetViewer {...props}/>)); }
+export function renderCreate(container: HTMLElement, props: CreateProps): void { root ??= createRoot(container); flushSync(() => root!.render(<CreateWorkbench {...props}/>)); }
 export function unmountMedia(): void { if (root) { root.unmount(); root = undefined; } }

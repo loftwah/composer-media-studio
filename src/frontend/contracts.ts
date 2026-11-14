@@ -47,3 +47,23 @@ export interface ViewerProps {
   still: MediaAssetV1 | null;
   launchKitUrl: string | null;
 }
+
+export interface RecipeControlV1 { key: string; label: string; type: string; default?: string | number; application?: string; options?: string[] }
+export interface RecipeV1 { slug: string; title: string; description: string; kind: string; controls: RecipeControlV1[] }
+export interface ModelV1 {
+  id: string; label: string; provider: string; kind: string; description: string; costBasis: string;
+  references: number; aspects: string[]; durations: number[] | null; mask: boolean;
+  edit: string | null; promptRequired: boolean; audio: { mode: string; minSeconds?: number; maxSeconds?: number } | null;
+}
+export interface CreateStateV1 {
+  kind: string; model: string; recipeSlug: string; prompt: string; aspect: string;
+  durationSeconds: number; referenceAssetId: string | null; maskAssetId: string | null;
+  controls: Record<string, string | number>;
+  showAllReferences?: boolean;
+}
+export interface CreateProps {
+  create: CreateStateV1; models: ModelV1[]; recipes: RecipeV1[]; images: MediaAssetV1[];
+  selectedReference: MediaAssetV1 | null; maskAsset: MediaAssetV1 | null;
+  model: ModelV1 | null; recipe: RecipeV1 | null; estimateMicro: number;
+  fundingBlocked: boolean; permissionBlocked: boolean; executionFailed: boolean;
+}
