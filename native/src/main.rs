@@ -1,3 +1,4 @@
+mod connection;
 mod discovery;
 mod local_media;
 use rune::tok::{TextStyle, type_};
@@ -17,6 +18,11 @@ struct State {
     address: TextEdit,
     result: String,
     waiting: bool,
+    connection: Option<connection::Session>,
+    connected_origin: String,
+    connect_receive: Option<Receiver<connection::Event>>,
+    connect_inflight: Arc<AtomicBool>,
+    connect_cancel: Option<Arc<AtomicBool>>,
     receive: Option<Receiver<(String, Result<(), String>)>>,
     waker: Option<Waker>,
     review_mode: bool,
@@ -29,6 +35,49 @@ struct State {
     media_receive: Option<Receiver<(u64, Result<local_media::LocalMedia, &'static str>)>>,
 }
 impl State {
+    fn disconnect(&mut self) {
+        if let Some(cancel) = self.connect_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.connect_receive = None;
+        self.connection = None;
+        self.connected_origin.clear();
+        self.result =
+            "Disconnected on this device. You can also revoke the connection in Studio.".into();
+    }
+    fn connect(&mut self) {
+        if self.connect_receive.is_some() {
+            return;
+        }
+        if self.connect_inflight.load(Ordering::Acquire) {
+            self.result = "The previous connection is closing. Try again shortly.".into();
+            return;
+        }
+        let address = self.address.text.trim().to_owned();
+        if let Err(message) = discovery::origin(&address) {
+            self.result = message.into();
+            return;
+        }
+        let Some(waker) = self.waker.clone() else {
+            self.result = "The connection is unavailable.".into();
+            return;
+        };
+        self.connection = None;
+        self.connected_origin = address.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (send, receive) = mpsc::channel();
+        self.connect_receive = Some(receive);
+        self.connect_cancel = Some(cancel.clone());
+        self.result = "Preparing a read-only connection…".into();
+        self.connect_inflight.store(true, Ordering::Release);
+        let inflight = self.connect_inflight.clone();
+        std::thread::spawn(move || {
+            let worker_waker = waker.clone();
+            connection::connect(address, send, cancel, move || worker_waker());
+            inflight.store(false, Ordering::Release);
+            waker();
+        });
+    }
     fn choose_media(&mut self, files: &[PathBuf]) {
         self.media_seq = self.media_seq.wrapping_add(1);
         self.media_receive = None;
@@ -284,16 +333,59 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
       .child(label("Enter the HTTPS address of your own Media Studio. This check reads public connection information only; it does not sign in or access projects.",16.0,muted))
       .child(label("Studio address",15.0,ink))
       .child(row().h(48.0).w_full().px(12.0).center_y().fill(Color::WHITE).border(1.0,line).radius(8.0).child(text_input(&s.address,type_::BODY).key("address").label("Studio address").single_line().grow(1.0).color(ink).placeholder("https://your-studio.example",muted).on_edit(|s: &mut State| &mut s.address)))
-      .child(row().child(button)).child(label(&s.result,15.0,ink).role("status"))
+      .child(row().gap(8.0).child(button).child(if s.connect_receive.is_some() || s.connection.is_some() { action("disconnect", "Disconnect", State::disconnect) } else { action("connect", "Connect read-only", State::connect) })).child(label("Connect opens your browser. You choose one project; read access includes its records, prompts, assets and exports. No generation, spending or publishing.",14.0,muted)).child(label(&s.result,15.0,ink).role("status"))
       .child(row().child(action("review-open","Review a local file",|s|s.review_mode=true)))
       .child(el().grow(1.0))
-      .child(label("Early native connection check. Sign-in, project access, media editing and platform packages are not implemented yet.",14.0,muted))
+      .child(label("Early desktop preview. The connection lasts only for this session; media editing and platform packages are not implemented.",14.0,muted))
 }
 fn setup(s: &mut State, waker: Waker) {
     s.waker = Some(waker);
 }
 fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
     let mut changed = false;
+    if (s.connection.is_some() || s.connect_receive.is_some())
+        && s.address.text.trim() != s.connected_origin
+    {
+        s.disconnect();
+        s.result = "Address changed. Connect again to the new Studio.".into();
+        changed = true;
+    }
+    if let Some(event) = s.connect_receive.as_ref().and_then(|r| r.try_recv().ok()) {
+        match event {
+            connection::Event::Open(url) => {
+                if tx.open_url(&url).is_err() {
+                    s.disconnect();
+                    s.result = "Could not open the browser. Try again.".into();
+                } else {
+                    s.result =
+                        "Choose a project and allow read-only access in your browser.".into();
+                }
+            }
+            connection::Event::Connected(session, name) => {
+                s.connect_receive = None;
+                s.connect_cancel = None;
+                s.connection = Some(session);
+                s.result =
+                    format!("Connected to {name}. Read-only access expires within 30 minutes.");
+            }
+            connection::Event::Failed(error) => {
+                s.connect_receive = None;
+                s.connect_cancel = None;
+                s.connection = None;
+                s.result = error.into();
+            }
+        }
+        changed = true;
+    }
+    if let Some(session) = &s.connection {
+        if std::time::Instant::now() >= session.expires {
+            s.disconnect();
+            s.result = "Connection expired. Connect again to continue.".into();
+            changed = true;
+        } else {
+            tx.wake_after(Duration::from_secs(1));
+        }
+    }
     if let Some((address, result)) = s.receive.as_ref().and_then(|r| r.try_recv().ok()) {
         s.receive = None;
         s.waiting = false;
@@ -302,7 +394,7 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
         } else {
             match result {
                 Ok(()) => format!(
-                    "{address} advertises the required read-only PKCE endpoints. Sign-in is not available in this preview."
+                    "{address} advertises the required read-only PKCE endpoints. You can start a connection."
                 ),
                 Err(error) => error,
             }
@@ -451,6 +543,20 @@ mod ui_tests {
         state.media = None;
         assert!(poll(&mut state, 0.0, &mut tx));
         assert!(state.media_observed.is_empty());
+    }
+    #[test]
+    fn disconnect_clears_session_and_blocks_overlapping_worker() {
+        let mut state = State::default();
+        state.address.text = "https://studio.example".into();
+        state.waker = Some(Arc::new(|| {}));
+        let flag = Arc::new(AtomicBool::new(false));
+        state.connect_cancel = Some(flag.clone());
+        state.connect_inflight.store(true, Ordering::Release);
+        state.disconnect();
+        assert!(flag.load(Ordering::Acquire));
+        state.connect();
+        assert!(state.connect_receive.is_none());
+        assert!(state.result.contains("previous connection"));
     }
     #[test]
     fn invalid_address_fails_in_native_ui_without_network() {
