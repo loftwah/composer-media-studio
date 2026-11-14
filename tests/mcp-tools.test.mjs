@@ -132,6 +132,12 @@ test('MCP turns an authorised ready song plan into the same saved storyboard wit
     assert.equal(first.structuredContent.composition.shots[0].trimEndMs,5000);
     const again = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2,allowTrim:true}});
     assert.equal(again.structuredContent.created,false); assert.equal(again.structuredContent.composition.id,first.structuredContent.composition.id);
+    const composition=first.structuredContent.composition;
+    const update={projectId:project.id,compositionId:composition.id,expectedUpdatedAt:composition.updatedAt,title:'Revised cut',shots:composition.shots.map(({assetId,trimStartMs,trimEndMs})=>({assetId,...(trimStartMs === undefined ? {} : {trimStartMs,trimEndMs})}))};
+    const saved=await client.callTool({name:'studio_update_storyboard',arguments:update});
+    assert.equal(saved.isError,undefined,JSON.stringify(saved));
+    const stale=await client.callTool({name:'studio_update_storyboard',arguments:update});
+    assert.equal(stale.isError,true);
     assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
   } finally { await client.close(); }
 });

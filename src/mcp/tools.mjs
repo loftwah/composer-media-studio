@@ -81,7 +81,7 @@ export function createStudioMcpHandler(dispatch, options = {}) {
     const compositionFields = { title: z.string().min(1).max(80), shots: z.array(shot).min(2).max(6), audioAssetId: id.optional(), audioTracks: z.array(audioTrack).max(4).optional(), slateAssetId: id.optional(), slateVideoAssetId: id.optional() };
     const composition = z.object({ projectId: id, ...compositionFields }).strict();
     register('studio_create_storyboard', 'Save a storyboard from two to six existing project clips; does not render or incur inference charges.', composition, ({ projectId }) => `/api/projects/${projectId}/compositions`, { readOnly: false, method: 'POST', payload: ({ projectId, ...body }) => body });
-    const compositionUpdate = z.object({ projectId: id, compositionId: id, ...compositionFields }).strict();
+    const compositionUpdate = z.object({ projectId: id, compositionId: id, expectedUpdatedAt: z.number().int().min(0).optional(), ...compositionFields }).strict();
     register('studio_update_storyboard', 'Replace a saved storyboard manifest. Existing rendered results remain attached; this does not render.', compositionUpdate, ({ projectId, compositionId }) => `/api/projects/${projectId}/compositions/${compositionId}`, { readOnly: false, method: 'PATCH', payload: ({ projectId, compositionId, ...body }) => body });
     const rename = z.object({ assetId: id, title: z.string().min(1).max(100), caption: z.string().max(400).optional() }).strict();
     register('studio_rename_asset', 'Update a saved asset title and optional caption.', rename, ({ assetId }) => `/api/assets/${assetId}`, { readOnly: false, method: 'PATCH', payload: ({ assetId, ...body }) => body });
