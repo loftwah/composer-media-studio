@@ -55,6 +55,7 @@ const labels: Record<string, [string, string]> = {
 function CompositionCard({
   projectId,
   canEdit,
+  onAssetSaved,
   composition,
   generations,
   assets,
@@ -63,6 +64,7 @@ function CompositionCard({
 }: {
   projectId: string;
   canEdit: boolean;
+  onAssetSaved: (asset: MediaAssetV1) => void;
   composition: CompositionV1;
   generations: ComposeGenerationV1[];
   assets: MediaAssetV1[];
@@ -125,7 +127,7 @@ function CompositionCard({
           Edit shots
         </button>
       </div>
-      <LocalRenderer projectId={projectId} composition={composition} assets={assets} canEdit={canEdit} />
+      <LocalRenderer projectId={projectId} composition={composition} assets={assets} canEdit={canEdit} onAssetSaved={onAssetSaved} />
       <div className="render-list">
         {renders.length === 0 && (
           <p className="small" style={{ margin: 0 }}>
@@ -232,6 +234,7 @@ export function Assemble({
   projectId,
   canEdit,
   onSongStoryboard,
+  onAssetSaved,
   compose,
   assets,
   compositions,
@@ -533,6 +536,7 @@ export function Assemble({
             key={c.id}
             projectId={projectId}
             canEdit={canEdit}
+            onAssetSaved={onAssetSaved}
             composition={c}
             generations={generations}
             assets={assets}

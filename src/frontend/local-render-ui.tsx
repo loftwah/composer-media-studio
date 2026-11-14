@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
 import './local-render.css';
 
-export function LocalRenderer({ projectId, composition, assets, canEdit }: { projectId: string; composition: CompositionV1; assets: MediaAssetV1[]; canEdit: boolean }) {
+export function LocalRenderer({ projectId, composition, assets, canEdit, onAssetSaved }: { projectId: string; composition: CompositionV1; assets: MediaAssetV1[]; canEdit: boolean; onAssetSaved: (asset: MediaAssetV1) => void }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -40,7 +40,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit }: { pro
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/assets`, { method: 'POST', credentials: 'same-origin', body: form });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.asset?.id) throw new Error(data?.error?.message ?? `Save could not be confirmed (${response.status}).`);
-      setSavedAssetId(data.asset.id); setSaveState('saved');
+      onAssetSaved(data.asset); setSavedAssetId(data.asset.id); setSaveState('saved');
     } catch (err) { setError(`${(err as Error).message || 'Save could not be confirmed.'} Check the library before trying again; your download remains available.`); setSaveState('uncertain'); }
   };
   return <details className="local-render"><summary>Render MP4 on this device</summary>

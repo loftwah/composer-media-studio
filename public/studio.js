@@ -346,7 +346,11 @@ function hasUnsavedStoryboard() {
 }
 
 function renderReactAssemble() {
-  creativeHome.renderAssemble(app.querySelector("#creative-media"), { projectId: state.projectId, canEdit: Boolean(state.session?.actions.includes("edit")), onSongStoryboard: (composition) => {
+  const projectId = state.projectId;
+  creativeHome.renderAssemble(app.querySelector("#creative-media"), { projectId, onAssetSaved: (asset) => {
+    if (!state.project || state.project.id !== projectId) return;
+    state.project.assets = [asset, ...state.project.assets.filter((item) => item.id !== asset.id)];
+  }, canEdit: Boolean(state.session?.actions.includes("edit")), onSongStoryboard: (composition) => {
     if (!state.project || state.project.id !== composition.projectId || state.view !== "project" || state.tab !== "assemble") return;
     state.project.compositions = [composition, ...(state.project.compositions ?? []).filter((item) => item.id !== composition.id)];
     renderReactAssemble();
