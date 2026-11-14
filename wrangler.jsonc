@@ -29,6 +29,7 @@
   "ai": {
     "binding": "AI"
   },
+  "services": [{ "binding": "WOODHOUSE_SOURCE", "service": "woodhouse-loftwah" }],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

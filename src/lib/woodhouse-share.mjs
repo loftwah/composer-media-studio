@@ -32,25 +32,32 @@ export function woodhouseUrl(value) {
   return null;
 }
 
-async function requestCatalogue(url) {
-  const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(8000) });
+function shareFetch(env, url, timeout) {
+  const options = { redirect: "error", signal: AbortSignal.timeout(timeout) };
+  return env.WOODHOUSE_SOURCE
+    ? env.WOODHOUSE_SOURCE.fetch(url, options)
+    : fetch(url, options);
+}
+
+async function requestCatalogue(env, url) {
+  const response = await shareFetch(env, url, 8000);
   if (response.status === 404) throw new HttpError(404, "This artwork is no longer listed in Woodhouse Share.");
-  if (!response.ok) throw new Error("Share catalogue unavailable");
+  if (!response.ok) throw new Error(`Share catalogue returned HTTP ${response.status}`);
   const data = await response.json();
   if (data.version !== 1) throw new Error("Unexpected Share catalogue version");
   return data;
 }
 
-export async function shareAsset(assetId) {
+export async function shareAsset(env, assetId) {
   if (typeof assetId !== "string" || !identifier.test(assetId))
     throw new HttpError(400, "Enter a valid Woodhouse Share asset ID.");
-  const { asset } = await requestCatalogue(shareApi + "/" + assetId);
+  const { asset } = await requestCatalogue(env, shareApi + "/" + assetId);
   if (asset?.id !== assetId || asset.visibility !== "public")
     throw new HttpError(404, "This artwork is no longer public in Woodhouse Share.");
   return asset;
 }
 
-export async function sharePage(params) {
+export async function sharePage(env, params) {
   const query = (params.get("q") ?? "").trim().slice(0, 100);
   const project = params.get("project") ?? "";
   const after = params.get("after") ?? "";
@@ -59,7 +66,7 @@ export async function sharePage(params) {
   if (query) url.searchParams.set("q", query);
   if (identifier.test(project)) url.searchParams.set("project", project);
   if (identifier.test(after)) url.searchParams.set("after", after);
-  const data = await requestCatalogue(url);
+  const data = await requestCatalogue(env, url.href);
   return {
     query, project, after,
     assets: data.assets.filter((asset) => asset.visibility === "public" && identifier.test(asset.id)),
@@ -67,10 +74,10 @@ export async function sharePage(params) {
   };
 }
 
-export async function shareOriginal(asset, limit) {
+export async function shareOriginal(env, asset, limit) {
   const url = woodhouseUrl(asset.original?.url);
   if (!url) throw new HttpError(422, "This artwork has no supported original.");
-  const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20000) });
+  const response = await shareFetch(env, url, 20000);
   if (!response.ok || !response.body)
     throw new HttpError(502, "Woodhouse Share did not return the original.");
   if (Number(response.headers.get("content-length")) > limit) {
