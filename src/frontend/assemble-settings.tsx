@@ -1,4 +1,5 @@
 import { LocalRenderer } from "./local-render-ui";
+import { shotRange } from "../../public/shot-trims.js";
 import { FootagePlans } from "./footage-plans";
 import { SongPlans } from "./song-plans";
 import type {
@@ -72,6 +73,7 @@ function CompositionCard({
   socialCost: number;
 }) {
   const renders = generations.filter((g) => g.compositionId === composition.id);
+  const hasTrims = composition.shots.some((shot) => shot.trimStartMs !== undefined || shot.trimEndMs !== undefined);
   const busy = renders.some((g) => pending(g.status));
   const changed =
     renders.length > 0 &&
@@ -105,7 +107,7 @@ function CompositionCard({
           data-action="compose-render"
           data-variant="assembly"
           data-id={composition.id}
-          disabled={busy}
+          disabled={busy || hasTrims}
         >
           Render master · {money(assemblyCost)}
         </button>
@@ -114,7 +116,7 @@ function CompositionCard({
           data-action="compose-render"
           data-variant="social"
           data-id={composition.id}
-          disabled={busy}
+          disabled={busy || hasTrims}
           title="The selected order, composed into a 720 × 1280 (9:16) master with the saved sound, after a one-second vertical slate"
         >
           Make 9:16 cut · {money(socialCost)}
@@ -127,6 +129,7 @@ function CompositionCard({
           Edit shots
         </button>
       </div>
+      {hasTrims && <p className="small">Paid provider rendering cannot preserve these trims. Use the local MP4 renderer below.</p>}
       <LocalRenderer projectId={projectId} composition={composition} assets={assets} canEdit={canEdit} onAssetSaved={onAssetSaved} />
       <div className="render-list">
         {renders.length === 0 && (
@@ -249,7 +252,9 @@ export function Assemble({
   const chosen = compose.shotIds
     .map((id) => clips.find((a) => a.id === id))
     .filter((a): a is MediaAssetV1 => Boolean(a));
-  const total = chosen.reduce((sum, a) => sum + (a.durationMs || 0), 0);
+  const total = chosen.reduce((sum, a) => sum + (shotRange(compose.shotTrims[a.id] ?? {}, a)?.durationMs ?? 0), 0);
+  const mixedBed = audio.find((asset) => asset.id === compose.audioAssetId);
+  const staleBed = Boolean(compose.audioAssetId && (!mixedBed?.durationMs || Math.abs(mixedBed.durationMs - total) > 100));
   return (
     <>
       <FootagePlans key={`footage-${projectId}`} projectId={projectId} assets={assets} canEdit={canEdit} />
@@ -301,7 +306,7 @@ export function Assemble({
                     {asset.title}
                     <br />
                     <span className="small">
-                      {((asset.durationMs || 0) / 1000).toFixed(1)}s ·{" "}
+                      {compose.shotTrims[asset.id] ? `Using ${compose.shotTrims[asset.id].trimStartMs}–${compose.shotTrims[asset.id].trimEndMs} ms of original` : `${((asset.durationMs || 0) / 1000).toFixed(1)}s`} ·{" "}
                       {asset.width}×{asset.height}
                     </span>
                   </span>
@@ -457,7 +462,7 @@ export function Assemble({
                 Mix soundtrack
               </button>
             </div>
-            {compose.audioAssetId && (
+            {compose.audioAssetId && (<>
               <p className="small" style={{ margin: "0.4rem 0 0" }}>
                 Mixed bed:{" "}
                 {audio.find((a) => a.id === compose.audioAssetId)?.title ??
@@ -465,7 +470,9 @@ export function Assemble({
                 . Rendering uses this saved WAV; the separate tracks remain in
                 the composition manifest.
               </p>
-            )}
+              <button className="quiet" type="button" data-action="mix-clear">Remove mixed bed</button>
+              {staleBed && <p className="notice warn">The mixed bed does not match the shot durations. Mix again or remove the bed before saving.</p>}
+            </>)}
           </div>
           {audio.length === 0 && (
             <p className="small" style={{ margin: 0 }}>
@@ -477,7 +484,7 @@ export function Assemble({
             <button
               className="button"
               data-action="compose-save"
-              disabled={chosen.length < 2 || total > 60000}
+              disabled={chosen.length < 2 || total > 60000 || staleBed}
             >
               {compose.editingId ? "Save changes" : "Save storyboard"}
             </button>

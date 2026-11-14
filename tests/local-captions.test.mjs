@@ -23,3 +23,11 @@ test('refuses overlapping or out-of-range cues and never silently clips caption 
  assert.throws(()=>captionLines('extraordinary',4,s=>s.length),/too wide/);
  assert.throws(()=>captionLines('one two six ten',3,s=>s.length),/three lines/);
 });
+test('captioned trimmed cuts must match the frozen source in- and out-points',()=>{
+ const longer=[assets[0],{...assets[1],durationMs:4000},assets[2]];
+ const frozen=[{...scenes[0],trimStartMs:0,trimEndMs:2000},scenes[1]];
+ const trimmed={...composition,shots:[{assetId:'asset_a',trimStartMs:0,trimEndMs:2000,durationMs:2000},{assetId:'asset_b'}],originSongPlan:{...origin,scenes:frozen}};
+ assert.equal(resolveCaptionSnapshot(trimmed,longer,plan).revision,4);
+ assert.throws(()=>resolveCaptionSnapshot({...trimmed,shots:[{assetId:'asset_a',trimStartMs:500,trimEndMs:2500,durationMs:2000},{assetId:'asset_b'}]},longer,plan),/no longer matches/);
+ assert.throws(()=>resolveCaptionSnapshot({...trimmed,originSongPlan:{...origin,scenes}},longer,plan),/no longer matches/);
+});

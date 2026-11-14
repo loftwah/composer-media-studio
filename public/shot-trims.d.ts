@@ -1,0 +1,1 @@
+export function shotRange(shot: { trimStartMs?: number; trimEndMs?: number; durationMs?: number }, asset: { durationMs: number | null } | undefined): { start: number; end: number; durationMs: number } | null;

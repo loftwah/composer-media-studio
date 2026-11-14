@@ -2,6 +2,7 @@
 import { ALL_FORMATS, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from 'mediabunny';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
 import { captionLines, type CaptionSnapshot } from './local-captions.ts';
+import { shotRange } from '../../public/shot-trims.js';
 
 const MAX_INPUT = 128 * 1024 * 1024;
 const MAX_OUTPUT = 64 * 1024 * 1024;
@@ -31,7 +32,11 @@ export function validateLocalInputs(composition: CompositionV1, assets: MediaAss
   const shots = composition.shots.map(shot => assets.find(asset => asset.id === shot.assetId && asset.kind === 'video'));
   if (shots.length < 2 || shots.length > 6 || shots.some(shot => !shot || !shot.durationMs || shot.durationMs <= 0 || shot.durationMs > 16000)) throw new Error('Choose two to six available video clips, each no longer than 16 seconds.');
   const clips = shots as MediaAssetV1[];
-  const totalMs = clips.reduce((sum, asset) => sum + asset.durationMs!, 0);
+  const ranges = composition.shots.map((shot, index) => shotRange(shot, clips[index]));
+  if (ranges.some(range => !range)) throw new Error('A saved shot has an invalid trim range. Open the storyboard and review it.');
+  const selected = ranges as { start: number; end: number; durationMs: number }[];
+  const totalMs = selected.reduce((sum, range) => sum + range.durationMs, 0);
+  if (composition.totalMs !== undefined && composition.totalMs !== totalMs) throw new Error('The saved storyboard duration does not match its shots. Open it and save again.');
   if (totalMs > 60000 || totalMs <= 0) throw new Error('Keep the storyboard within 60 seconds.');
   const sound = composition.audioAssetId ? assets.find(asset => asset.id === composition.audioAssetId && asset.kind === 'audio') : undefined;
   if (composition.audioAssetId && !sound) throw new Error('The mixed soundtrack is no longer available.');
@@ -39,11 +44,11 @@ export function validateLocalInputs(composition: CompositionV1, assets: MediaAss
   if (sound && (!sound.durationMs || Math.abs(sound.durationMs - totalMs) > 100)) throw new Error('The saved mixed soundtrack must match the storyboard duration. Mix and save it again.');
   if (sound && (sound.mime !== 'audio/wav' || sound.bytes > 16 * 1024 * 1024)) throw new Error('Use Mix soundtrack to save a WAV mix under 16 MiB before local rendering.');
   if ([...clips, ...(sound ? [sound] : [])].some(asset => !Number.isSafeInteger(asset.bytes) || asset.bytes <= 0) || clips.reduce((sum, asset) => sum + asset.bytes, sound?.bytes ?? 0) > MAX_INPUT) throw new Error('The selected media exceeds the 128 MiB local input limit or has an unknown size.');
-  return { clips, totalMs, sound };
+  return { clips, ranges: selected, totalMs, sound };
 }
 export async function renderLocalMp4(composition: CompositionV1, assets: MediaAssetV1[], signal: AbortSignal, progress: (message: string) => void, captions?: CaptionSnapshot): Promise<Blob> {
   if (typeof VideoEncoder === 'undefined') throw new Error('This browser does not support the required video encoder.');
-  const { clips, totalMs, sound } = validateLocalInputs(composition, assets);
+  const { clips, ranges, totalMs, sound } = validateLocalInputs(composition, assets);
   if (sound && typeof AudioEncoder === 'undefined') throw new Error('This browser does not support the required audio encoder.');
   const first = clips[0];
   if (!first.width || !first.height) throw new Error('The first clip has no measured frame size.');
@@ -93,12 +98,15 @@ export async function renderLocalMp4(composition: CompositionV1, assets: MediaAs
           if (!track || !await track.canDecode()) throw new Error(`${clip.title} cannot be decoded by this browser.`);
           const codedWidth = await track.getCodedWidth(), codedHeight = await track.getCodedHeight();
           if (codedWidth <= 0 || codedHeight <= 0 || codedWidth > 4096 || codedHeight > 4096 || codedWidth * codedHeight > 8294400) throw new Error(`${clip.title} exceeds the local 4K input limit.`);
-          const actualDuration = await track.computeDuration();
-          if (!Number.isFinite(actualDuration) || Math.abs(actualDuration * 1000 - clip.durationMs!) > 100) throw new Error(`${clip.title} has a different decoded duration. Re-upload or choose another clip.`);
           const firstTime = await track.getFirstTimestamp();
-          const duration = clip.durationMs! / 1000;
+          const endTime = await track.computeDuration();
+          const actualDuration = endTime - firstTime;
+          if (!Number.isFinite(firstTime) || !Number.isFinite(endTime) || Math.abs(actualDuration * 1000 - clip.durationMs!) > 100) throw new Error(`${clip.title} has a different decoded duration. Re-upload or choose another clip.`);
+          const range = ranges[index];
+          const duration = range.durationMs / 1000;
           const frames = Math.ceil(duration * FPS);
-          const times = Array.from({ length: frames }, (_, frame) => firstTime + frame / FPS);
+          const times = Array.from({ length: frames }, (_, frame) => firstTime + range.start / 1000 + frame / FPS);
+          if (times.at(-1)! >= endTime) throw new Error(`${clip.title} ends before the selected trim. Review this shot.`);
           const sink = new CanvasSink(track, { width, height, fit: 'contain', poolSize: 2 });
           let frame = 0;
           for await (const sample of sink.canvasesAtTimestamps(times)) {

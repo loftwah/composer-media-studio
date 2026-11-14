@@ -16,3 +16,14 @@ test('local MP4 refuses missing clips, overlong media, unmixed tracks and incons
  assert.throws(()=>validateLocalInputs(comp,[clip('clip_1'),clip('clip_2'),{...audio,mime:'audio/mpeg'}]),/save a WAV mix/);
  assert.throws(()=>validateLocalInputs(comp,[clip('clip_1',{bytes:130*1024*1024}),clip('clip_2'),audio]),/128 MiB/);
 });
+test('local MP4 validates saved ranges and measures the soundtrack against the trimmed cut',()=>{
+ const trimmed={...comp,shots:[{assetId:'clip_1',trimStartMs:500,trimEndMs:1500,durationMs:1000},{assetId:'clip_2'}],totalMs:3000};
+ const assets=[clip('clip_1'),clip('clip_2'),{...audio,durationMs:3000}];
+ const result=validateLocalInputs(trimmed,assets);
+ assert.deepEqual(result.ranges.map(x=>[x.start,x.end]),[[500,1500],[0,2000]]);
+ assert.equal(result.totalMs,3000);
+ assert.throws(()=>validateLocalInputs({...trimmed,shots:[{assetId:'clip_1',trimStartMs:500},trimmed.shots[1]]},assets),/invalid trim/);
+ assert.throws(()=>validateLocalInputs({...trimmed,shots:[{...trimmed.shots[0],trimEndMs:2500},trimmed.shots[1]]},assets),/invalid trim/);
+ assert.throws(()=>validateLocalInputs(trimmed,[...assets.slice(0,2),audio]),/match the storyboard/);
+ assert.throws(()=>validateLocalInputs({...trimmed,totalMs:4000},assets),/duration does not match/);
+});
