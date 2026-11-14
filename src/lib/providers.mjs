@@ -102,7 +102,7 @@ export const models = {
     provider: PROVIDER_FAL,
     endpoint: "minimax/h3-max-turbo/image-to-video",
     kind: "video",
-    description: "Animate a selected still into a 5, 10 or 15 second 768p video. Provider availability has not yet been verified in this studio.",
+    description: "Animate a selected still into a 5, 10 or 15 second 768p video. Availability and funding depend on this studio’s provider account.",
     aspects: ["from-image"],
     references: 1,
     durations: [5, 10, 15],
