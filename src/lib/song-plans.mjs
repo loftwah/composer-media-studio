@@ -1,5 +1,6 @@
 // MIT. Durable, project-scoped editorial planning; no provider calls or spend.
 import { HttpError, id, now, safeJson, text } from './util.mjs';
+import { readSongPlanPack } from './song-plan-pack.mjs';
 
 const fail = (message) => { throw new HttpError(400, message, 'invalid_song_plan'); };
 const integer = (value, label) => {
@@ -71,6 +72,23 @@ export async function createSongPlan(env, project, input) {
   const timestamp = now(), planId = id('plan');
   await env.DB.prepare('INSERT INTO song_plans(id,project_id,song_asset_id,song_sha256,spec_json,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,1,?6,?6)').bind(planId, project.id, song.id, song.sha256, JSON.stringify(spec), timestamp).run();
   return viewSongPlan({ id: planId, project_id: project.id, song_asset_id: song.id, song_sha256: song.sha256, spec_json: JSON.stringify(spec), revision: 1, created_at: timestamp, updated_at: timestamp });
+}
+// A new private plan is inserted only if the explicitly selected matching song is still live.
+export async function importSongPlan(env, project, input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key=>!['confirm','songRightsConfirmed','lyricsRightsConfirmed','songAssetId','pack'].includes(key)) || typeof input.songAssetId !== 'string' || !/^asset_[a-z0-9_]{1,80}$/.test(input.songAssetId) || input.confirm !== true || input.songRightsConfirmed !== true) fail('Review the plan and confirm permission to use the selected song');
+  let pack; try { pack = readSongPlanPack(input.pack); } catch { fail('This is not a supported portable song plan'); }
+  if (pack.plan.captions.length && input.lyricsRightsConfirmed !== true) fail('Confirm permission to use the supplied captions');
+  const song = await asset(env, project, input.songAssetId, 'audio');
+  if (!song.sha256 || song.sha256.toLowerCase() !== pack.songSha256.toLowerCase()) fail('Choose the same saved song as the portable plan');
+  if (!Number.isSafeInteger(song.duration_ms) || song.duration_ms < pack.plan.endMs) fail('The chosen song is too short for this plan');
+  const scenes=pack.plan.scenes.map(s=>({id:id('scn'),startMs:s.startMs,endMs:s.endMs,direction:s.direction,referenceAssetId:null,selectedTakeId:null}));
+  const spec=await validateSpec(env,project,song,{...pack.plan,scenes});
+  if(pack.plan.captions.length) { const prefix=id('cue'); spec.captions=validateCaptions({source:'owner_supplied',rightsConfirmed:true,cues:pack.plan.captions.map((c,i)=>({...c,id:`${prefix}_${String(i).padStart(3,'0')}`}))},spec.startMs,spec.endMs); }
+  const stamp=now(),planId=id('plan');
+  const saved=await env.DB.prepare(`INSERT INTO song_plans(id,project_id,song_asset_id,song_sha256,spec_json,revision,created_at,updated_at)
+    SELECT ?1,?2,?3,?4,?5,1,?6,?6 WHERE EXISTS (SELECT 1 FROM assets WHERE id=?3 AND project_id=?2 AND kind='audio' AND deleted_at IS NULL AND sha256=?4 AND duration_ms=?7) RETURNING *`).bind(planId,project.id,song.id,song.sha256,JSON.stringify(spec),stamp,song.duration_ms).first();
+  if(!saved) throw new HttpError(409,'The selected song changed. Review the import again.','song_changed');
+  return viewSongPlan(saved);
 }
 export async function listSongPlans(env, project) {
   const rows = await env.DB.prepare('SELECT * FROM song_plans WHERE project_id=?1 ORDER BY updated_at DESC').bind(project.id).all();

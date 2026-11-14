@@ -34,7 +34,7 @@ import {
 } from "./lib/jobs.mjs";
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { previewSceneProposal, applySceneProposal } from "./lib/scene-proposals.mjs";
-import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
+import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
 import { measureFootageSource } from "./lib/footage-preflight.mjs";
@@ -568,6 +568,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     const footagePlanEdit = rest && rest.match(/^footage-plans\/([a-z0-9_]+)$/);
     if (footagePlanEdit && method === "PATCH") return json({ plan: await updateFootagePlan(env, project, footagePlanEdit[1], await body(request)) });
 
+    if (rest === "song-plans/import" && method === "POST") {
+      const binding=request.headers.get("x-studio-local-import-binding") ?? "";
+      if (!/^[a-f0-9]{64}$/.test(binding) || !constantTimeEqual(binding,(await sessionBinding(env,session)) ?? "")) throw new HttpError(409,"Your Studio session changed. Review the import again.","session_changed");
+      return json({ plan: await importSongPlan(env, project, await body(request)) }, 201);
+    }
     if (rest === "song-plans" && method === "GET") return json({ plans: await listSongPlans(env, project) });
     if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);
     const sceneProposal = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/scene-proposal\/(preview|apply)$/);
