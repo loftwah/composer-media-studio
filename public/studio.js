@@ -2,6 +2,7 @@ import { encodeWav } from "./wav.js";
 import { isLocalRenderProvenance, publicCaption } from "./asset-caption.js";
 import { shotRange } from "./shot-trims.js";
 import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.js";
+import { prepareVoiceDraft, restoreCreateDraft } from "./voice-handoff.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -24,6 +25,11 @@ function clearMixPreview() {
 }
 window.addEventListener('pagehide', clearMixPreview);
 const shareImportDrafts = new Map();
+// Displaced Create drafts stay project-scoped and recoverable for this tab's lifetime.
+const priorCreateDrafts = new Map();
+window.addEventListener("beforeunload", (event) => {
+  if ([...priorCreateDrafts.values()].some((drafts) => drafts.length)) event.preventDefault();
+});
 // Comparison is an in-memory view of existing same-project images, not a saved collection.
 const comparisons = new Map();
 
@@ -399,7 +405,18 @@ function studioReentry(session) {
 
 function renderReactAssemble() {
   const projectId = state.projectId;
-  creativeHome.renderAssemble(app.querySelector("#creative-media"), { projectId, onAssetSaved: (asset) => {
+  creativeHome.renderAssemble(app.querySelector("#creative-media"), { projectId, onVoiceDraft: (script) => {
+    if (!state.project || state.project.id !== projectId || state.view !== "project" || state.tab !== "assemble" || !state.session?.actions.includes("edit")) return "Reopen this studio before preparing narration.";
+    try {
+      const { previous, voice } = prepareVoiceDraft(state.create, script, modelById("studio-voice"));
+      const drafts = priorCreateDrafts.get(projectId) ?? [];
+      drafts.push(previous); priorCreateDrafts.set(projectId, drafts);
+      state.create = voice;
+      location.hash = `#/p/${projectId}/create`;
+      notify("Narration draft prepared. Earlier Create draft is available above; no request was sent.");
+      return null;
+    } catch (error) { return error.message; }
+  }, onAssetSaved: (asset) => {
     if (!state.project || state.project.id !== projectId) return;
     state.project.assets = [asset, ...state.project.assets.filter((item) => item.id !== asset.id)];
   }, canEdit: Boolean(state.session?.actions.includes("edit")), onSongStoryboard: (composition) => {
@@ -492,6 +509,12 @@ function projectCard(project) {
   </button>`;
 }
 
+function createDraftRecovery() {
+  const drafts = priorCreateDrafts.get(state.projectId) ?? [];
+  if (!drafts.length) return "";
+  return `<div class="card stack"><strong>Earlier Create drafts</strong><p class="small">These drafts are kept in this tab for this session. Reloading or closing the tab clears them.</p><div class="row"><label>Choose a draft<select id="prior-create-draft">${drafts.map((draft,index)=>`<option value="${index}">Draft ${index + 1} · ${esc(draft.kind ?? "create")}</option>`).join("")}</select></label><button type="button" class="secondary" data-action="restore-create-draft">Restore draft</button><button type="button" class="quiet" data-action="discard-create-drafts">Discard earlier drafts</button></div></div>`;
+}
+
 function projectView() {
   const project = state.project;
   if (!project) return `<p class="notice">Loading…</p>`;
@@ -515,7 +538,7 @@ function projectView() {
     </nav>
     <section role="tabpanel" aria-label="${esc(state.tab)}">
       ${state.tab === "library" ? (creativeHome ? '<div id="creative-media"></div>' : libraryView()) : ""}
-      ${state.tab === "create" ? (creativeHome ? '<div id="creative-media"></div>' : createView()) : ""}
+      ${state.tab === "create" ? `${createDraftRecovery()}${creativeHome ? '<div id="creative-media"></div>' : createView()}` : ""}
       ${state.tab === "assemble" ? (creativeHome ? '<div id="creative-media"></div>' : composeView()) : ""}
       ${state.tab === "history" ? (creativeHome ? '<div id="creative-media"></div>' : historyView()) : ""}
       ${state.tab === "publish" ? (creativeHome ? '<div id="creative-media"></div>' : publishView()) : ""}
@@ -1158,6 +1181,23 @@ async function handleAction(action, element, keyboard = false) {
         drawWaveforms();
       } else render();
       return;
+    case "restore-create-draft": {
+      const drafts = priorCreateDrafts.get(state.projectId) ?? [];
+      const value = document.querySelector("#prior-create-draft")?.value;
+      if (value === undefined) return;
+      const { restored, remaining } = restoreCreateDraft(drafts, Number(value), state.create);
+      priorCreateDrafts.set(state.projectId, remaining);
+      state.create = restored;
+      render();
+      notify("Draft restored. The draft you just left is also available above.");
+      return;
+    }
+    case "discard-create-drafts": {
+      const projectId = state.projectId;
+      const confirmed = await confirmAction("Discard earlier Create drafts?", "These session-only drafts will be lost. The draft currently open will remain.", "Discard drafts");
+      if (confirmed && state.projectId === projectId) { priorCreateDrafts.delete(projectId); render(); notify("Earlier session drafts discarded."); }
+      return;
+    }
     case "kind": {
       state.create.kind = element.dataset.kind;
       if (state.create.kind === "audio") {

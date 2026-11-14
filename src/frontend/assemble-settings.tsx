@@ -243,6 +243,7 @@ export function Assemble({
   projectId,
   canEdit,
   onSongStoryboard,
+  onVoiceDraft,
   onAssetSaved,
   compose,
   assets,
@@ -263,7 +264,7 @@ export function Assemble({
   const staleBed = Boolean(compose.audioAssetId && (!mixedBed?.durationMs || Math.abs(mixedBed.durationMs - total) > 100));
   return (
     <>
-      <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} />
+      <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} onVoiceDraft={onVoiceDraft} />
       <FootagePlans key={`footage-${projectId}`} projectId={projectId} assets={assets} canEdit={canEdit} />
       <SongPlans key={projectId} projectId={projectId} assets={assets} canEdit={canEdit} onStoryboard={onSongStoryboard} />
       <div className="spread">
