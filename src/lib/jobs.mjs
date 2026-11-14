@@ -1,3 +1,4 @@
+import { publishCandidate } from "./publication-policy.mjs";
 // MIT. One durable job authority for images and video.
 //
 // Invariants:
@@ -379,7 +380,13 @@ async function failGeneration(env, generation, error, { dispatched = false } = {
 export async function saveGeneration(env, generation, bytes, format) {
   const mime = mimeFor(format, bytes);
   const fresh = await loadGeneration(env, generation.id);
-  if (fresh.status === "saved") return fresh;
+  if (fresh.status === "saved") {
+    if (fresh.output_asset_id && !fresh.deleted_at) {
+      try { await publishCandidate(env, fresh.project_id, fresh.output_asset_id, { automatic: true }); }
+      catch (error) { console.warn("Automatic publication skipped:", String(error.message ?? error).slice(0, 120)); }
+    }
+    return fresh;
+  }
   if (fresh.deleted_at) {
     await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',updated_at=?2 WHERE id=?1")
       .bind(generation.id, now())
@@ -400,6 +407,8 @@ export async function saveGeneration(env, generation, bytes, format) {
       .bind(generation.id, existingAsset.id, now())
       .run();
     await settleReservation(env, generation);
+    try { await publishCandidate(env, generation.project_id, existingAsset.id, { automatic: true }); }
+    catch (error) { console.warn("Automatic publication skipped:", String(error.message ?? error).slice(0, 120)); }
     return loadGeneration(env, generation.id);
   }
   const extension = extensionFor(mime);
@@ -486,6 +495,8 @@ export async function saveGeneration(env, generation, bytes, format) {
     .bind(generation.id, assetId, now())
     .run();
   await settleReservation(env, generation);
+  try { await publishCandidate(env, generation.project_id, assetId, { automatic: true }); }
+  catch (error) { console.warn("Automatic publication skipped:", String(error.message ?? error).slice(0, 120)); }
   return loadGeneration(env, generation.id);
 }
 

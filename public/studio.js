@@ -814,6 +814,7 @@ function publishView() {
   return `
     <div class="spread"><h2 style="margin:0">Published pages</h2><button class="button" data-action="choose-publish">Publish a piece</button></div>
     <p class="small">Publishing creates a public page with only the title, description and media. Prompts, other projects and private filenames stay private. Withdrawal stops new visits; downloads already taken cannot be recalled.</p>
+    <div class="row"><button class="secondary" data-action="publication-policy">First-party publishing settings</button><button class="secondary" data-action="publication-inventory">Review publication inventory</button></div>
     <div class="stack" style="margin-top:0.8rem">
       ${publications.length === 0 ? `<div class="card"><p style="margin:0">Nothing published yet.</p></div>` : ""}
       ${publications
@@ -1396,6 +1397,46 @@ async function handleAction(action, element) {
         return;
       }
       await publishAsset(asset.id, values.title, values.description);
+      return;
+    }
+    case "publication-policy": {
+      const path = `/api/projects/${state.projectId}/publication-policy`;
+      const policy = await api(path);
+      if (!policy.installationAllowed) {
+        await ask({ title: "First-party publishing", copy: "This installation has not enabled first-party publishing for this project. Existing published pages are unchanged.", submit: "Close" });
+        return;
+      }
+      if (policy.enabled) {
+        if (!(await confirmAction("Turn off automatic publishing?", "Future results will stay private. Published pages and listings remain as they are.", "Turn off"))) return;
+        await api(path, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+        notify("Automatic publishing turned off.");
+      } else {
+        if (!(await confirmAction("Enable first-party publishing?", "New generated, variant and assembled results in this project will be publicly listed. Only enable this if you have the rights to publish the outputs and their reference material, and have checked they are suitable for public sharing. Uploads and reference files are not published directly. Existing results require a separate inventory review.", "I confirm rights and enable"))) return;
+        await api(path, { method: "PUT", body: JSON.stringify({ enabled: true, rightsConfirmed: true }) });
+        notify("Automatic publishing enabled for this project.");
+      }
+      return;
+    }
+    case "publication-inventory": {
+      const projectId = state.projectId;
+      let after = "";
+      do {
+        const result = await api(`/api/projects/${projectId}/publication-inventory${after ? `?after=${encodeURIComponent(after)}` : ""}`);
+        const candidates = result.items.filter((item) => item.status === "candidate" || item.status === "existing");
+        const rows = result.items.map((item) => `<a href="#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(item.id)}" target="_blank" rel="noopener">${esc(item.title)}</a> — ${esc(item.kind)}, ${esc(item.source)}, ${esc(item.status)} <code>${esc(item.id)}</code>`).join("<br>") || "No assets on this page.";
+        const viewed = await ask({ title: "Publication inventory", copy: `Dry run: ${rows}<br><br>${candidates.length} eligible item(s) on this page. Withdrawn, hidden and ineligible items are excluded. ${!result.policy.installationAllowed || !result.policy.enabled ? "First-party publishing is off; enable it before applying." : ""} ${result.nextAfter ? "More assets follow." : ""}`, submit: "Continue" });
+        if (!viewed) return;
+        if (result.policy.installationAllowed && result.policy.enabled && candidates.length) {
+          const apply = await confirmAction("Publish the eligible items on this page?", `This will publish or list ${candidates.length} item(s). Confirm you have rights to publish these outputs and their references and that they are suitable for public sharing. Choose Cancel to skip this page.`, "Confirm rights and publish");
+          if (apply) {
+            await api(`/api/projects/${projectId}/publication-reconcile`, { method: "POST", body: JSON.stringify({ assetIds: candidates.map((item) => item.id), confirm: true, rightsConfirmed: true }) });
+            await loadProject(projectId);
+            render();
+            notify("Reviewed page reconciled.");
+          }
+        }
+        after = result.nextAfter;
+      } while (after);
       return;
     }
     case "toggle-listing": {

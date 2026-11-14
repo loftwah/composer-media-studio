@@ -39,6 +39,7 @@ import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
 import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, publicGallery } from "./lib/ui.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
+import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
 import {
@@ -328,6 +329,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/\/render$/.test(path) && method === "POST") action = "generate";
   if (/\/publish$/.test(path) && method === "POST") action = "publish";
   if (/^\/api\/publications\//.test(path)) action = "publish";
+  if (/^\/api\/projects\/[a-z0-9_]+\/publication-(policy|inventory|reconcile)$/.test(path)) action = "publish";
   if (/^\/api\/generations\/[a-z0-9_]+$/.test(path) && method === "DELETE") action = "edit";
   if (/^\/api\/generations\/[a-z0-9_]+\/(cancel|reconcile|save-retry)$/.test(path)) action = "generate";
   if (/\/export$/.test(path)) action = "read";
@@ -343,6 +345,34 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     );
 
   if (method !== "GET" && method !== "HEAD") assertSameOrigin(request, env);
+
+  const publicationPolicyMatch = path.match(/^\/api\/projects\/([a-z0-9_]+)\/publication-(policy|inventory|reconcile)$/);
+  if (publicationPolicyMatch) {
+    const [, projectId, operation] = publicationPolicyMatch;
+    const project = await env.DB.prepare("SELECT id FROM projects WHERE id=?1").bind(projectId).first();
+    if (!project) throw new HttpError(404, "Project not found", "not_found");
+    if (operation === "policy" && method === "GET") return json(await policyFor(env, projectId));
+    if (operation === "policy" && method === "PUT") {
+      const input = await body(request);
+      if (typeof input.enabled !== "boolean") throw new HttpError(400, "Send enabled as a boolean.");
+      return json(await setPolicy(env, projectId, input.enabled, input.rightsConfirmed));
+    }
+    if (operation === "inventory" && method === "GET") {
+      const after = url.searchParams.get("after") ?? "";
+      if (after && !/^asset_[a-z0-9_]+$/.test(after)) throw new HttpError(400, "Invalid inventory cursor.");
+      return json({ policy: await policyFor(env, projectId), ...(await inventory(env, projectId, after)) });
+    }
+    if (operation === "reconcile" && method === "POST") {
+      const input = await body(request);
+      if (input.confirm !== true || input.rightsConfirmed !== true || !Array.isArray(input.assetIds) || input.assetIds.length > 100 || input.assetIds.length < 1 || input.assetIds.some((item) => typeof item !== "string" || !/^asset_[a-z0-9_]+$/.test(item))) throw new HttpError(400, "Confirm rights and provide 1–100 asset IDs.");
+      const policy = await policyFor(env, projectId);
+      if (!policy.installationAllowed || !policy.enabled) throw new HttpError(403, "Enable the first-party publication policy for this project first.", "not_allowed");
+      const results = [];
+      for (const assetId of [...new Set(input.assetIds)]) results.push({ assetId, result: await publishCandidate(env, projectId, assetId) });
+      return json({ results });
+    }
+    throw new HttpError(405, "Method not allowed", "method_not_allowed");
+  }
 
   if (path === "/api/models" && method === "GET")
     return json({ models: publicModels(), videosConfigured: Boolean(env.FAL_KEY) });

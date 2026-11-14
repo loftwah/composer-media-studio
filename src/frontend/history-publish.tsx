@@ -231,6 +231,10 @@ export function Publish({ publications, origin }: PublishProps) {
         media. Prompts, other projects and private filenames stay private.
         Withdrawal stops new visits; downloads already taken cannot be recalled.
       </p>
+      <div className="row">
+        <button type="button" className="secondary" data-action="publication-policy">First-party publishing settings</button>
+        <button type="button" className="secondary" data-action="publication-inventory">Review publication inventory</button>
+      </div>
       <div className="stack history-list">
         {publications.length === 0 && (
           <div className="card">
