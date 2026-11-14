@@ -2,7 +2,7 @@
 import { ALL_FORMATS, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from 'mediabunny';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
 import type { CaptionSnapshot } from './local-captions.ts';
-import { createCaptionPainter } from './caption-paint.ts';
+import { createCaptionPainter, type CaptionStyle } from './caption-paint.ts';
 import { shotRange } from '../../public/shot-trims.js';
 import { defaultFraming, framingNote, resolveFrame, type Framing } from './local-framing.ts';
 
@@ -48,7 +48,7 @@ export function validateLocalInputs(composition: CompositionV1, assets: MediaAss
   if ([...clips, ...(sound ? [sound] : [])].some(asset => !Number.isSafeInteger(asset.bytes) || asset.bytes <= 0) || clips.reduce((sum, asset) => sum + asset.bytes, sound?.bytes ?? 0) > MAX_INPUT) throw new Error('The selected media exceeds the 128 MiB local input limit or has an unknown size.');
   return { clips, ranges: selected, totalMs, sound };
 }
-export async function renderLocalMp4(composition: CompositionV1, assets: MediaAssetV1[], signal: AbortSignal, progress: (message: string) => void, captions?: CaptionSnapshot, framing: Framing = defaultFraming): Promise<Blob> {
+export async function renderLocalMp4(composition: CompositionV1, assets: MediaAssetV1[], signal: AbortSignal, progress: (message: string) => void, captions?: CaptionSnapshot, framing: Framing = defaultFraming, captionStyle: CaptionStyle = 'classic'): Promise<Blob> {
   if (typeof VideoEncoder === 'undefined') throw new Error('This browser does not support the required video encoder.');
   const { clips, ranges, totalMs, sound } = validateLocalInputs(composition, assets);
   if (sound && typeof AudioEncoder === 'undefined') throw new Error('This browser does not support the required audio encoder.');
@@ -59,7 +59,7 @@ export async function renderLocalMp4(composition: CompositionV1, assets: MediaAs
   if (!await canEncodeVideo('avc', { width, height, bitrate }) || (sound && !await canEncodeAudio('aac', { numberOfChannels: 2, sampleRate: 44100, bitrate: 128000 }))) throw new Error('This browser cannot encode the required H.264/AAC MP4. Try a current supported browser.');
   const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false }); if (!context) throw new Error('This browser cannot create a video canvas.');
-  const paintCaption = createCaptionPainter(context, width, height, captions);
+  const paintCaption = createCaptionPainter(context, width, height, captions, captionStyle);
   const target = new BufferTarget();
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target });
   output.setMetadataTags({ comment: framingNote(outputFrame) });

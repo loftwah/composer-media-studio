@@ -54,6 +54,7 @@ type RenderReceipt = {
   soundtrack: { assetId: string; sha256: string } | null;
   tracks: { assetId: string; sha256: string; role: string; startMs: number; trimStartMs: number; trimEndMs: number; gainDb: number; fadeInMs: number; fadeOutMs: number }[];
   captions: { planId: string; revision: number; songAssetId: string; songSha256: string } | null;
+  captionStyle?: string | null;
   framing: { aspect: string; fit: string; quality?: string };
   output: { sha256: string };
 };
@@ -83,7 +84,7 @@ function PrivateRenderReceipt({ assetId, reentryUrl }: { assetId: string; reentr
       <p><strong>Shots and saved source hashes</strong></p><ol>{receipt.shots.map((shot, i) => <li key={i}>{shot.assetId} · {shot.startMs}–{shot.endMs} ms<br/>SHA-256 {shot.sha256}</li>)}</ol>
       {receipt.soundtrack && <p>Mixed soundtrack: {receipt.soundtrack.assetId}<br/>SHA-256 {receipt.soundtrack.sha256}</p>}
       {receipt.tracks.length > 0 && <><p><strong>Soundtrack sources</strong></p><ul>{receipt.tracks.map((track, i) => <li key={i}>{track.role}: {track.assetId} · {track.trimStartMs}–{track.trimEndMs} ms · starts {track.startMs} ms · gain {track.gainDb} dB · fades {track.fadeInMs}/{track.fadeOutMs} ms<br/>SHA-256 {track.sha256}</li>)}</ul></>}
-      {receipt.captions && <p>Saved captions: plan {receipt.captions.planId}, revision {receipt.captions.revision}; song {receipt.captions.songAssetId}<br/>SHA-256 {receipt.captions.songSha256}</p>}
+      {receipt.captions && <p>Caption look: {receipt.captionStyle === 'lower-third' ? 'left lower-third' : receipt.captionStyle === 'classic' ? 'classic subtitle' : 'not recorded'}<br/>Saved captions: plan {receipt.captions.planId}, revision {receipt.captions.revision}; song {receipt.captions.songAssetId}<br/>SHA-256 {receipt.captions.songSha256}</p>}
     </>}
   </details>;
 }

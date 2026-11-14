@@ -97,7 +97,7 @@ test('caption snapshot requires matching plan revision and confirmed rights with
   const sceneStarts=captioned.scenes.map((scene,i)=>({sceneId:scene.id,startMs:i===0?500:0}));
   const made=await createStoryboardFromSongPlan(env,project,captioned.id,{expectedRevision:3,allowTrim:true,sceneStarts});
   const composition=made.composition;
-  const start=()=>call(`/api/projects/${project.id}/compositions/${composition.id}/local-render-receipts`,{method:'POST',body:{expectedUpdatedAt:composition.updatedAt,includeCaptions:true,framing:{aspect:'source',fit:'contain'}}});
+  const start=(extra={})=>call(`/api/projects/${project.id}/compositions/${composition.id}/local-render-receipts`,{method:'POST',body:{expectedUpdatedAt:composition.updatedAt,includeCaptions:true,framing:{aspect:'source',fit:'contain'},...extra}});
   // The local renderer requires a mixed soundtrack before saving provenance.
   assert.equal((await start()).status,400);
   await addAsset(env,project,{id:'asset_mix1',kind:'audio',durationMs:12000}); await env.DB.prepare("UPDATE assets SET sha256=?1,mime='audio/wav' WHERE id=?2").bind(sha,'asset_mix1').run();
@@ -106,6 +106,7 @@ test('caption snapshot requires matching plan revision and confirmed rights with
   const res=await start(); assert.equal(res.status,201); const {receipt}=await res.json();
   const stored=await env.DB.prepare('SELECT snapshot_json FROM local_render_receipts WHERE id=?1').bind(receipt.id).first();
   assert.equal(stored.snapshot_json.includes('Private words'),false); assert.equal(JSON.parse(stored.snapshot_json).captions.revision,3); assert.equal(JSON.parse(stored.snapshot_json).shots[0].startMs,500);
+  assert.equal(JSON.parse(stored.snapshot_json).captionStyle,'classic'); const styled=await start({captionStyle:'lower-third'}); assert.equal(styled.status,201); const styledRow=await env.DB.prepare('SELECT snapshot_json FROM local_render_receipts WHERE id=?1').bind((await styled.json()).receipt.id).first(); assert.equal(JSON.parse(styledRow.snapshot_json).captionStyle,'lower-third'); assert.equal((await start({captionStyle:'unknown'})).status,400);
   await env.DB.prepare('UPDATE song_plans SET revision=revision+1 WHERE id=?1').bind(plan.id).run();
   assert.equal((await start()).status,409);
 });

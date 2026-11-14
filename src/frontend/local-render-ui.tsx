@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
 import './local-render.css';
 import { resolveCaptionSnapshot, type CaptionSnapshot } from './local-captions';
-import { createCaptionPainter } from './caption-paint';
+import { createCaptionPainter, type CaptionStyle } from './caption-paint';
 import { defaultFraming, framingNote, resolveFrame, type FrameAspect, type FrameFit, type FrameQuality, type Framing } from './local-framing';
 
 async function loadCaptionSnapshot(projectId: string, composition: CompositionV1, signal: AbortSignal) {
@@ -22,7 +22,7 @@ async function loadCaptionSnapshot(projectId: string, composition: CompositionV1
   return { snapshot, media, captions };
 }
 
-function CaptionSample({ captions, width, height }: { captions: CaptionSnapshot; width: number; height: number }) {
+function CaptionSample({ captions, width, height, style }: { captions: CaptionSnapshot; width: number; height: number; style: CaptionStyle }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const [index, setIndex] = useState(0);
   const [error, setError] = useState('');
@@ -32,11 +32,11 @@ function CaptionSample({ captions, width, height }: { captions: CaptionSnapshot;
     if (!context) { setError('Caption preview is unavailable in this browser.'); return; }
     try {
       context.fillStyle = '#59626b'; context.fillRect(0, 0, width, height);
-      const paint = createCaptionPainter(context, width, height, captions);
+      const paint = createCaptionPainter(context, width, height, captions, style);
       paint(captions.cues[Math.min(index, captions.cues.length - 1)].startMs - captions.sourceStartMs);
       setError('');
     } catch (err) { setError((err as Error).message || 'Caption preview failed.'); }
-  }, [captions, width, height, index]);
+  }, [captions, width, height, index, style]);
   return <div><label>Caption to preview<select value={Math.min(index, captions.cues.length - 1)} onChange={event => setIndex(Number(event.target.value))}>{captions.cues.map((cue, i) => <option key={cue.id} value={i}>Caption {i + 1}</option>)}</select></label><canvas ref={canvas} width={width} height={height} style={{ width: '100%', maxWidth: 640, height: 'auto', display: 'block' }} role="img" aria-label={`Saved caption ${Math.min(index + 1, captions.cues.length)}: ${captions.cues[Math.min(index, captions.cues.length - 1)].speaker ? `${captions.cues[Math.min(index, captions.cues.length - 1)].speaker}: ` : ''}${captions.cues[Math.min(index, captions.cues.length - 1)].text}`} />{error && <p className="notice" role="alert">{error}</p>}</div>;
 }
 
@@ -48,6 +48,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'uncertain'>('idle');
   const [savedAssetId, setSavedAssetId] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(false);
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>('classic');
   const [captionSample, setCaptionSample] = useState<CaptionSnapshot | null>(null);
   const [captionSampleBusy, setCaptionSampleBusy] = useState(false);
   const captionSampleTask = useRef<AbortController | null>(null);
@@ -73,7 +74,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     setError(''); setStatus('Checking this browser…'); setBusy(true);
     const task = new AbortController(); controller.current = task;
     let snapshot = structuredClone(composition), media = structuredClone(assets);
-    const chosenFraming = { ...framing };
+    const chosenFraming = { ...framing }, chosenCaptionStyle = captionStyle;
     try {
       let captions: CaptionSnapshot | undefined;
       if (includeCaptions) {
@@ -87,7 +88,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
         const receiptResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}/compositions/${encodeURIComponent(snapshot.id)}/local-render-receipts`, {
           method: 'POST', credentials: 'same-origin', signal: task.signal,
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ expectedUpdatedAt: snapshot.updatedAt, includeCaptions: Boolean(captions), framing: chosenFraming }),
+          body: JSON.stringify({ expectedUpdatedAt: snapshot.updatedAt, includeCaptions: Boolean(captions), framing: chosenFraming, ...(captions ? {captionStyle:chosenCaptionStyle} : {}) }),
         });
         const receiptData = await receiptResponse.json().catch(() => ({}));
         if (!receiptResponse.ok || typeof receiptData.receipt?.id !== 'string') throw new Error(receiptData.error?.message || 'Could not record this saved storyboard. Reload it and try again.');
@@ -97,12 +98,12 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
       if (!first) throw new Error('The first clip is no longer available.');
       const frame = resolveFrame(chosenFraming, first);
       const { renderLocalMp4 } = await import('./local-render');
-      const blob = await renderLocalMp4(snapshot, media, task.signal, setStatus, captions, chosenFraming);
+      const blob = await renderLocalMp4(snapshot, media, task.signal, setStatus, captions, chosenFraming, chosenCaptionStyle);
       if (task.signal.aborted) return;
       if (preview.current) URL.revokeObjectURL(preview.current);
       const url = URL.createObjectURL(blob); preview.current = url; saveAttempt.current = false; setSaveState('idle'); setSavedAssetId('');
       const frameDescription = framingNote(frame);
-      const caption = `Browser MP4 from saved storyboard; ${frameDescription}${captions ? '; owner-confirmed captions' : ''}. ${receiptId ? 'Source evidence is in the private render receipt.' : 'No private render receipt was created.'}`;
+      const caption = `Browser MP4 from saved storyboard; ${frameDescription}${captions ? `; owner-confirmed captions (${chosenCaptionStyle === 'lower-third' ? 'lower-third' : 'classic'})` : ''}. ${receiptId ? 'Source evidence is in the private render receipt.' : 'No private render receipt was created.'}`;
       setResult({blob,url,caption,captioned:Boolean(captions),framing:frameDescription,receiptId}); setStatus('MP4 ready to preview or download.');
     } catch (err) { if (task.signal.aborted) setStatus('Local render cancelled.'); else setError((err as Error).message || 'The local render failed.'); }
     finally { if (controller.current === task) controller.current = null; setBusy(false); }
@@ -140,9 +141,9 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     <p className="small">Renderer: <a href="/third-party/mediabunny.txt">Mediabunny licence and source</a>. Keep this page open while rendering. The result uses this saved version; later edits are not included.</p>
     {composition.originSongPlan ? <label className="local-caption-option"><input type="checkbox" checked={includeCaptions} disabled={busy || saveState === 'saving'} onChange={event=>{ setIncludeCaptions(event.target.checked); if (!event.target.checked) { captionSampleTask.current?.abort(); setCaptionSample(null); } }} /> Burn in saved captions from the linked song plan</label> : <p className="small">Captions can be burned in when this storyboard was made from a saved song plan.</p>}
     {includeCaptions && <p className="small">Uses only saved, permission-confirmed captions from the exact linked plan revision. Timing follows 30 fps video frames; overlapping cues and text that cannot fit are refused. The encoded MP4 is both the preview and download. The saved plan and storyboard are frozen at the start; later edits are not included. Captions are not transcription or lip sync.</p>}
-    {includeCaptions && <div><button type="button" className="secondary" disabled={busy || captionSampleBusy} onClick={() => void loadSample()}>{captionSampleBusy ? 'Loading captions…' : 'Preview saved captions'}</button>{captionSample && frame && <><p className="small">Saved captions on a neutral background, using the same text layout and output frame as the MP4. This does not preview your footage. Rendering checks the saved revision again.</p><CaptionSample captions={captionSample} width={frame.width} height={frame.height} /></>}</div>}
+    {includeCaptions && <div><label>Caption look<select value={captionStyle} disabled={busy} onChange={event=>setCaptionStyle(event.target.value as CaptionStyle)}><option value="classic">Classic subtitle</option><option value="lower-third">Left lower-third</option></select></label><p className="small">The sample and final MP4 use the same look. {canEdit ? 'If you save the MP4, its private receipt records this choice.' : 'This read-only render has no saved receipt.'}</p><button type="button" className="secondary" disabled={busy || captionSampleBusy} onClick={() => void loadSample()}>{captionSampleBusy ? 'Loading captions…' : 'Preview saved captions'}</button>{captionSample && frame && <><p className="small">Saved captions on a neutral background, using the same text layout and output frame as the MP4. This does not preview your footage. Rendering checks the saved revision again.</p><CaptionSample captions={captionSample} width={frame.width} height={frame.height} style={captionStyle} /></>}</div>}
     <div className="row"><button type="button" className="secondary" onClick={() => void start()} disabled={busy || saveState === 'saving' || (framing.fit === 'cover' && !sourcePreviewReady)}>Make local MP4</button>{busy && <button type="button" className="quiet" onClick={() => controller.current?.abort()}>Cancel</button>}</div>
     {status && <p role="status" className="small">{status}</p>}{error && <p role="alert" className="notice">{error}</p>}
-    {result && <div className="local-render-result"><p className="small">{result.framing}. {result.captioned ? 'This preview and download contain the saved captions.' : 'This preview and download do not contain captions.'} Changed framing settings apply to the next render.</p><video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${composition.title}`} /><div className="row"><a className="button secondary" href={result.url} download="studio-local-render.mp4">Download MP4</a>{canEdit && saveState !== 'saved' && <button type="button" className="secondary" disabled={saveState !== 'idle' || busy} onClick={() => void save()}>{saveState === 'saving' ? 'Saving…' : 'Save to library'}</button>}{savedAssetId && <a href={`#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(savedAssetId)}`}>Open saved video</a>}</div></div>}
+    {result && <div className="local-render-result"><p className="small">{result.framing}. {result.captioned ? 'This preview and download contain the saved captions.' : 'This preview and download do not contain captions.'} Changed framing and caption-look settings apply to the next render.</p><video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${composition.title}`} /><div className="row"><a className="button secondary" href={result.url} download="studio-local-render.mp4">Download MP4</a>{canEdit && saveState !== 'saved' && <button type="button" className="secondary" disabled={saveState !== 'idle' || busy} onClick={() => void save()}>{saveState === 'saving' ? 'Saving…' : 'Save to library'}</button>}{savedAssetId && <a href={`#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(savedAssetId)}`}>Open saved video</a>}</div></div>}
   </details>;
 }

@@ -6,7 +6,8 @@ const conflict = () => { throw new HttpError(409, 'The saved storyboard or its s
 const hashPattern = /^[a-f0-9]{64}$/i;
 
 export async function createLocalRenderReceipt(env, project, compositionId, input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['expectedUpdatedAt','includeCaptions','framing'].includes(k)) || !Number.isSafeInteger(input.expectedUpdatedAt) || typeof input.includeCaptions !== 'boolean') fail('Provide the saved version and caption choice');
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['expectedUpdatedAt','includeCaptions','framing','captionStyle'].includes(k)) || !Number.isSafeInteger(input.expectedUpdatedAt) || typeof input.includeCaptions !== 'boolean') fail('Provide the saved version and caption choice');
+  if (!['classic','lower-third'].includes(input.captionStyle ?? 'classic')) fail('Choose a supported caption look');
   const framing = input.framing;
   if (!framing || !['source','16:9','9:16','1:1'].includes(framing.aspect) || !['contain','cover'].includes(framing.fit) || !['standard','hd'].includes(framing.quality ?? 'standard') || Object.keys(framing).some(k => !['aspect','fit','quality'].includes(k))) fail('Choose a supported frame and fit');
   const composition = await env.DB.prepare('SELECT * FROM compositions WHERE id=?1 AND project_id=?2').bind(compositionId, project.id).first();
@@ -70,7 +71,7 @@ export async function createLocalRenderReceipt(env, project, compositionId, inpu
     }
     captions = { planId: plan.id, revision: plan.revision, songAssetId: song.id, songSha256: song.sha256 };
   }
-  const snapshot = { version: 1, evidence: { snapshot: 'server_verified', render: 'browser_reported' }, storyboard: { id: composition.id, updatedAt: composition.updated_at }, shots, totalMs, soundtrack, tracks, captions, framing: { aspect: framing.aspect, fit: framing.fit, quality: framing.quality ?? 'standard' } };
+  const snapshot = { version: 1, evidence: { snapshot: 'server_verified', render: 'browser_reported' }, storyboard: { id: composition.id, updatedAt: composition.updated_at }, shots, totalMs, soundtrack, tracks, captions, captionStyle: input.includeCaptions ? (input.captionStyle ?? 'classic') : null, framing: { aspect: framing.aspect, fit: framing.fit, quality: framing.quality ?? 'standard' } };
   const receiptId = id('lrr'), outputAssetId = id('asset'), timestamp = now();
   await env.DB.prepare('DELETE FROM local_render_receipts WHERE project_id=?1 AND expires_at<?2 AND NOT EXISTS (SELECT 1 FROM assets WHERE id=output_asset_id)').bind(project.id, timestamp).run();
   const rows = [...checked.values()];
