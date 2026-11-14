@@ -185,7 +185,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
     ${bridged ? "</details>" : ""}
     ${woodhouseShare ? '<p><a href="/portfolio">Browse artwork from Woodhouse Share</a></p>' : ""}
     <p><a href="/tools/audio-trim">Trim a song</a> · <a href="/tools/video-clip">Clip and frame a video</a> · <a href="/tools/add-music">Add music</a> · no sign-in needed</p>
-    <p class="small">This studio belongs to its own Cloudflare account and stores media in its own R2 bucket. It does not use your App Composer password.</p>
+    <p class="small">Your media stays in this studio. The owner passphrase is separate from your App Composer password.</p>
   </main>
 </div>
 <script type="module" src="/login.js?v=${encodeURIComponent(revision)}"></script>
