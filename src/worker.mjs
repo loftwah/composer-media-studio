@@ -35,6 +35,7 @@ import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/fo
 import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
+import { measureFootageSource } from "./lib/footage-preflight.mjs";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.mjs";
 import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
@@ -727,13 +728,15 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     }
   }
 
-  const assetMatch = path.match(/^\/api\/assets\/([a-z0-9_]+)(?:\/(file|download|publish|local-render-receipt|footage-export-receipt))?$/);
+  const assetMatch = path.match(/^\/api\/assets\/([a-z0-9_]+)(?:\/(file|download|publish|local-render-receipt|footage-export-receipt|footage-preflight))?$/);
   if (assetMatch) {
     const [, assetId, action] = assetMatch;
     const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
     if (!asset) throw new HttpError(404, "Asset not found", "not_found");
     if (session.mode !== "owner" && session.project && asset.project_id !== session.project)
       throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
+
+    if (action === "footage-preflight" && method === "GET") return json({ measurement: await measureFootageSource(env, asset) });
 
     if (action === "footage-export-receipt" && method === "GET") {
       if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
