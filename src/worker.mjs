@@ -12,6 +12,7 @@ import {
   recordLoginFailure,
   requireSession,
   sessionCookie,
+  sessionBinding,
   verifyPassphrase,
 } from "./lib/auth.mjs";
 import {
@@ -51,6 +52,7 @@ import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
 import {
   audioInfo,
+  constantTimeEqual,
   escapeHtml,
   extensionFor,
   HttpError,
@@ -319,6 +321,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     const session = await readSession(env, request);
     return json({
       signedIn: Boolean(session),
+      localImportBinding: await sessionBinding(env, session),
       mode: session?.mode ?? null,
       actor: session?.actorName ?? session?.actor ?? null,
       workspace: session?.workspaceName ?? session?.workspace ?? null,
@@ -541,8 +544,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return importWoodhouseAsset(env, project, input.assetId);
     }
 
-    if (rest === "assets" && method === "POST")
+    if (rest === "assets" && method === "POST") {
+      const binding = request.headers.get("x-studio-local-import-binding");
+      if (binding !== null && (!/^[a-f0-9]{64}$/.test(binding) || !constantTimeEqual(binding, (await sessionBinding(env, session)) ?? ""))) throw new HttpError(409, "Your Studio session changed. Choose a studio again.", "session_changed");
       return uploadAsset(request, env, project);
+    }
 
     if (rest === "promo-briefs" && method === "GET") return json({ briefs: await listPromoBriefs(env, project) });
     if (rest === "promo-briefs" && method === "POST") return json({ brief: await createPromoBrief(env, project, await body(request)) }, 201);

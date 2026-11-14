@@ -1,3 +1,4 @@
+import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { encodeWav } from "../../public/wav.js";
@@ -10,6 +11,8 @@ function AudioTrim() {
   const [file, setFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [outputUrl, setOutputUrl] = useState("");
+  const [outputBlob, setOutputBlob] = useState<Blob | null>(null);
+  const [importing, setImporting] = useState(false);
   const [buffer, setBuffer] = useState<AudioBuffer | null>(null);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
@@ -38,7 +41,7 @@ function AudioTrim() {
   }, [buffer]);
   async function choose(next: File | undefined) {
     const current = ++revision.current;
-    setFile(null); setBuffer(null); setSourceUrl(""); setOutputUrl(""); setMessage(""); setBusy(false);
+    setFile(null); setBuffer(null); setSourceUrl(""); setOutputUrl(""); setOutputBlob(null); setMessage(""); setBusy(false);
     if (!next) return;
     if (next.size > MAX_BYTES) { setMessage("Choose a file under 16 MB."); return; }
     const url = URL.createObjectURL(next);
@@ -86,23 +89,23 @@ function AudioTrim() {
         to[i] = from[first + i] * Math.max(0, gain);
       }
     }
-    setOutputUrl(URL.createObjectURL(encodeWav(result))); setMessage("Your WAV is ready to play or save.");
+    const wav = encodeWav(result); setOutputBlob(wav); setOutputUrl(URL.createObjectURL(wav)); setMessage("Your WAV is ready to play or save.");
   }
-  const change = (setter: (n: number) => void, value: string) => { setter(value === "" ? NaN : Number(value)); setOutputUrl(""); };
+  const change = (setter: (n: number) => void, value: string) => { setter(value === "" ? NaN : Number(value)); setOutputUrl(""); setOutputBlob(null); };
   return <main className="trim-page" id="main">
-    <header><a href="/">← Media Studio</a><h1>Trim a song</h1><p>Choose a short audio file, mark the part you want and save a WAV. Your file stays on this device; nothing is uploaded.</p></header>
+    <header><a href="/">← Media Studio</a><h1>Trim a song</h1><p>Choose a short audio file, mark the part you want and save a WAV. Your source stays on this device; you can choose to upload the finished clip to Studio.</p></header>
     <section className="trim-work" aria-labelledby="source-heading"><h2 id="source-heading">Your audio</h2>
-      <label className="trim-file">Choose audio<input type="file" accept="audio/*,.mp3,.wav,.m4a" onChange={e => void choose(e.target.files?.[0])} /></label>
+      <label className="trim-file">Choose audio<input type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={importing} onChange={e => void choose(e.target.files?.[0])} /></label>
       <p className="trim-note">Up to 16 MB and 3 minutes, mono or stereo. Supported formats depend on your browser.</p>
       {file && buffer && <><p><strong>{file.name}</strong> · {buffer.duration.toFixed(2)} seconds</p><canvas ref={canvas} width="800" height="110" className="trim-wave" aria-label="Waveform of the original audio" role="img"/><audio controls src={sourceUrl} aria-label="Original audio" />
         <div className="trim-fields">
-          <label>Start (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" value={Number.isNaN(start) ? "" : start} onChange={e => change(setStart,e.target.value)} /></label>
-          <label>End (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" value={Number.isNaN(end) ? "" : end} onChange={e => change(setEnd,e.target.value)} /></label>
-          <label>Fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn) ? "" : fadeIn} onChange={e => change(setFadeIn,e.target.value)} /></label>
-          <label>Fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut) ? "" : fadeOut} onChange={e => change(setFadeOut,e.target.value)} /></label>
-        </div><button type="button" onClick={makeClip}>Make WAV</button></>}
+          <label>Start (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" disabled={importing} value={Number.isNaN(start) ? "" : start} onChange={e => change(setStart,e.target.value)} /></label>
+          <label>End (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" disabled={importing} value={Number.isNaN(end) ? "" : end} onChange={e => change(setEnd,e.target.value)} /></label>
+          <label>Fade in (seconds)<input type="number" min="0" step="0.01" disabled={importing} value={Number.isNaN(fadeIn) ? "" : fadeIn} onChange={e => change(setFadeIn,e.target.value)} /></label>
+          <label>Fade out (seconds)<input type="number" min="0" step="0.01" disabled={importing} value={Number.isNaN(fadeOut) ? "" : fadeOut} onChange={e => change(setFadeOut,e.target.value)} /></label>
+        </div><button type="button" disabled={importing} onClick={makeClip}>Make WAV</button></>}
       <p role="status" aria-live="polite">{busy ? "Reading audio on this device…" : message}</p>
-      {outputUrl && <div className="trim-result"><h2>Your clip</h2><audio controls src={outputUrl} aria-label="Trimmed audio"/><a className="button" href={outputUrl} download={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`}>Save WAV</a><p className="trim-note">The original is unchanged. To add this clip to a project, save it here and upload it from your Studio library.</p></div>}
+      {outputUrl && <div className="trim-result"><h2>Your clip</h2><audio controls src={outputUrl} aria-label="Trimmed audio"/><a className="button" href={outputUrl} download={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`}>Save WAV</a><p className="trim-note">The original is unchanged.</p>{outputBlob && <LocalImport key={outputUrl} blob={outputBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`} operation="trim audio" format="wav" onBusyChange={setImporting}/>}</div>}
     </section>
   </main>;
 }

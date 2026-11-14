@@ -44,6 +44,13 @@ function normaliseActions(value) {
   return [...new Set(value.filter((action) => ACTIONS.includes(action)))];
 }
 
+// Opaque context binding for an explicit local import; it is not a credential.
+export async function sessionBinding(env, session) {
+  if (!session || !env.SESSION_SECRET) return null;
+  const fields = [session.mode, session.actor, session.workspace, session.project, session.actions, session.revision, session.issued, session.expires];
+  return sign(env.SESSION_SECRET, `local-import-session:${JSON.stringify(fields)}`);
+}
+
 export async function createSession(env, claims = {}) {
   if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32)
     throw new HttpError(500, "Studio session secret is not configured", "not_configured");
