@@ -1017,6 +1017,20 @@ async function confirmAction(title, copy, label = "Continue", dangerous = false)
 
 /* ---------- actions ---------- */
 
+// Create controls are rebuilt when their selection changes. Keep keyboard
+// users on the same control instead of returning focus to the document body.
+function renderKeepingCreateFocus(element) {
+  const wasFocused = document.activeElement === element;
+  const keys = ["action", "kind", "slug", "model", "id"];
+  const identity = keys.filter((key) => element.dataset[key] !== undefined)
+    .map((key) => [key, element.dataset[key]]);
+  render();
+  if (!wasFocused) return;
+  const replacement = [...app.querySelectorAll("[data-action]")].find((candidate) =>
+    identity.every(([key, value]) => candidate.dataset[key] === value));
+  replacement?.focus({ preventScroll: true });
+}
+
 async function handleAction(action, element) {
   const id = element.dataset.id;
   switch (action) {
@@ -1093,7 +1107,7 @@ async function handleAction(action, element) {
         state.create.prompt = "";
         state.create.referenceAssetId = null;
         state.create.durationSeconds = 15;
-        render();
+        renderKeepingCreateFocus(element);
         return;
       }
       if (state.create.kind === "video") state.create.durationSeconds = 6;
@@ -1105,7 +1119,7 @@ async function handleAction(action, element) {
         state.create.prompt = promptFromRecipe(recipe, {});
         state.create.model = recipe.kind === "video" ? (state.project.defaults.videoModel ?? "hailuo-standard") : (recipe.model ?? "studio-draft");
       }
-      render();
+      renderKeepingCreateFocus(element);
       return;
     }
     case "recipe": {
@@ -1120,7 +1134,7 @@ async function handleAction(action, element) {
       if (aspectControl?.default) state.create.aspect = aspectControl.default;
       const durationControl = recipe.controls.find((control) => control.key === "duration");
       if (durationControl?.default) state.create.durationSeconds = Number(durationControl.default);
-      render();
+      renderKeepingCreateFocus(element);
       return;
     }
     case "edit-model": {
@@ -1134,17 +1148,17 @@ async function handleAction(action, element) {
         prompt: model === "studio-fill" ? "" : model === "studio-upscale" ? "masterpiece, best quality, highres" : "",
         controls: {},
       };
-      render();
+      renderKeepingCreateFocus(element);
       return;
     }
     case "pick-reference":
       state.create.referenceAssetId = id;
       if (state.create.maskAssetId) state.create.maskAssetId = null;
-      render();
+      renderKeepingCreateFocus(element);
       return;
     case "toggle-references":
       state.create.showAllReferences = !state.create.showAllReferences;
-      render();
+      renderKeepingCreateFocus(element);
       return;
     case "mask-clear": {
       if (!maskPainter) return;
