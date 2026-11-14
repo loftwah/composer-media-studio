@@ -5,7 +5,7 @@ import type { AssembleProps, CreateProps, HistoryProps, LibraryProps, MediaAsset
 import { CreateWorkbench } from "./create";
 import { Assemble, Settings } from "./assemble-settings";
 import { History, Publish } from "./history-publish";
-import { isLocalRenderProvenance } from "../../public/asset-caption.js";
+import { isLocalRenderProvenance, shareImportProvenance } from "../../public/asset-caption.js";
 import "./library.css";
 
 const bytesLabel = (bytes: number) => !bytes ? "—" : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -114,16 +114,17 @@ function AssetViewer({ projectId, asset, still, launchKitUrl, reentryUrl }: View
   if (!asset) return <p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a>.</p>;
   const isVideo = asset.kind === "video", isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
+  const shareProvenance = shareImportProvenance(asset.caption);
   return <div className="asset-viewer">
     <p><a className="button secondary" data-viewer-back href={back}>← Back to library</a></p>
     <div className="viewer">
       <div className="stage">{isVideo ? <AssetVideo key={asset.id} asset={asset} reentryUrl={reentryUrl}/> : isAudio ? <div className="audio-stage"><canvas width="840" height="200" data-waveform={asset.file} aria-hidden="true"/><audio src={asset.file} controls preload="metadata"/></div> : <img src={asset.file} alt={asset.title}/>}</div>
       <aside className="card stack"><div><p className="eyebrow">{asset.kind} · {asset.source}</p><h1 className="asset-viewer-title">{asset.title}</h1></div>
-        {localRender ? <p>MP4 rendered on this device from a saved storyboard{asset.caption?.includes('; owner-confirmed captions') ? ', with saved captions' : ''}.</p> : asset.caption && <p>{asset.caption}</p>}
+        {shareProvenance ? <p>Imported from Woodhouse Share.</p> : localRender ? <p>MP4 rendered on this device from a saved storyboard{asset.caption?.includes('; owner-confirmed captions') ? ', with saved captions' : ''}.</p> : asset.caption && <p>{asset.caption}</p>}
         <dl className="kv"><dt>Size</dt><dd>{bytesLabel(asset.bytes)}</dd>{Boolean(asset.width) && <><dt>Frame</dt><dd>{asset.width} × {asset.height}</dd></>}{Boolean(asset.durationMs) && <><dt>Duration</dt><dd>{(asset.durationMs! / 1000).toFixed(1)}s</dd></>}{isAudio && Boolean(asset.sampleRate) && <><dt>Audio</dt><dd>{asset.sampleRate} Hz · {asset.channels ?? "—"} channel{asset.channels === 1 ? "" : "s"}</dd></>}<dt>Type</dt><dd>{asset.mime}</dd><dt>Added</dt><dd>{dateLabel(asset.createdAt)}</dd></dl>
         {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id} reentryUrl={reentryUrl}/>}
         {isVideo && <PrivateFootageReceipt key={asset.id} assetId={asset.id}/>}
-        <details className="asset-technical"><summary>Technical details</summary><dl className="kv"><dt>SHA-256</dt><dd>{asset.sha256}</dd></dl>{localRender && <p>{asset.caption}</p>}</details>
+        <details className="asset-technical"><summary>Technical details</summary><dl className="kv"><dt>SHA-256</dt><dd>{asset.sha256}</dd></dl>{localRender && <p>{asset.caption}</p>}{shareProvenance && <div><p>{shareProvenance.credit}</p><p><a href={shareProvenance.catalogue} target="_blank" rel="noopener noreferrer">Share catalogue record</a>{shareProvenance.source && <> · <a href={shareProvenance.source} target="_blank" rel="noopener noreferrer">Source notes</a></>}</p></div>}</details>
         <div className="row"><a className="button secondary" href={asset.download} download>Download</a><button type="button" className="secondary" data-action="rename-asset" data-id={asset.id}>Rename</button>{still && <button type="button" className="secondary" data-action="vary-asset" data-id={still.id}>{isVideo ? "Make a variation of its still" : "Make a variation"}</button>}</div>
         <div className="row"><button type="button" className="secondary" data-action="animate-asset" data-id={asset.id} disabled={asset.kind !== "image"}>Animate this still</button><button type="button" className="secondary" data-action="publish-asset" data-id={asset.id}>Publish page</button></div>
         {asset.kind === "image" && <div className="row"><button type="button" className="secondary" data-action="edit-asset" data-mode="fill" data-id={asset.id}>Masked fill / outpaint</button><button type="button" className="secondary" data-action="edit-asset" data-mode="cutout" data-id={asset.id}>Remove background</button><button type="button" className="secondary" data-action="edit-asset" data-mode="upscale" data-id={asset.id}>Upscale ×2</button></div>}

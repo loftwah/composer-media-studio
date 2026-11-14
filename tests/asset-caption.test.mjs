@@ -11,3 +11,11 @@ test('local render provenance stays out of default public descriptions', () => {
   assert.equal(publicCaption('An authored caption with a long creative note.'), 'An authored caption with a long creative note.');
   assert.equal(publicCaption('Browser MP4 from storyboard ideas for my project'), 'Browser MP4 from storyboard ideas for my project');
 });
+
+test('Share provenance is narrowly recognised with safe source links', async () => {
+  const { shareImportProvenance } = await import('../public/asset-caption.js');
+  const caption = 'https://woodhouse.loftwah.com/api/v1/assets/crown-jelly\nhttps://woodhouse.loftwah.com/source/notes\nWoodhouse · model';
+  assert.deepEqual(shareImportProvenance(caption), { catalogue: 'https://woodhouse.loftwah.com/api/v1/assets/crown-jelly', source: 'https://woodhouse.loftwah.com/source/notes', credit: 'Woodhouse · model' });
+  assert.equal(publicCaption(caption), caption);
+  for (const value of ['A descriptive caption with https://example.com', 'https://woodhouse.loftwah.com/api/v1/assets/crown-jelly\nhttps://evil.example/notes\nCredit', 'https://woodhouse.loftwah.com.evil.example/api/v1/assets/crown-jelly\nCredit', caption + '\nMy own description']) assert.equal(shareImportProvenance(value), null);
+});
