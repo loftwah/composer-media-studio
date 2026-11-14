@@ -1,5 +1,5 @@
 import { encodeWav } from "./wav.js";
-import { isLocalRenderProvenance, publicCaption } from "./asset-caption.js";
+import { isLocalRenderProvenance, publicCaption, shareImportProvenance } from "./asset-caption.js";
 import { shotRange } from "./shot-trims.js";
 import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.js";
 import { prepareVoiceDraft, restoreCreateDraft, switchCreateProject, createEventBelongsToProject, hasCreateDraftChanges, shouldWarnCreateDrafts } from "./voice-handoff.js";
@@ -974,6 +974,7 @@ function assetView() {
   const isVideo = asset.kind === "video";
   const isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
+  const shareProvenance = shareImportProvenance(asset.caption);
   // The server resolves this from stored same-project relationships; the client
   // never guesses a poster from a filename or title.
   const still = asset.reuseStillId ? state.project.assets.find((item) => item.id === asset.reuseStillId) : null;
@@ -1002,7 +1003,7 @@ function assetView() {
       <div class="stage">${isVideo ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video>` : isAudio ? `<div class="audio-stage"><canvas width="840" height="200" data-waveform="${esc(asset.file)}" aria-hidden="true"></canvas><audio src="${esc(asset.file)}" controls preload="metadata"></audio></div>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}">`}</div>
       <aside class="card stack">
         <div><p class="eyebrow">${esc(asset.kind)} · ${esc(asset.source)}</p><h1 style="font-size:1.7rem">${esc(asset.title)}</h1></div>
-        ${localRender ? `<p>MP4 rendered on this device from a saved storyboard${asset.caption.includes("; owner-confirmed captions") ? ", with saved captions" : ""}.</p>` : asset.caption ? `<p>${esc(asset.caption)}</p>` : ""}
+        ${shareProvenance ? `<p>Imported from Woodhouse Share.</p>` : localRender ? `<p>MP4 rendered on this device from a saved storyboard${asset.caption.includes("; owner-confirmed captions") ? ", with saved captions" : ""}.</p>` : asset.caption ? `<p>${esc(asset.caption)}</p>` : ""}
         <dl class="kv">
           <dt>Size</dt><dd>${bytesLabel(asset.bytes)}</dd>
           ${asset.width ? `<dt>Frame</dt><dd>${asset.width} × ${asset.height}</dd>` : ""}
@@ -1011,7 +1012,7 @@ function assetView() {
           <dt>Type</dt><dd>${esc(asset.mime)}</dd>
           <dt>Added</dt><dd>${dateLabel(asset.createdAt)}</dd>
         </dl>
-        <details class="asset-technical"><summary>Technical details</summary><dl class="kv"><dt>SHA-256</dt><dd>${esc(asset.sha256)}</dd></dl>${localRender ? `<p>${esc(asset.caption)}</p>` : ""}</details>
+        <details class="asset-technical"><summary>Technical details</summary><dl class="kv"><dt>SHA-256</dt><dd>${esc(asset.sha256)}</dd></dl>${localRender ? `<p>${esc(asset.caption)}</p>` : ""}${shareProvenance ? `<div><p>${esc(shareProvenance.credit)}</p><p><a href="${esc(shareProvenance.catalogue)}" target="_blank" rel="noopener noreferrer">Share catalogue record</a>${shareProvenance.source ? ` · <a href="${esc(shareProvenance.source)}" target="_blank" rel="noopener noreferrer">Source notes</a>` : ""}</p></div>` : ""}</details>
         <div class="row">
           <a class="button secondary" href="${esc(asset.download)}" download>Download</a>
           <button class="secondary" data-action="rename-asset" data-id="${esc(asset.id)}">Rename</button>
