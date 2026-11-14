@@ -1139,7 +1139,8 @@ export async function buildCompositionSpec(env, project, input) {
     slateVideoAssetId = slateVideo.id;
   }
 
-  return { title, shots: manifest, audioAssetId, audioTracks, slateAssetId, slateVideoAssetId, totalMs };
+  const trimVersioned = manifest.some(shot => Object.hasOwn(shot, "trimStartMs"));
+  return { title, shots: manifest, audioAssetId, audioTracks, slateAssetId, slateVideoAssetId, totalMs, ...(trimVersioned ? { trimVersioned: true } : {}) };
 }
 
 export async function createComposition(env, project, input) {
@@ -1213,6 +1214,10 @@ export async function updateComposition(env, project, composition, input) {
     : composition;
   if (!baseline) throw new HttpError(404, "Storyboard not found", "not_found");
   const previous = safeJson(baseline.spec_json, {});
+  const requiresVersion = previous.trimVersioned === true || (previous.shots ?? []).some(shot => Object.hasOwn(shot, "trimStartMs") || Object.hasOwn(shot, "trimEndMs")) ||
+    (Array.isArray(input.shots) && input.shots.some(shot => shot && (Object.hasOwn(shot, "trimStartMs") || Object.hasOwn(shot, "trimEndMs"))));
+  if (requiresVersion && (!Number.isSafeInteger(input.expectedUpdatedAt) || input.expectedUpdatedAt !== baseline.updated_at))
+    throw new HttpError(409, "This storyboard changed or needs its saved version. Reload it before saving.", "revision_conflict");
   for (const shot of previous.shots ?? []) {
     const incoming = Array.isArray(input.shots) ? input.shots.find(item => item?.assetId === shot.assetId) : undefined;
     if (incoming && (Object.hasOwn(shot, "trimStartMs") || Object.hasOwn(shot, "trimEndMs")) &&
@@ -1220,11 +1225,12 @@ export async function updateComposition(env, project, composition, input) {
       throw new HttpError(400, "This storyboard has trimmed shots. Include both trim times when saving it.", "shot_trim_required");
   }
   const spec = await buildCompositionSpec(env, project, input);
+  if (requiresVersion) spec.trimVersioned = true;
   // This is historical origin, not a claim that later edits still match the plan.
   const originSongPlan = previous.originSongPlan;
   if (originSongPlan) spec.originSongPlan = originSongPlan;
-  const fresh = await env.DB.prepare("UPDATE compositions SET title=?2,spec_json=?3,updated_at=?4 WHERE id=?1 AND project_id=?5 AND spec_json=?6 RETURNING *")
-    .bind(composition.id, spec.title, JSON.stringify(spec), now(), project.id, baseline.spec_json)
+  const fresh = await env.DB.prepare("UPDATE compositions SET title=?2,spec_json=?3,updated_at=?4 WHERE id=?1 AND project_id=?5 AND spec_json=?6 AND updated_at=?7 RETURNING *")
+    .bind(composition.id, spec.title, JSON.stringify(spec), Math.max(now(), baseline.updated_at + 1), project.id, baseline.spec_json, baseline.updated_at)
     .first();
   if (!fresh) throw new HttpError(409, "This storyboard changed. Reload it before saving.", "revision_conflict");
   return {
@@ -1246,6 +1252,9 @@ export async function createRender(env, project, composition, input) {
   if (!/^[a-zA-Z0-9_-]{8,80}$/.test(clientRequestId))
     throw new HttpError(400, "A client request id is required", "invalid_request");
 
+  const spec = safeJson(composition.spec_json, { shots: [], audioAssetId: null, audioTracks: [], totalMs: 0 });
+  if ((spec.shots ?? []).some(shot => Object.hasOwn(shot, "trimStartMs") || Object.hasOwn(shot, "trimEndMs")))
+    throw new HttpError(400, "Provider rendering does not support trimmed shots. Choose full clips for this render.", "provider_shot_trim_unsupported");
   const existing = await env.DB.prepare(
     "SELECT * FROM generations WHERE project_id=?1 AND client_request_id=?2",
   )
@@ -1253,9 +1262,6 @@ export async function createRender(env, project, composition, input) {
     .first();
   if (existing) return { generation: existing, created: false };
 
-  const spec = safeJson(composition.spec_json, { shots: [], audioAssetId: null, audioTracks: [], totalMs: 0 });
-  if ((spec.shots ?? []).some(shot => Object.hasOwn(shot, "trimStartMs") || Object.hasOwn(shot, "trimEndMs")))
-    throw new HttpError(400, "Provider rendering does not support trimmed shots. Choose full clips for this render.", "provider_shot_trim_unsupported");
   let needsMix = (spec.audioTracks ?? []).some(
     (track) => track.trimStartMs || track.gainDb || track.fadeInMs || track.fadeOutMs || track.startMs,
   );
