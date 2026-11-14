@@ -1,0 +1,9 @@
+.footage-workspace { margin: 0 0 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+.footage-workspace summary { cursor: pointer; font-size: 1.3rem; font-weight: 700; min-height: 44px; align-content: center; }
+.footage-content > p { max-width: 65ch; color: var(--muted); }
+.footage-content fieldset { min-width: 0; border: 0; padding: 0; margin: 0; display: grid; gap: .8rem; }
+.footage-content label:not(.song-check) { display: grid; gap: .3rem; }
+.footage-content input:not([type="checkbox"]), .footage-content select, .footage-content textarea { width: 100%; min-width: 0; }
+.footage-content textarea { min-height: 5rem; }
+.footage-content h3, .footage-content h4 { margin: 0; }
+.footage-preview { display: block; width: min(100%, 32rem); max-height: 20rem; background: #111; border-radius: .5rem; }

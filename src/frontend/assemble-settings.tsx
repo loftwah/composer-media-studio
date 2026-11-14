@@ -1,3 +1,4 @@
+import { FootagePlans } from "./footage-plans";
 import { SongPlans } from "./song-plans";
 import type {
   AssembleProps,
@@ -242,6 +243,7 @@ export function Assemble({
   const total = chosen.reduce((sum, a) => sum + (a.durationMs || 0), 0);
   return (
     <>
+      <FootagePlans key={`footage-${projectId}`} projectId={projectId} assets={assets} canEdit={canEdit} />
       <SongPlans key={projectId} projectId={projectId} assets={assets} canEdit={canEdit} />
       <div className="spread">
         <h2 style={{ margin: 0 }}>Storyboard and assembly</h2>
