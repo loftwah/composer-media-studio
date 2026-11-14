@@ -30,6 +30,7 @@ import {
   reconcileGeneration,
   saveGeneration,
 } from "./lib/jobs.mjs";
+import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
@@ -499,6 +500,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
     if (rest === "assets" && method === "POST")
       return uploadAsset(request, env, project);
+
+    if (rest === "footage-plans" && method === "GET") return json({ plans: await listFootagePlans(env, project) });
+    if (rest === "footage-plans" && method === "POST") return json({ plan: await createFootagePlan(env, project, await body(request)) }, 201);
+    const footagePlanEdit = rest && rest.match(/^footage-plans\/([a-z0-9_]+)$/);
+    if (footagePlanEdit && method === "PATCH") return json({ plan: await updateFootagePlan(env, project, footagePlanEdit[1], await body(request)) });
 
     if (rest === "song-plans" && method === "GET") return json({ plans: await listSongPlans(env, project) });
     if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);

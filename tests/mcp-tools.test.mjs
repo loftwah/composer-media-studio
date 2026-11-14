@@ -28,7 +28,7 @@ test('MCP SDK discovers actual read tools and reads existing scoped Studio recor
     return { status: response.status, body: await response.json() };
   });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_export_song_captions', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_models', 'studio_list_projects', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_update_project', 'studio_update_song_captions', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_footage_plan', 'studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_export_song_captions', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_footage_plans', 'studio_list_models', 'studio_list_projects', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_update_footage_plan', 'studio_update_project', 'studio_update_song_captions', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
   const state = await client.callTool({ name: 'studio_list_projects', arguments: {} });
   assert.equal(state.structuredContent.projects[0].id, project.id);
   const wrong = await client.callTool({ name: 'studio_get_project', arguments: { projectId: 'prj_other' } });
@@ -88,5 +88,26 @@ test('MCP song plans respect the project grant and share the real revisioned API
     assert.equal(denied.isError, true);
     const deniedExport = await client.callTool({ name: 'studio_export_song_captions', arguments: { projectId: 'prj_other', planId, format: 'vtt' } });
     assert.equal(deniedExport.isError, true);
+  } finally { await client.close(); }
+});
+
+test('MCP footage cut maps use existing authorised project and cannot read another project', async () => {
+  const { env, project } = await setup();
+  await addAsset(env, project, { id: 'asset_source1', kind: 'video', durationMs: 40000 });
+  let cookie = 'studio_session=' + await createSession(env);
+  const scopedCookie = 'studio_session=' + await createSession(env, { mode: 'bridge', actor: 'user', workspace: 'workspace', project: project.id, actions: ['read'] });
+  const client = await connect(async ({ method, path, body }) => {
+    const response = await worker.fetch(new Request('https://studio.test' + path, { method, headers: { cookie, origin: 'https://studio.test', 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) }), env);
+    return { status: response.status, body: await response.json() };
+  });
+  try {
+    const created=await client.callTool({name:'studio_create_footage_plan',arguments:{projectId:project.id,sourceAssetId:'asset_source1',rightsConfirmed:true,title:'Fictional clip',aspect:'16:9',sourceStartMs:0,sourceEndMs:20000,sceneCount:4}});
+    assert.equal(created.isError,undefined,JSON.stringify(created));
+    assert.equal(created.structuredContent.plan.revision,1);
+    cookie=scopedCookie;
+    const read=await client.callTool({name:'studio_list_footage_plans',arguments:{projectId:project.id}});
+    assert.equal(read.structuredContent.plans[0].id,created.structuredContent.plan.id);
+    const denied=await client.callTool({name:'studio_list_footage_plans',arguments:{projectId:'prj_other'}});
+    assert.equal(denied.isError,true);
   } finally { await client.close(); }
 });
