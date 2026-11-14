@@ -346,3 +346,35 @@ test('promo brief tools obey OAuth project and edit scopes, revision checks and 
     assert.equal((await call(env,'/mcp',{method:'POST',headers:{authorization:'Bearer '+editToken}})).status,401);
   } finally {await reader.close();await editor.close();}
 });
+
+test('subject read tools share private version history and enforce OAuth project grants', async () => {
+  const { env, project } = await setup();
+  await addAsset(env, project, { id: 'asset_subject1', kind: 'image' });
+  await env.DB.prepare('UPDATE assets SET sha256=?1 WHERE id=?2').bind('a'.repeat(64), 'asset_subject1').run();
+  const cookie = 'studio_session=' + await createSession(env);
+  const body = { type:'person', name:'Fictional subject', traits:'A green coat', referenceAssetId:'asset_subject1', referenceRole:'face', rightsConfirmed:true };
+  const basePath = `/api/projects/${project.id}/subjects`;
+  const request = (path, method, data) => call(env,path,{method,headers:{cookie,origin:base,'content-type':'application/json'},body:JSON.stringify(data)});
+  const first = await request(basePath,'POST',body); assert.equal(first.status,201); const subject=(await first.json()).subject;
+  assert.equal((await request(`${basePath}/${subject.id}`,'PATCH',{...body,name:'Fictional subject revised',expectedRevision:1})).status,200);
+  const token = await flow(env,project,cookie,'studio.read');
+  const client = new Client({name:'fictional-subject-reader',version:'1.0'},{versionNegotiation:{mode:'auto'}});
+  await client.connect(new StreamableHTTPClientTransport(new URL(resource),{requestInit:{headers:{authorization:'Bearer '+token}},fetch:(url,init)=>worker.fetch(new Request(url,init),env)}));
+  try {
+    const tools=(await client.listTools()).tools;
+    for (const name of ['studio_list_subjects','studio_get_subject_versions']) assert.equal(tools.find(t=>t.name===name).annotations.readOnlyHint,true);
+    const listed=await client.callTool({name:'studio_list_subjects',arguments:{projectId:project.id}});
+    assert.equal(listed.structuredContent.subjects[0].revision,2);
+    const args={projectId:project.id,subjectId:subject.id};
+    const history=await client.callTool({name:'studio_get_subject_versions',arguments:args});
+    assert.deepEqual(history.structuredContent.versions.map(v=>v.revision),[2,1]);
+    await env.DB.prepare('UPDATE assets SET deleted_at=1 WHERE id=?1').bind('asset_subject1').run();
+    assert.equal((await client.callTool({name:'studio_get_subject_versions',arguments:args})).structuredContent.versions[0].referenceAvailable,false);
+    assert.equal((await client.callTool({name:'studio_list_subjects',arguments:{projectId:'prj_wrong'}})).isError,true);
+    assert.equal((await client.callTool({name:'studio_get_subject_versions',arguments:{projectId:'prj_wrong',subjectId:subject.id}})).isError,true);
+    assert.equal((await client.callTool({name:'studio_get_subject_versions',arguments:{projectId:project.id,subjectId:'../api/state'}})).isError,true);
+    assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+    await env.DB.prepare('UPDATE mcp_tokens SET revoked_at=?1').bind(Date.now()).run();
+    assert.equal((await call(env,'/mcp',{method:'POST',headers:{authorization:'Bearer '+token}})).status,401);
+  } finally { await client.close(); }
+});
