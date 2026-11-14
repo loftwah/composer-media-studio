@@ -161,3 +161,37 @@ test("verified Share reference retains a public credit and MIT licence without c
   await env.DB.prepare('UPDATE publications SET revoked_at=1 WHERE id=?1').bind(pub.id).run();
   assert.equal(await publishCandidate(env,project.id,output.id),'skipped');
 });
+
+test("bounded generated ancestry can publish only when every no-mask link remains valid", async () => {
+  const {env,project}=await setup(); env.FIRST_PARTY_PUBLICATION_PROJECTS=project.id;
+  await env.DB.prepare("INSERT INTO publication_policies(project_id,enabled,enabled_at,attested_at) VALUES(?1,1,1,1)").bind(project.id).run();
+  const root=await generated(env,project,'chain_root','generated',2);
+  // Earlier reference-free models omitted the mask fields before mask support.
+  await env.DB.prepare("UPDATE generations SET request_json=?2 WHERE id=?1").bind('gen_chain_root',JSON.stringify({prompt:'secret root',referenceAssetId:null,parentAssetId:null})).run();
+  const middle=await generated(env,project,'chain_middle','generated',3);
+  const result=await generated(env,project,'chain_result','variant',4);
+  for(const [asset,gen,parent,model] of [[middle,'gen_chain_middle',root,'studio-detail'],[result,'gen_chain_result',middle,'studio-upscale']]) {
+    await env.DB.prepare('UPDATE assets SET parent_asset_id=?2 WHERE id=?1').bind(asset.id,parent.id).run();
+    await env.DB.prepare('UPDATE generations SET model=?2,request_json=?3 WHERE id=?1').bind(gen,model,JSON.stringify({prompt:'private',referenceAssetId:parent.id,referenceSha256:parent.sha256,parentAssetId:null,maskAssetId:null})).run();
+  }
+  const {inventory}=await import('../src/lib/publication-policy.mjs');
+  assert.equal((await inventory(env,project.id)).items.find(x=>x.id===result.id).status,'candidate');
+  assert.equal(await publishCandidate(env,project.id,result.id),'created');
+  const pub=await env.DB.prepare('SELECT * FROM publications WHERE asset_id=?1').bind(result.id).first();
+  assert.equal(pub.attribution_json,'[]'); assert.equal(pub.description,'');
+  await env.DB.prepare('UPDATE publications SET listed=0 WHERE id=?1').bind(pub.id).run();
+  assert.equal(await publishCandidate(env,project.id,result.id,{automatic:true}),'existing');
+  assert.equal((await env.DB.prepare('SELECT listed FROM publications WHERE id=?1').bind(pub.id).first()).listed,0);
+  await env.DB.prepare('UPDATE assets SET sha256=?2 WHERE id=?1').bind(root.id,'changed').run();
+  assert.equal(await publishCandidate(env,project.id,result.id),'attribution_review_required');
+  assert.equal((await env.DB.prepare('SELECT listed FROM publications WHERE id=?1').bind(pub.id).first()).listed,0);
+  await env.DB.prepare('UPDATE assets SET sha256=?2 WHERE id=?1').bind(root.id,root.sha256).run();
+  await env.DB.prepare('UPDATE generations SET request_json=?2 WHERE id=?1').bind('gen_chain_middle',JSON.stringify({referenceAssetId:root.id,referenceSha256:root.sha256,parentAssetId:null,maskAssetId:'asset_unknown'})).run();
+  assert.equal(await publishCandidate(env,project.id,result.id),'attribution_review_required');
+  await env.DB.prepare('UPDATE generations SET request_json=?2 WHERE id=?1').bind('gen_chain_middle',JSON.stringify({referenceAssetId:root.id,referenceSha256:root.sha256,parentAssetId:null,maskAssetId:null})).run();
+  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,revoked_at) VALUES('pub_root_hidden',?1,?2,'prior-root','Old root','',1,1,1)").bind(project.id,root.id).run();
+  assert.equal(await publishCandidate(env,project.id,result.id),'attribution_review_required');
+  await env.DB.prepare("DELETE FROM publications WHERE id='pub_root_hidden'").run();
+  await env.DB.prepare('UPDATE assets SET parent_asset_id=?2 WHERE id=?1').bind(root.id,result.id).run();
+  assert.equal(await publishCandidate(env,project.id,result.id),'attribution_review_required');
+});
