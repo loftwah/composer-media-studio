@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { useEffect, useState } from "react";
 import type { AssembleProps, CreateProps, HistoryProps, LibraryProps, MediaAssetV1, PublishProps, SettingsProps, ViewerProps } from "./contracts";
 import { CreateWorkbench } from "./create";
+import { FootageRestyle } from "./footage-restyle";
 import { Assemble, Settings } from "./assemble-settings";
 import { History, Publish } from "./history-publish";
 import { isLocalRenderProvenance, shareImportProvenance } from "../../public/asset-caption.js";
@@ -124,6 +125,7 @@ function AssetViewer({ projectId, asset, still, launchKitUrl, reentryUrl }: View
         <dl className="kv"><dt>Size</dt><dd>{bytesLabel(asset.bytes)}</dd>{Boolean(asset.width) && <><dt>Frame</dt><dd>{asset.width} × {asset.height}</dd></>}{Boolean(asset.durationMs) && <><dt>Duration</dt><dd>{(asset.durationMs! / 1000).toFixed(1)}s</dd></>}{isAudio && Boolean(asset.sampleRate) && <><dt>Audio</dt><dd>{asset.sampleRate} Hz · {asset.channels ?? "—"} channel{asset.channels === 1 ? "" : "s"}</dd></>}<dt>Type</dt><dd>{asset.mime}</dd><dt>Added</dt><dd>{dateLabel(asset.createdAt)}</dd></dl>
         {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id} reentryUrl={reentryUrl}/>}
         {isVideo && <PrivateFootageReceipt key={asset.id} assetId={asset.id}/>}
+        {isVideo && <details className="asset-technical"><summary>Restyle this clip</summary><FootageRestyle key={asset.id} projectId={projectId} assetId={asset.id}/></details>}
         <details className="asset-technical"><summary>Technical details</summary><dl className="kv"><dt>SHA-256</dt><dd>{asset.sha256}</dd></dl>{localRender && <p>{asset.caption}</p>}{shareProvenance && <div><p>{shareProvenance.credit}</p><p><a href={shareProvenance.catalogue} target="_blank" rel="noopener noreferrer">Share catalogue record</a>{shareProvenance.source && <> · <a href={shareProvenance.source} target="_blank" rel="noopener noreferrer">Source notes</a></>}</p></div>}</details>
         <div className="row"><a className="button secondary" href={asset.download} download>Download</a><button type="button" className="secondary" data-action="rename-asset" data-id={asset.id}>Rename</button>{still && <button type="button" className="secondary" data-action="vary-asset" data-id={still.id}>{isVideo ? "Make a variation of its still" : "Make a variation"}</button>}</div>
         <div className="row"><button type="button" className="secondary" data-action="animate-asset" data-id={asset.id} disabled={asset.kind !== "image"}>Animate this still</button><button type="button" className="secondary" data-action="publish-asset" data-id={asset.id}>Publish page</button></div>
