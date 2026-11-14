@@ -24,6 +24,7 @@ import {
   runImage,
   submitAssembly,
   submitAudio,
+  submitFootageRestyle,
   submitImageEdit,
   submitSlateVideo,
   submitVideo,
@@ -33,6 +34,7 @@ import {
 } from "./providers.mjs";
 import { builtinRecipe } from "./recipes.mjs";
 import { signRenderLink } from "./render-links.mjs";
+import { measureFootageSource } from "./footage-preflight.mjs";
 import {
   audioInfo,
   extensionFor,
@@ -164,12 +166,21 @@ function replayConflict() { throw new HttpError(409, "This request ID was alread
 function validateGenerationReplay(row, model, settings, input) {
   const saved = safeJson(row.request_json, {});
   if (row.model !== model.id || row.kind !== model.kind || Object.entries(settings).some(([key,value]) => JSON.stringify(saved[key]) !== JSON.stringify(value)) ||
-      (saved.referenceAssetId ?? null) !== (input.referenceAssetId ?? null) || (saved.maskAssetId ?? null) !== (input.maskAssetId ?? null) || (saved.parentAssetId ?? null) !== (input.parentAssetId ?? null)) replayConflict();
+      (saved.referenceAssetId ?? null) !== (input.referenceAssetId ?? null) || (saved.maskAssetId ?? null) !== (input.maskAssetId ?? null) || (saved.parentAssetId ?? null) !== (model.restyle ? input.sourceAssetId : (input.parentAssetId ?? null))) replayConflict();
 }
 function validateRenderReplay(row, model, composition) {
   // The job retains its original manifest even if the storyboard or a cached
   // social slate changes later. Replaying the same request returns that job.
   if (row.model !== model.id || row.composition_id !== composition.id) replayConflict();
+}
+
+async function verifyRestyleSource(env, projectId, settings) {
+  const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND deleted_at IS NULL").bind(settings.sourceAssetId,projectId).first();
+  if (!asset || asset.sha256 !== settings.sourceSha256) throw new HttpError(409, "The saved source changed. Measure the clip again.", "source_changed");
+  const measured = await measureFootageSource(env,asset), v=measured.video;
+  if (Math.abs(v.durationSeconds-settings.durationSeconds) > .000001) throw new HttpError(409, "The clip duration changed. Measure it again.", "source_changed");
+  if (![v.width,v.height,v.codedWidth,v.codedHeight].every(n=>n>=720&&n<=2160) || v.minimumPacketFps<24 || v.maximumPacketFps>60) throw new HttpError(400, "The clip falls outside this model's listed dimensions or frame rate.", "unsupported_source");
+  return asset;
 }
 
 export async function createGeneration(env, project, input) {
@@ -189,6 +200,7 @@ export async function createGeneration(env, project, input) {
   const validateReplay = row => validateGenerationReplay(row, model, settings, input);
   if (existing) { validateReplay(existing); return { generation: existing, created: false }; }
 
+  if (model.restyle) await verifyRestyleSource(env,project.id,settings);
   const reference = await referenceFor(env, project.id, input.referenceAssetId);
   if (model.references > 0 && !reference)
     throw new HttpError(400, `${model.label} needs a selected reference image`);
@@ -213,6 +225,7 @@ export async function createGeneration(env, project, input) {
   }
 
   const cost = estimateCost(model, settings);
+  if (model.restyle && settings.maxCostMicro < cost) throw new HttpError(409, "The estimate exceeds the amount you reviewed. Measure and review it again.", "estimate_changed");
   const generationId = id("gen");
   const timestamp = now();
   const insert = env.DB.prepare(
@@ -234,7 +247,7 @@ export async function createGeneration(env, project, input) {
           referenceSha256: reference?.asset.sha256 ?? null,
           maskAssetId: mask?.asset.id ?? null,
           maskSha256: mask?.asset.sha256 ?? null,
-          parentAssetId: input.parentAssetId ?? null,
+          parentAssetId: model.restyle ? settings.sourceAssetId : (input.parentAssetId ?? null),
         }),
         cost,
         cost,
@@ -266,6 +279,19 @@ export async function dispatchGeneration(env, generation) {
     const current = await loadGeneration(env, generation.id);
     if (current.status === "admitted" && safeJson(current.request_json, {}).budgetAdmission !== "atomic-v1") throw new HttpError(409, "This older job's reservation cannot be verified. Do not retry it automatically.", "admission_unverified");
     return current;
+  }
+
+  if (model.restyle) {
+    let sourceUrl;
+    try {
+      await verifyRestyleSource(env,generation.project_id,request);
+      sourceUrl = await signRenderLink(env,{assetId:request.sourceAssetId,projectId:generation.project_id});
+    } catch (error) { return failGeneration(env,generation,error,{dispatched:false}); }
+    try {
+      const submitted = await submitFootageRestyle(env,model,request,sourceUrl);
+      await env.DB.prepare("UPDATE generations SET status='submitted',provider_request_id=?2,provider_status_url=?3,provider_response_url=?4,submitted_at=?5,updated_at=?5 WHERE id=?1 AND status='submitting'").bind(generation.id,submitted.requestId,submitted.statusUrl,submitted.responseUrl,now()).run();
+      return loadGeneration(env,generation.id);
+    } catch(error) { return failGeneration(env,generation,error,{dispatched:true}); }
   }
 
   if (model.kind === "image" && model.edit) {

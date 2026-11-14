@@ -76,7 +76,7 @@ function JobCard({
       <header>
         <div className="row">
           <span className={`status ${tone}`}>{label}</span>
-          <strong>{model?.label ?? job.model}</strong>
+          <strong>{model?.label ?? (job.model === "kling-o1-restyle" ? "Kling O1 footage edit" : job.model)}</strong>
           <span className="small">
             {job.kind} · {date(job.createdAt)} {time(job.createdAt)}
           </span>
@@ -118,14 +118,14 @@ function JobCard({
             >
               Open result
             </button>
-            <button
+            {job.model !== "kling-o1-restyle" && <button
               type="button"
               className="secondary"
               data-action="reuse-job"
               data-id={job.id}
             >
               Reuse settings
-            </button>
+            </button>}
           </>
         )}
         {pending && job.kind === "video" && (

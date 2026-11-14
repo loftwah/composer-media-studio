@@ -899,14 +899,14 @@ function jobCard(generation) {
   const canRetrySave = ["provider_complete", "saving"].includes(generation.status);
   return `<article class="job" data-job="${esc(generation.id)}">
     <header>
-      <div class="row">${statusChip(generation.status)}<strong>${esc(model?.label ?? generation.model)}</strong><span class="small">${esc(generation.kind)} · ${dateLabel(generation.createdAt)} ${timeLabel(generation.createdAt)}</span></div>
+      <div class="row">${statusChip(generation.status)}<strong>${esc(model?.label ?? (generation.model === "kling-o1-restyle" ? "Kling O1 footage edit" : generation.model))}</strong><span class="small">${esc(generation.kind)} · ${dateLabel(generation.createdAt)} ${timeLabel(generation.createdAt)}</span></div>
       <span class="small">Estimated allocation: ${money(generation.costObservedMicro ?? generation.costEstimateMicro)}</span>
     </header>
     <p class="prompt">${esc(generation.prompt)}</p>
     <p class="small">${esc(generation.aspect ?? "")} ${generation.durationSeconds ? `· ${generation.durationSeconds}s` : ""} ${generation.error ? `· ${esc(generation.error.message)}` : ""}</p>
     ${asset ? `<div class="result">${asset.kind === "video" ? `<video src="${esc(asset.file)}" controls preload="metadata"></video>` : asset.kind === "audio" ? `<audio src="${esc(asset.file)}" controls preload="metadata" style="width:100%"></audio>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}" loading="lazy">`}</div>` : ""}
     <div class="row">
-      ${asset ? `<button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open result</button><button class="secondary" data-action="reuse-job" data-id="${esc(generation.id)}">Reuse settings</button>` : ""}
+      ${asset ? `<button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open result</button>${generation.model !== "kling-o1-restyle" ? `<button class="secondary" data-action="reuse-job" data-id="${esc(generation.id)}">Reuse settings</button>` : ""}` : ""}
       ${pending && generation.kind === "video" ? `<button class="secondary" data-action="refresh-job" data-id="${esc(generation.id)}">Refresh</button>` : ""}
       ${canCancel ? `<button class="secondary" data-action="cancel-job" data-id="${esc(generation.id)}">Cancel</button>` : ""}
       ${canRetrySave ? `<button data-action="save-retry" data-id="${esc(generation.id)}">Retry saving</button>` : ""}

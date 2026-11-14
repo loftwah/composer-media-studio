@@ -124,6 +124,12 @@ export const models = {
     costPerSecondMicro: 70_000,
     costBasis: "fal.ai review estimate for a five second clip; check current fal pricing before relying on it.",
   },
+  "kling-o1-restyle": {
+    id: "kling-o1-restyle", label: "Kling O1 footage edit", provider: PROVIDER_FAL,
+    endpoint: "fal-ai/kling-video/o1/video-to-video/edit", kind: "video", restyle: true,
+    description: "Edit a saved clip using a written direction.", references: 0, aspects: [],
+    costMicro: 168_000, costBasis: "fal.ai lists US$0.168 per input second; reserved by rounding up to a whole second. Provider billing may change.",
+  },
   "studio-score": {
     id: "studio-score",
     label: "Studio Score",
@@ -256,7 +262,7 @@ export function toBase64(bytes) {
 }
 
 export function publicModels() {
-  return Object.values(models).map((model) => ({
+  return Object.values(models).filter(model => !model.restyle).map((model) => ({
     id: model.id,
     label: model.label,
     kind: model.kind,
@@ -291,6 +297,7 @@ export function estimateCost(model, settings = {}) {
     const seconds = Number(settings.durationSeconds ?? model.audio.maxSeconds);
     return Math.max(1, Math.round((model.costMicro * seconds) / model.audio.maxSeconds));
   }
+  if (model.restyle) return Math.ceil(settings.durationSeconds) * model.costMicro;
   if (model.kind !== "video") return model.costMicro;
   const base = model.durations?.[0] ?? 5;
   const seconds = Number(settings.durationSeconds ?? base);
@@ -319,6 +326,11 @@ export function validateSettings(model, input) {
   if (prompt.length > 1800)
     throw new HttpError(400, "Keep the prompt under 1,800 characters");
 
+  if (model.restyle) {
+    if (input.rightsConfirmed !== true || input.providerConsent !== true) throw new HttpError(400, "Confirm rights and permission to send this clip to fal and Kling.", "consent_required");
+    if (!/^asset_[a-z0-9]+$/.test(input.sourceAssetId ?? "") || !/^[a-f0-9]{64}$/i.test(input.sourceSha256 ?? "") || !Number.isFinite(input.durationSeconds) || input.durationSeconds < 3 || input.durationSeconds > 10.05 || !Number.isSafeInteger(input.maxCostMicro) || input.maxCostMicro < 1 || typeof input.keepAudio !== "boolean") throw new HttpError(400, "Measure the saved clip and review its estimate first.", "invalid_source");
+    return {prompt, sourceAssetId:input.sourceAssetId, sourceSha256:input.sourceSha256, durationSeconds:input.durationSeconds, maxCostMicro:input.maxCostMicro, keepAudio:input.keepAudio, rightsConfirmed:true, providerConsent:true};
+  }
   if (model.kind === "image") {
     const aspect = String(input.aspect ?? model.aspects[0]);
     if (!model.aspects.includes(aspect))
@@ -685,6 +697,10 @@ async function falSubmit(env, endpoint, input, { webhook = false } = {}) {
     statusUrl: checkFalUrl(payload.status_url, "status URL"),
     responseUrl: checkFalUrl(payload.response_url, "result URL"),
   };
+}
+
+export async function submitFootageRestyle(env, model, settings, sourceUrl) {
+  return falSubmit(env, model.endpoint, { prompt: settings.prompt, video_url: sourceUrl, keep_audio: settings.keepAudio, enable_safety_checker: true });
 }
 
 export async function submitAudio(env, model, settings) {

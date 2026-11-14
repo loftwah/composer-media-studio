@@ -9,3 +9,6 @@
 .footage-preview { display: block; width: min(100%, 32rem); max-height: 20rem; background: #111; border-radius: .5rem; }
 
 .footage-export-preview { display: block; width: min(100%, 32rem); max-width: 100%; height: auto; background: #111; border-radius: .5rem; }
+
+.footage-restyle-consent { display: flex; align-items: flex-start; gap: .55rem; }
+.footage-restyle-consent input[type="checkbox"] { width: auto; min-width: 1rem; margin: .2rem 0 0; }
