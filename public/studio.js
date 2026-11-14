@@ -837,9 +837,9 @@ function composeView() {
         <p class="eyebrow">Saved clips</p>
         ${clips.length === 0 ? `<p class="small" style="margin:0">No clips yet. Animate a still or upload an MP4 first.</p>` : ""}
         <ul class="clip-picker">
-          ${clips.map((asset) => {
+          ${clips.map((asset, index) => {
             const used = compose.shotIds.includes(asset.id);
-            return `<li><span>${esc(asset.title)} <span class="small">${((asset.durationMs || 0) / 1000).toFixed(1)}s</span></span>
+            return `<li><div class="clip-picker-info"><span>Clip ${index + 1} · ${esc(asset.title)} <span class="small">${((asset.durationMs || 0) / 1000).toFixed(1)}s</span></span><details class="clip-picker-preview" name="clip-picker-preview"><summary>Preview clip ${index + 1}</summary><video src="${esc(asset.file)}" controls playsinline preload="none" aria-label="Preview clip ${index + 1}: ${esc(asset.title)}"></video></details></div>
               <button class="${used ? "quiet" : "secondary"}" data-action="${used ? "compose-remove" : "compose-add"}" data-id="${esc(asset.id)}">${used ? "Added" : "Add shot"}</button></li>`;
           }).join("")}
         </ul>
@@ -2438,6 +2438,14 @@ async function drawWaveforms() {
 }
 
 /* ---------- events ---------- */
+
+// A collapsed clip preview must not keep playing behind the storyboard.
+app.addEventListener("toggle", (event) => {
+  const details = event.target;
+  if (details instanceof HTMLDetailsElement && details.classList.contains("clip-picker-preview") && !details.open) {
+    details.querySelector("video")?.pause();
+  }
+}, true);
 
 app.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");

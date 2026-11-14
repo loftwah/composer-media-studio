@@ -520,16 +520,21 @@ export function Assemble({
             </p>
           )}
           <ul className="clip-picker">
-            {clips.map((a) => {
+            {clips.map((a, index) => {
               const used = compose.shotIds.includes(a.id);
               return (
                 <li key={a.id}>
-                  <span>
-                    {a.title}{" "}
+                  <div className="clip-picker-info">
+                    <span>Clip {index + 1} · {a.title}{" "}
                     <span className="small">
                       {((a.durationMs || 0) / 1000).toFixed(1)}s
                     </span>
-                  </span>
+                    </span>
+                    <details className="clip-picker-preview" name="clip-picker-preview" onToggle={(event) => { if (!event.currentTarget.open) event.currentTarget.querySelector("video")?.pause(); }}>
+                      <summary>Preview clip {index + 1}</summary>
+                      <video src={a.file} controls playsInline preload="none" aria-label={`Preview clip ${index + 1}: ${a.title}`} />
+                    </details>
+                  </div>
                   <button
                     className={used ? "quiet" : "secondary"}
                     data-action={used ? "compose-remove" : "compose-add"}
