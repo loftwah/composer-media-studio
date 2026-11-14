@@ -35,6 +35,9 @@ export function FootagePlans({ projectId, assets, canEdit }: { projectId: string
   const [saved, setSaved] = useState<Plan | null>(cached?.saved ?? null);
   const [draft, setDraft] = useState<Plan | null>(cached?.draft ?? null);
   const [sourceId, setSourceId] = useState(videos[0]?.id ?? '');
+  const sourcePreview = useRef<HTMLVideoElement | null>(null);
+  const [previewReady, setPreviewReady] = useState(false);
+  const [markStatus, setMarkStatus] = useState('');
   const [title, setTitle] = useState('');
   const [start, setStart] = useState('0');
   const [end, setEnd] = useState(seconds(Math.min(videos[0]?.durationMs ?? 30000, 60000)));
@@ -58,6 +61,17 @@ export function FootagePlans({ projectId, assets, canEdit }: { projectId: string
   const mayLeave = () => !changed || window.confirm('Discard unsaved changes to this cut map?');
   const selectedSource = videos.find(video => video.id === sourceId);
   const planSource = draft && videos.find(video => video.id === draft.sourceAssetId);
+  const markPlayhead = (edge: 'start' | 'end') => {
+    const player = sourcePreview.current;
+    const durationMs = selectedSource?.durationMs;
+    if (!player || !previewReady || !durationMs || !Number.isFinite(player.duration) || !Number.isFinite(player.currentTime)) {
+      setMarkStatus('The source video is not ready.');
+      return;
+    }
+    const point = Math.max(0, Math.min(durationMs, Math.floor(player.duration * 1000), Math.round(player.currentTime * 1000)));
+    if (edge === 'start') setStart(seconds(point)); else setEnd(seconds(point));
+    setMarkStatus(`${edge === 'start' ? 'Start' : 'End'} set to ${seconds(point)} seconds. Check both times before creating the cut map.`);
+  };
   return <section className="footage-workspace" aria-labelledby="footage-title"><details open={workspaceOpen} onToggle={event => setWorkspaceOpen(event.currentTarget.open)}><summary id="footage-title">Plan from existing footage</summary><div className="footage-content">
     <p>Choose a source video and map its cuts. Your original stays untouched. This plans an edit; it does not detect cuts, restyle or render footage.</p>
     {error && <p className="notice" role="alert">{error} {conflict && saved && <button type="button" className="secondary" disabled={busy} onClick={() => { if (window.confirm('Discard unsaved edits and load the latest saved cut map?')) void run(async () => { await reload(saved.id); setMessage('Loaded the latest saved cut map.'); }); }}>Reload saved map</button>}</p>}
@@ -65,8 +79,8 @@ export function FootagePlans({ projectId, assets, canEdit }: { projectId: string
     {loading ? <p>Loading saved cut maps…</p> : <>
       {!canEdit && <p className="small">This connection can view cut maps; editing requires project edit access.</p>}
       <div className="song-plan-columns"><div><h3>Start with a video</h3>{videos.length === 0 ? <p>No measured video yet. Upload an MP4 or WebM in the library, then return here.</p> : <form onSubmit={e => { e.preventDefault(); if (!mayLeave()) return; void run(async () => { const result = await request(base, 'POST', { sourceAssetId: sourceId, rightsConfirmed: rights, title, aspect: '16:9', sourceStartMs: milliseconds(start), sourceEndMs: milliseconds(end), sceneCount: Number(count) }); setPlans(current => [result.plan, ...current]); open(result.plan); setTitle(''); setRights(false); setMessage('Cut map saved. Adjust the suggested ranges below.'); }); }}><fieldset disabled={!canEdit || busy}>
-        <label>Source video<select value={sourceId} onChange={e => { const id = e.target.value; setSourceId(id); setRights(false); setStart('0'); setEnd(seconds(Math.min(videos.find(v => v.id === id)?.durationMs ?? 30000, 60000))); }}>{videos.map(v => <option key={v.id} value={v.id}>{v.title} · {seconds(v.durationMs ?? 0)}s</option>)}</select></label>
-        {selectedSource && <video className="footage-preview" controls playsInline preload="metadata" src={selectedSource.file} aria-label={`Preview source ${selectedSource.title}`} />}
+        <label>Source video<select value={sourceId} onChange={e => { const id = e.target.value; setPreviewReady(false); setMarkStatus(''); setSourceId(id); setRights(false); setStart('0'); setEnd(seconds(Math.min(videos.find(v => v.id === id)?.durationMs ?? 30000, 60000))); }}>{videos.map(v => <option key={v.id} value={v.id}>{v.title} · {seconds(v.durationMs ?? 0)}s</option>)}</select></label>
+        {selectedSource && <><video key={selectedSource.id} ref={sourcePreview} className="footage-preview" controls playsInline preload="metadata" src={selectedSource.file} aria-label={`Preview source ${selectedSource.title}`} onLoadedMetadata={() => setPreviewReady(true)} onError={() => { setPreviewReady(false); setMarkStatus('The source preview could not load. You can still enter times manually.'); }} /><p className="small">Pause at a point in the video, then use it as the start or end. You can still enter times below.</p><div className="row"><button type="button" className="secondary" disabled={!previewReady} onClick={() => markPlayhead('start')}>Use playhead for start</button><button type="button" className="secondary" disabled={!previewReady} onClick={() => markPlayhead('end')}>Use playhead for end</button></div><p className="small" role="status">{markStatus}</p></>}
         <label>Cut map title<input required maxLength={80} value={title} onChange={e => setTitle(e.target.value)} placeholder="My footage edit" /></label>
         <div className="song-plan-times"><label>Start <span className="small">seconds</span><input required type="number" min="0" step="0.001" value={start} onChange={e => setStart(e.target.value)} /></label><label>End <span className="small">seconds</span><input required type="number" min="0" step="0.001" value={end} onChange={e => setEnd(e.target.value)} /></label><label>Scenes<select value={count} onChange={e => setCount(e.target.value)}>{[1,2,3,4,5,6].map(n => <option key={n}>{n}</option>)}</select></label></div>
         <p className="small">Select up to 60 seconds. Even divisions are starting suggestions, not detected cuts.</p><label className="song-check"><input type="checkbox" checked={rights} required onChange={e => setRights(e.target.checked)} /> I own this footage or have permission to use it.</label><button type="submit" disabled={!rights || !sourceId}>Create cut map</button></fieldset></form>}</div>
