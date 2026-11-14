@@ -1,0 +1,16 @@
+.trim-page { width:min(100% - 2rem, 62rem); margin:clamp(2rem,6vw,5rem) auto; }
+.trim-page header { max-width:65ch; margin-bottom:2rem; }
+.trim-page h1 { margin:.8rem 0 .5rem; }
+.trim-page header p, .trim-note { color:var(--ink-soft); line-height:1.6; }
+.trim-work { display:grid; gap:1rem; border-top:1px solid var(--line); padding-top:1.5rem; }
+.trim-work h2, .trim-work p { margin:0; }
+.trim-file { display:grid; gap:.5rem; max-width:30rem; font-weight:600; }
+.trim-work input[type=file] { width:100%; }
+.trim-wave { display:block; width:100%; height:110px; background:var(--paper-deep); border-radius:8px; }
+.trim-work audio { width:min(100%, 42rem); }
+.trim-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 11rem),1fr)); gap:1rem; }
+.trim-fields label { display:grid; gap:.4rem; font-weight:600; }
+.trim-work button, .trim-result .button { justify-self:start; }
+.trim-result { display:grid; gap:1rem; border-top:1px solid var(--line); padding-top:1.5rem; }
+
+.trim-result .button, .trim-result .button:hover { color:var(--paper); text-decoration:none; }

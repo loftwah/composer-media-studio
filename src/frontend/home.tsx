@@ -204,6 +204,9 @@ function Home({
               Browse Share artwork
             </a>
           )}
+          <a className="button secondary" href="/tools/audio-trim">
+            Trim audio locally
+          </a>
           <a className="button secondary" href="/help">
             Explore studio tools
           </a>
@@ -239,3 +242,5 @@ export {
   renderSettings,
   unmountMedia,
 } from "./library";
+
+export { mountAudioTrim } from "./audio-trim";

@@ -139,6 +139,11 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
 </html>`;
 }
 
+export function audioTrimPage({ revision = "dev" } = {}) {
+  return `${head({ title: "Trim a song — Media Studio", description: "Trim audio privately on your device and save a WAV.", extra: `<link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}">` })}
+<body><div id="audio-trim"><main id="main"><h1>Trim a song</h1><p>JavaScript is required to trim audio on your device.</p></main></div><script type="module" src="/audio-trim.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
+}
+
 export function loginPage({ next = "/", revision = "dev", bridged = false, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
   return `${head({
     title: "Sign in — Media Studio",
@@ -169,6 +174,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
     </form>
     ${bridged ? "</details>" : ""}
     ${woodhouseShare ? '<p><a href="/portfolio">Browse artwork from Woodhouse Share</a></p>' : ""}
+    <p><a href="/tools/audio-trim">Trim a song on this device</a> · no sign-in needed</p>
     <p class="small">This studio belongs to its own Cloudflare account and stores media in its own R2 bucket. It does not use your App Composer password.</p>
   </main>
 </div>

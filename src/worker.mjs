@@ -36,7 +36,7 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery } from "./lib/ui.mjs";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage } from "./lib/ui.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
@@ -1170,6 +1170,9 @@ async function handlePublic(request, env, url) {
       status,
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": status === 200 && !view.films?.length ? "public, max-age=60" : "no-store" },
     });
+  }
+  if (path === "/tools/audio-trim") {
+    return new Response(audioTrimPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
   }
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
