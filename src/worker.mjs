@@ -34,6 +34,7 @@ import {
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
+import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
 import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
@@ -535,6 +536,12 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     if (rest === "assets" && method === "POST")
       return uploadAsset(request, env, project);
 
+    if (rest === "subjects" && method === "GET") return json({ subjects: await listSubjects(env, project) });
+    if (rest === "subjects" && method === "POST") return json({ subject: await saveSubject(env, project, await body(request)) }, 201);
+    const subjectMatch = rest && rest.match(/^subjects\/([a-z0-9_]+)$/);
+    if (subjectMatch && method === "GET") return json({ versions: await subjectVersions(env, project, subjectMatch[1]) });
+    if (subjectMatch && method === "PATCH") return json({ subject: await saveSubject(env, project, await body(request), subjectMatch[1]) });
+
     if (rest === "footage-plans" && method === "GET") return json({ plans: await listFootagePlans(env, project) });
     if (rest === "footage-plans" && method === "POST") return json({ plan: await createFootagePlan(env, project, await body(request)) }, 201);
     const footagePlanEdit = rest && rest.match(/^footage-plans\/([a-z0-9_]+)$/);
@@ -674,6 +681,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           createdAt: publication.created_at,
           revokedAt: publication.revoked_at,
         })),
+        subjects: await listSubjects(env, project, true),
         notes: [
           "Secrets, provider keys and session cookies are never included.",
           "Cost figures reflect Studio estimates and reservations, not verified provider invoice charges; the legacy costObservedMicro field is an allocated estimate.",
