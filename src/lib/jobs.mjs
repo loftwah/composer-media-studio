@@ -1177,6 +1177,16 @@ export async function createStoryboardFromSongPlan(env, project, planId, input) 
   const song = safeJson(plan.spec_json, {});
   if (!Array.isArray(song.scenes) || song.scenes.length < 2 || song.scenes.length > 6)
     throw new HttpError(400, "Choose two to six scenes", "invalid_shots");
+  let starts = new Map();
+  if (input.sceneStarts !== undefined) {
+    if (!Array.isArray(input.sceneStarts) || input.sceneStarts.length !== song.scenes.length)
+      throw new HttpError(400, "Provide one source in-point for each saved scene.", "invalid_scene_starts");
+    for (const entry of input.sceneStarts) {
+      if (!entry || typeof entry !== "object" || Object.keys(entry).some(key => key !== "sceneId" && key !== "startMs") || typeof entry.sceneId !== "string" || !Number.isSafeInteger(entry.startMs) || entry.startMs < 0 || starts.has(entry.sceneId) || !song.scenes.some(scene => scene.id === entry.sceneId))
+        throw new HttpError(400, "Scene in-points must be unique non-negative milliseconds for the saved scenes.", "invalid_scene_starts");
+      starts.set(entry.sceneId, entry.startMs);
+    }
+  }
   const shots = [];
   const originScenes = [];
   for (const [index, scene] of song.scenes.entries()) {
@@ -1187,20 +1197,40 @@ export async function createStoryboardFromSongPlan(env, project, planId, input) 
     const takeMs = Number(take.duration_ms);
     if (!Number.isSafeInteger(sceneMs) || sceneMs <= 0 || !Number.isSafeInteger(takeMs) || takeMs < sceneMs)
       throw new HttpError(400, `Scene ${index + 1} needs a take at least as long as its timing. Choose a longer take or adjust the scene.`, "take_duration_mismatch");
-    const needsTrim = takeMs > sceneMs;
+    const start = starts.get(scene.id) ?? 0;
+    const end = start + sceneMs;
+    if (!Number.isSafeInteger(end) || end > takeMs)
+      throw new HttpError(400, `Scene ${index + 1} extends past its selected take. Choose an earlier in-point.`, "take_duration_mismatch");
+    const needsTrim = start !== 0 || end !== takeMs;
     if (needsTrim && input.allowTrim !== true)
-      throw new HttpError(400, `Scene ${index + 1} has a longer take. Confirm using its first ${(sceneMs / 1000).toFixed(3)} seconds before making the storyboard.`, "take_trim_confirmation_required");
-    const trim = needsTrim ? { trimStartMs: 0, trimEndMs: sceneMs } : {};
+      throw new HttpError(400, `Scene ${index + 1} uses part of a take. Confirm its selected range before making the storyboard.`, "take_trim_confirmation_required");
+    const trim = needsTrim ? { trimStartMs: start, trimEndMs: end } : {};
     shots.push({ assetId: take.id, ...trim });
     originScenes.push({ id: scene.id, selectedTakeId: scene.selectedTakeId, startMs: scene.startMs, endMs: scene.endMs, ...trim });
   }
   const spec = await buildCompositionSpec(env, project, {
     title: song.title, shots, audioTracks: [{ assetId: source.id, role: "music", startMs: 0, trimStartMs: song.startMs, trimEndMs: song.endMs, gainDb: 0, fadeInMs: 0, fadeOutMs: 0 }],
   });
+  if (spec.totalMs !== song.endMs - song.startMs || spec.shots.some((shot, index) => shot.durationMs !== song.scenes[index].endMs - song.scenes[index].startMs))
+    throw new HttpError(409, "A take changed while preparing the storyboard. Reload the plan and review the ranges.", "take_changed");
   spec.originSongPlan = { id: plan.id, revision, songSha256: plan.song_sha256, sourceStartMs: song.startMs, sourceEndMs: song.endMs, scenes: originScenes };
-  const compositionId = `cmp_song_${plan.id}_${revision}`;
+  const orderedStarts = song.scenes.map(scene => starts.get(scene.id) ?? 0);
+  const cutKey = JSON.stringify({ projectId: project.id, planId: plan.id, revision, orderedStarts });
+  const compositionId = orderedStarts.some(Boolean)
+    ? `cmp_song_cut_${(await sha256Hex(new TextEncoder().encode(cutKey))).slice(0, 40)}`
+    : `cmp_song_${plan.id}_${revision}`;
+  const matchesRequestedShots = (row) => {
+    const current = safeJson(row.spec_json, {});
+    const ranges = items => (items ?? []).map(shot => [shot.assetId, shot.trimStartMs ?? 0, shot.trimEndMs ?? shot.durationMs]);
+    return JSON.stringify(ranges(current.shots)) === JSON.stringify(ranges(spec.shots));
+  };
   let existing = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(compositionId, project.id).first();
-  if (existing) return { composition: { id: existing.id, projectId: existing.project_id, createdAt: existing.created_at, updatedAt: existing.updated_at, ...safeJson(existing.spec_json, {}) }, created: false };
+  if (existing) {
+    const currentPlan = await env.DB.prepare("SELECT revision FROM song_plans WHERE id=?1 AND project_id=?2").bind(plan.id, project.id).first();
+    if (!currentPlan || currentPlan.revision !== revision) throw new HttpError(409, "This plan changed. Reload it before making a storyboard.", "revision_conflict");
+    if (!matchesRequestedShots(existing)) throw new HttpError(409, "This storyboard's saved shots were edited. Choose another range or review the existing storyboard.", "storyboard_changed");
+    return { composition: { id: existing.id, projectId: existing.project_id, createdAt: existing.created_at, updatedAt: existing.updated_at, ...safeJson(existing.spec_json, {}) }, created: false };
+  }
   const timestamp = now();
   const created = await env.DB.prepare(`INSERT OR IGNORE INTO compositions(id,project_id,title,spec_json,created_at,updated_at)
     SELECT ?1,?2,?3,?4,?5,?5 WHERE EXISTS (SELECT 1 FROM song_plans WHERE id=?6 AND project_id=?2 AND revision=?7) RETURNING *`)
@@ -1208,6 +1238,7 @@ export async function createStoryboardFromSongPlan(env, project, planId, input) 
   if (!created) {
     existing = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(compositionId, project.id).first();
     if (!existing) throw new HttpError(409, "This plan changed. Reload it before making a storyboard.", "revision_conflict");
+    if (!matchesRequestedShots(existing)) throw new HttpError(409, "This storyboard's saved shots were edited. Choose another range or review the existing storyboard.", "storyboard_changed");
   }
   const row = created || existing;
   return { composition: { id: row.id, projectId: row.project_id, createdAt: row.created_at, updatedAt: row.updated_at, ...safeJson(row.spec_json, {}) }, created: Boolean(created) };

@@ -94,7 +94,8 @@ test('caption snapshot requires matching plan revision and confirmed rights with
   const plan=await updateSongPlan(env,project,original.id,{...original,expectedRevision:1,scenes:original.scenes.map((s,i)=>({...s,selectedTakeId:`asset_clip0${i+1}`}))});
   const captioned=await updateSongCaptions(env,project,plan.id,{expectedRevision:2,rightsConfirmed:true,cues:[{id:'cue_001',startMs:0,endMs:1000,text:'Private words',speaker:''}]});
   const {createStoryboardFromSongPlan}=await import('../src/lib/jobs.mjs');
-  const made=await createStoryboardFromSongPlan(env,project,captioned.id,{expectedRevision:3,allowTrim:true});
+  const sceneStarts=captioned.scenes.map((scene,i)=>({sceneId:scene.id,startMs:i===0?500:0}));
+  const made=await createStoryboardFromSongPlan(env,project,captioned.id,{expectedRevision:3,allowTrim:true,sceneStarts});
   const composition=made.composition;
   const start=()=>call(`/api/projects/${project.id}/compositions/${composition.id}/local-render-receipts`,{method:'POST',body:{expectedUpdatedAt:composition.updatedAt,includeCaptions:true,framing:{aspect:'source',fit:'contain'}}});
   // The local renderer requires a mixed soundtrack before saving provenance.
@@ -104,7 +105,7 @@ test('caption snapshot requires matching plan revision and confirmed rights with
   await env.DB.prepare('UPDATE compositions SET spec_json=?2 WHERE id=?1').bind(composition.id,JSON.stringify(spec)).run();
   const res=await start(); assert.equal(res.status,201); const {receipt}=await res.json();
   const stored=await env.DB.prepare('SELECT snapshot_json FROM local_render_receipts WHERE id=?1').bind(receipt.id).first();
-  assert.equal(stored.snapshot_json.includes('Private words'),false); assert.equal(JSON.parse(stored.snapshot_json).captions.revision,3);
+  assert.equal(stored.snapshot_json.includes('Private words'),false); assert.equal(JSON.parse(stored.snapshot_json).captions.revision,3); assert.equal(JSON.parse(stored.snapshot_json).shots[0].startMs,500);
   await env.DB.prepare('UPDATE song_plans SET revision=revision+1 WHERE id=?1').bind(plan.id).run();
   assert.equal((await start()).status,409);
 });

@@ -64,3 +64,25 @@ test('a short selected take is refused even when trim is approved', async () => 
   await env.DB.prepare('UPDATE assets SET duration_ms=4900 WHERE id=?1').bind('asset_take01').run();
   await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true}),e=>e.code==='take_duration_mismatch');
 });
+
+test('scene in-points create distinct idempotent cuts and reject invalid or edited ranges', async () => {
+  const {env,project,plan}=await fixture(0);
+  await env.DB.prepare('UPDATE assets SET duration_ms=5200 WHERE id=?1').bind('asset_take01').run();
+  const sceneStarts=plan.scenes.map((scene,index)=>({sceneId:scene.id,startMs:index===0?100:0}));
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,sceneStarts}),e=>e.code==='take_trim_confirmation_required');
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true,sceneStarts:sceneStarts.slice(1)}),e=>e.code==='invalid_scene_starts');
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true,sceneStarts:sceneStarts.map((entry,i)=>i===1?sceneStarts[0]:entry)}),e=>e.code==='invalid_scene_starts');
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true,sceneStarts:sceneStarts.map((entry,i)=>i===0?{...entry,startMs:201}:entry)}),e=>e.code==='take_duration_mismatch');
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:1,allowTrim:true,sceneStarts}),e=>e.status===409);
+  const [first,replay]=await Promise.all([createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true,sceneStarts}),createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true,sceneStarts})]);
+  assert.deepEqual([first.created,replay.created].sort(),[false,true]);
+  assert.equal(first.composition.id,replay.composition.id);
+  assert.equal(first.composition.shots[0].trimStartMs,100); assert.equal(first.composition.shots[0].trimEndMs,5100);
+  assert.equal(first.composition.originSongPlan.scenes[0].trimStartMs,100); assert.equal(first.composition.originSongPlan.scenes[0].trimEndMs,5100);
+  const zero=await createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true});
+  assert.notEqual(zero.composition.id,first.composition.id);
+  const row=await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(first.composition.id).first();
+  await updateComposition(env,project,row,{title:'Edited',shots:first.composition.shots.map((shot,index)=>index?shot:{...shot,trimStartMs:0,trimEndMs:5000}),audioTracks:first.composition.audioTracks,expectedUpdatedAt:first.composition.updatedAt});
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true,sceneStarts}),e=>e.code==='storyboard_changed');
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+});

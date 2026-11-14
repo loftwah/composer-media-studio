@@ -31,3 +31,10 @@ test('captioned trimmed cuts must match the frozen source in- and out-points',()
  assert.throws(()=>resolveCaptionSnapshot({...trimmed,shots:[{assetId:'asset_a',trimStartMs:500,trimEndMs:2500,durationMs:2000},{assetId:'asset_b'}]},longer,plan),/no longer matches/);
  assert.throws(()=>resolveCaptionSnapshot({...trimmed,originSongPlan:{...origin,scenes}},longer,plan),/no longer matches/);
 });
+test('non-zero scene in-points retain captions only while the frozen ranges match',()=>{
+ const longer=[assets[0],{...assets[1],durationMs:4000},assets[2]];
+ const frozen=[{...scenes[0],trimStartMs:500,trimEndMs:2500},scenes[1]];
+ const cut={...composition,shots:[{assetId:'asset_a',trimStartMs:500,trimEndMs:2500,durationMs:2000},{assetId:'asset_b'}],originSongPlan:{...origin,scenes:frozen}};
+ assert.equal(resolveCaptionSnapshot(cut,longer,plan).revision,4);
+ assert.throws(()=>resolveCaptionSnapshot({...cut,shots:[{assetId:'asset_a',trimStartMs:600,trimEndMs:2600,durationMs:2000},{assetId:'asset_b'}]},longer,plan),/no longer matches/);
+});

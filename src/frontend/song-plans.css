@@ -51,3 +51,8 @@
 .subject-summary img { width: 5rem; height: 5rem; flex: none; object-fit: contain; background: var(--surface); border-radius: 8px; }
 .subject-summary p { margin: .25rem 0; }
 .subject-library .scene-direction-editor { margin-top: 1rem; }
+
+.song-take-range { display:grid; gap:.5rem; border-top:1px solid var(--border); padding:1rem 0; }
+.song-take-range video { width:min(100%, 24rem); max-height:18rem; background:#111; object-fit:contain; }
+.song-take-range label { max-width:20rem; }
+.song-take-range p { margin:0; }
