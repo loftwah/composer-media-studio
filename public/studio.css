@@ -193,7 +193,7 @@ legend { padding: 0 0.4rem; font-weight: 600; font-size: 0.85rem; }
 .recipe:hover { background: var(--paper-deep); border-color: var(--ink); }
 .recipe[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .recipe strong { font-family: var(--display); font-size: 1.05rem; }
-.recipe span { font-size: 0.84rem; color: var(--ink-soft); }
+.recipe span { font-size: 0.84rem; line-height: 1.4; font-weight: 400; color: var(--ink-soft); }
 
 .status { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 0.18rem 0.5rem; border-radius: 999px; background: var(--paper-deep); color: var(--ink-soft); }
 .status.ok { background: #dcebdd; color: var(--ok); }
