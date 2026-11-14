@@ -1,9 +1,9 @@
-Mediabunny 1.65.2
+Mediabunny 1.66.0
 Copyright (c) 2026-present, Vanilagy and contributors.
 Licensed under the Mozilla Public License, version 2.0.
 Licence text: /third-party/mediabunny-LICENSE.txt
 Corresponding source package, including source files:
-https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.2.tgz
+https://registry.npmjs.org/mediabunny/-/mediabunny-1.66.0.tgz
 Upstream source revision:
-https://github.com/Vanilagy/mediabunny/tree/173f6b70765fa3a6ffc1c82737514416fa559ef5
+https://github.com/Vanilagy/mediabunny/tree/5d270321467df4d138bb30df731bb0af2780939a
 No modifications have been made to Mediabunny's source.
