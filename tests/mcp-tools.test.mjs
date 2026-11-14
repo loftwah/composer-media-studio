@@ -116,7 +116,7 @@ test('MCP turns an authorised ready song plan into the same saved storyboard wit
   const { createSongPlan, updateSongPlan } = await import('../src/lib/song-plans.mjs');
   const { env, project } = await setup();
   await addAsset(env, project, { id: 'asset_song1', kind: 'audio', durationMs: 20000 });
-  for (let i = 1; i <= 4; i++) await addAsset(env, project, { id: `asset_take0${i}`, kind: 'video', durationMs: 5000 });
+  for (let i = 1; i <= 4; i++) await addAsset(env, project, { id: `asset_take0${i}`, kind: 'video', durationMs: i === 1 ? 5200 : 5000 });
   const plan = await createSongPlan(env, project, { songAssetId: 'asset_song1', rightsConfirmed: true, title: 'Fictional film', aspect: '16:9', startMs: 0, endMs: 20000, sceneCount: 4 });
   await updateSongPlan(env, project, plan.id, { ...plan, expectedRevision: 1, scenes: plan.scenes.map((scene, i) => ({ ...scene, selectedTakeId: `asset_take0${i+1}` })) });
   const cookie = 'studio_session=' + await createSession(env);
@@ -125,9 +125,12 @@ test('MCP turns an authorised ready song plan into the same saved storyboard wit
     return { status: response.status, body: await response.json() };
   });
   try {
-    const first = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2}});
+    const refused = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2}});
+    assert.equal(refused.isError,true);
+    const first = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2,allowTrim:true}});
     assert.equal(first.isError,undefined,JSON.stringify(first)); assert.equal(first.structuredContent.created,true);
-    const again = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2}});
+    assert.equal(first.structuredContent.composition.shots[0].trimEndMs,5000);
+    const again = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2,allowTrim:true}});
     assert.equal(again.structuredContent.created,false); assert.equal(again.structuredContent.composition.id,first.structuredContent.composition.id);
     assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
   } finally { await client.close(); }
