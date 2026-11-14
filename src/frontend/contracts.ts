@@ -35,6 +35,7 @@ export interface MediaAssetV1 {
   file: string;
   download: string;
   reuseStillId?: string | null;
+  hasLocalRenderReceipt?: boolean;
 }
 export interface LibraryProps {
   projectId: string;

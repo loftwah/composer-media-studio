@@ -947,7 +947,7 @@ function assetView() {
       <div class="stage">${isVideo ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video>` : isAudio ? `<div class="audio-stage"><canvas width="840" height="200" data-waveform="${esc(asset.file)}" aria-hidden="true"></canvas><audio src="${esc(asset.file)}" controls preload="metadata"></audio></div>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}">`}</div>
       <aside class="card stack">
         <div><p class="eyebrow">${esc(asset.kind)} · ${esc(asset.source)}</p><h1 style="font-size:1.7rem">${esc(asset.title)}</h1></div>
-        ${localRender ? `<p>MP4 rendered on this device from a saved storyboard${asset.caption.includes("; owner-confirmed captions from song plan ") ? ", with saved captions" : ""}.</p>` : asset.caption ? `<p>${esc(asset.caption)}</p>` : ""}
+        ${localRender ? `<p>MP4 rendered on this device from a saved storyboard${asset.caption.includes("; owner-confirmed captions") ? ", with saved captions" : ""}.</p>` : asset.caption ? `<p>${esc(asset.caption)}</p>` : ""}
         <dl class="kv">
           <dt>Size</dt><dd>${bytesLabel(asset.bytes)}</dd>
           ${asset.width ? `<dt>Frame</dt><dd>${asset.width} × ${asset.height}</dd>` : ""}
