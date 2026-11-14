@@ -24,3 +24,13 @@ test('gallery cards shorten source URLs while the published detail retains the f
   const detail = publicPage({origin:'https://studio.example',slug:'film_source',title:'LDraw motion',description,kind:'video',mime:'video/mp4',media:'/film.mp4',download:'/film.mp4'});
   assert.match(detail, /Source: https:\/\/woodhouse\.example\/api\/assets\/new-074\. Original by Woodhouse\./);
 });
+
+
+test('public home offers configured next steps while standalone installations omit them', () => {
+  const { buildUrl, storyUrl } = { buildUrl: 'https://composer.example/init', storyUrl: 'https://composer.example/story' };
+  const connected = publicGallery({home: true, buildUrl, storyUrl});
+  assert.match(connected, /href="https:\/\/composer\.example\/init">Build your own studio/);
+  assert.match(connected, /href="https:\/\/composer\.example\/story">Read the story/);
+  const standalone = publicGallery({home: true});
+  assert.doesNotMatch(standalone, /Build your own studio|Read the story/);
+});

@@ -1382,7 +1382,7 @@ async function handlePublic(request, env, url) {
       if (path === "/studio") return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
       const catalogue = await publicCatalogue(env, 1, 6);
       const featured = catalogue.items.length ? [] : await homeShowcase(env);
-      return new Response(publicGallery({ ...catalogue, featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+      return new Response(publicGallery({ ...catalogue, ...sharingDestinations(env), featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
     }
     return new Response(shell({
       revision: BUILD.revision,
