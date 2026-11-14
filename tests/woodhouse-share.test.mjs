@@ -10,8 +10,10 @@ test("artwork links retain the current search and page when returning to the cat
   const asset = { id: "first-print", title: "Print", project: "fighter" };
   const context = { query: "ring & bell", project: "fighter", after: "earlier-print" };
   const gallery = woodhouseGallery({ assets: [asset], ...context });
+  assert.match(gallery, /<a href="\/studio">Open Studio<\/a>/);
   assert.match(gallery, /q=ring\+%26\+bell&amp;project=fighter&amp;after=earlier-print&amp;asset=first-print/);
   const detail = woodhouseGallery({ asset, ...context });
+  assert.match(detail, /<a href="\/studio">Open Studio<\/a>/);
   assert.match(detail, /href="\/portfolio\?q=ring\+%26\+bell&amp;project=fighter&amp;after=earlier-print#artwork-first-print"/);
   assert.match(woodhouseGallery({ asset }), /href="\/portfolio#artwork-first-print"/);
 });

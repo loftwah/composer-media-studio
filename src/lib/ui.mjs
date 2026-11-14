@@ -476,7 +476,7 @@ export function woodhouseGallery({ asset, assets = [], query = "", project = "",
   <a class="wordmark" href="/">${mark}<span>Media Studio</span></a>
   <nav class="header-nav" aria-label="Portfolio">
     <a href="/portfolio">Share artwork</a>
-    <a href="/">Open Studio</a>
+    <a href="/studio">Open Studio</a>
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
   </nav>
 </header>
