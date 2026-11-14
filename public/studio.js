@@ -223,8 +223,16 @@ function promptFromRecipe(recipe, values) {
   });
 }
 
+const settingsDrafts = new Map();
+function saveSettingsDraft() {
+  const form = app.querySelector('[data-form="settings"][data-project-id]');
+  if (!form) return;
+  settingsDrafts.set(form.dataset.projectId, Object.fromEntries(["name", "creativeDirection", "visibility", "referenceTitle", "referenceUrl"].map(key => [key, form.elements[key].value])));
+}
+
 function render() {
   saveShareImportDraft();
+  saveSettingsDraft();
   if (mediaMounted) { creativeHome.unmountMedia(); mediaMounted = false; }
   if (state.view === "home") {
     if (creativeHome) {
@@ -260,6 +268,14 @@ function render() {
       renderReactCreate();
       mediaMounted = true;
     }
+    if (creativeHome && state.tab === "assemble" && state.project) {
+      renderReactAssemble();
+      mediaMounted = true;
+    }
+    if (creativeHome && state.tab === "settings" && state.project) {
+      creativeHome.renderSettings(app.querySelector("#creative-media"), { project: state.project, draft: settingsDrafts.get(state.projectId) });
+      mediaMounted = true;
+    }
     if (creativeHome && state.tab === "history" && state.project) {
       renderReactHistory();
       mediaMounted = true;
@@ -290,6 +306,10 @@ function renderReactLibrary() {
     projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter,
     canImportShare: state.woodhouseShare && state.session?.actions.includes("edit"),
   });
+}
+
+function renderReactAssemble() {
+  creativeHome.renderAssemble(app.querySelector("#creative-media"), { compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social") });
 }
 
 function renderReactHistory() {
@@ -370,7 +390,7 @@ function projectCard(project) {
     <div class="body">
       <h3>${esc(project.name)}</h3>
       <span class="small">${project.counts.image} images · ${project.counts.video} videos</span>
-      <span class="small">${money(project.budget.spentMicro)} of ${money(project.budget.allowanceMicro)} used this month</span>
+      <span class="small">${money(project.budget.spentMicro)} of ${money(project.budget.allowanceMicro)} allocated this month (estimated)</span>
     </div>
   </button>`;
 }
@@ -399,10 +419,10 @@ function projectView() {
     <section role="tabpanel" aria-label="${esc(state.tab)}">
       ${state.tab === "library" ? (creativeHome ? '<div id="creative-media"></div>' : libraryView()) : ""}
       ${state.tab === "create" ? (creativeHome ? '<div id="creative-media"></div>' : createView()) : ""}
-      ${state.tab === "assemble" ? composeView() : ""}
+      ${state.tab === "assemble" ? (creativeHome ? '<div id="creative-media"></div>' : composeView()) : ""}
       ${state.tab === "history" ? (creativeHome ? '<div id="creative-media"></div>' : historyView()) : ""}
       ${state.tab === "publish" ? (creativeHome ? '<div id="creative-media"></div>' : publishView()) : ""}
-      ${state.tab === "settings" ? settingsView() : ""}
+      ${state.tab === "settings" ? (creativeHome ? '<div id="creative-media"></div>' : settingsView()) : ""}
     </section>`;
 }
 
@@ -411,11 +431,11 @@ function budgetStrip(budget) {
   const percent = budget.allowanceMicro > 0 ? Math.min(100, Math.round((used / budget.allowanceMicro) * 100)) : 0;
   return `<div class="card" data-budget-strip style="margin:1rem 0;padding:0.8rem 1rem">
     <div class="spread" style="margin-bottom:0.4rem">
-      <span class="small"><strong>${money(budget.spentMicro)}</strong> spent · ${money(budget.reservedMicro)} reserved · ${money(budget.allowanceMicro)} monthly allowance</span>
+      <span class="small"><strong>${money(budget.spentMicro)}</strong> allocated (estimated) · ${money(budget.reservedMicro)} reserved · ${money(budget.allowanceMicro)} monthly allowance</span>
       <span class="small">${esc(budget.period)} · ${percent}%</span>
     </div>
-    <div class="meter" role="img" aria-label="${money(used)} of ${money(budget.allowanceMicro)} committed"><span style="width:${percent}%"></span></div>
-    <p class="small" style="margin:0.4rem 0 0">Estimates are shown before each request. Unknown outcomes keep their reservation until the provider is reconciled.</p>
+    <div class="meter" role="img" aria-label="${money(used)} of ${money(budget.allowanceMicro)} allocated or reserved (estimated)"><span style="width:${percent}%"></span></div>
+    <p class="small" style="margin:0.4rem 0 0">Allocations are estimates; provider invoices are not linked. Unknown outcomes keep their reservation until the provider is reconciled.</p>
   </div>`;
 }
 
@@ -572,7 +592,7 @@ function createView() {
         </div>
         <button class="button" data-action="submit-create" ${(needsReference && !create.referenceAssetId) || (needsMask && !create.maskAssetId) || (promptRequired && !create.prompt.trim()) ? "disabled" : ""}>${create.kind === "video" ? "Animate this still" : create.kind === "audio" ? "Generate sound" : model?.edit === "fill" ? "Apply fill" : model?.edit === "cutout" ? "Remove background" : model?.edit === "upscale" ? "Upscale still" : "Create image"} · ${money(estimate())}</button>
       </div>
-      <p class="small" style="margin:0.6rem 0 0">Each submit starts one new request. A repeat with the same request id is replayed, never charged twice. Video runs asynchronously; you can leave this page and come back.</p>
+      <p class="small" style="margin:0.6rem 0 0">Each submit starts one new request. A repeat with the same request id is replayed without another submission. Video runs asynchronously; you can leave this page and come back.</p>
     </div>`;
 }
 
@@ -702,7 +722,7 @@ function compositionCard(composition) {
       ${renders.map((generation) => {
         const asset = state.project.assets.find((item) => item.id === generation.assetId);
         return `<div class="render-row" data-job="${esc(generation.id)}">
-          <div class="row">${statusChip(generation.status)}<strong>${esc(generation.variant === "social" ? "9:16 cut" : "Assembled master")}</strong><span class="small">${money(generation.costObservedMicro ?? generation.costEstimateMicro)}</span></div>
+          <div class="row">${statusChip(generation.status)}<strong>${esc(generation.variant === "social" ? "9:16 cut" : "Assembled master")}</strong><span class="small">Estimated allocation: ${money(generation.costObservedMicro ?? generation.costEstimateMicro)}</span></div>
           ${asset ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video><p class="small" style="margin:0">${asset.width} × ${asset.height} · ${(asset.durationMs / 1000).toFixed(2)}s · ${bytesLabel(asset.bytes)} · assembled from ${esc(String(composition.shots.length))} shots</p>` : `<p class="small" style="margin:0">${generation.error ? esc(generation.error.message) : "Provider is rendering."}</p>`}
           <div class="row">
             ${asset ? `<a class="button secondary" href="${esc(asset.download)}" download>Download</a><button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open</button><button class="secondary" data-action="publish-asset" data-id="${esc(asset.id)}">Publish</button>` : ""}
@@ -747,7 +767,7 @@ function jobCard(generation) {
   return `<article class="job" data-job="${esc(generation.id)}">
     <header>
       <div class="row">${statusChip(generation.status)}<strong>${esc(model?.label ?? generation.model)}</strong><span class="small">${esc(generation.kind)} · ${dateLabel(generation.createdAt)} ${timeLabel(generation.createdAt)}</span></div>
-      <span class="small">${money(generation.costObservedMicro ?? generation.costEstimateMicro)}</span>
+      <span class="small">Estimated allocation: ${money(generation.costObservedMicro ?? generation.costEstimateMicro)}</span>
     </header>
     <p class="prompt">${esc(generation.prompt)}</p>
     <p class="small">${esc(generation.aspect ?? "")} ${generation.durationSeconds ? `· ${generation.durationSeconds}s` : ""} ${generation.error ? `· ${esc(generation.error.message)}` : ""}</p>
@@ -1353,6 +1373,8 @@ async function handleAction(action, element) {
       }
       const references = [...(state.project.references ?? []), { id: `ref_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`, title, url, note: "" }];
       await saveSettings({ references });
+      form.elements.referenceTitle.value = "";
+      form.elements.referenceUrl.value = "";
       notify("Reference added.");
       render();
       return;
@@ -1621,6 +1643,7 @@ async function refreshGeneration(id, manual = false) {
   replaceGeneration(result.generation);
   state.project.budget = result.budget;
   if (mediaMounted && state.view === "project" && state.tab === "history") renderReactHistory();
+  else if (mediaMounted && state.view === "project" && state.tab === "assemble") renderReactAssemble();
   else {
     const card = document.querySelector(`[data-job="${id}"]`);
     if (card) card.outerHTML = jobCard(result.generation);
@@ -1632,6 +1655,7 @@ async function refreshGeneration(id, manual = false) {
     await loadProject(projectId);
     if (state.projectId !== projectId || state.project?.id !== projectId) return result.generation;
     if (mediaMounted && state.view === "project" && state.tab === "history") renderReactHistory();
+    else if (mediaMounted && state.view === "project" && state.tab === "assemble") renderReactAssemble();
     else if (!isTyping()) render();
     notify("Result saved to the library.");
   }
@@ -2206,6 +2230,8 @@ app.addEventListener("submit", async (event) => {
   try {
     await saveSettings();
     await loadProject(state.projectId);
+    settingsDrafts.set(state.projectId, { name: state.project.name, creativeDirection: state.project.creativeDirection, visibility: state.project.visibility, referenceTitle: form.elements.referenceTitle.value, referenceUrl: form.elements.referenceUrl.value });
+    form.removeAttribute("data-project-id");
     render();
     notify("Studio saved.");
   } catch (error) {

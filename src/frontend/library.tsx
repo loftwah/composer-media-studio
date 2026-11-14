@@ -1,7 +1,8 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import type { CreateProps, HistoryProps, LibraryProps, MediaAssetV1, PublishProps, ViewerProps } from "./contracts";
+import type { AssembleProps, CreateProps, HistoryProps, LibraryProps, MediaAssetV1, PublishProps, SettingsProps, ViewerProps } from "./contracts";
 import { CreateWorkbench } from "./create";
+import { Assemble, Settings } from "./assemble-settings";
 import { History, Publish } from "./history-publish";
 import "./library.css";
 
@@ -65,4 +66,6 @@ export function renderViewer(container: HTMLElement, props: ViewerProps): void {
 export function renderCreate(container: HTMLElement, props: CreateProps): void { root ??= createRoot(container); flushSync(() => root!.render(<CreateWorkbench {...props}/>)); }
 export function renderHistory(container: HTMLElement, props: HistoryProps): void { root ??= createRoot(container); flushSync(() => root!.render(<History {...props}/>)); }
 export function renderPublish(container: HTMLElement, props: PublishProps): void { root ??= createRoot(container); flushSync(() => root!.render(<Publish {...props}/>)); }
+export function renderAssemble(container: HTMLElement, props: AssembleProps): void { root ??= createRoot(container); flushSync(() => root!.render(<Assemble {...props}/>)); }
+export function renderSettings(container: HTMLElement, props: SettingsProps): void { root ??= createRoot(container); flushSync(() => root!.render(<Settings {...props}/>)); }
 export function unmountMedia(): void { if (root) { root.unmount(); root = undefined; } }

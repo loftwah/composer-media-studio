@@ -455,7 +455,7 @@ export function CreateWorkbench({
         </div>
         <p className="small">
           Each submit starts one new request. A repeat with the same request id
-          is replayed, never charged twice. Video runs asynchronously; you can
+          is replayed without another submission. Video runs asynchronously; you can
           leave this page and come back.
         </p>
       </div>

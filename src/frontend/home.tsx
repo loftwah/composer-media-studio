@@ -19,7 +19,7 @@ function ProjectCard({ project, featured }: { project: ProjectSummaryV1; feature
       <span className="creative-project-title">{project.name}</span>
       {featured && project.creativeDirection && <span className="creative-direction">{project.creativeDirection}</span>}
       <span className="creative-meta">{description}</span>
-      <span className="creative-budget">{money(project.budget.spentMicro)} of {money(project.budget.allowanceMicro)} used this month</span>
+      <span className="creative-budget">{money(project.budget.spentMicro)} of {money(project.budget.allowanceMicro)} allocated this month (estimated)</span>
       <span className="creative-open">Open studio <span aria-hidden="true">→</span></span>
     </span>
   </button>;
@@ -53,4 +53,4 @@ export function unmountHome(): void {
   if (root) { root.unmount(); root = undefined; }
 }
 
-export { renderLibrary, renderViewer, renderCreate, renderHistory, renderPublish, unmountMedia } from "./library";
+export { renderLibrary, renderViewer, renderCreate, renderHistory, renderPublish, renderAssemble, renderSettings, unmountMedia } from "./library";

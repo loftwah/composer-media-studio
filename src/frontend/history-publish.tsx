@@ -82,7 +82,7 @@ function JobCard({
           </span>
         </div>
         <span className="small">
-          {money(job.costObservedMicro ?? job.costEstimateMicro)}
+          Estimated allocation: {money(job.costObservedMicro ?? job.costEstimateMicro)}
         </span>
       </header>
       <p className="prompt">{job.prompt}</p>

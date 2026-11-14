@@ -77,3 +77,10 @@ export interface GenerationV1 {
 export interface PublicationV1 { id: string; title: string; path: string; createdAt: string | number }
 export interface HistoryProps { generations: GenerationV1[]; assets: MediaAssetV1[]; models: ModelV1[] }
 export interface PublishProps { publications: PublicationV1[]; origin: string }
+
+export interface AudioTrackV1 { assetId: string; role: string; startMs: number; trimStartMs: number; trimEndMs: number; gainDb: number; fadeInMs: number; fadeOutMs: number }
+export interface ComposeStateV1 { shotIds: string[]; audioAssetId: string | null; audioTracks: AudioTrackV1[]; title: string; editingId: string | null }
+export interface CompositionV1 { id: string; title: string; shots: { assetId: string }[]; totalMs: number; audioAssetId: string | null; audioTracks?: AudioTrackV1[]; createdAt: string | number; updatedAt?: string | number }
+export interface ComposeGenerationV1 extends GenerationV1 { compositionId?: string; variant?: string }
+export interface AssembleProps { compose: ComposeStateV1; assets: MediaAssetV1[]; compositions: CompositionV1[]; generations: ComposeGenerationV1[]; assemblyCost: number; socialCost: number }
+export interface SettingsProps { project: { id: string; name: string; creativeDirection: string; visibility: string; references?: { id: string; title: string; url: string }[] }; draft?: { name: string; creativeDirection: string; visibility: string; referenceTitle: string; referenceUrl: string } }
