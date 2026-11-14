@@ -1,6 +1,7 @@
 // MIT. Server-rendered shells. The studio itself is progressive, same-origin JS.
 
 import { escapeHtml } from "./util.mjs";
+import { shareOrigin, shareProjectName, shareProjects, woodhouseUrl } from "./woodhouse-share.mjs";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 
@@ -71,7 +72,7 @@ function brandByline() {
   return `<span class="brand-by">App Composer</span>`;
 }
 
-function header({ session, composerOrigin, storyUrl, buildUrl, helpHref = "/help" }) {
+function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, helpHref = "/help" }) {
   const bridged = session?.mode === "bridge";
   const context = session
     ? `<p class="session-context"><span>${bridged ? "Opened from App Composer" : "Standalone owner session"}</span>${
@@ -86,6 +87,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, helpHref = "/help
     ${bridged && composerOrigin ? `<a class="quiet" href="${escapeHtml(composerOrigin)}/media-studio/studio" title="Return to App Composer and reopen this studio">App Composer</a>` : ""}
     ${storyUrl ? `<a class="quiet" href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     <a href="#/">Projects</a>
+    ${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}
     <a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener">Help</a>
     <button class="quiet" id="signout" type="button">Sign out</button>
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
@@ -94,7 +96,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, helpHref = "/help
 </header>`;
 }
 
-export function shell({ revision, session = null, composerOrigin = null, storyUrl = null }) {
+export function shell({ revision, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
   return `${head({
     title: "Media Studio — make, assemble and keep images, video and sound",
     description:
@@ -103,7 +105,7 @@ export function shell({ revision, session = null, composerOrigin = null, storyUr
   })}
 <body>
 <a class="skip" href="#main">Skip to content</a>
-${header({ session, composerOrigin, storyUrl })}
+${header({ session, composerOrigin, storyUrl, woodhouseShare })}
 <main id="main" tabindex="-1">
   <div id="app">
     <p class="notice calm">Loading your studio…</p>
@@ -126,7 +128,7 @@ ${header({ session, composerOrigin, storyUrl })}
 </html>`;
 }
 
-export function loginPage({ next = "/", revision = "dev", bridged = false, composerOrigin = null, storyUrl = null }) {
+export function loginPage({ next = "/", revision = "dev", bridged = false, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
   return `${head({
     title: "Sign in — Media Studio",
     description: "Owner sign-in for an independent Media Studio.",
@@ -155,6 +157,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
       <p class="small" role="status" id="login-status"></p>
     </form>
     ${bridged ? "</details>" : ""}
+    ${woodhouseShare ? '<p><a href="/portfolio">Browse artwork from Woodhouse Share</a></p>' : ""}
     <p class="small">This studio belongs to its own Cloudflare account and stores media in its own R2 bucket. It does not use your App Composer password.</p>
   </main>
 </div>
@@ -332,6 +335,95 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
     <li>Deploy with a clean pushed <code>main</code>. The guarded deploy runs the focused checks first.</li>
   </ol>
   <p class="small">No App Composer account, licence callback or hosted service is required after deployment.</p>
+</main>
+</body>
+</html>`;
+}
+
+function shareLink(url, label) {
+  const href = woodhouseUrl(url);
+  return href ? `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>` : "";
+}
+
+function sharePreview(asset, large = false) {
+  const href = woodhouseUrl(large ? asset.previewUrl : asset.thumbnailUrl);
+  return href
+    ? `<img src="${escapeHtml(href)}" alt="${escapeHtml(asset.alt || asset.title)}"
+          ${large ? "" : 'loading="lazy"'} decoding="async">`
+    : "";
+}
+
+function shareCard(asset) {
+  return `<li><a href="/portfolio?asset=${encodeURIComponent(asset.id)}">
+    ${sharePreview(asset)}<span>${escapeHtml(shareProjectName(asset.project))}</span>
+    <strong>${escapeHtml(asset.title)}</strong>
+  </a></li>`;
+}
+
+function shareDetail(asset) {
+  return `<a href="/portfolio?project=${encodeURIComponent(asset.project)}">← More from ${escapeHtml(shareProjectName(asset.project))}</a>
+    <div class="share-detail">
+      <figure>${sharePreview(asset, true)}</figure>
+      <section>
+        <h1>${escapeHtml(asset.title)}</h1>
+        <p>${escapeHtml(asset.description)}</p>
+        <p class="small">${escapeHtml(asset.kind)} · ${escapeHtml(asset.credit)}</p>
+        <div class="row">
+          ${shareLink(asset.original?.url, "Open original")}
+          ${shareLink(asset.sourceUrl, "Source notes")}
+          ${shareLink(asset.shareUrl, "Woodhouse gallery")}
+        </div>
+        <h2>Use in a project</h2>
+        <p>Confirm reuse rights in the source notes. In your Studio project, open Library → Import from Woodhouse Share and enter this asset ID.</p>
+        <p><code>${escapeHtml(asset.id)}</code></p>
+        ${asset.formats?.length ? `<h2>Formats</h2><ul>${asset.formats.map((format) => `<li>${shareLink(format.url, format.label)}</li>`).join("")}</ul>` : ""}
+        ${asset.versions?.length ? `<h2>Versions</h2><ul>${asset.versions.map((version) => `<li>${shareLink(version.url, version.label)} · ${escapeHtml(version.note)} ${shareLink(version.sourceUrl, "Source")}</li>`).join("")}</ul>` : ""}
+        ${asset.kitUrl ? shareLink(asset.kitUrl, "Open social kit") : ""}
+      </section>
+    </div>`;
+}
+
+export function woodhouseGallery({ asset, assets = [], query = "", project = "", after, nextAfter, error }) {
+  const filters = new URLSearchParams();
+  if (query) filters.set("q", query);
+  if (project) filters.set("project", project);
+  const firstPage = filters.toString() ? "/portfolio?" + filters : "/portfolio";
+  if (nextAfter) filters.set("after", nextAfter);
+  return `${head({
+    title: asset ? `${asset.title} — Artwork from Woodhouse Share` : "Artwork from Woodhouse Share — Media Studio",
+    description: "Browse the public Woodhouse Share artwork catalogue, originals and versions.",
+  })}
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <a class="wordmark" href="/">${mark}<span>Media Studio</span></a>
+  <nav class="header-nav" aria-label="Portfolio">
+    <a href="/portfolio">Share artwork</a>
+    <a href="/">Open Studio</a>
+    <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
+  </nav>
+</header>
+<main id="main" class="share-portfolio">
+${error ? `<h1>Share artwork</h1><p role="status">${escapeHtml(error)}</p><p><a href="/portfolio">Browse the catalogue</a> · <a href="${shareOrigin}/share/">Open Woodhouse Share</a></p>`
+  : asset ? shareDetail(asset)
+  : `<section class="share-intro">
+      <h1>Artwork from Woodhouse Share</h1>
+      <p>Browse public artwork, production captures and alternate editions. Each entry links to its original, credit and source notes.</p>
+      <a href="${shareOrigin}/share/">Open Woodhouse Share ↗</a>
+    </section>
+    <form class="share-filters" action="/portfolio" method="get" role="search">
+      <label>Search artwork <input name="q" type="search" maxlength="100" value="${escapeHtml(query)}"></label>
+      <label>Project <select name="project">
+        <option value="">All projects</option>
+        ${Object.entries(shareProjects).map(([key, label]) => `<option value="${key}"${key === project ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+      </select></label>
+      <button class="button" type="submit">Search</button>
+    </form>
+    ${assets.length ? `<ul class="share-prints">${assets.map(shareCard).join("")}</ul>` : '<p>No artwork matches these filters. Try another project or search.</p>'}
+    ${after || nextAfter ? `<nav class="row share-pagination" aria-label="Artwork pages">
+      ${after ? `<a href="${escapeHtml(firstPage)}">First page</a>` : ""}
+      ${nextAfter ? `<a class="button secondary" href="/portfolio?${escapeHtml(filters)}">Next page →</a>` : ""}
+    </nav>` : ""}`}
 </main>
 </body>
 </html>`;

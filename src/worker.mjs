@@ -33,7 +33,8 @@ import { publicModels } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage } from "./lib/ui.mjs";
+import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery } from "./lib/ui.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import {
   audioInfo,
@@ -63,7 +64,7 @@ const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 
-function securityHeaders(response) {
+function securityHeaders(response, woodhouse = false) {
   const headers = new Headers(response.headers);
   headers.set("x-content-type-options", "nosniff");
   headers.set("referrer-policy", "strict-origin-when-cross-origin");
@@ -71,7 +72,7 @@ function securityHeaders(response) {
   headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
   headers.set(
     "content-security-policy",
-    "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    `default-src 'self'; img-src 'self' data: blob:${woodhouse ? " " + shareOrigin : ""}; media-src 'self' blob:; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
   );
   return new Response(response.body, { status: response.status, headers });
 }
@@ -225,7 +226,7 @@ async function handleLogin(request, env) {
     const token = await createSession(env);
     return json({ ok: true }, 200, { "set-cookie": sessionCookie(token) });
   }
-  return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
+  return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
 }
@@ -329,6 +330,7 @@ async function handleApi(request, env, url) {
       allowanceDefaultMicro: Number(env.MONTHLY_ALLOWANCE_MICRO) || 5_000_000,
       recipes: builtinRecipes,
       destinations: sharingDestinations(env),
+      woodhouseShare: env.WOODHOUSE_SHARE === "true",
     });
   }
 
@@ -455,6 +457,13 @@ async function handleApi(request, env, url) {
         .bind(project.id, name, direction, visibility, JSON.stringify(defaults), JSON.stringify(references), now())
         .run();
       return json({ project: await projectSummary(env, await loadProject(env, project.id)) });
+    }
+
+    if (rest === "assets/woodhouse" && method === "POST" && env.WOODHOUSE_SHARE === "true") {
+      const input = await body(request);
+      if (input.reuseConfirmed !== true)
+        throw new HttpError(400, "Confirm permission to reuse this original.");
+      return importWoodhouseAsset(env, project, input.assetId);
     }
 
     if (rest === "assets" && method === "POST")
@@ -834,8 +843,43 @@ async function uploadAsset(request, env, project) {
   if (file.size > MAX_VIDEO_BYTES)
     throw new HttpError(413, `Keep uploads under ${MAX_VIDEO_BYTES / 1024 / 1024} MiB`, "too_large");
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const sniffed = sniffMedia(bytes, file.type);
+  const title = String(form.get("title") ?? "").trim() || file.name.replace(/\.[^.]+$/, "").slice(0, 100);
+  return storeAsset(env, project, new Uint8Array(await file.arrayBuffer()), {
+    mime: file.type, title, caption: String(form.get("caption") ?? ""),
+    parent: form.get("parentAssetId") ? String(form.get("parentAssetId")) : null,
+  });
+}
+
+async function importWoodhouseAsset(env, project, shareId) {
+  let asset;
+  let bytes;
+  try {
+    asset = await shareAsset(shareId);
+    bytes = await shareOriginal(asset, MAX_IMAGE_BYTES);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(502, "Woodhouse Share did not return this artwork. Try again later.");
+  }
+  if (sniffMedia(bytes).kind !== "image")
+    throw new HttpError(415, "This Share original is not a supported image.");
+  const hash = await sha256Hex(bytes);
+  if (asset.original.sha256 && asset.original.sha256 !== hash)
+    throw new HttpError(409, "The original changed in transit. Check this artwork in Woodhouse Share.");
+  const identity = await sha256Hex(new TextEncoder().encode(JSON.stringify([project.id, shareId, hash])));
+  const existing = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind("asset_" + identity).first();
+  if (existing?.deleted_at) throw new HttpError(409, "This imported original was previously removed from this project.");
+  if (existing) return json({ asset: assetView(existing) });
+  const anchor = shareApi + "/" + shareId;
+  const source = woodhouseUrl(asset.sourceUrl);
+  const caption = [anchor, source, asset.credit].filter(Boolean).join("\n").slice(0, 400);
+  return storeAsset(env, project, bytes, {
+    title: String(asset.title ?? shareId).slice(0, 100), caption,
+    importId: "asset_" + identity, hash,
+  });
+}
+
+async function storeAsset(env, project, bytes, { mime, title, caption, parent = null, importId, hash }) {
+  const sniffed = sniffMedia(bytes, mime);
   if (!sniffed.kind)
     throw new HttpError(
       415,
@@ -863,19 +907,20 @@ async function uploadAsset(request, env, project) {
     size = { width: video.width, height: video.height, durationMs: video.durationMs };
   }
 
-  const hash = await sha256Hex(bytes);
-  const assetId = id("asset");
-  const key = `projects/${project.id}/assets/${assetId}/original.${extensionFor(sniffed.mime)}`;
+  hash ??= await sha256Hex(bytes);
+  const assetId = importId ?? id("asset");
+  const storageId = importId ? id("asset") : assetId;
+  const key = `projects/${project.id}/assets/${storageId}/original.${extensionFor(sniffed.mime)}`;
   await env.MEDIA.put(key, bytes, {
     httpMetadata: { contentType: sniffed.mime },
     customMetadata: { sha256: hash, project: project.id },
   });
   const timestamp = now();
-  const fallbackTitle = String(form.get("title") ?? "").trim() || file.name.replace(/\.[^.]+$/, "").slice(0, 100) || "Untitled";
+
   try {
     await env.DB.prepare(
       `INSERT INTO assets(id,project_id,kind,r2_key,mime,bytes,width,height,duration_ms,sample_rate,channels,sha256,title,caption,source,parent_asset_id,created_at,updated_at)
-       VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'upload',?15,?16,?16)`,
+       VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'upload',?15,?16,?16)${importId ? " ON CONFLICT(id) DO NOTHING" : ""}`,
     )
       .bind(
         assetId,
@@ -890,9 +935,9 @@ async function uploadAsset(request, env, project) {
         size.sampleRate ?? null,
         size.channels ?? null,
         hash,
-        text(fallbackTitle, 100, "Title", { required: false }) || "Untitled",
-        text(String(form.get("caption") ?? ""), 400, "Caption", { required: false }),
-        form.get("parentAssetId") ? String(form.get("parentAssetId")) : null,
+        text(title, 100, "Title", { required: false }) || "Untitled",
+        text(caption, 400, "Caption", { required: false }),
+        parent,
         timestamp,
       )
       .run();
@@ -901,7 +946,9 @@ async function uploadAsset(request, env, project) {
     throw error;
   }
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
-  return json({ asset: assetView(asset) }, 201);
+  if (asset.r2_key !== key) await env.MEDIA.delete(key);
+  if (asset.deleted_at) throw new HttpError(409, "This imported original was previously removed from this project.");
+  return json({ asset: assetView(asset) }, asset.r2_key === key ? 201 : 200);
 }
 
 async function handlePublic(request, env, url) {
@@ -1040,12 +1087,12 @@ async function handlePublic(request, env, url) {
     const token = url.searchParams.get("token");
     const claim = await readBridgeToken(env, token);
     if (!claim)
-      return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
+      return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), {
         status: 401,
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
       });
     if (!(await claimHandoff(env, claim)))
-      return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
+      return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), {
         status: 409,
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
       });
@@ -1070,6 +1117,21 @@ async function handlePublic(request, env, url) {
   }
 
   if (path === "/login") return handleLogin(request, env);
+  if (path.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true") {
+    let view;
+    let status = 200;
+    try {
+      const assetId = url.searchParams.get("asset");
+      view = assetId ? { asset: await shareAsset(assetId) } : await sharePage(url.searchParams);
+    } catch (error) {
+      status = error instanceof HttpError ? error.status : 503;
+      view = { error: error instanceof HttpError ? error.message : "Woodhouse Share is unavailable. Try again in a moment." };
+    }
+    return new Response(woodhouseGallery(view), {
+      status,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": status === 200 ? "public, max-age=60" : "no-store" },
+    });
+  }
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" },
@@ -1078,7 +1140,7 @@ async function handlePublic(request, env, url) {
   if (path === "/" || path === "/studio") {
     const session = await readSession(env, request);
     if (!session)
-      return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
+      return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), {
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
       });
     return new Response(shell({
@@ -1086,6 +1148,7 @@ async function handlePublic(request, env, url) {
       session,
       composerOrigin: env.COMPOSER_ORIGIN,
       storyUrl: env.PUBLIC_STORY_URL,
+      woodhouseShare: env.WOODHOUSE_SHARE === "true",
     }), {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
     });
@@ -1138,7 +1201,7 @@ export default {
       const response = url.pathname.startsWith("/api/")
         ? await handleApi(request, env, url)
         : await handlePublic(request, env, url);
-      return securityHeaders(response);
+      return securityHeaders(response, url.pathname.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true");
     } catch (error) {
       if (error instanceof HttpError) {
         if (error.status === 401 && !new URL(request.url).pathname.startsWith("/p/"))

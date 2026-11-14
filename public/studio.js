@@ -14,6 +14,7 @@ const state = {
   recipes: [],
   videosConfigured: false,
   destinations: {},
+  woodhouseShare: false,
   session: null,
   filter: "all",
   query: "",
@@ -134,6 +135,7 @@ async function boot() {
   state.recipes = data.recipes;
   state.videosConfigured = data.videosConfigured;
   state.destinations = data.destinations ?? {};
+  state.woodhouseShare = data.woodhouseShare === true;
   const route = parseHash();
   state.view = route.view;
   state.projectId = route.projectId ?? null;
@@ -325,6 +327,16 @@ function libraryView() {
       </div>
       <label class="button secondary" for="upload" style="cursor:pointer">Upload media<input id="upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" hidden data-input="upload"></label>
     </div>
+    ${state.woodhouseShare && state.session?.actions.includes("edit") ? `
+      <details class="share-import">
+        <summary>Import from Woodhouse Share</summary>
+        <form class="stack" data-form="woodhouse-import">
+          <p class="small">Find the asset ID in <a href="/portfolio" target="_blank" rel="noopener">Share artwork</a>. The original and source credit are saved to this project.</p>
+          <label>Share asset ID <input name="assetId" required maxlength="128" pattern="[a-z0-9][a-z0-9\\-]{0,127}"></label>
+          <label><span><input name="reuseConfirmed" type="checkbox" required> I have permission to reuse this original.</span></label>
+          <div><button class="button secondary" type="submit">Import original</button></div>
+        </form>
+      </details>` : ""}
     <div class="dropzone" id="dropzone" style="margin:1rem 0">
       <p style="margin:0"><strong>Drop files here</strong> or use Upload media.</p>
       <p class="small" style="margin:0.3rem 0 0">JPEG, PNG, WebP, MP4, WebM, WAV, MP3 or M4A. Images and audio up to 32 MB, video up to 64 MB.</p>
@@ -1945,6 +1957,36 @@ app.addEventListener("input", (event) => {
 });
 
 app.addEventListener("submit", async (event) => {
+  const importForm = event.target.closest('[data-form="woodhouse-import"]');
+  if (importForm) {
+    event.preventDefault();
+    const projectId = state.projectId;
+    const values = new FormData(importForm);
+    const submit = importForm.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const { asset } = await api(`/api/projects/${projectId}/assets/woodhouse`, {
+        method: "POST",
+        body: JSON.stringify({
+          assetId: values.get("assetId").trim(),
+          reuseConfirmed: values.has("reuseConfirmed"),
+        }),
+      });
+      if (state.project?.id === projectId) {
+        if (!state.project.assets.some((entry) => entry.id === asset.id))
+          state.project.assets.unshift(asset);
+        state.query = "";
+        state.filter = "all";
+        render();
+      }
+      notify(`Saved ${asset.title}.`);
+    } catch (error) {
+      notify(error.message, "bad");
+    } finally {
+      submit.disabled = false;
+    }
+    return;
+  }
   const form = event.target.closest('[data-form="settings"]');
   if (!form) return;
   event.preventDefault();

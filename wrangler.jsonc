@@ -48,6 +48,7 @@
     "MONTHLY_ALLOWANCE_MICRO": "5000000",
     "PUBLIC_BUILD_URL": "https://composer.loftwah.com/init?start=media-studio",
     "PUBLIC_STORY_URL": "https://composer.loftwah.com/media-studio",
+    "WOODHOUSE_SHARE": "true",
     "LAUNCH_KIT_URL": "https://composer-launch-kit.loftwah.workers.dev/"
   },
   "triggers": {
