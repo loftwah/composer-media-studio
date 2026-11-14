@@ -735,7 +735,7 @@ function composeView() {
         </div>
         <div class="mixer">
           <div class="spread"><p class="small" style="margin:0"><strong>Soundtrack</strong> · up to four saved tracks</p><span class="small">${compose.audioAssetId ? "mixed bed saved" : "not mixed yet"}</span></div>
-          ${compose.audioTracks.length === 0 ? `<p class="small" style="margin:0.4rem 0">Add music, narration or an effect. Trim, gain and fades are applied once in the browser and saved as a new WAV; the separate tracks stay as lineage.</p>` : ""}
+          ${compose.audioTracks.length === 0 ? `<p class="small" style="margin:0.4rem 0">Add music, narration or an effect. Trim, gain and fades are applied once in the browser and saved as a new WAV. The original tracks and settings remain in the storyboard.</p>` : ""}
           ${compose.audioTracks.map((track, index) => {
             const asset = audio.find((item) => item.id === track.assetId);
             return `<div class="mix-row" data-mix-row="${index}">
@@ -759,7 +759,7 @@ function composeView() {
             <button class="secondary" type="button" data-action="mix-add" ${compose.audioTracks.length >= 4 ? "disabled" : ""}>Add track</button>
             <button class="button" type="button" data-action="mix-render" ${compose.audioTracks.length === 0 ? "disabled" : ""}>Mix soundtrack</button>
           </div>
-          ${compose.audioAssetId ? `<p class="small" style="margin:0.4rem 0 0">Mixed bed: ${esc(audio.find((item) => item.id === compose.audioAssetId)?.title ?? compose.audioAssetId)}. Rendering uses this saved WAV; the separate tracks remain in the composition manifest.</p><button class="quiet" type="button" data-action="mix-clear">Remove mixed bed</button>${staleMixedBed() ? `<p class="notice warn">The mixed bed does not match the shot durations. Mix again or remove the bed before saving.</p>` : ""}` : ""}
+          ${compose.audioAssetId ? `<p class="small" style="margin:0.4rem 0 0">Mixed bed: ${esc(audio.find((item) => item.id === compose.audioAssetId)?.title ?? compose.audioAssetId)}. Rendering uses this saved WAV; the individual tracks stay linked to the composition.</p><button class="quiet" type="button" data-action="mix-clear">Remove mixed bed</button>${staleMixedBed() ? `<p class="notice warn">The mixed bed does not match the shot durations. Mix again or remove the bed before saving.</p>` : ""}` : ""}
         </div>
         ${audio.length === 0 ? `<p class="small" style="margin:0">Upload or generate sound in Create to add music, narration or an effect.</p>` : ""}
         <div class="row">

@@ -359,8 +359,8 @@ export function Assemble({
             {compose.audioTracks.length === 0 && (
               <p className="small" style={{ margin: "0.4rem 0" }}>
                 Add music, narration or an effect. Trim, gain and fades are
-                applied once in the browser and saved as a new WAV; the separate
-                tracks stay as lineage.
+                applied once in the browser and saved as a new WAV. The original tracks
+                and settings remain in the storyboard.
               </p>
             )}
             {compose.audioTracks.map((track, index) => {
@@ -473,8 +473,8 @@ export function Assemble({
                 Mixed bed:{" "}
                 {audio.find((a) => a.id === compose.audioAssetId)?.title ??
                   compose.audioAssetId}
-                . Rendering uses this saved WAV; the separate tracks remain in
-                the composition manifest.
+                . Rendering uses this saved WAV; the individual tracks stay linked
+                to the composition.
               </p>
               <button className="quiet" type="button" data-action="mix-clear">Remove mixed bed</button>
               {staleBed && <p className="notice warn">The mixed bed does not match the shot durations. Mix again or remove the bed before saving.</p>}

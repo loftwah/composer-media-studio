@@ -99,7 +99,7 @@ function AddMusic() {
     catch (error) { setMessage(error instanceof Error && error.name === "AbortError" ? "Export cancelled. Your originals are unchanged." : error instanceof Error ? error.message : "Could not make the film on this device."); }
     finally { controller.current = null; setBusy(false); }
   }
-  return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Add music to a video</h1><p>Make a new MP4 from your own video and music. Files stay on this device; no sign-in, upload or paid generation is needed.</p></header>
+  return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Add music to a video</h1><p>Make a new MP4 from your own video and music on this device, without sign-in or paid generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="inputs-title"><h2 id="inputs-title">Choose your files</h2>
       <label className="trim-file">Video<input type="file" accept="video/mp4,video/webm" disabled={busy || importing} onChange={e => choose(e.target.files?.[0],"video")}/></label>
       <p className="trim-note">Up to 60 seconds and 128 MB. The original video soundtrack is replaced by your chosen music.</p>
