@@ -30,7 +30,7 @@ async function checkMusicDuration(file: File, signal: AbortSignal) {
   } finally { element.removeAttribute("src"); element.load(); URL.revokeObjectURL(url); }
 }
 
-async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: number, originalGain: number, fadeIn: number, fadeOut: number, previewOnly: boolean, signal: AbortSignal, progress: (s: string) => void) {
+async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: number, originalGain: number, fadeIn: number, fadeOut: number, previewOnly: boolean, quality: "standard" | "hd", signal: AbortSignal, progress: (s: string) => void) {
   if (!videoFile.size || videoFile.size > MAX_VIDEO_BYTES || !musicFile.size || musicFile.size > MAX_AUDIO_BYTES) throw new Error("Choose video under 128 MB and audio under 16 MB.");
   if (!Number.isFinite(offset) || offset < 0 || !Number.isFinite(gain) || gain < 0 || gain > 1 || !Number.isFinite(originalGain) || originalGain < 0 || originalGain > 1) throw new Error("Choose a valid music start and volume.");
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(videoFile) });
@@ -44,8 +44,9 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
     const codedWidth = await track.getCodedWidth(), codedHeight = await track.getCodedHeight();
     if (!Number.isFinite(first) || !Number.isFinite(end) || !Number.isFinite(duration) || duration <= 0 || duration > MAX_SECONDS) throw new Error("Choose a video no longer than 60 seconds.");
     if (!codedWidth || !codedHeight || codedWidth > 4096 || codedHeight > 4096 || codedWidth * codedHeight > 8294400) throw new Error("Choose a video at or below 4K resolution.");
-    const width = codedWidth > codedHeight ? 640 : codedWidth < codedHeight ? 360 : 480;
-    const height = codedWidth > codedHeight ? 360 : codedWidth < codedHeight ? 640 : 480;
+    const width = quality === "hd" ? (codedWidth > codedHeight ? 1280 : codedWidth < codedHeight ? 720 : 720) : (codedWidth > codedHeight ? 640 : codedWidth < codedHeight ? 360 : 480);
+    const height = quality === "hd" ? (codedWidth > codedHeight ? 720 : codedWidth < codedHeight ? 1280 : 720) : (codedWidth > codedHeight ? 360 : codedWidth < codedHeight ? 640 : 480);
+    const bitrate = quality === "hd" ? 4000000 : 1200000;
     check(signal); progress("Reading your music on this device…");
     await checkMusicDuration(musicFile, signal); check(signal);
     const musicInput = new Input({ formats: ALL_FORMATS, source: new BlobSource(musicFile) });
@@ -105,12 +106,12 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
     }
     check(signal); const mixed = await offline.startRendering(); check(signal);
     if (previewOnly) { progress("Preparing your audio-only preview…"); return encodeWav(mixed); }
-    if (!await canEncodeVideo("avc", {width,height,bitrate:1200000}) || !await canEncodeAudio("aac", {numberOfChannels:2,sampleRate:44100,bitrate:128000})) throw new Error("This browser cannot encode H.264/AAC MP4. Try a current supported browser.");
+    if (!await canEncodeVideo("avc", {width,height,bitrate}) || !await canEncodeAudio("aac", {numberOfChannels:2,sampleRate:44100,bitrate:128000})) throw new Error("This browser cannot encode H.264/AAC MP4. Try a current supported browser.");
     check(signal);
     const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext("2d", {alpha:false}); if (!ctx) throw new Error("This browser cannot create a video canvas.");
     const target = new BufferTarget(); output = new Output({ format: new Mp4OutputFormat({fastStart:"in-memory"}), target });
-    const visual = new CanvasSource(canvas, {codec:"avc",bitrate:1200000}); output.addVideoTrack(visual, {frameRate:FPS});
+    const visual = new CanvasSource(canvas, {codec:"avc",bitrate}); output.addVideoTrack(visual, {frameRate:FPS});
     const soundtrack = new AudioBufferSource({codec:"aac",bitrate:128000}); output.addAudioTrack(soundtrack);
     await output.start(); check(signal);
     const frames = Math.ceil(duration * FPS);
@@ -135,6 +136,7 @@ function AddMusic() {
   const [video,setVideo] = useState<File | null>(null), [music,setMusic] = useState<File | null>(null);
   const [videoUrl,setVideoUrl] = useState(""), [musicUrl,setMusicUrl] = useState(""), [result,setResult] = useState("");
   const [offset,setOffset] = useState(0), [volume,setVolume] = useState(80), [originalVolume,setOriginalVolume] = useState(0), [fadeIn,setFadeIn] = useState(0), [fadeOut,setFadeOut] = useState(0), [busy,setBusy] = useState<"preview" | "export" | null>(null), [message,setMessage] = useState("");
+  const [quality, setQuality] = useState<"standard" | "hd">("standard");
   const [importing, setImporting] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [preview, setPreview] = useState("");
@@ -158,7 +160,7 @@ function AddMusic() {
     if (mode === "preview") setPreview(""); else { setResult(""); setResultBlob(null); }
     setMessage("Checking files on this device…");
     try {
-      const blob = await makeFilm(video,music,offset,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",abort.signal,setMessage); check(abort.signal);
+      const blob = await makeFilm(video,music,offset,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",quality,abort.signal,setMessage); check(abort.signal);
       if (mode === "preview") { setPreview(URL.createObjectURL(blob)); setMessage("Audio-only mix preview ready. No video has been exported."); }
       else { setResultBlob(blob); setResult(URL.createObjectURL(blob)); setMessage("Your film is ready to play and save."); }
     } catch (error) { setMessage(error instanceof Error && error.name === "AbortError" ? "Cancelled. Your originals are unchanged." : error instanceof Error ? error.message : "Could not prepare this on your device."); }
@@ -175,7 +177,8 @@ function AddMusic() {
       <div className="trim-fields"><label>Music start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label></div>
       <p className="trim-note">Fades apply to the added music only and must fit within the part used in the video.</p>
       <p className="trim-note">If your video has no original sound, only the chosen audio is added. Combining loud tracks can distort; lower the volumes and listen before saving.</p>
-      <p className="trim-note">Export uses H.264/AAC MP4 in a compatible browser. Video is fitted within 640 × 360, 360 × 640 or 480 × 480; bars may be added. Preview the finished film before saving.</p>
+      <label>Export quality<select value={quality} disabled={busy !== null || importing} onChange={e=>{setQuality(e.target.value as "standard" | "hd");clearOutputs();}}><option value="standard">Standard · smaller file</option><option value="hd">HD · 720p</option></select></label>
+      <p className="trim-note">HD takes longer and uses more memory. The original frame is fitted to your chosen size; bars may be added. Export uses H.264/AAC MP4 in a compatible browser.</p>
       {!busy ? <div className="video-tool-actions"><button type="button" className="secondary" disabled={!video || !music || importing} onClick={()=>void run("preview")}>Preview mix (audio only)</button><button type="button" disabled={!video || !music || importing} onClick={()=>void run("export")}>Make MP4</button></div> : <button type="button" className="secondary" onClick={()=>{controller.current?.abort();setMessage("Cancelling…");}}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
       {preview && <div className="trim-result"><h2>Audio-only mix preview</h2><p className="trim-note">This is the sound mix, without video. Play the original video above to compare. The MP4 uses AAC encoding, so it may sound slightly different.</p><audio ref={previewPlayer} onPlay={()=>pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/></div>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/>}</div>}
