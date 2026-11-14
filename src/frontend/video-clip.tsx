@@ -1,3 +1,4 @@
+import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output } from "mediabunny";
@@ -15,6 +16,7 @@ function VideoClip() {
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState("");
   const [result, setResult] = useState("");
+  const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [duration, setDuration] = useState(0);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
@@ -23,16 +25,17 @@ function VideoClip() {
   const [mute, setMute] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
   const current = useRef(0);
   const active = useRef<Conversion | null>(null);
   const cancelRequested = useRef(false);
   useEffect(() => () => { if (source) URL.revokeObjectURL(source); }, [source]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => { current.current++; void active.current?.cancel(); }, []);
-  function change() { setResult(""); }
+  function change() { setResult(""); setResultBlob(null); }
   async function choose(next: File | undefined) {
     const revision = ++current.current;
-    setFile(null); setSource(""); setResult(""); setDuration(0); setMessage("");
+    setFile(null); setSource(""); setResult(""); setResultBlob(null); setDuration(0); setMessage("");
     if (!next) return;
     if (!next.size || next.size > MAX_BYTES) { setMessage("Choose a video under 128 MB."); return; }
     const url = URL.createObjectURL(next);
@@ -52,7 +55,7 @@ function VideoClip() {
   async function makeClip() {
     if (!file || busy) return;
     if (![start,end].every(Number.isFinite) || start < 0 || end > duration || end <= start || end - start > MAX_CLIP_SECONDS) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
-    cancelRequested.current = false; setBusy(true); setResult(""); setMessage("Checking this browser’s video and audio codecs…");
+    cancelRequested.current = false; setBusy(true); setResult(""); setResultBlob(null); setMessage("Checking this browser’s video and audio codecs…");
     const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(file) });
     try {
       const video = await input.getPrimaryVideoTrack(); const audio = await input.getPrimaryAudioTrack();
@@ -72,18 +75,18 @@ function VideoClip() {
       conversion.onProgress = p => setMessage(`Making MP4 on this device: ${Math.round(p*100)}%`);
       await conversion.execute();
       if (!target.buffer || !target.buffer.byteLength || target.buffer.byteLength > 64 * 1024 * 1024) throw new Error("The result is empty or exceeds the 64 MB output limit.");
-      setResult(URL.createObjectURL(new Blob([target.buffer], {type:"video/mp4"}))); setMessage("Your MP4 is ready to play and save.");
+      const blob = new Blob([target.buffer], {type:"video/mp4"}); setResultBlob(blob); setResult(URL.createObjectURL(blob)); setMessage("Your MP4 is ready to play and save.");
     } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
     finally { active.current = null; input.dispose(); setBusy(false); }
   }
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Clip and frame a video</h1><p>Choose a short video, set its in and out points and save a new MP4. Everything stays on this device; no upload, sign-in or generation is needed.</p></header>
-    <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2><label className="trim-file">Choose video<input type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy} onChange={e => void choose(e.target.files?.[0])}/></label><p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
+    <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2><label className="trim-file">Choose video<input type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing} onChange={e => void choose(e.target.files?.[0])}/></label><p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
       {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p><video className="video-tool-player" src={source} controls playsInline aria-label="Original video"/>
-      <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));change();}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));change();}}/></label>
-      <label>Frame<select value={shape} disabled={busy} onChange={e => {setShape(e.target.value as Shape);change();}}><option value="portrait">9:16 · 360 × 640</option><option value="landscape">16:9 · 640 × 360</option><option value="square">1:1 · 480 × 480</option></select></label><label>Fit<select value={fit} disabled={busy} onChange={e => {setFit(e.target.value as Fit);change();}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
-      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy} onChange={e => {setMute(e.target.checked);change();}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · 1.2 Mbps video. Export requires compatible browser codecs. Crop is centred; preview the result before saving.</p>
-      {!busy ? <button type="button" onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your clip</h2><video className="video-tool-player" src={result} controls playsInline aria-label="Finished video"/><a className="button" href={result} download={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`}>Save MP4</a><p className="trim-note">The original is unchanged. To use this clip in a project, save it here, then upload it from your <a href="/studio">Studio library</a>.</p></div>}
+      <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));change();}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));change();}}/></label>
+      <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);change();}}><option value="portrait">9:16 · 360 × 640</option><option value="landscape">16:9 · 640 × 360</option><option value="square">1:1 · 480 × 480</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);change();}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
+      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);change();}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · 1.2 Mbps video. Export requires compatible browser codecs. Crop is centred; preview the result before saving.</p>
+      {!busy ? <button type="button" disabled={importing} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your clip</h2><video className="video-tool-player" src={result} controls playsInline aria-label="Finished video"/><a className="button" href={result} download={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`}>Save MP4</a>{resultBlob && <LocalImport key={result} blob={resultBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`} operation="clip and frame" onBusyChange={setImporting}/>}</div>}
     </section></main>;
 }
 export function mountVideoClip(container: HTMLElement) { createRoot(container).render(<VideoClip />); }
