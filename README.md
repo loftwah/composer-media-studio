@@ -22,6 +22,8 @@ A composition is an ordered list of two to six saved clips (each at most 16 seco
 
 For music-video planning, the project API and scoped MCP connection can save a rights-confirmed song plan against an existing audio asset's fingerprint. It proposes evenly divided scenes for a 2–60 second segment (two to six scenes); those boundaries are editable and are not lyric- or beat-aware. Each scene can retain a direction, same-project reference image and selected video take. Plan revisions use compare-and-swap so a stale edit returns a conflict. Planning does not generate or render media, and there is not yet a Studio interface or a complete music-video workflow for these plans. Apply additive migration `0006_song_plans.sql` before deploying this capability.
 
+Owners and authorised editors can save up to 100 manually timed, rights-confirmed caption cues on a song plan through the project API or MCP. Times are measured against the source song; SRT and WebVTT exports shift them to the chosen segment's start. Caption edits share the plan revision, and scene edits preserve them. Captions are not automatically transcribed or burned into rendered video, and there is not yet a caption editor in the Studio interface.
+
 A 9:16 cut keeps the selected shot order. Its first stage composes a deliberate one-second 1080 × 1920 slate; the second composes the selected takes in their chosen order after it, with the saved sound. It is not a renamed 4:5 file, a stretch, or a portrait-first re-sort of the edit.
 
 Studio Score takes a length of 10 to 30 seconds, so a generated bed can be chosen to fit the cut instead of being padded afterwards.

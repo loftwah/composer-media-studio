@@ -39,3 +39,26 @@ test('simultaneous edits on the same revision admit only one writer', async () =
   assert.equal(outcomes.filter(result=>result.status==='rejected' && result.reason.status===409).length,1);
   assert.equal((await listSongPlans(env,project))[0].revision,2);
 });
+
+test('manual captions survive scene edits and export relative SRT and WebVTT without provider calls', async () => {
+  const { updateSongCaptions, exportSongCaptions } = await import('../src/lib/song-plans.mjs');
+  const {env,project}=await setup(); await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:40000});
+  const plan=await createSongPlan(env,project,input);
+  const captions=await updateSongCaptions(env,project,plan.id,{expectedRevision:1,rightsConfirmed:true,cues:[
+    {id:'cue_002',startMs:11000,endMs:12500,text:'<hello> & goodbye',speaker:'Singer'},
+    {id:'cue_001',startMs:2000,endMs:3000,text:'First line',speaker:''},
+  ]});
+  assert.equal(captions.revision,2); assert.equal(captions.captions.cues[0].id,'cue_001');
+  const vtt=await exportSongCaptions(env,project,plan.id,'vtt');
+  assert.match(vtt.content,/WEBVTT\n\ncue_001\n00:00:01\.000 --> 00:00:02\.000\nFirst line/);
+  assert.match(vtt.content,/00:00:10\.000 --> 00:00:11\.500\nSinger: &lt;hello&gt; &amp; goodbye/);
+  const srt=await exportSongCaptions(env,project,plan.id,'srt');
+  assert.match(srt.content,/1\n00:00:01,000 --> 00:00:02,000\nFirst line/);
+  const edited=await updateSongPlan(env,project,plan.id,{...captions,title:'Revised',expectedRevision:2});
+  assert.deepEqual(edited.captions,captions.captions);
+  await assert.rejects(updateSongCaptions(env,project,plan.id,{expectedRevision:2,rightsConfirmed:true,cues:[]}),e=>e.status===409);
+  await assert.rejects(updateSongCaptions(env,project,plan.id,{expectedRevision:3,rightsConfirmed:false,cues:[]}),/permission/);
+  await assert.rejects(updateSongCaptions(env,project,plan.id,{expectedRevision:3,rightsConfirmed:true,cues:[{id:'cue_bad1',startMs:999,endMs:1500,text:'Bad'}]}),/within/);
+  await assert.rejects(updateSongCaptions(env,project,plan.id,{expectedRevision:3,rightsConfirmed:true,cues:[{id:'cue_bad1',startMs:1000,endMs:1500,text:'Bad\n\nWEBVTT'}]}),/single line/);
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+});

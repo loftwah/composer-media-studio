@@ -28,7 +28,7 @@ test('MCP SDK discovers actual read tools and reads existing scoped Studio recor
     return { status: response.status, body: await response.json() };
   });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_models', 'studio_list_projects', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_update_project', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['studio_create_song_plan', 'studio_create_storyboard', 'studio_download_asset_chunk', 'studio_export_project', 'studio_export_song_captions', 'studio_get_asset', 'studio_get_job', 'studio_get_project', 'studio_import_share_artwork', 'studio_list_models', 'studio_list_projects', 'studio_list_song_plans', 'studio_publish_asset', 'studio_rename_asset', 'studio_update_project', 'studio_update_song_captions', 'studio_update_song_plan', 'studio_update_storyboard', 'studio_withdraw_publication']);
   const state = await client.callTool({ name: 'studio_list_projects', arguments: {} });
   assert.equal(state.structuredContent.projects[0].id, project.id);
   const wrong = await client.callTool({ name: 'studio_get_project', arguments: { projectId: 'prj_other' } });
@@ -72,10 +72,21 @@ test('MCP song plans respect the project grant and share the real revisioned API
     const created = await client.callTool({ name: 'studio_create_song_plan', arguments: { projectId: project.id, songAssetId: 'asset_song1', rightsConfirmed: true, title: 'Fictional song', aspect: '16:9', startMs: 0, endMs: 30000, sceneCount: 4 } });
     assert.equal(created.isError, undefined, JSON.stringify(created));
     assert.equal(created.structuredContent.plan.revision, 1);
+    const planId = created.structuredContent.plan.id;
+    const saved = await client.callTool({ name: 'studio_update_song_captions', arguments: { projectId: project.id, planId, expectedRevision: 1, rightsConfirmed: true, cues: [{ id: 'cue_test1', startMs: 1000, endMs: 2000, text: 'Original fictional words' }] } });
+    assert.equal(saved.structuredContent.plan.revision, 2);
+    const exported = await client.callTool({ name: 'studio_export_song_captions', arguments: { projectId: project.id, planId, format: 'vtt' } });
+    assert.match(exported.structuredContent.content, /WEBVTT/);
+    const file = await worker.fetch(new Request(`https://studio.test/api/projects/${project.id}/song-plans/${planId}/captions?format=srt&download=1`, { headers: { cookie } }), env);
+    assert.equal(file.status, 200); assert.match(file.headers.get('content-type'), /application\/x-subrip/); assert.equal(file.headers.get('cache-control'), 'no-store');
+    assert.match(await file.text(), /Original fictional words/);
+
     cookie = scopedCookie;
     const read = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: project.id } });
     assert.equal(read.structuredContent.plans[0].id, created.structuredContent.plan.id);
     const denied = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: 'prj_other' } });
     assert.equal(denied.isError, true);
+    const deniedExport = await client.callTool({ name: 'studio_export_song_captions', arguments: { projectId: 'prj_other', planId, format: 'vtt' } });
+    assert.equal(deniedExport.isError, true);
   } finally { await client.close(); }
 });

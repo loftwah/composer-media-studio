@@ -30,7 +30,7 @@ import {
   reconcileGeneration,
   saveGeneration,
 } from "./lib/jobs.mjs";
-import { createSongPlan, listSongPlans, updateSongPlan } from "./lib/song-plans.mjs";
+import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
@@ -491,6 +491,14 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
     if (rest === "song-plans" && method === "GET") return json({ plans: await listSongPlans(env, project) });
     if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);
+    const songCaptions = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/captions$/);
+    if (songCaptions && method === "PATCH") return json({ plan: await updateSongCaptions(env, project, songCaptions[1], await body(request)) });
+    if (songCaptions && method === "GET") {
+      const params = new URL(request.url).searchParams;
+      const result = await exportSongCaptions(env, project, songCaptions[1], params.get("format"));
+      if (params.get("download") === "1") return new Response(result.content, { headers: { "content-type": result.format === "vtt" ? "text/vtt; charset=utf-8" : "application/x-subrip; charset=utf-8", "content-disposition": `attachment; filename="captions.${result.format}"`, "cache-control": "no-store" } });
+      return json(result);
+    }
     const songPlanEdit = rest && rest.match(/^song-plans\/([a-z0-9_]+)$/);
     if (songPlanEdit && method === "PATCH") return json({ plan: await updateSongPlan(env, project, songPlanEdit[1], await body(request)) });
 

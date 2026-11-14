@@ -69,7 +69,62 @@ export async function updateSongPlan(env, project, planId, input) {
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
   const spec = await validateSpec(env, project, song, input);
+  const existingCaptions = safeJson(row.spec_json, {}).captions;
+  if (existingCaptions) spec.captions = validateCaptions(existingCaptions, spec.startMs, spec.endMs);
   const updated = await env.DB.prepare('UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5 RETURNING *').bind(JSON.stringify(spec), now(), planId, project.id, input.expectedRevision).first();
   if (!updated) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
   return viewSongPlan(updated);
+}
+
+// Caption timing is in source-song milliseconds. Export shifts it to the
+// chosen segment's zero point; no external transcription service is used.
+function validateCaptions(captions, startMs, endMs) {
+  if (!captions) return null;
+  if (captions.source !== 'owner_supplied' || captions.rightsConfirmed !== true || !Array.isArray(captions.cues) || captions.cues.length > 100) fail('Confirm permission for the supplied lyrics and provide at most 100 cues');
+  const seen = new Set();
+  const cues = captions.cues.map((cue) => {
+    if (!cue || !/^[a-z0-9_]{4,80}$/.test(cue.id ?? '') || seen.has(cue.id)) fail('Each caption needs a unique stable ID');
+    seen.add(cue.id);
+    const from = integer(cue.startMs, 'Caption start'), to = integer(cue.endMs, 'Caption end');
+    if (from < startMs || to > endMs || to <= from) fail('Caption times must fit within the chosen song segment');
+    if (typeof cue.text !== 'string' || !cue.text.trim() || cue.text.length > 300 || /[\u0000-\u001f\u007f]/.test(cue.text)) fail('Caption text must be a single line of up to 300 characters');
+    const speaker = cue.speaker ?? '';
+    if (typeof speaker !== 'string' || speaker.length > 80 || /[\u0000-\u001f\u007f]/.test(speaker)) fail('Speaker must be a single line of up to 80 characters');
+    return { id: cue.id, startMs: from, endMs: to, text: cue.text.trim(), speaker: speaker.trim() };
+  }).sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.id.localeCompare(b.id));
+  return { source: 'owner_supplied', rightsConfirmed: true, cues };
+}
+async function planRow(env, project, planId) {
+  const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first();
+  if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
+  return row;
+}
+export async function updateSongCaptions(env, project, planId, input) {
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) fail('Provide the revision you last read');
+  const row = await planRow(env, project, planId);
+  if (row.revision !== input.expectedRevision) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
+  const song = await asset(env, project, row.song_asset_id, 'audio');
+  if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
+  const spec = safeJson(row.spec_json, {});
+  spec.captions = validateCaptions({ source: 'owner_supplied', rightsConfirmed: input.rightsConfirmed, cues: input.cues }, spec.startMs, spec.endMs);
+  const updated = await env.DB.prepare('UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5 RETURNING *').bind(JSON.stringify(spec), now(), planId, project.id, input.expectedRevision).first();
+  if (!updated) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
+  return viewSongPlan(updated);
+}
+const escapeCaption = (value) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+function stamp(ms, format) {
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60, fraction = ms % 1000;
+  const two = n => String(n).padStart(2, '0');
+  return `${two(h)}:${two(m)}:${two(s)}${format === 'srt' ? ',' : '.'}${String(fraction).padStart(3, '0')}`;
+}
+export async function exportSongCaptions(env, project, planId, format) {
+  if (!['srt', 'vtt'].includes(format)) fail('Choose SRT or WebVTT');
+  const row = await planRow(env, project, planId);
+  const song = await asset(env, project, row.song_asset_id, 'audio');
+  if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
+  const spec = safeJson(row.spec_json, {});
+  const captions = validateCaptions(spec.captions, spec.startMs, spec.endMs);
+  if (!captions || !captions.cues.length) throw new HttpError(404, 'This plan has no saved captions', 'not_found');
+  const blocks = captions.cues.map((cue, i) => `${format === 'srt' ? i + 1 : cue.id}\n${stamp(cue.startMs-spec.startMs, format)} --> ${stamp(cue.endMs-spec.startMs, format)}\n${cue.speaker ? escapeCaption(cue.speaker) + ': ' : ''}${escapeCaption(cue.text)}\n`).join('\n');
+  return { format, content: `${format === 'vtt' ? 'WEBVTT\n\n' : ''}${blocks}`, revision: row.revision };
 }
