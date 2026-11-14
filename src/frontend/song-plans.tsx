@@ -31,6 +31,60 @@ async function request(path: string, method = 'GET', body?: unknown) {
 function TimeField({ label, value, onCommit }: { label: string; value: number; onCommit: (n: number) => void }) {
   return <label>{label} <span className="small">seconds</span><input type="number" min="0" step="0.001" defaultValue={seconds(value)} key={value} onBlur={e => onCommit(milliseconds(e.currentTarget.value))} /></label>;
 }
+function TakeRangePreview({ take, index, startMs, endMs, valid }: { take: MediaAssetV1; index: number; startMs: number; endMs: number; valid: boolean }) {
+  const video = useRef<HTMLVideoElement | null>(null);
+  const active = useRef(false);
+  const generation = useRef(0);
+  const pending = useRef<AbortController | null>(null);
+  const [status, setStatus] = useState('');
+  function waitFor(player: HTMLVideoElement, event: 'loadedmetadata' | 'seeked', signal: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => finish(new Error('Preview timed out')), 15000);
+      const finish = (error?: Error) => { window.clearTimeout(timer); player.removeEventListener(event, done); player.removeEventListener('error', failed); signal.removeEventListener('abort', cancelled); error ? reject(error) : resolve(); };
+      const done = () => finish();
+      const failed = () => finish(new Error('Preview could not load'));
+      const cancelled = () => finish(new Error('Preview cancelled'));
+      player.addEventListener(event, done, { once: true }); player.addEventListener('error', failed, { once: true }); signal.addEventListener('abort', cancelled, { once: true });
+    });
+  }
+  useEffect(() => {
+    generation.current++;
+    pending.current?.abort();
+    if (active.current) {
+      active.current = false;
+      video.current?.pause();
+      setStatus('The range changed. Preview it again.');
+    }
+  }, [take.id, startMs, endMs, valid]);
+  useEffect(() => () => { generation.current++; pending.current?.abort(); active.current = false; video.current?.pause(); }, []);
+  async function playRange() {
+    const player = video.current;
+    if (!player || !valid) return;
+    const request = ++generation.current;
+    pending.current?.abort();
+    const task = new AbortController(); pending.current = task;
+    setStatus('Loading selected portion…'); active.current = true;
+    try {
+      if (player.readyState < 1) { const ready = waitFor(player, 'loadedmetadata', task.signal); player.load(); await ready; }
+      if (request !== generation.current) return;
+      if (!Number.isFinite(player.duration) || endMs / 1000 > player.duration + 0.001) throw new Error('Clip duration changed');
+      if (Math.abs(player.currentTime - startMs / 1000) > 0.001) {
+        player.currentTime = startMs / 1000;
+        if (player.seeking) await waitFor(player, 'seeked', task.signal);
+      }
+      if (request !== generation.current) return;
+      await player.play();
+      if (request !== generation.current) { player.pause(); return; }
+      if (player.currentTime + 0.1 < startMs / 1000) { active.current = false; player.pause(); throw new Error('Clip did not seek'); }
+      if (active.current) setStatus('Playing the selected portion.');
+    } catch {
+      if (request !== generation.current) return;
+      active.current = false;
+      setStatus('The preview could not play. Check the clip and try again.');
+    }
+  }
+  return <div className="song-take-preview"><video ref={video} controls playsInline preload="none" src={take.file} aria-label={`Original take for scene ${index + 1}`} onTimeUpdate={event => { if (active.current && event.currentTarget.currentTime >= endMs / 1000) { active.current = false; event.currentTarget.pause(); event.currentTarget.currentTime = endMs / 1000; setStatus('Selected portion finished.'); } }} onEnded={() => { if (active.current) { generation.current++; active.current = false; setStatus('Selected portion finished.'); } }} onPause={() => { if (active.current) { generation.current++; pending.current?.abort(); active.current = false; setStatus('Preview paused.'); } }} onError={() => { generation.current++; active.current = false; setStatus('The preview could not load. Check the clip and try again.'); }}/><button type="button" className="secondary" disabled={!valid} onClick={() => void playRange()}>Preview selected portion</button><p className="small">The browser preview is approximate and uses the original clip’s audio. The local MP4 renderer mutes clip audio.</p>{status && <p className="small" role="status">{status}</p>}</div>;
+}
 export function SongPlans({ projectId, assets, canEdit, onStoryboard }: { projectId: string; assets: MediaAssetV1[]; canEdit: boolean; onStoryboard: (composition: CompositionV1) => void }) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/song-plans`;
   const songs = assets.filter(a => a.kind === 'audio' && a.durationMs && a.durationMs >= 2000);
@@ -136,7 +190,7 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard }: { projec
         </div>
         <button type="button" disabled={!changedPlan || conflict} onClick={() => void run(async () => { const result = await request(`${base}/${saved.id}`, 'PATCH', { expectedRevision: saved.revision, title: draft.title, treatment: draft.treatment, aspect: draft.aspect, startMs: draft.startMs, endMs: draft.endMs, scenes: draft.scenes }); savedScenes(result.plan); setMessage('Scene plan saved.'); })}>Save scene plan</button></fieldset>
         <div className="song-storyboard"><h4>Prepare the storyboard</h4><p className="small">Choose a saved take for every scene and an in-point within each take. The scene length sets the out-point. Originals stay unchanged. The song segment becomes a soundtrack track: mix it in the storyboard before rendering. Saved captions can be burned into a matching storyboard’s local MP4 or downloaded separately. Saving a storyboard is free and does not render. In-points are kept in this draft and the saved storyboard, not in the song plan.</p>
-          {takeReview.map(({ index, scene, take, sceneMs, raw, startMs }) => <div className="song-take-range" key={scene.id}><strong>Scene {index + 1}: {take?.title ?? 'Choose a take above'}</strong>{take?.durationMs && <><video controls playsInline preload="none" src={take.file} aria-label={`Preview original take for scene ${index + 1}`}/><label>In point for scene {index + 1} <span className="small">seconds from the start of the original</span><input type="number" min="0" max={Math.max(0, (take.durationMs - sceneMs) / 1000)} step="0.001" value={raw} disabled={!canEdit || busy} onChange={event => { setSourceStarts(current => ({ ...current, [scene.id]: event.target.value })); setTrimConsent(false); setStoryboardId(null); }}/></label><p className="small">{Number.isSafeInteger(startMs) && startMs >= 0 && startMs + sceneMs <= take.durationMs ? `Keep ${seconds(startMs)}–${seconds(startMs + sceneMs)}s of ${seconds(take.durationMs)}s.` : `Choose an in-point from 0 to ${seconds(Math.max(0, take.durationMs - sceneMs))}s.`}</p></>}</div>)}
+          {takeReview.map(({ index, scene, take, sceneMs, raw, startMs }) => <div className="song-take-range" key={scene.id}><strong>Scene {index + 1}: {take?.title ?? 'Choose a take above'}</strong>{take?.durationMs && <><TakeRangePreview key={take.id} take={take} index={index} startMs={startMs} endMs={startMs + sceneMs} valid={Number.isSafeInteger(startMs) && startMs >= 0 && take.durationMs <= 16000 && startMs + sceneMs <= take.durationMs}/><label>In point for scene {index + 1} <span className="small">seconds from the start of the original</span><input type="number" min="0" max={Math.max(0, (take.durationMs - sceneMs) / 1000)} step="0.001" value={raw} disabled={!canEdit || busy} onChange={event => { setSourceStarts(current => ({ ...current, [scene.id]: event.target.value })); setTrimConsent(false); setStoryboardId(null); }}/></label><p className="small">{Number.isSafeInteger(startMs) && startMs >= 0 && startMs + sceneMs <= take.durationMs ? `Keep ${seconds(startMs)}–${seconds(startMs + sceneMs)}s of ${seconds(take.durationMs)}s.` : `Choose an in-point from 0 to ${seconds(Math.max(0, take.durationMs - sceneMs))}s.`}</p></>}</div>)}
           {invalidTakes && <p className="notice">Every scene needs a selected take of at most 16 seconds and a valid in-point that leaves enough footage for the scene.</p>}
           {trimmedTakes.length > 0 && <label className="song-check"><input type="checkbox" checked={trimConsent} onChange={event => setTrimConsent(event.target.checked)} /> I want to use the selected portions in the storyboard.</label>}
           <button type="button" className="secondary" disabled={!canEdit || busy || conflict || changedPlan || changedReference || invalidTakes || (trimmedTakes.length > 0 && !trimConsent)} onClick={() => void run(async () => { const sceneStarts = takeReview.map(({ scene, startMs }) => ({ sceneId: scene.id, startMs })); const result = await request(`${base}/${saved.id}/storyboard`, 'POST', { expectedRevision: saved.revision, ...(trimmedTakes.length ? { allowTrim: true } : {}), ...(sceneStarts.some(item => item.startMs !== 0) ? { sceneStarts } : {}) }); onStoryboard(result.composition); setStoryboardId(result.composition.id); setSourceStarts({}); setTrimConsent(false); setMessage(result.created ? 'Storyboard saved. Open it below and mix the soundtrack before rendering.' : 'This selection already has a storyboard. Open it below.'); })}>Make storyboard from saved plan</button>{changedPlan && <p className="small">Save scene changes first.</p>}{changedReference && <p className="small">Apply or clear the reference proposal first.</p>}{storyboardId && <button type="button" className="quiet" data-action="compose-load" data-id={storyboardId}>Open storyboard</button>}</div>
