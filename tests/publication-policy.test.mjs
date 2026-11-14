@@ -36,7 +36,7 @@ test("first-party policy requires installation and project opt-in, protects with
   assert.equal((await request("publication-reconcile","POST",{assetIds,confirm:true})).status,400);
   const payload={assetIds,confirm:true,rightsConfirmed:true};
   const results=(await (await request("publication-reconcile","POST",payload)).json()).results;
-  assert.deepEqual(results.map(x=>x.result),["created","skipped","skipped","skipped","skipped","existing","skipped"]);
+  assert.deepEqual(results.map(x=>x.result),["created","attribution_review_required","attribution_review_required","skipped","skipped","existing","skipped"]);
   const existingAfter=await env.DB.prepare("SELECT slug,listed FROM publications WHERE id='pub_existing'").first();
   assert.equal(existingAfter.slug,"slug-existing"); assert.equal(existingAfter.listed,1);
   const newPublication=await env.DB.prepare("SELECT title,description FROM publications WHERE asset_id=?1").bind(a.id).first();
@@ -106,8 +106,8 @@ test("reference-derived and incomplete provenance never auto-publishes or lists 
   await env.DB.prepare("UPDATE generations SET model='future-unknown-model' WHERE id=?1").bind("gen_unknownmodel").run();
   await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at) VALUES('pub_linked',?1,?2,'original-linked','Existing page','Existing credit',1,1)").bind(project.id,linked.id).run();
   for(const a of [linked,hiddenLink,incomplete,malformed,unknown]) {
-    assert.equal(await publishCandidate(env,project.id,a.id,{automatic:true}),"skipped");
-    assert.equal(await publishCandidate(env,project.id,a.id),"skipped");
+    assert.equal(await publishCandidate(env,project.id,a.id,{automatic:true}),"attribution_review_required");
+    assert.equal(await publishCandidate(env,project.id,a.id),"attribution_review_required");
   }
   const {inventory}=await import("../src/lib/publication-policy.mjs");
   const items=(await inventory(env,project.id)).items;
@@ -115,4 +115,49 @@ test("reference-derived and incomplete provenance never auto-publishes or lists 
   const unchanged=await env.DB.prepare("SELECT slug,description,listed FROM publications WHERE id='pub_linked'").first();
   assert.deepEqual({...unchanged},{slug:"original-linked",description:"Existing credit",listed:0});
   assert.doesNotMatch(JSON.stringify(items),/PRIVATE|Tabler/);
+});
+
+test("verified Share reference retains a public credit and MIT licence without copying private text", async (t) => {
+  const {env,project}=await setup(); env.FIRST_PARTY_PUBLICATION_PROJECTS=project.id;
+  await env.DB.prepare("INSERT INTO publication_policies(project_id,enabled,enabled_at,attested_at) VALUES(?1,1,1,1)").bind(project.id).run();
+  const {PNG_1x1}=await import('./harness.mjs'); const {sha256Hex}=await import('../src/lib/util.mjs');
+  const hash=await sha256Hex(PNG_1x1);
+  const source=await addAsset(env,project,{id:"asset_reference",kind:"image",source:"upload"});
+  await env.DB.prepare("UPDATE assets SET sha256=?2,caption=?3 WHERE id=?1").bind(source.id,hash,"https://woodhouse.loftwah.com/api/v1/assets/atlas-plate-20-foilbury\nPRIVATE CAPTION").run();
+  const output=await generated(env,project,"verified","generated",Date.now()+1);
+  await env.DB.prepare("UPDATE assets SET parent_asset_id=?2 WHERE id=?1").bind(output.id,source.id).run();
+  await env.DB.prepare("UPDATE generations SET model='h3-max-turbo',request_json=?2 WHERE id=?1").bind('gen_verified',JSON.stringify({referenceAssetId:source.id,referenceSha256:hash,maskAssetId:null,parentAssetId:null,prompt:'SECRET PROMPT'})).run();
+  const record={version:1,asset:{id:'atlas-plate-20-foilbury',visibility:'public',reuse:'unconfirmed',credit:'Woodhouse · gpt-image-2.6-flare · Tabler Icons (MIT)',sourceUrl:'https://woodhouse.loftwah.com/source',original:{url:'https://woodhouse.loftwah.com/original.png'}}};
+  let mismatch = false;
+  t.mock.method(globalThis,'fetch',async url => String(url).endsWith('/original.png') ? new Response(mismatch ? new Uint8Array([1,2,3]) : PNG_1x1) : Response.json(record));
+  const {inventory}=await import('../src/lib/publication-policy.mjs');
+  const failed=await generated(env,project,"bad_hash","generated",Date.now()+1);
+  await env.DB.prepare("UPDATE assets SET parent_asset_id=?2 WHERE id=?1").bind(failed.id,source.id).run();
+  await env.DB.prepare("UPDATE generations SET model='h3-max-turbo',request_json=?2 WHERE id=?1").bind('gen_bad_hash',JSON.stringify({referenceAssetId:source.id,referenceSha256:hash,maskAssetId:null,parentAssetId:null})).run();
+  mismatch=true;
+  assert.equal(await publishCandidate(env,project.id,failed.id),'attribution_review_required');
+  assert.equal(await env.DB.prepare('SELECT id FROM publications WHERE asset_id=?1').bind(failed.id).first(),null);
+  mismatch=false;
+  record.asset.credit="Unknown third party; no verified licence";
+  assert.equal(await publishCandidate(env,project.id,failed.id),'attribution_review_required');
+  record.asset.credit='Woodhouse · gpt-image-2.6-flare · Tabler Icons (MIT)';
+  record.asset.original.url='https://other.example/original.png';
+  assert.equal(await publishCandidate(env,project.id,failed.id),'attribution_review_required');
+  record.asset.original.url='https://woodhouse.loftwah.com/original.png';
+  assert.equal((await inventory(env,project.id)).items.find(x=>x.id===output.id).status,'source_verification_available');
+  assert.equal(await publishCandidate(env,project.id,output.id),'created');
+  const pub=await env.DB.prepare('SELECT * FROM publications WHERE asset_id=?1').bind(output.id).first();
+  const credits=JSON.parse(pub.attribution_json); assert.equal(credits[0].tablerMit,true);
+  assert.doesNotMatch(pub.attribution_json,/PRIVATE CAPTION|SECRET PROMPT/);
+  const html=await (await worker.fetch(new Request(`https://studio.test/p/${pub.slug}`),env)).text();
+  assert.match(html,/Catalogue reuse status: unconfirmed/); assert.match(html,/Tabler Icons MIT licence/); assert.match(html,/Copyright \(c\) 2020-2026 Paweł Kuna/); assert.match(html,/Permission is hereby granted/);
+  assert.match(html,/https:\/\/woodhouse\.loftwah\.com\/source/); assert.doesNotMatch(html,/PRIVATE CAPTION|SECRET PROMPT/);
+  await env.DB.prepare('UPDATE publications SET listed=0 WHERE id=?1').bind(pub.id).run();
+  assert.equal(await publishCandidate(env,project.id,output.id,{automatic:true}),'existing');
+  assert.equal((await env.DB.prepare('SELECT listed FROM publications WHERE id=?1').bind(pub.id).first()).listed,0);
+  assert.equal(await publishCandidate(env,project.id,output.id),'existing');
+  const relisted=await env.DB.prepare('SELECT slug,listed,attribution_json FROM publications WHERE id=?1').bind(pub.id).first();
+  assert.equal(relisted.slug,pub.slug); assert.equal(relisted.listed,1); assert.equal(relisted.attribution_json,pub.attribution_json);
+  await env.DB.prepare('UPDATE publications SET revoked_at=1 WHERE id=?1').bind(pub.id).run();
+  assert.equal(await publishCandidate(env,project.id,output.id),'skipped');
 });

@@ -184,6 +184,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
 }
 
 export function publicPage({
+  attribution = [],
   listed = false,
   title,
   description,
@@ -216,6 +217,28 @@ export function publicPage({
   const ogImageMime = isVideo ? posterMime : mime;
   const ogImageWidth = isVideo ? posterWidth : width;
   const ogImageHeight = isVideo ? posterHeight : height;
+  const sourceCredits = (Array.isArray(attribution) ? attribution : []).filter((item) => item && typeof item.credit === "string" && woodhouseUrl(item.sourceUrl)).map((item) => `<li>${escapeHtml(item.credit)} · <a href="${escapeHtml(woodhouseUrl(item.sourceUrl))}">Public source and provenance</a>${item.reuse === "unconfirmed" ? " · Catalogue reuse status: unconfirmed" : ""}</li>`).join("");
+  const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
+
+Copyright (c) 2020-2026 Paweł Kuna
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/LICENSE">Tabler Icons licence source</a></p></details>` : "";
   const actions = [
     buildUrl
       ? `<a class="button" href="${escapeHtml(buildUrl)}">Build your own Media Studio</a>`
@@ -270,6 +293,7 @@ export function publicPage({
       <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
     </figcaption>
   </figure>
+  ${sourceCredits ? `<section class="public-credits" aria-labelledby="credits-title"><h2 id="credits-title">Source and credit</h2><ul>${sourceCredits}</ul>${tablerLicense}</section>` : ""}
   <p class="small">A deliberately published piece. Private projects, other media, masks and prompts stay in the studio. Withdrawing this page stops new visits here; copies someone already downloaded cannot be recalled.</p>
   ${
     actions.length

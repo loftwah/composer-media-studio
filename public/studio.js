@@ -1412,7 +1412,7 @@ async function handleAction(action, element) {
         await api(path, { method: "PUT", body: JSON.stringify({ enabled: false }) });
         notify("Automatic publishing turned off.");
       } else {
-        if (!(await confirmAction("Enable first-party publishing?", "New explicitly reference-free generated results from supported models in this project will be publicly listed. Reference-derived results, variants and assemblies require attribution review and are skipped. Only enable this if you have the rights to publish the outputs and their reference material, and have checked they are suitable for public sharing. Uploads and reference files are not published directly. Existing results require a separate inventory review.", "I confirm rights and enable"))) return;
+        if (!(await confirmAction("Enable first-party publishing?", "New explicitly reference-free generated results from supported models in this project will be publicly listed. Direct Share-derived results are included only when the source bytes and public credit verify; other references and assemblies require attribution review and are skipped. Only enable this if you have the rights to publish the outputs and their reference material, and have checked they are suitable for public sharing. Uploads and reference files are not published directly. Existing results require a separate inventory review.", "I confirm rights and enable"))) return;
         await api(path, { method: "PUT", body: JSON.stringify({ enabled: true, rightsConfirmed: true }) });
         notify("Automatic publishing enabled for this project.");
       }
@@ -1423,17 +1423,18 @@ async function handleAction(action, element) {
       let after = "";
       do {
         const result = await api(`/api/projects/${projectId}/publication-inventory${after ? `?after=${encodeURIComponent(after)}` : ""}`);
-        const candidates = result.items.filter((item) => item.status === "candidate" || item.status === "existing");
-        const rows = result.items.map((item) => `<a href="#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(item.id)}" target="_blank" rel="noopener">${esc(item.title)}</a> — ${esc(item.kind)}, ${esc(item.source)}, ${esc(item.status === "attribution_review_required" ? "attribution review required" : item.status)} <code>${esc(item.id)}</code>`).join("<br>") || "No assets on this page.";
-        const viewed = await ask({ title: "Publication inventory", copy: `Dry run: ${rows}<br><br>${candidates.length} eligible item(s) on this page. Withdrawn, hidden and ineligible items are excluded. Attribution review is required for references, variants, assemblies or incomplete source records; these are skipped until verified public credits and licences can be retained. ${!result.policy.installationAllowed || !result.policy.enabled ? "First-party publishing is off; enable it before applying." : ""} ${result.nextAfter ? "More assets follow." : ""}`, submit: "Continue" });
+        const candidates = result.items.filter((item) => item.status === "candidate" || item.status === "existing" || item.status === "source_verification_available");
+        const rows = result.items.map((item) => `<a href="#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(item.id)}" target="_blank" rel="noopener">${esc(item.title)}</a> — ${esc(item.kind)}, ${esc(item.source)}, ${esc(item.status === "attribution_review_required" ? "attribution review required" : item.status === "source_verification_available" ? "Share source verification available" : item.status)} <code>${esc(item.id)}</code>`).join("<br>") || "No assets on this page.";
+        const viewed = await ask({ title: "Publication inventory", copy: `Dry run: ${rows}<br><br>${candidates.length} eligible item(s) on this page. Withdrawn, hidden and ineligible items are excluded. Share sources are checked against the original bytes when you apply this page. Reference chains, assemblies, unknown sources or unavailable credits remain held for attribution review. ${!result.policy.installationAllowed || !result.policy.enabled ? "First-party publishing is off; enable it before applying." : ""} ${result.nextAfter ? "More assets follow." : ""}`, submit: "Continue" });
         if (!viewed) return;
         if (result.policy.installationAllowed && result.policy.enabled && candidates.length) {
           const apply = await confirmAction("Publish the eligible items on this page?", `This will publish or list ${candidates.length} item(s). Confirm you have rights to publish these outputs and their references and that they are suitable for public sharing. Choose Cancel to skip this page.`, "Confirm rights and publish");
           if (apply) {
-            await api(`/api/projects/${projectId}/publication-reconcile`, { method: "POST", body: JSON.stringify({ assetIds: candidates.map((item) => item.id), confirm: true, rightsConfirmed: true }) });
+            const reconciled = await api(`/api/projects/${projectId}/publication-reconcile`, { method: "POST", body: JSON.stringify({ assetIds: candidates.map((item) => item.id), confirm: true, rightsConfirmed: true }) });
             await loadProject(projectId);
             render();
-            notify("Reviewed page reconciled.");
+            const done = reconciled.results.filter((item) => item.result === "created" || item.result === "existing").length;
+            notify(`${done} reconciled; ${reconciled.results.length - done} held or skipped.`);
           }
         }
         after = result.nextAfter;

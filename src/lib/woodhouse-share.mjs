@@ -36,8 +36,8 @@ function shareFetch(url, timeout) {
   return fetch(url, { redirect: "manual", signal: AbortSignal.timeout(timeout) });
 }
 
-async function requestCatalogue(url) {
-  const response = await shareFetch(url, 8000);
+async function requestCatalogue(url, timeout = 8000) {
+  const response = await shareFetch(url, timeout);
   if (response.status === 404) throw new HttpError(404, "This artwork is no longer listed in Woodhouse Share.");
   if (!response.ok) throw new Error(`Share catalogue returned HTTP ${response.status}`);
   const data = await response.json();
@@ -45,10 +45,10 @@ async function requestCatalogue(url) {
   return data;
 }
 
-export async function shareAsset(assetId) {
+export async function shareAsset(assetId, timeout = 8000) {
   if (typeof assetId !== "string" || !identifier.test(assetId))
     throw new HttpError(400, "Enter a valid Woodhouse Share asset ID.");
-  const { asset } = await requestCatalogue(shareApi + "/" + assetId);
+  const { asset } = await requestCatalogue(shareApi + "/" + assetId, timeout);
   if (asset?.id !== assetId || asset.visibility !== "public")
     throw new HttpError(404, "This artwork is no longer public in Woodhouse Share.");
   return asset;
@@ -71,10 +71,10 @@ export async function sharePage(params) {
   };
 }
 
-export async function shareOriginal(asset, limit) {
+export async function shareOriginal(asset, limit, timeout = 20000) {
   const url = woodhouseUrl(asset.original?.url);
   if (!url) throw new HttpError(422, "This artwork has no supported original.");
-  const response = await shareFetch(url, 20000);
+  const response = await shareFetch(url, timeout);
   if (!response.ok || !response.body)
     throw new HttpError(502, "Woodhouse Share did not return the original.");
   if (Number(response.headers.get("content-length")) > limit) {
