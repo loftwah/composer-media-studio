@@ -42,7 +42,7 @@ async function request(path: string, method = 'GET', body?: unknown) {
 }
 export function TimeField({ label, value, onCommit }: { label: string; value: number; onCommit: (n: number) => void }) {
   const [message, setMessage] = useState('');
-  return <label>{label} <span className="small">seconds</span><input type="number" min="0" step="0.001" defaultValue={seconds(value)} key={value} onChange={() => setMessage('')} onBlur={e => { const next = parseSongTime(e.currentTarget.value); if (next === null) { e.currentTarget.value = seconds(value); setMessage('Time unchanged. Enter a non-negative time with up to three decimal places.'); return; } setMessage(''); onCommit(next); }} />{message && <span className="small" role="status">{message}</span>}</label>;
+  return <label>{label} <span className="small">seconds</span><input type="number" min="0" step="0.001" defaultValue={seconds(value)} key={value} onChange={() => setMessage('')} onBlur={e => { const next = parseSongTime(e.currentTarget.value); if (next === null) { e.currentTarget.value = seconds(value); setMessage('Time unchanged. Enter a non-negative time accurate to a millisecond.'); return; } setMessage(''); onCommit(next); }} />{message && <span className="small" role="status">{message}</span>}</label>;
 }
 export function TakeRangePreview({ take, index, startMs, endMs, valid, sourceFootage = false }: { take: MediaAssetV1; index: number; startMs: number; endMs: number; valid: boolean; sourceFootage?: boolean }) {
   const video = useRef<HTMLVideoElement | null>(null);
