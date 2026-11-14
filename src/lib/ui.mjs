@@ -246,6 +246,7 @@ export function publicPage({
 <header class="site-header">
   <a class="wordmark" href="${escapeHtml(origin)}/" aria-label="Media Studio home">${mark}<span>Media Studio</span>${brandByline()}</a>
   <nav class="header-nav" aria-label="Published piece">
+    <a href="${escapeHtml(origin)}/gallery">← Back to gallery</a>
     ${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     ${buildUrl ? `<a href="${escapeHtml(buildUrl)}">Build your own</a>` : ""}
   </nav>
@@ -280,7 +281,7 @@ export function publicPage({
   </section>`
       : ""
   }
-  <footer class="public-footer">Published with an independently owned Media Studio · <a href="${escapeHtml(origin)}/">Owner sign-in</a></footer>
+  <footer class="public-footer">Published with an independently owned Media Studio · <a href="${escapeHtml(origin)}/studio">Owner sign-in</a></footer>
 </main>
 </body>
 </html>`;

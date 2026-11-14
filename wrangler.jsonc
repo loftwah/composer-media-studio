@@ -49,7 +49,7 @@
     "PUBLIC_BUILD_URL": "https://composer.loftwah.com/init?start=media-studio",
     "PUBLIC_STORY_URL": "https://composer.loftwah.com/media-studio",
     "WOODHOUSE_SHARE": "true",
-    "PUBLIC_SHOWCASE_SLUGS": "Na9FNUB_VhzZ7zA9,jWri1dDSfWbZ8HXD,hvhyL90Wm1EXbrAE,WWMS3shJ_pGapR_i,QXaKw_fL9cZenKCg,XrgIiuDDt6prdjGV,uInuEzJuaHUW4TjM,1qjHzSyIrIAQ4Zuk,gkjDvBg5eqMO6BBz,VQDLALCKpgZoylDr,5ycQgw8F4AhOj_oB,zCUxlr5AhN_K_ZJx,i0q2jGofhv2yu6m2,HzpgDbn3CC1WcTE6,Z7_WEb7Tpt68x_cW,HgHEHK2VIycsc58l,uARd0tT8kV-ASZPH,6VibHIWuuQgPd9oM,eW6oUa6GbqJCnuFN,h1zmUXhF0hEzm-g9,KKxqXp1_5Po84FMU",
+    "PUBLIC_SHOWCASE_SLUGS": "Na9FNUB_VhzZ7zA9,hvhyL90Wm1EXbrAE,WWMS3shJ_pGapR_i,jWri1dDSfWbZ8HXD,QXaKw_fL9cZenKCg,XrgIiuDDt6prdjGV,uInuEzJuaHUW4TjM,1qjHzSyIrIAQ4Zuk,gkjDvBg5eqMO6BBz,VQDLALCKpgZoylDr,5ycQgw8F4AhOj_oB,zCUxlr5AhN_K_ZJx,i0q2jGofhv2yu6m2,HzpgDbn3CC1WcTE6,Z7_WEb7Tpt68x_cW,HgHEHK2VIycsc58l,uARd0tT8kV-ASZPH,6VibHIWuuQgPd9oM,eW6oUa6GbqJCnuFN,h1zmUXhF0hEzm-g9,KKxqXp1_5Po84FMU",
     "LAUNCH_KIT_URL": "https://composer-launch-kit.loftwah.workers.dev/"
   },
   "triggers": {
