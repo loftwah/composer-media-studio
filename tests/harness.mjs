@@ -20,6 +20,7 @@ export class SqliteD1 {
     const statement = this.db.prepare(sql);
     return {
       bind: (...args) => ({
+        _batchRun: () => statement.run(...args),
         first: async () => statement.get(...args) ?? null,
         all: async () => ({ results: statement.all(...args) }),
         run: async () => statement.run(...args),
@@ -28,6 +29,14 @@ export class SqliteD1 {
       all: async () => ({ results: statement.all() }),
       run: async () => statement.run(),
     };
+  }
+  async batch(statements) {
+    this.db.exec("BEGIN");
+    try {
+      const results = statements.map(statement => ({ meta: { changes: Number(statement._batchRun().changes) } }));
+      this.db.exec("COMMIT");
+      return results;
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
   exec(sql) {
     this.db.exec(sql);

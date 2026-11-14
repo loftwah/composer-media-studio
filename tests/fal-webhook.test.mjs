@@ -43,6 +43,7 @@ async function signedRequest(body, { privateKey, requestId = "req_web" } = {}) {
 
 async function submitted(env, project, requestId = "req_web") {
   const timestamp = Date.now();
+  await env.DB.prepare("INSERT INTO budgets(project_id,period,allowance_micro,reserved_micro,spent_micro,updated_at) VALUES(?1,?2,5000000,20000,0,?3) ON CONFLICT(project_id,period) DO UPDATE SET reserved_micro=reserved_micro+20000").bind(project.id,new Date(timestamp).toISOString().slice(0,7),timestamp).run();
   await env.DB.prepare(
     `INSERT INTO generations(id,project_id,client_request_id,kind,recipe_id,provider,model,request_json,status,provider_request_id,cost_estimate_micro,cost_reserved_micro,created_at,updated_at,submitted_at)
      VALUES('gen_web',?1,'req_web_job','video','composition','fal','studio-assembly','{}','submitted',?2,20000,20000,?3,?3,?3)`,

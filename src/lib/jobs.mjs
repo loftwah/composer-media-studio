@@ -85,58 +85,57 @@ export async function budgetSnapshot(env, projectId) {
   };
 }
 
-async function ensureBudget(env, projectId) {
+async function ensureBudget(env, projectId, timestamp = now()) {
   await env.DB.prepare(
     "INSERT INTO budgets(project_id,period,allowance_micro,reserved_micro,spent_micro,updated_at) VALUES(?1,?2,?3,0,0,?4) ON CONFLICT(project_id,period) DO NOTHING",
   )
-    .bind(projectId, periodKey(), allowanceFor(env), now())
+    .bind(projectId, periodKey(timestamp), allowanceFor(env), timestamp)
     .run();
 }
 
-/** Atomic admission: one SQL statement is the allowance authority. */
-async function reserve(env, projectId, amount) {
-  await ensureBudget(env, projectId);
-  const row = await env.DB.prepare(
-    "UPDATE budgets SET reserved_micro=reserved_micro+?3, updated_at=?4 WHERE project_id=?1 AND period=?2 AND reserved_micro+spent_micro+?3<=allowance_micro RETURNING reserved_micro,spent_micro,allowance_micro",
-  )
-    .bind(projectId, periodKey(), amount, now())
-    .first();
-  if (!row) {
-    const snapshot = await budgetSnapshot(env, projectId);
-    throw new HttpError(
-      402,
-      `This month's allowance has ${money(snapshot.availableMicro)} free; this request needs ${money(amount)}. Raise the allowance or wait for next month.`,
-      "budget_exhausted",
-    );
+/** Atomically publish an admitted job and its allowance reservation. */
+async function admitJob(env, projectId, generationId, clientRequestId, cost, timestamp, insert, validateReplay) {
+  await ensureBudget(env, projectId, timestamp);
+  const period = periodKey(timestamp);
+  try {
+    const [created] = await env.DB.batch([
+      insert,
+      env.DB.prepare(`UPDATE budgets SET reserved_micro=reserved_micro+?3, updated_at=?4
+        WHERE project_id=?1 AND period=?2 AND EXISTS(SELECT 1 FROM generations WHERE id=?5 AND project_id=?1 AND status='admitted')`).bind(projectId, period, cost, timestamp, generationId),
+    ]);
+    if ((created.meta?.changes ?? created.changes ?? 0) > 0) {
+      const generation = await loadGeneration(env, generationId);
+      if (generation.status !== "failed") return { generation, created: true };
+      const snapshot = await budgetSnapshot(env, projectId);
+      throw new HttpError(402, `This month's allowance has ${money(snapshot.availableMicro)} free; this request needs ${money(cost)}. Raise the allowance or wait for next month.`, "budget_exhausted");
+    }
+  } catch (error) {
+    if (!String(error.message ?? error).includes("UNIQUE")) throw error;
   }
-  return row;
+  // A concurrent same-key request can win while the budget becomes full.
+  const existing = await env.DB.prepare("SELECT * FROM generations WHERE project_id=?1 AND client_request_id=?2").bind(projectId, clientRequestId).first();
+  if (existing) { validateReplay(existing); return { generation: existing, created: false }; }
+  const snapshot = await budgetSnapshot(env, projectId);
+  throw new HttpError(402, `This month's allowance has ${money(snapshot.availableMicro)} free; this request needs ${money(cost)}. Raise the allowance or wait for next month.`, "budget_exhausted");
 }
 
-async function settleReservation(env, generation) {
-  const fresh = await loadGeneration(env, generation.id);
-  if (fresh.cost_observed_micro !== null) return;
-  await env.DB.prepare(
-    "UPDATE budgets SET reserved_micro=MAX(0,reserved_micro-?3), spent_micro=spent_micro+?3, updated_at=?4 WHERE project_id=?1 AND period=?2",
-  )
-    .bind(generation.project_id, periodKey(generation.created_at), generation.cost_reserved_micro, now())
-    .run();
-  await env.DB.prepare("UPDATE generations SET cost_observed_micro=?2, updated_at=?3 WHERE id=?1 AND cost_observed_micro IS NULL")
-    .bind(generation.id, generation.cost_reserved_micro, now())
-    .run();
+// Record and apply a settlement together; the second statement runs only when
+// the first claimed the previously unsettled row in this same D1 transaction.
+export async function transferReservation(env, generation, settle) {
+  const period = periodKey(generation.created_at), timestamp = now(), amount = generation.cost_reserved_micro;
+  const [claimed] = await env.DB.batch([
+    env.DB.prepare(`UPDATE generations SET cost_observed_micro=?2,updated_at=?3 WHERE id=?1 AND cost_observed_micro IS NULL
+      AND EXISTS(SELECT 1 FROM budgets WHERE project_id=?4 AND period=?5)`).bind(generation.id, settle ? amount : 0, timestamp, generation.project_id, period),
+    env.DB.prepare(`UPDATE budgets SET reserved_micro=MAX(0,reserved_micro-?3),spent_micro=spent_micro+?4,updated_at=?5
+      WHERE project_id=?1 AND period=?2 AND changes()=1`).bind(generation.project_id,period,amount,settle ? amount : 0,timestamp),
+  ]);
+  if ((claimed.meta?.changes ?? claimed.changes ?? 0) === 0) {
+    const fresh = await loadGeneration(env, generation.id);
+    if (fresh.cost_observed_micro === null) throw new HttpError(409, "The job's budget record is unavailable; its reservation was retained.", "budget_unavailable");
+  }
 }
-
-async function releaseReservation(env, generation) {
-  const fresh = await loadGeneration(env, generation.id);
-  if (fresh.cost_observed_micro !== null) return;
-  await env.DB.prepare(
-    "UPDATE budgets SET reserved_micro=MAX(0,reserved_micro-?3), updated_at=?4 WHERE project_id=?1 AND period=?2",
-  )
-    .bind(generation.project_id, periodKey(generation.created_at), generation.cost_reserved_micro, now())
-    .run();
-  await env.DB.prepare("UPDATE generations SET cost_observed_micro=0, updated_at=?2 WHERE id=?1 AND cost_observed_micro IS NULL")
-    .bind(generation.id, now())
-    .run();
-}
+async function settleReservation(env, generation) { await transferReservation(env, generation, true); }
+async function releaseReservation(env, generation) { await transferReservation(env, generation, false); }
 
 async function referenceFor(env, projectId, assetId) {
   if (!assetId) return null;
@@ -161,6 +160,18 @@ async function referenceFor(env, projectId, assetId) {
   };
 }
 
+function replayConflict() { throw new HttpError(409, "This request ID was already used for different inputs. Start a new request.", "idempotency_conflict"); }
+function validateGenerationReplay(row, model, settings, input) {
+  const saved = safeJson(row.request_json, {});
+  if (row.model !== model.id || row.kind !== model.kind || Object.entries(settings).some(([key,value]) => JSON.stringify(saved[key]) !== JSON.stringify(value)) ||
+      (saved.referenceAssetId ?? null) !== (input.referenceAssetId ?? null) || (saved.maskAssetId ?? null) !== (input.maskAssetId ?? null) || (saved.parentAssetId ?? null) !== (input.parentAssetId ?? null)) replayConflict();
+}
+function validateRenderReplay(row, model, composition) {
+  // The job retains its original manifest even if the storyboard or a cached
+  // social slate changes later. Replaying the same request returns that job.
+  if (row.model !== model.id || row.composition_id !== composition.id) replayConflict();
+}
+
 export async function createGeneration(env, project, input) {
   const model = getModel(input.model);
   if (model.kind !== input.kind)
@@ -175,7 +186,8 @@ export async function createGeneration(env, project, input) {
   )
     .bind(project.id, clientRequestId)
     .first();
-  if (existing) return { generation: existing, created: false };
+  const validateReplay = row => validateGenerationReplay(row, model, settings, input);
+  if (existing) { validateReplay(existing); return { generation: existing, created: false }; }
 
   const reference = await referenceFor(env, project.id, input.referenceAssetId);
   if (model.references > 0 && !reference)
@@ -203,10 +215,9 @@ export async function createGeneration(env, project, input) {
   const cost = estimateCost(model, settings);
   const generationId = id("gen");
   const timestamp = now();
-  try {
-    await env.DB.prepare(
-      `INSERT INTO generations(id,project_id,client_request_id,kind,recipe_id,provider,model,request_json,status,cost_estimate_micro,cost_reserved_micro,created_at,updated_at)
-       VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'admitted',?9,?10,?11,?12)`,
+  const insert = env.DB.prepare(
+      `INSERT INTO generations(id,project_id,client_request_id,kind,recipe_id,provider,model,request_json,status,cost_estimate_micro,cost_reserved_micro,created_at,updated_at,error_code)
+       SELECT ?1,?2,?3,?4,?5,?6,?7,?8,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?13 AND reserved_micro+spent_micro+?10<=allowance_micro) THEN 'admitted' ELSE 'failed' END,?9,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?13 AND reserved_micro+spent_micro+?10<=allowance_micro) THEN ?10 ELSE 0 END,?11,?12,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?13 AND reserved_micro+spent_micro+?10<=allowance_micro) THEN NULL ELSE 'budget_exhausted' END`,
     )
       .bind(
         generationId,
@@ -218,6 +229,7 @@ export async function createGeneration(env, project, input) {
         model.id,
         JSON.stringify({
           ...settings,
+          budgetAdmission: "atomic-v1",
           referenceAssetId: reference?.asset.id ?? null,
           referenceSha256: reference?.asset.sha256 ?? null,
           maskAssetId: mask?.asset.id ?? null,
@@ -228,38 +240,17 @@ export async function createGeneration(env, project, input) {
         cost,
         timestamp,
         timestamp,
-      )
-      .run();
-  } catch (error) {
-    if (String(error.message ?? error).includes("UNIQUE")) {
-      const row = await env.DB.prepare(
-        "SELECT * FROM generations WHERE project_id=?1 AND client_request_id=?2",
-      )
-        .bind(project.id, clientRequestId)
-        .first();
-      if (row) return { generation: row, created: false };
-    }
-    throw error;
-  }
-
-  let generation = await loadGeneration(env, generationId);
-  try {
-    await reserve(env, project.id, cost);
-  } catch (error) {
-    await env.DB.prepare("UPDATE generations SET status='failed',error_code='budget_exhausted',error_detail=?2,updated_at=?3 WHERE id=?1")
-      .bind(generationId, error.message, now())
-      .run();
-    throw error;
-  }
-
-  generation = await loadGeneration(env, generationId);
-  return { generation, created: true, model, settings, reference };
+        periodKey(timestamp),
+      );
+  const admitted = await admitJob(env, project.id, generationId, clientRequestId, cost, timestamp, insert, validateReplay);
+  return { ...admitted, model, settings, reference };
 }
 
 /** Atomically take the dispatch lease so two callers cannot both submit. */
 async function claim(env, generationId, from, to) {
   const row = await env.DB.prepare(
-    `UPDATE generations SET status=?3, updated_at=?4 WHERE id=?1 AND status=?2 RETURNING id`,
+    `UPDATE generations SET status=?3, updated_at=?4 WHERE id=?1 AND status=?2
+      AND deleted_at IS NULL AND CASE WHEN json_valid(request_json) THEN json_extract(request_json,'$.budgetAdmission')='atomic-v1' ELSE 0 END RETURNING id`,
   )
     .bind(generationId, from, to, now())
     .first();
@@ -272,7 +263,9 @@ export async function dispatchGeneration(env, generation) {
   const reference = await referenceFor(env, generation.project_id, request.referenceAssetId);
 
   if (!(await claim(env, generation.id, "admitted", "submitting"))) {
-    return loadGeneration(env, generation.id);
+    const current = await loadGeneration(env, generation.id);
+    if (current.status === "admitted" && safeJson(current.request_json, {}).budgetAdmission !== "atomic-v1") throw new HttpError(409, "This older job's reservation cannot be verified. Do not retry it automatically.", "admission_unverified");
+    return current;
   }
 
   if (model.kind === "image" && model.edit) {
@@ -304,7 +297,7 @@ export async function dispatchGeneration(env, generation) {
       const output = await runImage(env, model, request, reference ? [reference] : []);
       return await saveGeneration(env, generation, output.bytes, output.format);
     } catch (error) {
-      return failGeneration(env, generation, error);
+      return failGeneration(env, generation, error, { dispatched: true });
     }
   }
 
@@ -355,11 +348,9 @@ async function recordProviderFailure(env, generation, error, stage) {
     .filter(Boolean)
     .join(" · ")
     .slice(0, 240);
-  await env.DB.prepare(
-    "UPDATE generations SET status=?2,error_code=?3,error_detail=?4,updated_at=?5 WHERE id=?1 AND status IN ('submitting','submitted','running','provider_complete','unknown','cancel_requested')",
-  )
-    .bind(generation.id, terminal ? "failed" : "unknown", code, detail, now())
-    .run();
+  const allowed = stage === "result" ? "'provider_complete'" : "'submitted','running','cancel_requested'";
+  await env.DB.prepare(`UPDATE generations SET status=?2,error_code=?3,error_detail=?4,updated_at=?5 WHERE id=?1 AND status IN (${allowed}) AND provider_request_id=?6`)
+    .bind(generation.id, terminal ? "failed" : "unknown", code, detail, now(), generation.provider_request_id).run();
   return loadGeneration(env, generation.id);
 }
 
@@ -367,12 +358,12 @@ async function failGeneration(env, generation, error, { dispatched = false } = {
   const definitive = error instanceof HttpError && error.definitive === true;
   const status = definitive || !dispatched ? "failed" : "unknown";
   const code = error instanceof HttpError ? error.code : "provider_error";
-  await env.DB.prepare(
-    "UPDATE generations SET status=?2,error_code=?3,error_detail=?4,updated_at=?5 WHERE id=?1 AND status IN ('submitting','submitted','running')",
+  const changed = await env.DB.prepare(
+    "UPDATE generations SET status=?2,error_code=?3,error_detail=?4,updated_at=?5 WHERE id=?1 AND status IN ('submitting','submitted','running') RETURNING id",
   )
     .bind(generation.id, status, code, String(error.message ?? error).slice(0, 240), now())
-    .run();
-  if (status === "failed") await releaseReservation(env, generation);
+    .first();
+  if (changed && status === "failed") await releaseReservation(env, generation);
   return loadGeneration(env, generation.id);
 }
 
@@ -611,17 +602,17 @@ export async function advanceGeneration(env, generation) {
     return completeJob(env, fresh, status);
   }
   if (providerState === "CANCELLED" || providerState === "CANCELED") {
-    await env.DB.prepare("UPDATE generations SET status='cancelled',cancelled_at=?2,updated_at=?2 WHERE id=?1")
-      .bind(fresh.id, now())
-      .run();
-    await settleReservation(env, fresh);
+    const changed = await env.DB.prepare("UPDATE generations SET status='cancelled',cancelled_at=?2,updated_at=?2 WHERE id=?1 AND status IN ('submitted','running','cancel_requested') AND provider_request_id=?3 RETURNING id")
+      .bind(fresh.id, now(), fresh.provider_request_id)
+      .first();
+    if (changed) await settleReservation(env, fresh);
     return loadGeneration(env, fresh.id);
   }
   if (providerState === "FAILED" || providerState === "ERROR") {
-    await env.DB.prepare("UPDATE generations SET status='failed',error_code='provider_failed',error_detail='The video provider reported a failed job',updated_at=?2 WHERE id=?1")
-      .bind(fresh.id, now())
-      .run();
-    await releaseReservation(env, fresh);
+    const changed = await env.DB.prepare("UPDATE generations SET status='failed',error_code='provider_failed',error_detail='The video provider reported a failed job',updated_at=?2 WHERE id=?1 AND status IN ('submitted','running','cancel_requested') AND provider_request_id=?3 RETURNING id")
+      .bind(fresh.id, now(), fresh.provider_request_id)
+      .first();
+    if (changed) await releaseReservation(env, fresh);
     return loadGeneration(env, fresh.id);
   }
   if (providerState === "IN_PROGRESS" && fresh.status !== "cancel_requested") {
@@ -646,6 +637,11 @@ function formatForMime(mime) {
  * deterministic 1080×1920 still, keep those bytes as a reusable asset, then
  * compose the selected takes in their chosen order after it. */
 async function completeSocialStage(env, generation, status) {
+  const claimed = await env.DB.prepare("UPDATE generations SET status='submitting',updated_at=?2 WHERE id=?1 AND status IN ('submitted','running') AND deleted_at IS NULL AND provider_request_id=?3 RETURNING id").bind(generation.id, now(), generation.provider_request_id).first();
+  if (!claimed) {
+    await env.DB.prepare("UPDATE generations SET status='unknown',error_code='cancel_completed_stage',error_detail='The provider completed a stage after cancellation; no next stage was submitted.',updated_at=?2 WHERE id=?1 AND status='cancel_requested' AND provider_request_id=?3").bind(generation.id,now(),generation.provider_request_id).run();
+    return loadGeneration(env, generation.id);
+  }
   const request = safeJson(generation.request_json, {});
   let slate;
   try {
@@ -655,9 +651,9 @@ async function completeSocialStage(env, generation, status) {
     });
   } catch (error) {
     await env.DB.prepare(
-      "UPDATE generations SET error_code='slate_unavailable',error_detail=?2,updated_at=?3 WHERE id=?1",
+      "UPDATE generations SET status=CASE WHEN error_code='cancel_unconfirmed' THEN 'unknown' ELSE 'submitted' END,error_code=CASE WHEN error_code='cancel_unconfirmed' THEN 'cancel_unconfirmed' ELSE 'slate_unavailable' END,error_detail=?2,updated_at=?3 WHERE id=?1 AND status='submitting' AND provider_request_id=?4",
     )
-      .bind(generation.id, String(error.message ?? error).slice(0, 200), now())
+      .bind(generation.id, String(error.message ?? error).slice(0, 200), now(), generation.provider_request_id)
       .run();
     return loadGeneration(env, generation.id);
   }
@@ -674,9 +670,9 @@ async function completeSocialStage(env, generation, status) {
     });
   } catch (error) {
     await env.DB.prepare(
-      "UPDATE generations SET error_code='slate_save_failed',error_detail=?2,updated_at=?3 WHERE id=?1",
+      "UPDATE generations SET status=CASE WHEN error_code='cancel_unconfirmed' THEN 'unknown' ELSE 'submitted' END,error_code=CASE WHEN error_code='cancel_unconfirmed' THEN 'cancel_unconfirmed' ELSE 'slate_save_failed' END,error_detail=?2,updated_at=?3 WHERE id=?1 AND status='submitting' AND provider_request_id=?4",
     )
-      .bind(generation.id, String(error.message ?? error).slice(0, 200), now())
+      .bind(generation.id, String(error.message ?? error).slice(0, 200), now(), generation.provider_request_id)
       .run();
     return loadGeneration(env, generation.id);
   }
@@ -690,6 +686,11 @@ async function completeSocialStage(env, generation, status) {
     }
   }
 
+  const current = await loadGeneration(env, generation.id);
+  if (current.deleted_at || current.status !== "submitting" || current.error_code === "cancel_unconfirmed") {
+    if (current.status === "submitting") await env.DB.prepare("UPDATE generations SET status='unknown',error_code='cancel_unconfirmed',updated_at=?2 WHERE id=?1 AND status='submitting'").bind(generation.id,now()).run();
+    return loadGeneration(env, generation.id);
+  }
   const nextRequest = { ...request, stage: "compose", slateVideoAssetId: stored.id };
   return submitSocialCompose(env, generation, nextRequest, stored.id);
 }
@@ -831,15 +832,16 @@ async function audioTracksForRender(env, projectId, request, offsetMs = 0) {
 /** Read the finished provider result, copy its bytes, then save. Model-specific
  * because audio, stills and renders return different result shapes. */
 async function completeJob(env, generation, status) {
-  if (generation.status === "cancel_requested") {
-    // Completion won the race. Report what happened instead of pretending it cancelled.
-    await env.DB.prepare("UPDATE generations SET error_code='completed_before_cancel',updated_at=?2 WHERE id=?1")
-      .bind(generation.id, now())
-      .run();
+  if (generation.status === "provider_complete") {
+    const fresh = await loadGeneration(env, generation.id);
+    if (fresh.status !== "provider_complete" || fresh.provider_request_id !== generation.provider_request_id) return fresh;
+  } else {
+    const claimed = await env.DB.prepare(`UPDATE generations SET status='provider_complete',
+      error_code=CASE WHEN status='cancel_requested' THEN 'completed_before_cancel' ELSE error_code END,updated_at=?2
+      WHERE id=?1 AND status IN ('submitted','running','cancel_requested') AND provider_request_id=?3 RETURNING id`)
+      .bind(generation.id, now(), generation.provider_request_id).first();
+    if (!claimed) return loadGeneration(env, generation.id);
   }
-  await env.DB.prepare("UPDATE generations SET status='provider_complete',updated_at=?2 WHERE id=?1")
-    .bind(generation.id, now())
-    .run();
 
   const model = getModel(generation.model);
   const request = safeJson(generation.request_json, {});
@@ -922,22 +924,21 @@ export async function loadGenerationByProviderRequest(env, requestId) {
  * the same owned-storage path as a polled result. Re-delivery is a no-op. */
 export async function completeFromWebhook(env, generation, payload) {
   const fresh = await loadGeneration(env, generation.id);
-  if (!fresh || fresh.status === "saved" || fresh.deleted_at) return fresh;
+  if (!fresh || fresh.deleted_at || !["submitted","running","cancel_requested","provider_complete"].includes(fresh.status) || fresh.provider_request_id !== generation.provider_request_id) return fresh;
   const model = getModel(fresh.model);
   const file = resultFileFor(model, payload);
   if (!file?.url) {
     await env.DB.prepare(
-      "UPDATE generations SET status='failed',error_code='provider_invalid',error_detail='The provider webhook carried no usable output',updated_at=?2 WHERE id=?1",
+      "UPDATE generations SET status='failed',error_code='provider_invalid',error_detail='The provider webhook carried no usable output',updated_at=?2 WHERE id=?1 AND status IN ('submitted','running','cancel_requested') AND provider_request_id=?3",
     )
-      .bind(fresh.id, now())
+      .bind(fresh.id, now(), fresh.provider_request_id)
       .run();
     return loadGeneration(env, fresh.id);
   }
-  await env.DB.prepare(
-    "UPDATE generations SET status='provider_complete',updated_at=?2 WHERE id=?1",
-  )
-    .bind(fresh.id, now())
-    .run();
+  const claimed = await env.DB.prepare(
+    "UPDATE generations SET status='provider_complete',updated_at=?2 WHERE id=?1 AND status IN ('submitted','running','cancel_requested','provider_complete') AND provider_request_id=?3 RETURNING id",
+  ).bind(fresh.id, now(), fresh.provider_request_id).first();
+  if (!claimed) return loadGeneration(env, fresh.id);
   let download;
   try {
     download = await downloadMedia(env, file.url);
@@ -975,9 +976,10 @@ async function loadAssetRow(env, projectId, assetId) {
 
 export async function cancelGeneration(env, generation) {
   const fresh = await loadGeneration(env, generation.id);
-  if (fresh.status === "admitted" || fresh.status === "submitting") {
+  if (fresh.status === "admitted") {
+    if (safeJson(fresh.request_json, {}).budgetAdmission !== "atomic-v1") throw new HttpError(409, "This older job's reservation cannot be verified. Do not retry or release it automatically.", "admission_unverified");
     const cancelled = await env.DB.prepare(
-      "UPDATE generations SET status='cancelled',cancelled_at=?2,updated_at=?2 WHERE id=?1 AND status IN ('admitted','submitting') RETURNING id",
+      "UPDATE generations SET status='cancelled',cancelled_at=?2,updated_at=?2 WHERE id=?1 AND status='admitted' RETURNING id",
     )
       .bind(fresh.id, now())
       .first();
@@ -987,21 +989,25 @@ export async function cancelGeneration(env, generation) {
     }
     return loadGeneration(env, fresh.id);
   }
+  if (fresh.status === "submitting") {
+    await env.DB.prepare("UPDATE generations SET error_code='cancel_unconfirmed',updated_at=?2 WHERE id=?1 AND status='submitting'").bind(fresh.id, now()).run();
+    return loadGeneration(env, fresh.id);
+  }
   if (["submitted", "running"].includes(fresh.status)) {
+    // Claim cancellation intent before network I/O so another poll cannot
+    // launch the next paid social stage while the provider call is pending.
+    const intent = await env.DB.prepare("UPDATE generations SET status='cancel_requested',updated_at=?2 WHERE id=?1 AND status IN ('submitted','running') AND provider_request_id=?3 RETURNING id").bind(fresh.id,now(),fresh.provider_request_id).first();
+    if (!intent) {
+      const current = await loadGeneration(env, fresh.id);
+      return current.status === "submitting" ? cancelGeneration(env, current) : current;
+    }
     try {
       const result = await cancelVideo(env, fresh);
-      if (result.accepted) {
-        await env.DB.prepare("UPDATE generations SET status='cancel_requested',updated_at=?2 WHERE id=?1")
-          .bind(fresh.id, now())
-          .run();
-        return loadGeneration(env, fresh.id);
-      }
+      if (result.accepted) return loadGeneration(env, fresh.id);
     } catch {
-      // Fall through to an honest "not confirmed" state.
+      // A lost reply does not prove cancellation; retain the reservation.
     }
-    await env.DB.prepare("UPDATE generations SET error_code='cancel_unconfirmed',updated_at=?2 WHERE id=?1")
-      .bind(fresh.id, now())
-      .run();
+    await env.DB.prepare("UPDATE generations SET error_code='cancel_unconfirmed',updated_at=?2 WHERE id=?1 AND status='cancel_requested' AND provider_request_id=?3").bind(fresh.id, now(), fresh.provider_request_id).run();
     return loadGeneration(env, fresh.id);
   }
   if (["provider_complete", "saving"].includes(fresh.status)) {
@@ -1305,7 +1311,8 @@ export async function createRender(env, project, composition, input) {
   )
     .bind(project.id, clientRequestId)
     .first();
-  if (existing) return { generation: existing, created: false };
+  const validateReplay = row => validateRenderReplay(row, model, composition);
+  if (existing) { validateReplay(existing); return { generation: existing, created: false }; }
 
   let needsMix = (spec.audioTracks ?? []).some(
     (track) => track.trimStartMs || track.gainDb || track.fadeInMs || track.fadeOutMs || track.startMs,
@@ -1343,10 +1350,9 @@ export async function createRender(env, project, composition, input) {
   const cost = model.render === "social" && spec.slateVideoAssetId ? 20_000 : model.costMicro;
   const generationId = id("gen");
   const timestamp = now();
-  try {
-    await env.DB.prepare(
-      `INSERT INTO generations(id,project_id,composition_id,client_request_id,kind,recipe_id,provider,model,request_json,status,cost_estimate_micro,cost_reserved_micro,created_at,updated_at)
-       VALUES(?1,?2,?3,?4,'video','composition',?5,?6,?7,'admitted',?8,?9,?10,?10)`,
+  const insert = env.DB.prepare(
+      `INSERT INTO generations(id,project_id,composition_id,client_request_id,kind,recipe_id,provider,model,request_json,status,cost_estimate_micro,cost_reserved_micro,created_at,updated_at,error_code)
+       SELECT ?1,?2,?3,?4,'video','composition',?5,?6,?7,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?11 AND reserved_micro+spent_micro+?9<=allowance_micro) THEN 'admitted' ELSE 'failed' END,?8,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?11 AND reserved_micro+spent_micro+?9<=allowance_micro) THEN ?9 ELSE 0 END,?10,?10,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?11 AND reserved_micro+spent_micro+?9<=allowance_micro) THEN NULL ELSE 'budget_exhausted' END`,
     )
       .bind(
         generationId,
@@ -1356,6 +1362,7 @@ export async function createRender(env, project, composition, input) {
         model.provider,
         model.id,
         JSON.stringify({
+          budgetAdmission: "atomic-v1",
           compositionId: composition.id,
           title: composition.title,
           shots: spec.shots,
@@ -1371,30 +1378,10 @@ export async function createRender(env, project, composition, input) {
         cost,
         cost,
         timestamp,
-      )
-      .run();
-  } catch (error) {
-    if (String(error.message ?? error).includes("UNIQUE")) {
-      const row = await env.DB.prepare(
-        "SELECT * FROM generations WHERE project_id=?1 AND client_request_id=?2",
-      )
-        .bind(project.id, clientRequestId)
-        .first();
-      if (row) return { generation: row, created: false };
-    }
-    throw error;
-  }
-
-  const generation = await loadGeneration(env, generationId);
-  try {
-    await reserve(env, project.id, cost);
-  } catch (error) {
-    await env.DB.prepare("UPDATE generations SET status='failed',error_code='budget_exhausted',error_detail=?2,updated_at=?3 WHERE id=?1")
-      .bind(generationId, error.message, now())
-      .run();
-    throw error;
-  }
-  return { generation: await loadGeneration(env, generationId), created: true, model };
+        periodKey(timestamp),
+      );
+  const admitted = await admitJob(env, project.id, generationId, clientRequestId, cost, timestamp, insert, validateReplay);
+  return { ...admitted, model };
 }
 
 /** Submit the render. Exported so the worker can dispatch immediately. */
@@ -1402,7 +1389,9 @@ export async function dispatchRender(env, generation) {
   const model = getModel(generation.model);
   const request = safeJson(generation.request_json, {});
   if (!(await claim(env, generation.id, "admitted", "submitting"))) {
-    return loadGeneration(env, generation.id);
+    const current = await loadGeneration(env, generation.id);
+    if (current.status === "admitted" && safeJson(current.request_json, {}).budgetAdmission !== "atomic-v1") throw new HttpError(409, "This older job's reservation cannot be verified. Do not retry it automatically.", "admission_unverified");
+    return current;
   }
 
   try {

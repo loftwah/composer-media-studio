@@ -34,7 +34,7 @@ Studio Score takes a length of 10 to 30 seconds, so a generated bed can be chose
 
 A render needs the provider to read the participating bytes. The studio mints a signed link per asset, valid for 30 minutes, bound to one asset and one project. It exposes no listing, session or provider key, and expires on its own. That read is disclosed in the interface before the render starts.
 
-Every request shows an estimate before submission. The monthly allowance is enforced by one atomic SQL admission across the project. Half-finished saves keep the exact provider bytes and can be retried without another inference call. Ambiguous provider outcomes keep their reservation and are never resubmitted automatically.
+Every request shows an estimate before submission. The monthly allowance reservation and job admission are committed together in one D1 transaction across the project. Half-finished saves keep the exact provider bytes and can be retried without another inference call. Ambiguous provider outcomes keep their reservation and are never resubmitted automatically. Accepted cancellation requests require explicit reconciliation; normal polling and cron do not advance them. Older admitted jobs without a verifiable atomic admission are held for investigation rather than dispatched or released automatically.
 
 ## Migrations
 
