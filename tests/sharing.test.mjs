@@ -57,6 +57,18 @@ function published(overrides = {}) {
   });
 }
 
+test("public video reserves its known frame without applying it to audio or unknown dimensions", () => {
+  const video = published({ kind: "video", mime: "video/mp4", width: 768, height: 1344 });
+  assert.match(video, /class="media media-video" style="width:min\(100%,[\d.]+vh\)"/);
+  assert.match(video, /<video controls playsinline preload="metadata" width="768" height="1344" style="aspect-ratio:auto 768 \/ 1344"/);
+  const unknown = published({ kind: "video", mime: "video/mp4", width: null, height: null });
+  assert.match(unknown, /class="media media-video">/);
+  assert.doesNotMatch(unknown, /aspect-ratio:auto/);
+  const audio = published({ kind: "audio", mime: "audio/mpeg" });
+  assert.match(audio, /<div class="media">/);
+  assert.doesNotMatch(audio, /media-video|aspect-ratio:auto/);
+});
+
 test("public destinations accept plain HTTPS links and fail closed", () => {
   assert.equal(
     publicDestination("https://composer.loftwah.com/init?start=media-studio"),

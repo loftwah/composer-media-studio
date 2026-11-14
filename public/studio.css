@@ -237,7 +237,9 @@ dialog h2 { margin: 0; }
 }
 .public-page { max-width: 980px; }
 .public-page .media { background: #1d201c; border-radius: 4px; overflow: hidden; }
-.public-page .media img, .public-page .media video { width: 100%; display: block; max-height: 82vh; object-fit: contain; }
+.public-page .media img { width: 100%; display: block; max-height: 82vh; object-fit: contain; }
+.public-page .media-video { width: 100%; max-width: 100%; margin-inline: auto; }
+.public-page .media video { display: block; width: 100%; height: auto; max-height: 82vh; object-fit: contain; }
 .public-page .caption { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding-top: 0.7rem; font-size: 0.85rem; color: var(--muted); }
 .public-page .lede { font-family: var(--display); font-size: clamp(1.1rem, 2vw, 1.35rem); color: var(--ink-soft); max-width: 62ch; }
 .public-next { margin-top: 2rem; padding: 1.2rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }

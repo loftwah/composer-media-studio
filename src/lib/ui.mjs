@@ -219,6 +219,9 @@ export function publicPage({
   const url = `${origin}/p/${slug}`;
   const isVideo = kind === "video";
   const isAudio = kind === "audio";
+  const hasVideoDimensions = Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0;
+  const videoDimensions = hasVideoDimensions ? `width="${width}" height="${height}" style="aspect-ratio:auto ${width} / ${height}"` : "";
+  const videoFrameStyle = isVideo && hasVideoDimensions ? ` style="width:min(100%,${Math.min(10000, 82 * width / height)}vh)"` : "";
   const dimensions = width && height ? `${width} × ${height}` : null;
   const duration = durationMs ? `${(durationMs / 1000).toFixed(1)}s` : null;
   const size = bytes ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : null;
@@ -290,10 +293,10 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
   <h1>${escapeHtml(title)}</h1>
   ${description ? `<p class="lede">${escapeHtml(description)}</p>` : ""}
   <figure style="margin:1.4rem 0">
-    <div class="media">
+    <div class="media${isVideo ? " media-video" : ""}"${videoFrameStyle}>
       ${
         isVideo
-          ? `<video controls playsinline preload="metadata" ${poster ? `poster="${escapeHtml(poster)}"` : ""} aria-label="${escapeHtml(title)}"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">Your browser cannot play this video. <a href="${escapeHtml(download)}">Download it instead</a>.</video>`
+          ? `<video controls playsinline preload="metadata" ${videoDimensions} ${poster ? `poster="${escapeHtml(poster)}"` : ""} aria-label="${escapeHtml(title)}"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">Your browser cannot play this video. <a href="${escapeHtml(download)}">Download it instead</a>.</video>`
           : isAudio
             ? `<audio controls preload="metadata" aria-label="${escapeHtml(title)}" style="width:100%"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">Your browser cannot play this audio. <a href="${escapeHtml(download)}">Download it instead</a>.</audio>`
             : `<img src="${escapeHtml(media)}" alt="${escapeHtml(title)}" ${width ? `width="${width}" height="${height}"` : ""} decoding="async">`
