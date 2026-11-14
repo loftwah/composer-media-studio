@@ -1,3 +1,4 @@
+import { localAudioFits, MAX_LOCAL_AUDIO_SECONDS, MAX_LOCAL_PCM_BYTES } from "./local-audio-limits.mjs";
 import { LocalImport } from "./local-import";
 import { encodeWav } from "../../public/wav.js";
 import { localMixRange } from "./local-mix-range";
@@ -26,7 +27,7 @@ async function checkMusicDuration(file: File, signal: AbortSignal) {
       element.onerror = () => done(() => reject(new Error("This browser cannot read that audio file.")));
       if (signal.aborted) cancel();
     });
-    if (!Number.isFinite(duration) || duration <= 0 || duration > 180) throw new Error("Choose audio no longer than 3 minutes.");
+    if (!Number.isFinite(duration) || duration <= 0 || duration > MAX_LOCAL_AUDIO_SECONDS) throw new Error("Choose audio no longer than 5 minutes.");
   } finally { element.removeAttribute("src"); element.load(); URL.revokeObjectURL(url); }
 }
 
@@ -57,19 +58,19 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
       const musicChannels = await musicTrack.getNumberOfChannels(), musicRate = await musicTrack.getSampleRate();
       const musicStart = await musicTrack.getFirstTimestamp(), musicEnd = await musicTrack.computeDuration();
       const musicSeconds = musicEnd - musicStart;
-      if (!Number.isInteger(musicChannels) || musicChannels < 1 || musicChannels > 2 || !Number.isFinite(musicRate) || musicRate <= 0 || musicRate > 96000 || !Number.isFinite(musicSeconds) || musicSeconds <= 0 || musicSeconds > 180) throw new Error("Choose supported mono or stereo audio up to 3 minutes.");
+      if (!Number.isInteger(musicChannels) || musicChannels < 1 || musicChannels > 2 || !Number.isFinite(musicRate) || musicRate <= 0 || musicRate > 96000 || !Number.isFinite(musicSeconds) || musicSeconds <= 0 || musicSeconds > MAX_LOCAL_AUDIO_SECONDS) throw new Error("Choose supported mono or stereo audio up to 5 minutes.");
       musicInfo = {channels:musicChannels, rate:musicRate, seconds:musicSeconds};
     } finally { musicInput.dispose(); }
     check(signal);
     const audioContext = new AudioContext(); let music: AudioBuffer;
     try {
-      if (musicInfo.seconds * Math.max(musicInfo.rate, audioContext.sampleRate) * musicInfo.channels * 4 > 64 * 1024 * 1024) throw new Error("Choose audio that decodes to at most 64 MB on this device.");
+      if (!localAudioFits({seconds:musicInfo.seconds,channels:musicInfo.channels,sourceRate:musicInfo.rate,deviceRate:audioContext.sampleRate})) throw new Error("Choose audio that decodes to at most 128 MiB on this device.");
       const bytes = await musicFile.arrayBuffer(); check(signal);
       music = await audioContext.decodeAudioData(bytes);
-      if (music.length * music.numberOfChannels * 4 > 64 * 1024 * 1024 || music.numberOfChannels > 2) throw new Error("The decoded audio exceeds this tool's local memory limit.");
+      if (music.length * music.numberOfChannels * 4 > MAX_LOCAL_PCM_BYTES || music.numberOfChannels > 2) throw new Error("The decoded audio exceeds this tool's local memory limit.");
     } finally { await audioContext.close(); }
     check(signal);
-    if (!Number.isFinite(music.duration) || music.duration > 180 || music.duration <= offset) throw new Error("Choose audio up to 3 minutes and a start within the track.");
+    if (!Number.isFinite(music.duration) || music.duration > MAX_LOCAL_AUDIO_SECONDS || music.duration <= offset) throw new Error("Choose audio up to 5 minutes and a start within the track.");
     const audible = musicFadeDuration(duration, music.duration, offset, fadeIn, fadeOut);
     const offline = new OfflineAudioContext(2, Math.ceil(duration * 44100), 44100);
     const source = offline.createBufferSource(); source.buffer = music;
@@ -172,7 +173,7 @@ function AddMusic() {
       <p className="trim-note">Up to 60 seconds and 128 MB. Original sound is off by default. Raise its volume below to keep it under your music.</p>
       {video && <><p><strong>{video.name}</strong></p><video ref={sourceVideo} onPlay={()=>pauseOthers(sourceVideo.current)} className="video-tool-player" src={videoUrl} controls playsInline aria-label="Original video"/></>}
       <label className="trim-file">Music or spoken audio<input type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing} onChange={e => choose(e.target.files?.[0],"music")}/></label>
-      <p className="trim-note">Use audio you have permission to use, up to 3 minutes and 16 MB. If the selected audio ends early, any enabled original sound continues.</p>
+      <p className="trim-note">Use audio you have permission to use, up to 5 minutes and 16 MB; decoded audio must fit within 128 MiB on this device. If the selected audio ends early, any enabled original sound continues.</p>
       {music && <><p><strong>{music.name}</strong></p><audio ref={sourceMusic} onPlay={()=>pauseOthers(sourceMusic.current)} controls src={musicUrl} aria-label="Original music"/></>}
       <div className="trim-fields"><label>Music start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label></div>
       <p className="trim-note">Fades apply to the added music only and must fit within the part used in the video.</p>
