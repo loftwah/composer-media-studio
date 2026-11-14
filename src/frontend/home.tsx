@@ -52,3 +52,5 @@ export function renderHome(container: HTMLElement, props: HomeProps): void {
 export function unmountHome(): void {
   if (root) { root.unmount(); root = undefined; }
 }
+
+export { renderLibrary, renderViewer, unmountMedia } from "./library";

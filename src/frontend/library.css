@@ -1,0 +1,12 @@
+.library-controls { gap:1rem; }
+.library-workspace .asset-grid { margin-top:1rem; }
+.library-controls input[type="search"] { min-width:min(320px,60vw); }
+.library-upload { cursor:pointer; }
+.library-dropzone { margin:1rem 0; }
+.library-dropzone p { margin:0; }
+.library-dropzone p + p { margin-top:.3rem; }
+.asset-viewer-title { font-size:1.7rem; }
+.asset-hash { overflow-wrap:anywhere; font-size:.72rem; }
+.launch-kit-source { border-top:1px solid var(--line); padding-top:.8rem; }
+.launch-kit-source p { margin:0; }
+.asset-no-source { font-size:.84rem; }

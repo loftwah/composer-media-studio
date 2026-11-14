@@ -5,7 +5,10 @@ const toast = document.querySelector("#toast");
 const confirmDialog = document.querySelector("#confirm");
 let creativeHome = null;
 let homeMounted = false;
+let mediaMounted = false;
 let bootReady = false;
+let libraryReturn = null;
+const shareImportDrafts = new Map();
 
 const state = {
   view: "home",
@@ -30,7 +33,7 @@ const state = {
 
 // The original workbench remains in place while the home surface migrates.
 // A missing bundle falls back to the existing home rather than hiding projects.
-import(`/creative/home.js${new URL(import.meta.url).search}`)
+const creativeModuleReady = import(`/creative/home.js${new URL(import.meta.url).search}`)
   .then((module) => { creativeHome = module; if (bootReady && state.view === "home") render(); })
   .catch(() => console.warn("Creative home unavailable; using the existing project browser."));
 
@@ -153,6 +156,7 @@ async function boot() {
     if (state.view === "asset") state.assetId = route.assetId;
     await loadProject(state.projectId);
   }
+  if (state.view === "home") await creativeModuleReady;
   bootReady = true;
   render();
   startPolling();
@@ -219,6 +223,8 @@ function promptFromRecipe(recipe, values) {
 }
 
 function render() {
+  saveShareImportDraft();
+  if (mediaMounted) { creativeHome.unmountMedia(); mediaMounted = false; }
   if (state.view === "home") {
     if (creativeHome) {
       if (!homeMounted) {
@@ -233,14 +239,68 @@ function render() {
     } else app.innerHTML = homeView();
   } else if (state.view === "asset") {
     if (homeMounted) { creativeHome.unmountHome(); homeMounted = false; }
-    app.innerHTML = assetView();
+    if (creativeHome) {
+      app.innerHTML = '<div id="creative-media"></div>';
+      const asset = state.project?.assets.find((item) => item.id === state.assetId) ?? null;
+      const still = asset?.reuseStillId ? state.project.assets.find((item) => item.id === asset.reuseStillId) ?? null : null;
+      creativeHome.renderViewer(app.querySelector("#creative-media"), {
+        projectId: state.projectId, asset, still, launchKitUrl: state.destinations?.launchKitUrl ?? null,
+      });
+      mediaMounted = true;
+    } else app.innerHTML = assetView();
   } else {
     if (homeMounted) { creativeHome.unmountHome(); homeMounted = false; }
     app.innerHTML = projectView();
+    if (creativeHome && state.tab === "library" && state.project) {
+      renderReactLibrary();
+      mediaMounted = true;
+    }
     attachDropzone();
+    if (state.tab === "library") restoreShareImportDraft();
     if (state.tab === "create") attachMask();
+    if (state.tab === "library" && libraryReturn?.projectId === state.projectId) {
+      const previous = libraryReturn;
+      libraryReturn = null;
+      requestAnimationFrame(() => {
+        if (state.view !== "project" || state.tab !== "library" || state.projectId !== previous.projectId) return;
+        const item = [...app.querySelectorAll('[data-action="open-asset"]')].find((button) => button.dataset.id === previous.assetId);
+        item?.focus({ preventScroll: true });
+        window.scrollTo(0, previous.scrollY);
+      });
+    }
   }
   drawWaveforms();
+}
+
+function renderReactLibrary() {
+  creativeHome.renderLibrary(app.querySelector("#creative-media"), {
+    projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter,
+    canImportShare: state.woodhouseShare && state.session?.actions.includes("edit"),
+  });
+}
+
+// The import form is intentionally local and unsaved. Keep it per project
+// across polling, navigation and other workbench rerenders on this device.
+function saveShareImportDraft() {
+  const details = app.querySelector("details.share-import[data-project-id]");
+  if (!details) return;
+  const form = details.querySelector('[data-form="woodhouse-import"]');
+  if (!form) return;
+  shareImportDrafts.set(details.dataset.projectId, {
+    open: details.open,
+    assetId: form.elements.assetId.value,
+    reuseConfirmed: form.elements.reuseConfirmed.checked,
+  });
+}
+
+function restoreShareImportDraft() {
+  const details = app.querySelector("details.share-import[data-project-id]");
+  const draft = details && shareImportDrafts.get(details.dataset.projectId);
+  const form = details?.querySelector('[data-form="woodhouse-import"]');
+  if (!draft || !form) return;
+  details.open = draft.open;
+  form.elements.assetId.value = draft.assetId;
+  form.elements.reuseConfirmed.checked = draft.reuseConfirmed;
 }
 
 function homeView() {
@@ -300,7 +360,7 @@ function projectView() {
         .join("")}
     </nav>
     <section role="tabpanel" aria-label="${esc(state.tab)}">
-      ${state.tab === "library" ? libraryView() : ""}
+      ${state.tab === "library" ? (creativeHome ? '<div id="creative-media"></div>' : libraryView()) : ""}
       ${state.tab === "create" ? createView() : ""}
       ${state.tab === "assemble" ? composeView() : ""}
       ${state.tab === "history" ? historyView() : ""}
@@ -350,7 +410,7 @@ function libraryView() {
       <label class="button secondary" for="upload" style="cursor:pointer">Upload media<input id="upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" hidden data-input="upload"></label>
     </div>
     ${state.woodhouseShare && state.session?.actions.includes("edit") ? `
-      <details class="share-import">
+      <details class="share-import" data-project-id="${esc(state.projectId)}">
         <summary>Import from Woodhouse Share</summary>
         <form class="stack" data-form="woodhouse-import">
           <p class="small">Find the asset ID in <a href="/portfolio" target="_blank" rel="noopener">Share artwork</a>. The original and source credit are saved to this project.</p>
@@ -873,7 +933,20 @@ async function handleAction(action, element) {
       return;
     case "filter":
       state.filter = element.dataset.filter;
-      render();
+      if (mediaMounted && state.view === "project" && state.tab === "library") {
+        renderReactLibrary();
+        drawWaveforms();
+      } else render();
+      return;
+    case "clear-library":
+      state.filter = "all";
+      state.query = "";
+      if (mediaMounted && state.view === "project" && state.tab === "library") {
+        const search = app.querySelector('[data-input="search"]');
+        if (search) search.value = "";
+        renderReactLibrary();
+        drawWaveforms();
+      } else render();
       return;
     case "kind": {
       state.create.kind = element.dataset.kind;
@@ -1035,6 +1108,9 @@ async function handleAction(action, element) {
       await submitCreate();
       return;
     case "open-asset":
+      if (state.view === "project" && state.tab === "library") {
+        libraryReturn = { projectId: state.projectId, assetId: id, scrollY: window.scrollY };
+      }
       location.hash = `#/a/${state.projectId}/${id}`;
       return;
     case "refresh-job":
@@ -1988,8 +2064,13 @@ app.addEventListener("input", (event) => {
   if (!input) return;
   if (input.dataset.input === "search") {
     state.query = input.value;
-    const grid = document.querySelector(".asset-grid");
-    if (grid) grid.innerHTML = visibleAssets().map(assetCard).join("");
+    if (mediaMounted) {
+      renderReactLibrary();
+      drawWaveforms();
+    } else {
+      const grid = document.querySelector(".asset-grid");
+      if (grid) grid.innerHTML = visibleAssets().map(assetCard).join("");
+    }
   }
   if (input.dataset.input === "prompt") state.create.prompt = input.value;
   if (input.dataset.input === "control") {
@@ -2024,6 +2105,10 @@ app.addEventListener("submit", async (event) => {
           state.project.assets.unshift(asset);
         state.query = "";
         state.filter = "all";
+        importForm.reset();
+        const details = importForm.closest("details.share-import");
+        if (details) details.open = false;
+        shareImportDrafts.delete(projectId);
         render();
       }
       notify(`Saved ${asset.title}.`);
