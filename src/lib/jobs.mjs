@@ -686,16 +686,23 @@ async function completeSocialStage(env, generation, status) {
       .bind(request.compositionId, generation.project_id)
       .first();
     if (composition) {
-      const spec = safeJson(composition.spec_json, {});
-      spec.slateVideoAssetId = stored.id;
-      await env.DB.prepare("UPDATE compositions SET spec_json=?2,updated_at=?3 WHERE id=?1")
-        .bind(composition.id, JSON.stringify(spec), now())
-        .run();
+      await cacheSlateOnComposition(env, composition, stored.id);
     }
   }
 
   const nextRequest = { ...request, stage: "compose", slateVideoAssetId: stored.id };
   return submitSocialCompose(env, generation, nextRequest, stored.id);
+}
+
+// Caching the reusable slate is optional. Never replace a storyboard edit that
+// landed after this job read it; the job still retains its own slate asset.
+export async function cacheSlateOnComposition(env, composition, slateVideoAssetId) {
+  const spec = safeJson(composition.spec_json, {});
+  spec.slateVideoAssetId = slateVideoAssetId;
+  const updated = await env.DB.prepare("UPDATE compositions SET spec_json=?2,updated_at=?3 WHERE id=?1 AND project_id=?4 AND spec_json=?5 AND updated_at=?6 RETURNING id")
+    .bind(composition.id, JSON.stringify(spec), Math.max(now(), composition.updated_at + 1), composition.project_id, composition.spec_json, composition.updated_at)
+    .first();
+  return Boolean(updated);
 }
 
 async function submitSocialCompose(env, generation, request, slateVideoAssetId) {
