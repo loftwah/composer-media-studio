@@ -109,3 +109,7 @@ test('caption snapshot requires matching plan revision and confirmed rights with
   await env.DB.prepare('UPDATE song_plans SET revision=revision+1 WHERE id=?1').bind(plan.id).run();
   assert.equal((await start()).status,409);
 });
+test('HD quality is preserved in private receipts and legacy framing defaults to standard',async()=>{
+ const {env,start}=await fixture(); const hd=await start({framing:{aspect:'9:16',fit:'cover',quality:'hd'}});assert.equal(hd.status,201);const receipt=(await hd.json()).receipt;const row=await env.DB.prepare('SELECT snapshot_json FROM local_render_receipts WHERE id=?1').bind(receipt.id).first();assert.equal(JSON.parse(row.snapshot_json).framing.quality,'hd');
+ const legacy=await start();assert.equal(legacy.status,201);const old=(await legacy.json()).receipt;const saved=await env.DB.prepare('SELECT snapshot_json FROM local_render_receipts WHERE id=?1').bind(old.id).first();assert.equal(JSON.parse(saved.snapshot_json).framing.quality,'standard');assert.equal((await start({framing:{aspect:'1:1',fit:'contain',quality:'4k'}})).status,400);
+});

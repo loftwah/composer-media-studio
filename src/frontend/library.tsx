@@ -54,7 +54,7 @@ type RenderReceipt = {
   soundtrack: { assetId: string; sha256: string } | null;
   tracks: { assetId: string; sha256: string; role: string; startMs: number; trimStartMs: number; trimEndMs: number; gainDb: number; fadeInMs: number; fadeOutMs: number }[];
   captions: { planId: string; revision: number; songAssetId: string; songSha256: string } | null;
-  framing: { aspect: string; fit: string };
+  framing: { aspect: string; fit: string; quality?: string };
   output: { sha256: string };
 };
 
@@ -79,7 +79,7 @@ function PrivateRenderReceipt({ assetId, reentryUrl }: { assetId: string; reentr
     {state === 'missing' && <p>No private render receipt is recorded for this asset.</p>}
     {state === 'error' && <p role="alert">The receipt could not be loaded. <button type="button" className="quiet" onClick={() => void load()}>Try again</button></p>}
     {receipt && <><p>The server recorded the saved storyboard and source hashes. Framing, captions and rendering were reported by the browser; the server did not verify the rendered pixels.</p>
-      <dl className="kv"><dt>Storyboard</dt><dd>{receipt.storyboard.id} · version {receipt.storyboard.updatedAt}</dd><dt>Frame</dt><dd>{receipt.framing.aspect} · {receipt.framing.fit === 'cover' ? 'centre crop' : 'show whole shot'}</dd><dt>Duration</dt><dd>{(receipt.totalMs / 1000).toFixed(1)}s</dd><dt>Output SHA-256</dt><dd>{receipt.output.sha256}</dd></dl>
+      <dl className="kv"><dt>Storyboard</dt><dd>{receipt.storyboard.id} · version {receipt.storyboard.updatedAt}</dd><dt>Frame</dt><dd>{receipt.framing.aspect} · {receipt.framing.fit === 'cover' ? 'centre crop' : 'show whole shot'} · {receipt.framing.quality === 'hd' ? 'HD' : receipt.framing.quality === 'standard' ? 'standard' : 'quality not recorded'}</dd><dt>Duration</dt><dd>{(receipt.totalMs / 1000).toFixed(1)}s</dd><dt>Output SHA-256</dt><dd>{receipt.output.sha256}</dd></dl>
       <p><strong>Shots and saved source hashes</strong></p><ol>{receipt.shots.map((shot, i) => <li key={i}>{shot.assetId} · {shot.startMs}–{shot.endMs} ms<br/>SHA-256 {shot.sha256}</li>)}</ol>
       {receipt.soundtrack && <p>Mixed soundtrack: {receipt.soundtrack.assetId}<br/>SHA-256 {receipt.soundtrack.sha256}</p>}
       {receipt.tracks.length > 0 && <><p><strong>Soundtrack sources</strong></p><ul>{receipt.tracks.map((track, i) => <li key={i}>{track.role}: {track.assetId} · {track.trimStartMs}–{track.trimEndMs} ms · starts {track.startMs} ms · gain {track.gainDb} dB · fades {track.fadeInMs}/{track.fadeOutMs} ms<br/>SHA-256 {track.sha256}</li>)}</ul></>}

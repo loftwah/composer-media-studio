@@ -10,3 +10,9 @@ test('default preserves first-shot orientation and explicit frames are bounded',
  assert.throws(()=>resolveFrame({aspect:'source',fit:'contain'},{width:null,height:null}),/measured frame/);
  assert.throws(()=>resolveFrame({aspect:'bad',fit:'cover'},{width:1,height:1}),/valid output/);
 });
+test('HD output is explicit and aspect-correct while legacy framing remains standard',()=>{
+ assert.deepEqual(resolveFrame({aspect:'16:9',fit:'contain',quality:'hd'},{width:1920,height:1080}),{width:1280,height:720,fit:'contain'});
+ assert.deepEqual(resolveFrame({aspect:'9:16',fit:'cover',quality:'hd'},{width:1920,height:1080}),{width:720,height:1280,fit:'cover'});
+ assert.deepEqual(resolveFrame({aspect:'source',fit:'contain',quality:'hd'},{width:1000,height:1000}),{width:720,height:720,fit:'contain'});
+ assert.throws(()=>resolveFrame({aspect:'1:1',fit:'cover',quality:'other'},{width:720,height:1280}),/valid output/);
+});

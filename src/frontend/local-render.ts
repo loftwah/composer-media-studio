@@ -55,14 +55,15 @@ export async function renderLocalMp4(composition: CompositionV1, assets: MediaAs
   const first = clips[0];
   const outputFrame = resolveFrame(framing, first);
   const { width, height } = outputFrame;
-  if (!await canEncodeVideo('avc', { width, height, bitrate: 1200000 }) || (sound && !await canEncodeAudio('aac', { numberOfChannels: 2, sampleRate: 44100, bitrate: 128000 }))) throw new Error('This browser cannot encode the required H.264/AAC MP4. Try a current supported browser.');
+  const bitrate = framing.quality === 'hd' ? 4000000 : 1200000;
+  if (!await canEncodeVideo('avc', { width, height, bitrate }) || (sound && !await canEncodeAudio('aac', { numberOfChannels: 2, sampleRate: 44100, bitrate: 128000 }))) throw new Error('This browser cannot encode the required H.264/AAC MP4. Try a current supported browser.');
   const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false }); if (!context) throw new Error('This browser cannot create a video canvas.');
   const paintCaption = createCaptionPainter(context, width, height, captions);
   const target = new BufferTarget();
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target });
   output.setMetadataTags({ comment: framingNote(outputFrame) });
-  const video = new CanvasSource(canvas, { codec: 'avc', bitrate: 1200000 }); output.addVideoTrack(video, { frameRate: FPS });
+  const video = new CanvasSource(canvas, { codec: 'avc', bitrate }); output.addVideoTrack(video, { frameRate: FPS });
   let audio: AudioBufferSource | undefined;
   let mixed: AudioBuffer | undefined;
   if (sound) {
