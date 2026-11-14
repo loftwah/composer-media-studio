@@ -1,0 +1,1 @@
+export function captionPlayheadProposal(cue: {startMs:number;endMs:number}, edge: 'startMs'|'endMs', currentTime: number, segmentStart: number, segmentEnd: number): {edge:'startMs'|'endMs';value:number;startMs:number;endMs:number}|null;
