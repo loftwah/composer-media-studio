@@ -1,3 +1,4 @@
+import { mergeHistoryRead } from "./restyle-history-refresh.js";
 import { mergeRestyleResponse } from "./restyle-history.js";
 import { encodeWav } from "./wav.js";
 import { isLocalRenderProvenance, publicCaption, shareImportProvenance } from "./asset-caption.js";
@@ -26,6 +27,10 @@ function clearMixPreview() {
 }
 window.addEventListener('pagehide', clearMixPreview);
 const shareImportDrafts = new Map();
+// A lost admission response can hide a job that was nevertheless created.
+const uncertainRestyleProjects = new Map();
+const historyReadErrors = new Set();
+const historyReadSerial = new Map();
 // Displaced Create drafts stay project-scoped and recoverable for this tab's lifetime.
 const priorCreateDrafts = new Map();
 const projectCreateDrafts = new Map();
@@ -522,6 +527,21 @@ function createDraftRecovery() {
   return `<div class="card stack"><strong>Earlier Create drafts</strong><p class="small">These drafts are kept in this tab for this session. Reloading or closing the tab clears them.</p><div class="row"><label>Choose a draft<select id="prior-create-draft">${drafts.map((draft,index)=>`<option value="${index}">Draft ${index + 1} · ${esc(draft.kind ?? "create")}</option>`).join("")}</select></label><button type="button" class="secondary" data-action="restore-create-draft">Restore draft</button><button type="button" class="quiet" data-action="discard-create-drafts">Discard earlier drafts</button></div></div>`;
 }
 
+async function refreshUncertainHistory(projectId) {
+  const serial = (historyReadSerial.get(projectId) ?? 0) + 1;
+  historyReadSerial.set(projectId, serial);
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(projectId)}`);
+    if (state.projectId !== projectId || state.project?.id !== projectId || state.view !== "project" || state.tab !== "history" || historyReadSerial.get(projectId) !== serial) return false;
+    mergeHistoryRead(state.project, data);
+    historyReadErrors.delete(projectId);
+    return true;
+  } catch {
+    if (state.projectId === projectId && historyReadSerial.get(projectId) === serial) historyReadErrors.add(projectId);
+    return false;
+  }
+}
+
 function projectView() {
   const project = state.project;
   if (!project || project.id !== state.projectId) return `<p class="notice">Loading…</p>`;
@@ -547,7 +567,7 @@ function projectView() {
       ${state.tab === "library" ? (creativeHome ? '<div id="creative-media"></div>' : libraryView()) : ""}
       ${state.tab === "create" ? `${createDraftRecovery()}<div data-create-project="${esc(project.id)}">${creativeHome ? '<div id="creative-media"></div>' : createView()}</div>` : ""}
       ${state.tab === "assemble" ? (creativeHome ? '<div id="creative-media"></div>' : composeView()) : ""}
-      ${state.tab === "history" ? (creativeHome ? '<div id="creative-media"></div>' : historyView()) : ""}
+      ${state.tab === "history" ? `${uncertainRestyleProjects.has(project.id) ? `<div class="notice" role="status">${historyReadErrors.has(project.id) ? "Could not refresh History. The list may be out of date." : "A recent request may take time to appear. Check History again before starting another."} <button class="secondary" data-action="refresh-uncertain-history">Refresh History</button></div>` : ""}${creativeHome ? '<div id="creative-media"></div>' : historyView()}` : ""}
       ${state.tab === "publish" ? (creativeHome ? '<div id="creative-media"></div>' : publishView()) : ""}
       ${state.tab === "settings" ? (creativeHome ? '<div id="creative-media"></div>' : settingsView()) : ""}
     </section>`;
@@ -1124,6 +1144,12 @@ function renderKeepingCreateFocus(element) {
 async function handleAction(action, element, keyboard = false) {
   const id = element.dataset.id;
   switch (action) {
+    case "refresh-uncertain-history": {
+      const projectId = state.projectId;
+      await refreshUncertainHistory(projectId);
+      if (state.projectId === projectId && state.view === "project" && state.tab === "history") render();
+      return;
+    }
     case "new-project": {
       const values = await ask({
         title: "Start a studio",
@@ -1865,8 +1891,19 @@ async function handleAction(action, element, keyboard = false) {
 
 // React's restyle submit shares the same project cache as Create and History.
 // Update only the matching project, without rerendering the active editor.
+window.addEventListener("studio:restyle-attempted", (event) => {
+  const { projectId, requestId } = event.detail ?? {};
+  if (typeof projectId !== "string" || typeof requestId !== "string") return;
+  const requests = uncertainRestyleProjects.get(projectId) ?? new Set();
+  requests.add(requestId); uncertainRestyleProjects.set(projectId, requests);
+});
 window.addEventListener("studio:restyle-submitted", (event) => {
-  const { projectId, result } = event.detail ?? {};
+  const { projectId, requestId, result } = event.detail ?? {};
+  const requests = uncertainRestyleProjects.get(projectId);
+  if (requests && typeof requestId === "string" && typeof result?.generation?.id === "string") {
+    requests.delete(requestId);
+    if (!requests.size) { uncertainRestyleProjects.delete(projectId); historyReadErrors.delete(projectId); }
+  }
   if (state.projectId !== projectId || !mergeRestyleResponse(state.project, projectId, result)) return;
   if (mediaMounted && state.view === "project" && state.tab === "history") renderReactHistory();
   // Poll for the current job and budget instead of applying an admission
@@ -2605,6 +2642,10 @@ window.addEventListener("hashchange", async () => {
       return;
     }
     if (state.projectId !== requestedProject) return;
+  }
+  if (route.view === "project" && route.tab === "history" && uncertainRestyleProjects.has(route.projectId)) {
+    await refreshUncertainHistory(route.projectId);
+    if (state.projectId !== route.projectId || state.view !== "project" || state.tab !== "history") return;
   }
   render();
   if (route.view === "asset" && pendingViewerFocus?.projectId === route.projectId && pendingViewerFocus.assetId === route.assetId) {
