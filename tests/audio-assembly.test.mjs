@@ -115,6 +115,37 @@ test("a 15-second H3 take with its documented overrun remains assemblable, with 
   await assert.rejects(buildCompositionSpec(env, project, { title: "Too long", shots: [{ assetId: "asset_too_long" }, { assetId: "asset_short" }] }), /bounded clip/);
 });
 
+test("shot trim bounds persist without permitting unsupported provider rendering or silent loss", async () => {
+  const { env, project } = await setup();
+  await addAsset(env, project, { id: "asset_clip01", kind: "video", durationMs: 6000 });
+  await addAsset(env, project, { id: "asset_clip02", kind: "video", durationMs: 5000 });
+  const shots = [{ assetId: "asset_clip01", trimStartMs: 1000, trimEndMs: 4500 }, { assetId: "asset_clip02" }];
+  const composition = await createComposition(env, project, { title: "Trim proof", shots });
+  assert.equal(composition.totalMs, 8500);
+  assert.deepEqual(composition.shots[0], { assetId: "asset_clip01", title: "Asset asset_clip01", durationMs: 3500, trimStartMs: 1000, trimEndMs: 4500 });
+  assert.equal('trimStartMs' in composition.shots[1], false);
+  let row = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1").bind(composition.id).first();
+  assert.equal(JSON.parse(row.spec_json).shots[0].trimEndMs, 4500);
+  await assert.rejects(createRender(env, project, row, { model: "studio-assembly", clientRequestId: "req_trim_test" }), e => e.code === "provider_shot_trim_unsupported");
+  assert.equal((await env.DB.prepare("SELECT COUNT(*) AS n FROM generations").first()).n, 0);
+  await assert.rejects(updateComposition(env, project, row, { title: "No silent loss", shots: shots.map(s => ({ assetId: s.assetId })) }), e => e.code === "shot_trim_required");
+  const edited = await updateComposition(env, project, row, { title: "Retained", shots: composition.shots });
+  assert.equal(edited.shots[0].trimStartMs, 1000);
+  await assert.rejects(updateComposition(env, project, row, { title: "Stale edit", shots: composition.shots }), e => e.status === 409 && e.code === "revision_conflict");
+  row = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1").bind(composition.id).first();
+  const reset = await updateComposition(env, project, row, { title: "Full again", shots: [{ assetId: "asset_clip01", trimStartMs: 0, trimEndMs: 6000 }, shots[1]] });
+  assert.equal(reset.totalMs, 11000);
+  assert.equal('trimStartMs' in reset.shots[0], false);
+});
+
+test("rejects partial, noninteger, out-of-range and reversed shot trims", async () => {
+  const { env, project } = await setup();
+  for (const id of ['asset_clip01', 'asset_clip02']) await addAsset(env, project, { id, kind: 'video', durationMs: 6000 });
+  for (const trim of [{trimStartMs: 1}, {trimEndMs: 3}, {trimStartMs: -1,trimEndMs: 4}, {trimStartMs: 1,trimEndMs: 6001}, {trimStartMs: 1.5,trimEndMs: 4}, {trimStartMs: 4,trimEndMs: 4}, {trimStartMs: 5,trimEndMs: 4}, {trimStartMs: '1',trimEndMs: 4}]) {
+    await assert.rejects(buildCompositionSpec(env, project, { title: 'Invalid trim', shots: [{assetId:'asset_clip01',...trim}, {assetId:'asset_clip02'}] }), e => e.code === 'invalid_shot_trim');
+  }
+});
+
 test("an edited composition keeps the manifest its earlier render used", async () => {
   const { env, project } = await setup();
   await addAsset(env, project, { id: "asset_clip01", kind: "video", durationMs: 6000 });
