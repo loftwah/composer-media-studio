@@ -2,7 +2,7 @@
 import { ALL_FORMATS, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from 'mediabunny';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
 import type { CaptionSnapshot } from './local-captions.ts';
-import { createCaptionPainter } from './caption-paint';
+import { createCaptionPainter } from './caption-paint.ts';
 import { shotRange } from '../../public/shot-trims.js';
 import { defaultFraming, framingNote, resolveFrame, type Framing } from './local-framing.ts';
 
