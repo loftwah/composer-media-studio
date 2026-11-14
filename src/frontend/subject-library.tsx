@@ -70,7 +70,7 @@ export function SubjectLibrary({ projectId, planId, scenes, images, canEdit, con
     const pack = createSubjectPack(chosen);
     const url = URL.createObjectURL(new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = 'media-studio-subject.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setMessage('Subject pack downloaded. It contains private text, the subject ID, version and source fingerprint, but no image.');
+    setMessage('Subject pack download requested. It contains private text, the subject ID, version and source fingerprint, but no image.');
   }
   async function importPack(file: File | undefined) {
     if (!file) return;
