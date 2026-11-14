@@ -13,6 +13,16 @@ let mediaMounted = false;
 let bootReady = false;
 let libraryReturn = null;
 let pendingViewerFocus = null;
+let mixPreviewUrl = null;
+let mixPreviewVersion = 0;
+function clearMixPreview() {
+  mixPreviewVersion++;
+  const player = document.querySelector('#mix-preview-player');
+  if (player) { player.onerror = null; player.pause(); player.removeAttribute('src'); player.hidden = true; player.load(); }
+  if (mixPreviewUrl) URL.revokeObjectURL(mixPreviewUrl);
+  mixPreviewUrl = null;
+}
+window.addEventListener('pagehide', clearMixPreview);
 const shareImportDrafts = new Map();
 // Comparison is an in-memory view of existing same-project images, not a saved collection.
 const comparisons = new Map();
@@ -258,6 +268,7 @@ function saveSettingsDraft() {
 }
 
 function render() {
+  clearMixPreview();
   saveShareImportDraft();
   saveSettingsDraft();
   if (mediaMounted) { creativeHome.unmountMedia(); mediaMounted = false; }
@@ -756,9 +767,11 @@ function composeView() {
               </div>
             </div>`;
           }).join("")}
+          <p class="small">Preview is temporary and stays in your browser. Mix soundtrack saves a new WAV.</p>
           <div class="row" style="margin-top:0.6rem">
             <select id="mix-add" aria-label="Add an audio track"><option value="">Choose a saved audio asset</option>${audio.map((asset) => `<option value="${esc(asset.id)}">${esc(asset.title)} · ${asset.durationMs ? (asset.durationMs / 1000).toFixed(0) + "s" : "audio"}</option>`).join("")}</select>
             <button class="secondary" type="button" data-action="mix-add" ${compose.audioTracks.length >= 4 ? "disabled" : ""}>Add track</button>
+            <button class="secondary" type="button" data-action="mix-preview" ${compose.audioTracks.length === 0 ? "disabled" : ""}>Preview mix</button><audio id="mix-preview-player" controls hidden aria-label="Unsaved soundtrack preview"></audio>
             <button class="button" type="button" data-action="mix-render" ${compose.audioTracks.length === 0 ? "disabled" : ""}>Mix soundtrack</button>
           </div>
           ${compose.audioAssetId ? `<p class="small" style="margin:0.4rem 0 0">Mixed bed: ${esc(audio.find((item) => item.id === compose.audioAssetId)?.title ?? compose.audioAssetId)}. Rendering uses this saved WAV; the individual tracks stay linked to the composition.</p><button class="quiet" type="button" data-action="mix-clear">Remove mixed bed</button>${staleMixedBed() ? `<p class="notice warn">The mixed bed does not match the shot durations. Mix again or remove the bed before saving.</p>` : ""}` : ""}
@@ -1608,6 +1621,14 @@ async function handleAction(action, element, keyboard = false) {
       render();
       return;
     }
+    case "mix-preview": {
+      const button = element;
+      button.disabled = true;
+      try { await mixSoundtrack({ preview: true }); }
+      catch (error) { notify(error.message, "bad"); }
+      finally { if (button.isConnected) button.disabled = false; }
+      return;
+    }
     case "mix-render": {
       try {
         await mixSoundtrack();
@@ -2119,8 +2140,12 @@ function maskedCanvasBlob(canvas) {
 /* ---------- deterministic soundtrack mix ---------- */
 
 
-async function mixSoundtrack() {
-  const tracks = state.compose.audioTracks;
+async function mixSoundtrack({ preview = false } = {}) {
+  clearMixPreview();
+  const previewVersion = mixPreviewVersion;
+  const projectId = state.projectId;
+  const assets = [...(state.project?.assets ?? [])];
+  const tracks = structuredClone(state.compose.audioTracks);
   if (state.compose.shotIds.length < 2) {
     notify("Add at least two shots before mixing to their duration.", "bad");
     return;
@@ -2138,12 +2163,14 @@ async function mixSoundtrack() {
     1,
     draftDuration(),
   );
+  if (totalMs > 60000) throw new Error("Choose shots totalling no more than 60 seconds before mixing.");
   const sampleRate = 44100;
   const context = new OfflineAudioContext(2, Math.ceil((totalMs / 1000) * sampleRate), sampleRate);
   notify("Mixing the soundtrack…");
   for (const track of tracks) {
-    const asset = state.project.assets.find((item) => item.id === track.assetId);
-    if (!asset) continue;
+    if (mixPreviewVersion !== previewVersion || state.projectId !== projectId) throw new Error("The storyboard changed while mixing. Try again.");
+    const asset = assets.find((item) => item.id === track.assetId);
+    if (!asset || asset.kind !== "audio") throw new Error("A source track is no longer available. Choose another track.");
     const response = await fetch(asset.file, { credentials: "same-origin" });
     if (!response.ok) throw new Error(`Could not read ${asset.title} for the mix.`);
     const decoded = await context.decodeAudioData(await response.arrayBuffer());
@@ -2165,7 +2192,18 @@ async function mixSoundtrack() {
     source.start(start, trimStart, duration);
   }
   const rendered = await context.startRendering();
+  if (mixPreviewVersion !== previewVersion || state.projectId !== projectId) throw new Error("The storyboard changed while mixing. Try again.");
   const wav = encodeWav(rendered);
+  if (preview) {
+    const player = document.querySelector('#mix-preview-player');
+    if (!player) return;
+    mixPreviewUrl = URL.createObjectURL(wav);
+    player.src = mixPreviewUrl;
+    player.hidden = false;
+    player.onerror = () => { clearMixPreview(); notify("The browser could not play this preview. Try another browser.", "bad"); };
+    notify("Preview ready. Play it below; nothing was saved.");
+    return;
+  }
   const title = `Mixed soundtrack — ${state.compose.title.trim() || "storyboard"}`.slice(0, 100);
   const asset = await uploadBlob(
     wav,

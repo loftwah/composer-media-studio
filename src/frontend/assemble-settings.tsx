@@ -439,6 +439,7 @@ export function Assemble({
                 </div>
               );
             })}
+            <p className="small">Preview is temporary and stays in your browser. Mix soundtrack saves a new WAV.</p>
             <div className="row" style={{ marginTop: "0.6rem" }}>
               <select id="mix-add" aria-label="Add an audio track">
                 <option value="">Choose a saved audio asset</option>
@@ -459,6 +460,8 @@ export function Assemble({
               >
                 Add track
               </button>
+              <button className="secondary" type="button" data-action="mix-preview" disabled={compose.audioTracks.length === 0}>Preview mix</button>
+              <audio id="mix-preview-player" controls hidden aria-label="Unsaved soundtrack preview" />
               <button
                 className="button"
                 type="button"
