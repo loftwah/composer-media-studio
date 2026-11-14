@@ -1055,9 +1055,18 @@ export async function buildCompositionSpec(env, project, input) {
         `${asset.title || "That clip"} is not a bounded clip the studio can assemble`,
         "invalid_shots",
       );
+    const hasStart = Object.hasOwn(shot, "trimStartMs");
+    const hasEnd = Object.hasOwn(shot, "trimEndMs");
+    if (hasStart !== hasEnd)
+      throw new HttpError(400, "Provide both shot trim times, or neither for the whole clip", "invalid_shot_trim");
+    const start = hasStart ? shot.trimStartMs : 0;
+    const end = hasEnd ? shot.trimEndMs : durationMs;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end > durationMs || end <= start)
+      throw new HttpError(400, "Shot trim times must be whole milliseconds within the saved clip", "invalid_shot_trim");
+    const trimmed = start !== 0 || end !== durationMs;
     ids.push(assetId);
-    manifest.push({ assetId, title: asset.title || "Clip", durationMs });
-    totalMs += durationMs;
+    manifest.push({ assetId, title: asset.title || "Clip", durationMs: end - start, ...(trimmed ? { trimStartMs: start, trimEndMs: end } : {}) });
+    totalMs += end - start;
   }
   if (totalMs > MAX_TOTAL_MS)
     throw new HttpError(400, `Keep the assembled result under ${MAX_TOTAL_MS / 1000} seconds`, "invalid_shots");
@@ -1191,14 +1200,25 @@ export async function createStoryboardFromSongPlan(env, project, planId, input) 
 /** Editing keeps the composition id, so earlier renders still point at the cut
  * they were made from and the manifest is never rewritten retroactively. */
 export async function updateComposition(env, project, composition, input) {
+  const baseline = composition.spec_json === undefined
+    ? await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(composition.id, project.id).first()
+    : composition;
+  if (!baseline) throw new HttpError(404, "Storyboard not found", "not_found");
+  const previous = safeJson(baseline.spec_json, {});
+  for (const shot of previous.shots ?? []) {
+    const incoming = Array.isArray(input.shots) ? input.shots.find(item => item?.assetId === shot.assetId) : undefined;
+    if (incoming && (Object.hasOwn(shot, "trimStartMs") || Object.hasOwn(shot, "trimEndMs")) &&
+        (!Object.hasOwn(incoming, "trimStartMs") || !Object.hasOwn(incoming, "trimEndMs")))
+      throw new HttpError(400, "This storyboard has trimmed shots. Include both trim times when saving it.", "shot_trim_required");
+  }
   const spec = await buildCompositionSpec(env, project, input);
   // This is historical origin, not a claim that later edits still match the plan.
-  const originSongPlan = safeJson(composition.spec_json, {}).originSongPlan;
+  const originSongPlan = previous.originSongPlan;
   if (originSongPlan) spec.originSongPlan = originSongPlan;
-  await env.DB.prepare("UPDATE compositions SET title=?2,spec_json=?3,updated_at=?4 WHERE id=?1 AND project_id=?5")
-    .bind(composition.id, spec.title, JSON.stringify(spec), now(), project.id)
-    .run();
-  const fresh = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1").bind(composition.id).first();
+  const fresh = await env.DB.prepare("UPDATE compositions SET title=?2,spec_json=?3,updated_at=?4 WHERE id=?1 AND project_id=?5 AND spec_json=?6 RETURNING *")
+    .bind(composition.id, spec.title, JSON.stringify(spec), now(), project.id, baseline.spec_json)
+    .first();
+  if (!fresh) throw new HttpError(409, "This storyboard changed. Reload it before saving.", "revision_conflict");
   return {
     id: fresh.id,
     projectId: fresh.project_id,
@@ -1226,6 +1246,8 @@ export async function createRender(env, project, composition, input) {
   if (existing) return { generation: existing, created: false };
 
   const spec = safeJson(composition.spec_json, { shots: [], audioAssetId: null, audioTracks: [], totalMs: 0 });
+  if ((spec.shots ?? []).some(shot => Object.hasOwn(shot, "trimStartMs") || Object.hasOwn(shot, "trimEndMs")))
+    throw new HttpError(400, "Provider rendering does not support trimmed shots. Choose full clips for this render.", "provider_shot_trim_unsupported");
   let needsMix = (spec.audioTracks ?? []).some(
     (track) => track.trimStartMs || track.gainDb || track.fadeInMs || track.fadeOutMs || track.startMs,
   );
