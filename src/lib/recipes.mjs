@@ -11,7 +11,7 @@ export const builtinRecipes = [
     kind: "image",
     model: "studio-print",
     promptTemplate:
-      "Flat paper-cut editorial illustration about {subject}. Warm ivory paper ground, graphite ink outlines, layered cut-paper shapes in {palette}, screenprint grain, one clear focal point, generous empty space at the top for a headline, subtle deckled edges, no text, no lettering, no logos, no photorealistic people.",
+      "Flat paper-cut editorial illustration about {subject}. Warm ivory paper ground, graphite ink outlines, layered cut-paper shapes in {palette}, screenprint grain, one clear focal point, subtle deckled edges, no logos, no photorealistic people. Integrate accurate, legible lettering when it serves the brief.",
     controls: [
       { key: "subject", label: "Subject", type: "text", default: "a ceramicist shaping a bowl by hand", application: "prompt" },
       { key: "palette", label: "Palette", type: "select", options: ["burnt orange and bone", "deep teal and sand", "graphite and ochre"], default: "burnt orange and bone", application: "prompt" },
@@ -27,7 +27,7 @@ export const builtinRecipes = [
     kind: "image",
     model: "studio-draft",
     promptTemplate:
-      "Studio product photograph of {product}. Single soft key light from the left, subtle contact shadow, warm grey seamless background, tactile material detail, centred composition, shallow depth of field, no props, no text, no packaging logos, no hands.",
+      "Studio product photograph of {product}. Single soft key light from the left, subtle contact shadow, warm grey seamless background, tactile material detail, centred composition, shallow depth of field, no props, no packaging logos, no hands. Keep any requested lettering accurate and legible.",
     controls: [
       { key: "product", label: "Product", type: "text", default: "a matte burnt-orange stoneware cup", application: "prompt" },
       { key: "aspect", label: "Frame", type: "select", options: ["square", "portrait", "landscape"], default: "square", application: "provider-native" },
@@ -42,7 +42,7 @@ export const builtinRecipes = [
     kind: "image",
     model: "studio-film",
     promptTemplate:
-      "Screenprinted cinematic frame: {scene}. Graphic ink shading, deep readable shadows, warm amber practical light against cool ink, limited palette with one burnt orange accent, visible paper grain, wide 2.39:1 composition, no text, no watermark, no photorealistic faces.",
+      "Screenprinted cinematic frame: {scene}. Graphic ink shading, deep readable shadows, warm amber practical light against cool ink, limited palette with one burnt orange accent, visible paper grain, wide 2.39:1 composition, no watermark, no photorealistic faces. Include accurate, legible lettering when it serves the scene.",
     controls: [
       { key: "scene", label: "Scene", type: "text", default: "a lone lighthouse keeper crossing a wet stone path at dusk", application: "prompt" },
       { key: "aspect", label: "Frame", type: "select", options: ["wide", "landscape"], default: "wide", application: "provider-native" },
@@ -57,7 +57,7 @@ export const builtinRecipes = [
     kind: "image",
     model: "studio-detail",
     promptTemplate:
-      "Use the reference image as creative direction: keep its palette, ink line and paper-cut character. Make a new square editorial illustration of the same subject type, with one deliberate change: {change}. No added text, no logos, no watermark.",
+      "Use the reference image as creative direction: keep its palette, ink line and paper-cut character. Make a new square editorial illustration of the same subject type, with one deliberate change: {change}. Keep any lettering accurate and legible; no logos, no watermark.",
     controls: [
       { key: "change", label: "Change", type: "text", default: "move the light to late afternoon with a longer shadow", application: "prompt" },
       { key: "aspect", label: "Frame", type: "hidden", default: "square", application: "provider-native" },
@@ -73,7 +73,7 @@ export const builtinRecipes = [
     kind: "video",
     model: "hailuo-standard",
     promptTemplate:
-      "Subtle cinematic motion: {motion}. Keep the subject and graphic style of the first frame. Natural physics, no morphing, no added text, no camera shake.",
+      "Subtle cinematic motion: {motion}. Keep the subject and graphic style of the first frame. Natural physics, no morphing, no camera shake. Keep lettering legible when it appears.",
     controls: [
       { key: "motion", label: "Motion", type: "select", options: ["slow push in", "gentle parallax left", "soft drift upward", "still air with moving light"], default: "slow push in", application: "prompt" },
       { key: "duration", label: "Clip length", type: "select", options: ["6", "10"], default: "6", application: "provider-native" },

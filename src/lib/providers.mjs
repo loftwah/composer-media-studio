@@ -383,7 +383,7 @@ async function generateImage(env, model, settings, references, signal) {
   const input = { prompt: settings.prompt, width, height };
   if (model.endpoint.includes("stable-diffusion-xl"))
     input.negative_prompt =
-      "photograph of a real person, glossy 3d render, plastic skin, watermark, signature, text, busy detail";
+      "photograph of a real person, glossy 3d render, plastic skin, watermark, signature, busy detail";
   if (model.endpoint.includes("lucid-origin")) input.guidance = 5;
   if (model.endpoint.includes("phoenix")) input.guidance = 3;
   const output = await env.AI.run(model.endpoint, input, { signal });
