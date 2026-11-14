@@ -10,6 +10,7 @@ let homeMounted = false;
 let mediaMounted = false;
 let bootReady = false;
 let libraryReturn = null;
+let pendingViewerFocus = null;
 const shareImportDrafts = new Map();
 // Comparison is an in-memory view of existing same-project images, not a saved collection.
 const comparisons = new Map();
@@ -883,7 +884,7 @@ function settingsView() {
 
 function assetView() {
   const asset = state.project?.assets.find((item) => item.id === state.assetId);
-  if (!asset) return `<p class="notice">That asset is no longer in the library. <a href="#/p/${esc(state.projectId)}/library">Back to the library</a>.</p>`;
+  if (!asset) return `<p class="notice">That asset is no longer in the library. <a data-viewer-back href="#/p/${esc(state.projectId)}/library">Back to the library</a>.</p>`;
   const isVideo = asset.kind === "video";
   const isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
@@ -910,7 +911,7 @@ function assetView() {
           : "This file type cannot be imported into Launch Kit or used as a variation reference. Upload a JPEG, PNG or WebP still."
       }${isVideo ? ` <button class="quiet" data-action="choose-still">Choose a still</button>` : ""}</p>`;
   return `
-    <p><a class="button secondary" href="#/p/${esc(state.projectId)}/library">← Back to library</a></p>
+    <p><a class="button secondary" data-viewer-back href="#/p/${esc(state.projectId)}/library">← Back to library</a></p>
     <div class="viewer">
       <div class="stage">${isVideo ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video>` : isAudio ? `<div class="audio-stage"><canvas width="840" height="200" data-waveform="${esc(asset.file)}" aria-hidden="true"></canvas><audio src="${esc(asset.file)}" controls preload="metadata"></audio></div>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}">`}</div>
       <aside class="card stack">
@@ -1031,7 +1032,7 @@ function renderKeepingCreateFocus(element) {
   replacement?.focus({ preventScroll: true });
 }
 
-async function handleAction(action, element) {
+async function handleAction(action, element, keyboard = false) {
   const id = element.dataset.id;
   switch (action) {
     case "new-project": {
@@ -1266,6 +1267,8 @@ async function handleAction(action, element) {
       if (state.view === "project" && state.tab === "library") {
         libraryReturn = { projectId: state.projectId, assetId: id, scrollY: window.scrollY };
       }
+      pendingViewerFocus = keyboard && document.activeElement === element
+        ? { projectId: state.projectId, assetId: id } : null;
       location.hash = `#/a/${state.projectId}/${id}`;
       return;
     case "refresh-job":
@@ -2188,7 +2191,7 @@ app.addEventListener("click", async (event) => {
   if (!target) return;
   event.preventDefault();
   try {
-    await handleAction(target.dataset.action, target);
+    await handleAction(target.dataset.action, target, event.detail === 0);
   } catch (error) {
     if (error.message !== "Signed out") notify(error.message, "bad");
   }
@@ -2375,6 +2378,14 @@ window.addEventListener("hashchange", async () => {
   }
   if (!state.project || state.project.id !== state.projectId) await loadProject(state.projectId);
   render();
+  if (route.view === "asset" && pendingViewerFocus?.projectId === route.projectId && pendingViewerFocus.assetId === route.assetId) {
+    pendingViewerFocus = null;
+    const back = app.querySelector("[data-viewer-back]");
+    if (back) {
+      const rect = back.getBoundingClientRect();
+      back.focus({ preventScroll: rect.top >= 0 && rect.bottom <= window.innerHeight });
+    }
+  } else pendingViewerFocus = null;
 });
 
 boot().catch((error) => {

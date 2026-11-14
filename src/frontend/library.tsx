@@ -48,11 +48,11 @@ function Library({ projectId, assets, query, filter, canImportShare, comparing, 
 
 function AssetViewer({ projectId, asset, still, launchKitUrl }: ViewerProps) {
   const back = `#/p/${encodeURIComponent(projectId)}/library`;
-  if (!asset) return <p className="notice">That asset is no longer in the library. <a href={back}>Back to the library</a>.</p>;
+  if (!asset) return <p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a>.</p>;
   const isVideo = asset.kind === "video", isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
   return <div className="asset-viewer">
-    <p><a className="button secondary" href={back}>← Back to library</a></p>
+    <p><a className="button secondary" data-viewer-back href={back}>← Back to library</a></p>
     <div className="viewer">
       <div className="stage">{isVideo ? <video src={asset.file} controls playsInline preload="metadata"/> : isAudio ? <div className="audio-stage"><canvas width="840" height="200" data-waveform={asset.file} aria-hidden="true"/><audio src={asset.file} controls preload="metadata"/></div> : <img src={asset.file} alt={asset.title}/>}</div>
       <aside className="card stack"><div><p className="eyebrow">{asset.kind} · {asset.source}</p><h1 className="asset-viewer-title">{asset.title}</h1></div>
