@@ -186,7 +186,7 @@ function Home({
           </div>
         ) : (
           <p className="creative-meta">
-            No studios available for this account yet.
+            There are no studios available for this account yet.
           </p>
         )}
       </section>
