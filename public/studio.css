@@ -217,10 +217,16 @@ dialog h2 { margin: 0; }
 .notice.calm { border-color: var(--teal); background: #dfeae8; }
 .notice.warn { border-color: var(--danger); background: #f6ded7; }
 
-.viewer { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.5fr); }
+.viewer { display: grid; align-items: start; gap: 1rem; grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.8fr); }
 @media (max-width: 900px) { .viewer { grid-template-columns: 1fr; } }
-.viewer .stage { background: #1d201c; border-radius: var(--radius); display: grid; place-items: center; min-height: 320px; overflow: hidden; }
-.viewer .stage img, .viewer .stage video { max-width: 100%; max-height: 74vh; display: block; }
+.viewer .stage { min-width: 0; background: #1d201c; border-radius: var(--radius); display: grid; place-items: center; min-height: 200px; overflow: hidden; }
+.viewer .stage img, .viewer .stage video { max-width: 100%; max-height: 68vh; width: auto; height: auto; object-fit: contain; display: block; }
+.viewer .card { min-width: 0; overflow-wrap: anywhere; }
+.viewer .card .row > * { max-width: 100%; }
+.viewer .card .kv { grid-template-columns: max-content minmax(0, 1fr); }
+.asset-technical { border-top: 1px solid var(--line); padding-top: .8rem; font-size: .85rem; }
+.asset-technical summary { cursor: pointer; font-weight: 700; }
+.asset-technical p, .asset-technical dd { overflow-wrap: anywhere; }
 
 .public-page { max-width: 980px; }
 .public-page .media { background: #1d201c; border-radius: 4px; overflow: hidden; }
