@@ -339,23 +339,23 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
 <main id="main" class="public-page">
   <p class="eyebrow">Help and setup</p>
   <h1>How Media Studio works</h1>
-  <p class="lede">A plain account of what is stored, what a model costs, and what the studio can honestly confirm.</p>
+  <p class="lede">Learn what the studio stores, how generation is charged and how to recover your work.</p>
 
   <h2>Without an AI account</h2>
   <p>Uploads, project collections, search and filters, the viewer, renaming, downloads, deletion, creative references, storyboards, export and public pages all work without any model provider. Nothing on those paths calls a model or spends money.</p>
-  <p>Uploads accept JPEG, PNG and WebP images and WAV, MP3 or M4A audio up to 32&nbsp;MB, and MP4 or WebM video up to 64&nbsp;MB. The studio checks the actual bytes and records the real dimensions, duration and audio format. A reference image for generation is capped at 8&nbsp;MB. A saved storyboard can also render to MP4 on a compatible device without a provider or generation charge. Keep the page open while it renders; browser and device support, input size and duration limits apply.</p>
+  <p>Uploads accept JPEG, PNG and WebP images and WAV, MP3 or M4A audio up to 32&nbsp;MB, and MP4 or WebM video up to 64&nbsp;MB. The studio checks the file bytes and records dimensions, duration and audio format. A reference image for generation is capped at 8&nbsp;MB. A saved storyboard can also render to MP4 on a compatible device without a provider or generation charge. Keep the page open while it renders; browser and device support, input size and duration limits apply.</p>
 
   <h2>Generation and editing</h2>
-  <p>Generation uses the provider configured on this studio, not your personal account elsewhere:</p>
+  <p>Generation uses this studio’s configured providers, rather than a separate personal account:</p>
   <ul>
     <li><strong>Images</strong> run on Cloudflare Workers AI. Studio Print, Studio Film and Studio Draft support square, portrait, landscape and wide frames. Studio Quick makes square drafts. Studio Detail takes one selected still as a reference for a square variation.</li>
-    <li><strong>Edits</strong> run on fal.ai. Studio Fill takes a still and a same-size mask for a real inpaint or outpaint. Studio Cutout removes the background and returns a transparent PNG. Studio Upscale doubles the still. The original, mask and result are separate assets with their own hashes.</li>
+    <li><strong>Edits</strong> run on fal.ai. Studio Fill takes a still and a same-size mask to fill or extend an image. Studio Cutout removes the background and returns a transparent PNG. Studio Upscale doubles the still. The original, mask and result are separate assets with their own hashes.</li>
     <li><strong>Video</strong> runs on fal.ai. Animate a still sends the selected image and a motion prompt to an asynchronous image-to-video job, then copies the finished MP4 into this studio's storage.</li>
-    <li><strong>Sound</strong> runs on fal.ai too. Studio Score makes an instrumental bed of 10 to 30 seconds; Studio Voice narrates text you supply; Studio Effect makes one short cue. Each is its own audio asset with its real duration, sample rate and channel count. Music, narration and effects can be mixed in the browser with trim, gain and fades, then saved as a new WAV before the render uses it.</li>
+    <li><strong>Sound</strong> runs on fal.ai too. Studio Score makes an instrumental bed of 10 to 30 seconds; Studio Voice narrates text you supply; Studio Effect makes one short cue. Each is saved as a separate audio asset with its duration, sample rate and channel count. Music, narration and effects can be mixed in the browser with trim, gain and fades, then saved as a new WAV before the render uses it.</li>
     <li><strong>Assembly</strong> starts with a saved storyboard. On a compatible device, render its two to six clips and saved WAV mix or silence locally to an MP4, then download it or save it to the library. Source-clip audio stays muted. A storyboard made from a song plan can also include saved captions. Alternatively, a separately estimated provider render uses short-lived media links; provider availability and result retrieval can fail. Earlier saved results remain in the library.</li>
     <li><strong>Vertical cuts</strong> can be rendered locally on a compatible device; the local output frame is chosen from the first shot and may not be 9:16. Check the resulting dimensions before sharing. The separate provider-based 9:16 workflow is designed for a 720 × 1280 master, but result retrieval returned HTTP 403 on the tested provider account, so a completed provider cut is not confirmed there.</li>
   </ul>
-  <p>Every request shows an estimate before you confirm it. The amounts shown as estimated use and reserved are planning figures, not provider invoice charges. The monthly allowance is enforced per project with an atomic check, so two simultaneous requests cannot oversubscribe that project allowance.</p>
+  <p>Every paid generation or provider-render request shows an estimate before you confirm it. The amounts shown as estimated use and reserved are planning figures, not provider invoice charges. The monthly allowance is enforced per project with an atomic check, so two simultaneous requests cannot oversubscribe that project allowance.</p>
 
   <h2>Access from App Composer</h2>
   <p>An installation opened from App Composer uses the existing Composer sign-in. The handoff carries the current actor, workspace, selected project and only the actions granted there. Read, edit, generate, publish and admin are separate. Every privileged action re-checks the current Composer grant on the server, so revoking a member stops the next dispatch even if their studio tab is still open. A standalone installation uses its own owner passphrase and does not depend on Composer.</p>
@@ -365,10 +365,11 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
 
   <h2>What the statuses mean</h2>
   <ul>
-    <li><strong>Prepared / Submitting / Submitted / Generating</strong> — the request is saved and the provider is working.</li>
+    <li><strong>Prepared</strong> — the request is saved and ready for dispatch.</li>
+    <li><strong>Submitting / Submitted / Generating</strong> — the request is being sent, has been submitted, or is running with the provider.</li>
     <li><strong>Merging / composing</strong> — the 9:16 cut is on its first or second bounded provider call.</li>
-    <li><strong>Copying result / Saving</strong> — the provider finished. The studio is writing the exact bytes and the library record. A save failure can be retried without generating again.</li>
-    <li><strong>Saved</strong> — owned bytes and a library record both exist.</li>
+    <li><strong>Copying result / Saving</strong> — the provider finished. The studio is saving the exact file bytes and its library record. A save failure can be retried without generating again.</li>
+    <li><strong>Saved</strong> — the file and its library record are stored.</li>
     <li><strong>Cancel requested</strong> — the provider was asked to stop. The studio shows what the provider confirmed. A cancellation is not a refund.</li>
     <li><strong>Outcome unknown</strong> — the studio lost the provider's reply or cannot prove what happened. It keeps the reservation and never resubmits automatically. Reconcile when the provider is reachable.</li>
     <li><strong>Discarded after delete</strong> — the job or its asset was deleted before a late result arrived. The result is not restored.</li>
@@ -378,7 +379,7 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
   <p>A published page exposes its title, description and media, plus a download link. Prompts, masks, other projects and filenames stay private. Withdrawing stops new visits immediately, but copies someone already downloaded cannot be recalled. Deleting media also withdraws any page using it.</p>
 
   <h2>Ownership and recovery</h2>
-  <p>This studio owns its D1 metadata, its R2 media and its provider keys. The project export contains the project record, references, prompts, generation history, costs and lineage without secrets. Media files download separately while they still exist. An export is not a backup of R2; copy the files you need.</p>
+  <p>The studio keeps its metadata in D1, media in R2 and provider keys in its own secret storage. The project export contains the project record, references, prompts, generation history, costs and lineage without secrets. Media files download separately while they still exist. The export does not back up R2 files; download the media you need.</p>
   <p>Code and media restore are separate operations. Restoring an older Worker version does not bring back deleted bytes; restoring bytes does not roll back code.</p>
 
   <h2>Owner setup for a new installation</h2>

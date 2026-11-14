@@ -911,7 +911,7 @@ function settingsView() {
       </div>
       <div class="card stack">
         <p class="eyebrow">Creative references</p>
-        <p class="small" style="margin:0">Links to work that informs this studio. They are notes for you and your agent, never fetched or executed.</p>
+        <p class="small" style="margin:0">Save links that inform this studio. They are notes for you and your agent; the studio does not fetch or execute them.</p>
         <div id="references">
           ${references.length === 0 ? `<p class="small">No references yet.</p>` : ""}
           ${references.map((reference) => `<div class="row" style="justify-content:space-between;border-top:1px solid var(--line);padding-top:0.5rem"><span><strong>${esc(reference.title)}</strong><br><a href="${esc(reference.url)}" target="_blank" rel="noopener noreferrer" class="small">${esc(reference.url)}</a></span><button class="quiet" data-action="remove-reference" data-id="${esc(reference.id)}" type="button">Remove</button></div>`).join("")}

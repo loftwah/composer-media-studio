@@ -611,8 +611,8 @@ export function Settings({ project, draft }: SettingsProps) {
       <div className="card stack">
         <p className="eyebrow">Creative references</p>
         <p className="small" style={{ margin: 0 }}>
-          Links to work that informs this studio. They are notes for you and
-          your agent, never fetched or executed.
+          Save links that inform this studio. They are notes for you and your
+          agent; the studio does not fetch or execute them.
         </p>
         <div id="references">
           {refs.length === 0 && <p className="small">No references yet.</p>}
