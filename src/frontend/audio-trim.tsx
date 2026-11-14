@@ -27,7 +27,7 @@ function AudioTrim() {
     if (!ctx) return;
     const { width, height } = canvas.current;
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = "#167a72";
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--teal").trim();
     const samples = buffer.getChannelData(0);
     const step = Math.max(1, Math.floor(samples.length / width));
     for (let x = 0; x < width; x++) {
@@ -70,8 +70,14 @@ function AudioTrim() {
     const first = Math.round(start * buffer.sampleRate);
     const frames = Math.min(buffer.length - first, Math.round(length * buffer.sampleRate));
     if (frames < 1) { setMessage("Select a longer clip."); return; }
-    const context = new OfflineAudioContext(buffer.numberOfChannels, frames, buffer.sampleRate);
-    const result = context.createBuffer(buffer.numberOfChannels, frames, buffer.sampleRate);
+    let result: AudioBuffer;
+    try {
+      const context = new OfflineAudioContext(buffer.numberOfChannels, frames, buffer.sampleRate);
+      result = context.createBuffer(buffer.numberOfChannels, frames, buffer.sampleRate);
+    } catch {
+      setMessage("This browser cannot create the audio clip. Try a shorter file or another browser.");
+      return;
+    }
     for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
       const from = buffer.getChannelData(channel); const to = result.getChannelData(channel);
       for (let i = 0; i < frames; i++) {
