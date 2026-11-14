@@ -11,3 +11,5 @@ output/
 
 # Project-local installed design tooling (not application source).
 .agents/skills/impeccable/
+
+/native/target/
