@@ -1166,6 +1166,9 @@ export async function createComposition(env, project, input) {
  * This only saves metadata: it does not submit, mix, render or spend. */
 export async function createStoryboardFromSongPlan(env, project, planId, input) {
   const revision = input.expectedRevision;
+  const audioRole = input.audioRole === undefined ? "music" : input.audioRole;
+  if (!["music", "voice", "effect"].includes(audioRole))
+    throw new HttpError(400, "Choose music, narration or sound effect for the audio", "invalid_audio_role");
   if (!Number.isSafeInteger(revision) || revision < 1)
     throw new HttpError(400, "Provide the plan revision you last read", "invalid_revision");
   const plan = await env.DB.prepare("SELECT * FROM song_plans WHERE id=?1 AND project_id=?2").bind(planId, project.id).first();
@@ -1209,26 +1212,30 @@ export async function createStoryboardFromSongPlan(env, project, planId, input) 
     originScenes.push({ id: scene.id, selectedTakeId: scene.selectedTakeId, startMs: scene.startMs, endMs: scene.endMs, ...trim });
   }
   const spec = await buildCompositionSpec(env, project, {
-    title: song.title, shots, audioTracks: [{ assetId: source.id, role: "music", startMs: 0, trimStartMs: song.startMs, trimEndMs: song.endMs, gainDb: 0, fadeInMs: 0, fadeOutMs: 0 }],
+    title: song.title, shots, audioTracks: [{ assetId: source.id, role: audioRole, startMs: 0, trimStartMs: song.startMs, trimEndMs: song.endMs, gainDb: 0, fadeInMs: 0, fadeOutMs: 0 }],
   });
   if (spec.totalMs !== song.endMs - song.startMs || spec.shots.some((shot, index) => shot.durationMs !== song.scenes[index].endMs - song.scenes[index].startMs))
     throw new HttpError(409, "A take changed while preparing the storyboard. Reload the plan and review the ranges.", "take_changed");
   spec.originSongPlan = { id: plan.id, revision, songSha256: plan.song_sha256, sourceStartMs: song.startMs, sourceEndMs: song.endMs, scenes: originScenes };
   const orderedStarts = song.scenes.map(scene => starts.get(scene.id) ?? 0);
-  const cutKey = JSON.stringify({ projectId: project.id, planId: plan.id, revision, orderedStarts });
-  const compositionId = orderedStarts.some(Boolean)
+  const cutKey = JSON.stringify(audioRole === "music" ? { projectId: project.id, planId: plan.id, revision, orderedStarts } : { projectId: project.id, planId: plan.id, revision, orderedStarts, audioRole });
+  const compositionId = audioRole !== "music" || orderedStarts.some(Boolean)
     ? `cmp_song_cut_${(await sha256Hex(new TextEncoder().encode(cutKey))).slice(0, 40)}`
     : `cmp_song_${plan.id}_${revision}`;
   const matchesRequestedShots = (row) => {
     const current = safeJson(row.spec_json, {});
     const ranges = items => (items ?? []).map(shot => [shot.assetId, shot.trimStartMs ?? 0, shot.trimEndMs ?? shot.durationMs]);
-    return JSON.stringify(ranges(current.shots)) === JSON.stringify(ranges(spec.shots));
+    const sameShots = JSON.stringify(ranges(current.shots)) === JSON.stringify(ranges(spec.shots));
+    // Older clients reopen their existing composition without rewriting edits.
+    // An explicit role must never silently reopen a different edited soundtrack.
+    const sameTracks = input.audioRole === undefined || JSON.stringify(current.audioTracks ?? []) === JSON.stringify(spec.audioTracks);
+    return sameShots && sameTracks;
   };
   let existing = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(compositionId, project.id).first();
   if (existing) {
     const currentPlan = await env.DB.prepare("SELECT revision FROM song_plans WHERE id=?1 AND project_id=?2").bind(plan.id, project.id).first();
     if (!currentPlan || currentPlan.revision !== revision) throw new HttpError(409, "This plan changed. Reload it before making a storyboard.", "revision_conflict");
-    if (!matchesRequestedShots(existing)) throw new HttpError(409, "This storyboard's saved shots were edited. Choose another range or review the existing storyboard.", "storyboard_changed");
+    if (!matchesRequestedShots(existing)) throw new HttpError(409, "This storyboard's saved shots or soundtrack were edited. Review the existing storyboard before continuing.", "storyboard_changed");
     return { composition: { id: existing.id, projectId: existing.project_id, createdAt: existing.created_at, updatedAt: existing.updated_at, ...safeJson(existing.spec_json, {}) }, created: false };
   }
   const timestamp = now();
@@ -1238,7 +1245,7 @@ export async function createStoryboardFromSongPlan(env, project, planId, input) 
   if (!created) {
     existing = await env.DB.prepare("SELECT * FROM compositions WHERE id=?1 AND project_id=?2").bind(compositionId, project.id).first();
     if (!existing) throw new HttpError(409, "This plan changed. Reload it before making a storyboard.", "revision_conflict");
-    if (!matchesRequestedShots(existing)) throw new HttpError(409, "This storyboard's saved shots were edited. Choose another range or review the existing storyboard.", "storyboard_changed");
+    if (!matchesRequestedShots(existing)) throw new HttpError(409, "This storyboard's saved shots or soundtrack were edited. Review the existing storyboard before continuing.", "storyboard_changed");
   }
   const row = created || existing;
   return { composition: { id: row.id, projectId: row.project_id, createdAt: row.created_at, updatedAt: row.updated_at, ...safeJson(row.spec_json, {}) }, created: Boolean(created) };

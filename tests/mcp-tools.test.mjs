@@ -137,6 +137,12 @@ test('MCP turns an authorised ready song plan into the same saved storyboard wit
     assert.equal(shifted.isError,undefined,JSON.stringify(shifted));
     assert.equal(shifted.structuredContent.composition.shots[0].trimStartMs,100);
     assert.notEqual(shifted.structuredContent.composition.id,first.structuredContent.composition.id);
+    const voice = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2,allowTrim:true,audioRole:'voice'}});
+    assert.equal(voice.isError,undefined,JSON.stringify(voice));
+    assert.equal(voice.structuredContent.composition.audioTracks[0].role,'voice');
+    assert.notEqual(voice.structuredContent.composition.id,first.structuredContent.composition.id);
+    const voiceAgain = await client.callTool({name:'studio_storyboard_from_song_plan',arguments:{projectId:project.id,planId:plan.id,expectedRevision:2,allowTrim:true,audioRole:'voice'}});
+    assert.equal(voiceAgain.structuredContent.created,false);
     const composition=first.structuredContent.composition;
     const update={projectId:project.id,compositionId:composition.id,expectedUpdatedAt:composition.updatedAt,title:'Revised cut',shots:composition.shots.map(({assetId,trimStartMs,trimEndMs})=>({assetId,...(trimStartMs === undefined ? {} : {trimStartMs,trimEndMs})}))};
     const saved=await client.callTool({name:'studio_update_storyboard',arguments:update});

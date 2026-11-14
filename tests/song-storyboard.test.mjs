@@ -86,3 +86,24 @@ test('scene in-points create distinct idempotent cuts and reject invalid or edit
   await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,allowTrim:true,sceneStarts}),e=>e.code==='storyboard_changed');
   assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
 });
+
+test('audio role is explicit, isolated and idempotent without rewriting existing storyboards', async () => {
+  const {env,project,plan}=await fixture(0);
+  const legacy=await createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2});
+  assert.equal(legacy.composition.id,`cmp_song_${plan.id}_2`);
+  assert.equal(legacy.composition.audioTracks[0].role,'music');
+  const sameMusic=await createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,audioRole:'music'});
+  assert.equal(sameMusic.created,false); assert.equal(sameMusic.composition.id,legacy.composition.id);
+  const [voice,replay]=await Promise.all([createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,audioRole:'voice'}),createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,audioRole:'voice'})]);
+  assert.deepEqual([voice.created,replay.created].sort(),[false,true]);
+  assert.equal(voice.composition.id,replay.composition.id); assert.equal(voice.composition.audioTracks[0].role,'voice');
+  const effect=await createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,audioRole:'effect'});
+  assert.equal(effect.composition.audioTracks[0].role,'effect');
+  assert.equal(new Set([legacy.composition.id,voice.composition.id,effect.composition.id]).size,3);
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,audioRole:'narration'}),e=>e.code==='invalid_audio_role');
+  await assert.rejects(createStoryboardFromSongPlan(env,{id:'prj_other'},plan.id,{expectedRevision:2,audioRole:'voice'}),e=>e.status===404);
+  const row=await env.DB.prepare('SELECT * FROM compositions WHERE id=?1').bind(voice.composition.id).first();
+  await updateComposition(env,project,row,{title:'Edited',shots:voice.composition.shots,audioTracks:voice.composition.audioTracks.map(track=>({...track,role:'effect'}))});
+  await assert.rejects(createStoryboardFromSongPlan(env,project,plan.id,{expectedRevision:2,audioRole:'voice'}),e=>e.code==='storyboard_changed');
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+});
