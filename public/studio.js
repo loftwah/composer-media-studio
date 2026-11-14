@@ -102,15 +102,16 @@ function notify(message, tone = "ok") {
 }
 
 async function api(path, options = {}) {
+  const { preserveOnUnauthorized = false, ...requestOptions } = options;
   const response = await fetch(path, {
     credentials: "same-origin",
-    ...options,
+    ...requestOptions,
     headers: {
       ...(options.body instanceof FormData ? {} : { "content-type": "application/json" }),
       ...(options.headers ?? {}),
     },
   });
-  if (response.status === 401 && !path.startsWith("/api/login")) {
+  if (response.status === 401 && !preserveOnUnauthorized && !path.startsWith("/api/login")) {
     location.href = "/login";
     throw new Error("Signed out");
   }
@@ -950,7 +951,7 @@ function publishView() {
           <header><strong>${esc(publication.title)}</strong><span class="small">${dateLabel(publication.createdAt)}</span></header>
           <p class="small"><a href="${esc(publication.path)}" target="_blank" rel="noopener">${esc(location.origin + publication.path)}</a></p>
           <p class="small">${publication.hidden ? "Hidden from gallery · anyone with the link can view" : publication.listed ? "Listed in the public gallery" : "Unlisted · anyone with the link can view"}</p>
-          <div class="row"><button class="secondary" data-action="toggle-listing" data-id="${esc(publication.id)}">${publication.listed && !publication.hidden ? "Remove from gallery" : "Add to public gallery"}</button><a class="button secondary" href="${esc(publication.path)}" target="_blank" rel="noopener">Open page</a><button class="quiet" data-action="revoke" data-id="${esc(publication.id)}">Withdraw</button></div>
+          <div class="row"><button class="secondary" data-action="edit-publication" data-id="${esc(publication.id)}">Edit page details</button><button class="secondary" data-action="toggle-listing" data-id="${esc(publication.id)}">${publication.listed && !publication.hidden ? "Remove from gallery" : "Add to public gallery"}</button><a class="button secondary" href="${esc(publication.path)}" target="_blank" rel="noopener">Open page</a><button class="quiet" data-action="revoke" data-id="${esc(publication.id)}">Withdraw</button></div>
         </article>`)
         .join("")}
     </div>`;
@@ -1613,6 +1614,37 @@ async function handleAction(action, element, keyboard = false) {
         after = result.nextAfter;
       } while (after);
       return;
+    }
+    case "edit-publication": {
+      const projectId = state.projectId;
+      const publication = state.project.publications.find((item) => item.id === id);
+      if (!publication) return;
+      const expectedTitle = publication.title, expectedDescription = publication.description;
+      let draft = { title: expectedTitle, description: expectedDescription };
+      let copy = "Changes appear on this public page and in the gallery. Its link and visibility stay the same; cached pages may take a minute to update.";
+      while (true) {
+        const values = await ask({ title: "Edit public page", copy, fields: [
+          { name: "title", label: "Public title", value: draft.title, required: true, maxlength: 100 },
+          { name: "description", label: "Public description", type: "textarea", value: draft.description, maxlength: 300 },
+        ], submit: "Save public details" });
+        if (!values) return;
+        draft = values;
+        if (state.projectId !== projectId) { notify("Studio changed. Your edit was not saved."); return; }
+        try {
+          const updated = await api(`/api/publications/${id}`, { method: "PATCH", preserveOnUnauthorized: true, body: JSON.stringify({ ...draft, expectedTitle, expectedDescription }) });
+          const current = state.projectId === projectId && state.project?.publications.find((item) => item.id === id);
+          if (current) Object.assign(current, { title: updated.title, description: updated.description });
+          render();
+          notify("Public details saved. Cached pages may take a minute to update.");
+          return;
+        } catch (error) {
+          copy = error.status === 401
+            ? `Your session expired. Your text is still here. <a href="${esc(studioReentry(state.session))}" target="_blank" rel="noopener noreferrer">Sign in in a new tab</a>, then return and save again; you can also copy your text.`
+            : error.code === "revision_conflict"
+            ? "This page changed or was withdrawn elsewhere. Your edit was not saved. Copy your text before cancelling, then reload the studio to review the latest page."
+            : "The details could not be saved. Your text is still here; check it or copy it before cancelling and trying again.";
+        }
+      }
     }
     case "toggle-listing": {
       const publication = state.project.publications.find((item) => item.id === id);

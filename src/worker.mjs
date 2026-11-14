@@ -884,11 +884,21 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   const publicationMatch = path.match(/^\/api\/publications\/([a-z0-9_]+)$/);
   if (publicationMatch && method === "PATCH") {
     const input = await body(request);
-    if (typeof input.listed !== "boolean" && typeof input.hidden !== "boolean") throw new HttpError(400, "Send listed or hidden as a boolean", "invalid");
+    const editingText = Object.hasOwn(input, "title") || Object.hasOwn(input, "description");
+    if (!editingText && typeof input.listed !== "boolean" && typeof input.hidden !== "boolean") throw new HttpError(400, "Send listed or hidden as a boolean", "invalid");
     const row = await env.DB.prepare("SELECT id,project_id FROM publications WHERE id=?1 AND revoked_at IS NULL").bind(publicationMatch[1]).first();
     if (!row) throw new HttpError(404, "Publication not found", "not_found");
     if (session.mode !== "owner" && session.project && row.project_id !== session.project)
       throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
+    if (editingText) {
+      if (Object.hasOwn(input, "listed") || Object.hasOwn(input, "hidden") || typeof input.title !== "string" || typeof input.description !== "string" || typeof input.expectedTitle !== "string" || typeof input.expectedDescription !== "string") throw new HttpError(400, "Send the original and new title and description with the edit.", "invalid");
+      const title = text(input.title, 100, "Public title");
+      const description = text(input.description, 300, "Public description", { required: false });
+      const [result] = await env.DB.batch([env.DB.prepare("UPDATE publications SET title=?2,description=?3 WHERE id=?1 AND revoked_at IS NULL AND title=?4 AND description=?5")
+        .bind(row.id, title, description, input.expectedTitle, input.expectedDescription)]);
+      if (!result.meta.changes) throw new HttpError(409, "This publication changed or was withdrawn. Your edit was not saved.", "revision_conflict");
+      return json({ id: row.id, title, description });
+    }
     if (typeof input.listed === "boolean" && typeof input.hidden === "boolean") {
       await env.DB.prepare("UPDATE publications SET listed=?2,hidden=?3 WHERE id=?1").bind(row.id, input.listed ? 1 : 0, input.hidden ? 1 : 0).run();
     } else if (typeof input.listed === "boolean") {

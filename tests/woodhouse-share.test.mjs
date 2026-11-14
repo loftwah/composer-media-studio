@@ -6,6 +6,42 @@ import { sha256Hex } from "../src/lib/util.mjs";
 import { PNG_1x1, setup, addAsset } from "./harness.mjs";
 import { woodhouseGallery } from "../src/lib/ui.mjs";
 
+test("publication text edits preserve public identity and require scoped publish access", async (t) => {
+  const { env, project } = await setup();
+  env.COMPOSER_ORIGIN = 'https://composer.test'; env.BRIDGE_SECRET = 'fixture-bridge-secret-at-least-32-bytes';
+  let grantActive = true;
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    const claim = JSON.parse(options.body);
+    return Response.json({ ok:grantActive, actor:claim.actor, workspace:claim.workspace, actions:claim.actions });
+  });
+  const asset = await addAsset(env, project, { id: "asset_edit_page", kind: "image" });
+  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed,hidden,attribution_json) VALUES(?1,?2,?3,'edit-piece','Old','Old credit',1,1,1,0,?4)")
+    .bind("pub_edit", project.id, asset.id, '[{"name":"credit"}]').run();
+  const cookie = async (projectId, actions) => 'studio_session=' + await createSession(env, { mode:'bridge', actor:'fixture', workspace:'fixture', project:projectId, actions });
+  const patch = (auth, value) => worker.fetch(new Request('https://studio.test/api/publications/pub_edit', { method:'PATCH', headers:{ cookie:auth, origin:'https://studio.test', 'content-type':'application/json' }, body:JSON.stringify(value) }), env);
+  const edit = { title:'New <title>', description:'Credit <script>alert(1)</script> https://example.test/source', expectedTitle:'Old', expectedDescription:'Old credit' };
+  const owner = await cookie(project.id, ['read','publish']);
+  assert.equal((await patch(await cookie('prj_other', ['read','publish']), edit)).status, 403);
+  assert.equal((await patch(await cookie(project.id, ['read']), edit)).status, 403);
+  grantActive = false;
+  assert.equal((await patch(owner, edit)).status, 403);
+  grantActive = true;
+  assert.equal((await patch(owner, { ...edit, title:'' })).status, 400);
+  assert.equal((await patch(owner, { ...edit, description:'x'.repeat(301) })).status, 400);
+  assert.equal((await patch(owner, { ...edit, listed:false })).status, 400);
+  assert.equal((await patch(owner, edit)).status, 200);
+  const row = await env.DB.prepare('SELECT * FROM publications WHERE id=?1').bind('pub_edit').first();
+  assert.equal(row.slug, 'edit-piece'); assert.equal(row.listed, 1); assert.equal(row.hidden, 0);
+  assert.equal(row.revoked_at, null); assert.equal(row.attribution_json, '[{"name":"credit"}]');
+  assert.equal((await patch(owner, edit)).status, 409);
+  const page = await worker.fetch(new Request('https://studio.test/p/edit-piece'), env);
+  const html = await page.text();
+  assert.match(html, /New &lt;title&gt;/); assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
+  await env.DB.prepare('UPDATE publications SET revoked_at=1 WHERE id=?1').bind('pub_edit').run();
+  assert.equal((await patch(owner, { ...edit, expectedTitle:row.title, expectedDescription:row.description })).status, 404);
+});
+
 test("artwork links retain the current search and page when returning to the catalogue", () => {
   const asset = { id: "first-print", title: "Print", project: "fighter" };
   const context = { query: "ring & bell", project: "fighter", after: "earlier-print" };

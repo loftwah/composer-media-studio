@@ -262,6 +262,7 @@ export function Publish({ publications, origin }: PublishProps) {
             </p>
             <p className="small">{publication.hidden ? "Hidden from gallery · anyone with the link can view" : publication.listed ? "Listed in the public gallery" : "Unlisted · anyone with the link can view"}</p>
             <div className="row">
+              <button type="button" className="secondary" data-action="edit-publication" data-id={publication.id}>Edit page details</button>
               <button type="button" className="secondary" data-action="toggle-listing" data-id={publication.id}>
                 {publication.listed && !publication.hidden ? "Remove from gallery" : "Add to public gallery"}
               </button>
