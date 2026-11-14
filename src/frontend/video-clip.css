@@ -2,3 +2,6 @@
 .video-tool-check { display:flex; gap:.6rem; align-items:center; }
 
 .video-tool-actions { display:flex; flex-wrap:wrap; gap:.75rem; }
+
+.clip-poster-preview { display:block; width:auto; height:auto; max-width:min(100%,42rem); max-height:32rem; object-fit:contain; }
+.trim-result .button.secondary, .trim-result .button.secondary:hover { color:var(--ink); }
