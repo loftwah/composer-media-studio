@@ -24,14 +24,15 @@ export const DARKROOM_VERSION = "0.10.0";
 
 /**
  * Studio models whose Workers AI endpoint Darkroom's catalogue also carries.
- * Studio Draft (SDXL Lightning) is not in that catalogue and keeps its direct
- * Workers AI call, as do every fal.ai model.
+ * Studio Draft now uses FLUX.2 Klein 9B through Darkroom's multipart adapter.
+ * Every fal.ai model keeps its own adapter.
  */
 const darkroomModels = new Map([
   ["studio-print", "@cf/leonardo/lucid-origin"],
   ["studio-film", "@cf/leonardo/phoenix-1.0"],
   ["studio-quick", "@cf/black-forest-labs/flux-1-schnell"],
   ["studio-detail", "@cf/black-forest-labs/flux-2-klein-4b"],
+  ["studio-craft", "@cf/black-forest-labs/flux-2-klein-9b"],
 ]);
 
 export function usesDarkroom(model) {

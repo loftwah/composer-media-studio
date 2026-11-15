@@ -12,14 +12,14 @@ import {
   advanceGeneration,
   budgetSnapshot,
 } from "../src/lib/jobs.mjs";
-import { getModel, validateSettings, publicModels, estimateCost } from "../src/lib/providers.mjs";
+import { getModel, validateSettings, publicModels, publicRetiredModels, estimateCost } from "../src/lib/providers.mjs";
 import { imageSize, videoInfo, sniffMedia } from "../src/lib/util.mjs";
 import { PNG_1x1, jpeg, setup } from "./harness.mjs";
 
 function imageRequest(overrides = {}) {
   return {
     kind: "image",
-    model: "studio-draft",
+    model: "studio-craft",
     recipeId: "editorial-still",
     prompt: "A quiet paper landscape with a single burnt orange sun.",
     aspect: "portrait",
@@ -29,11 +29,26 @@ function imageRequest(overrides = {}) {
 }
 
 test("model settings are validated on the server", () => {
-  assert.throws(() => validateSettings(getModel("studio-draft"), { prompt: "x", aspect: "tall" }), /frame/);
+  assert.throws(() => validateSettings(getModel("studio-craft"), { prompt: "x", aspect: "tall" }), /frame/);
   assert.throws(() => validateSettings(getModel("hailuo-standard"), { prompt: "x", durationSeconds: 7 }), /second/);
   const settings = validateSettings(getModel("studio-detail"), { prompt: " change the light ", aspect: "square" });
   assert.equal(settings.prompt, "change the light");
   assert.ok(publicModels().every((model) => model.costMicro > 0 && model.costBasis.length > 20));
+});
+
+test("the retiring draft model is withdrawn but keeps its exact attribution", () => {
+  assert.equal(publicModels().some((model) => model.id === "studio-draft"), false);
+  assert.equal(publicModels().some((model) => model.id === "studio-craft"), true);
+  assert.equal(getModel("studio-craft").endpoint, "@cf/black-forest-labs/flux-2-klein-9b");
+  assert.throws(() => getModel("studio-draft"), (error) => {
+    assert.equal(error.status, 410);
+    assert.equal(error.code, "model_retired");
+    assert.equal(error.replacement, "studio-craft");
+    return true;
+  });
+  const retired = publicRetiredModels().find((model) => model.id === "studio-draft");
+  assert.equal(retired.endpoint, "@cf/bytedance/stable-diffusion-xl-lightning");
+  assert.equal(retired.retiredAt, "2026-11-20");
 });
 
 test("image and video bytes are read without trusting the client", () => {
@@ -83,7 +98,7 @@ test("the same client request can only create one generation", async () => {
 });
 
 test("one atomic admission prevents oversubscribing the allowance", async () => {
-  const { env, project } = await setup({ allowance: 2_000 });
+  const { env, project } = await setup({ allowance: 20_000 });
   const first = await createGeneration(env, project, imageRequest());
   assert.equal(first.created, true);
   await assert.rejects(createGeneration(env, project, imageRequest({ clientRequestId: "req_second1" })), (error) => {
@@ -92,7 +107,7 @@ test("one atomic admission prevents oversubscribing the allowance", async () => 
     return true;
   });
   const budget = await budgetSnapshot(env, project.id);
-  assert.equal(budget.reservedMicro, 1_200);
+  assert.equal(budget.reservedMicro, 16_000);
   const row = await env.DB.prepare("SELECT status FROM generations WHERE client_request_id='req_second1'").first();
   assert.equal(row.status, "failed");
 });
@@ -120,7 +135,7 @@ test("saving retains one owned asset and a retry never generates again", async (
   const assets = await env.DB.prepare("SELECT COUNT(*) AS n FROM assets").all();
   assert.equal(assets.results[0].n, 1);
   const budget = await budgetSnapshot(env, project.id);
-  assert.equal(budget.spentMicro, estimateCost(getModel("studio-draft")));
+  assert.equal(budget.spentMicro, estimateCost(getModel("studio-craft")));
   assert.equal(budget.reservedMicro, 0);
 });
 
@@ -156,7 +171,7 @@ test("a lost dispatch reply is unknown and keeps its reservation", async () => {
   assert.equal(advanced.status, "unknown");
   assert.equal(advanced.error_code, "dispatch_unknown");
   const budget = await budgetSnapshot(env, project.id);
-  assert.equal(budget.reservedMicro, 1_200);
+  assert.equal(budget.reservedMicro, 16_000);
   const fresh = await loadGeneration(env, generation.id);
   assert.equal(fresh.cost_allocated_micro, null);
 });

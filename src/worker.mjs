@@ -46,7 +46,7 @@ import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
 import { measureFootageSource } from "./lib/footage-preflight.mjs";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.mjs";
-import { models, publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
+import { models, publicModels, publicRetiredModels, retiredModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
@@ -57,6 +57,7 @@ import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
+import { readCapabilityManifest, readCapabilityState, refreshCapabilities } from "./lib/capabilities.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
 import {
   audioInfo,
@@ -195,6 +196,17 @@ function assetView(asset, extra = {}) {
   };
 }
 
+function modelAttribution(generation) {
+  const request = safeJson(generation.request_json, {});
+  const current = models[generation.model];
+  const retired = retiredModels[generation.model];
+  return {
+    modelLabel: current?.label ?? retired?.label ?? generation.model,
+    modelEndpoint: request.modelEndpoint ?? current?.endpoint ?? retired?.endpoint ?? null,
+    modelRetired: Boolean(retired),
+  };
+}
+
 function generationView(generation, extra = {}) {
   const request = safeJson(generation.request_json, {});
   return {
@@ -202,6 +214,7 @@ function generationView(generation, extra = {}) {
     kind: generation.kind,
     status: generation.status,
     model: generation.model,
+    ...modelAttribution(generation),
     recipeId: generation.recipe_id,
     compositionId: generation.composition_id ?? null,
     variant: request.variant ?? null,
@@ -404,6 +417,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   const projectIdFromPath = (path.match(/^\/api\/projects\/([a-z0-9_]+)/) ?? [])[1] ?? null;
   let action = method === "GET" || method === "HEAD" ? "read" : "edit";
   if (path === "/api/state" || path === "/api/models") action = "read";
+  if (path === "/api/capabilities/refresh" && method === "POST") action = "admin";
   if (path === "/api/projects" && method === "POST") action = "edit";
   if (/\/generations$/.test(path) && method === "POST") action = "generate";
   if (/\/render$/.test(path) && method === "POST") action = "generate";
@@ -451,7 +465,22 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   }
 
   if (path === "/api/models" && method === "GET")
-    return json({ models: publicModels(), videosConfigured: Boolean(env.FAL_KEY) });
+    return json({ models: publicModels(), retiredModels: publicRetiredModels(), videosConfigured: Boolean(env.FAL_KEY) });
+
+  if (path === "/api/capabilities/refresh" && method === "POST") {
+    const result = await refreshCapabilities(env, { force: true });
+    return json({
+      outcome: result.state.outcome,
+      checkedAt: result.state.checkedAt,
+      nextDueAt: result.state.nextDueAt,
+      openAlerts: result.state.openAlerts,
+      modelCalls: 0,
+      manifest: result.manifest,
+    });
+  }
+
+  if (path === "/api/capabilities" && method === "GET")
+    return json({ manifest: await readCapabilityManifest(env), state: await readCapabilityState(env) });
 
   if (path === "/api/state" && method === "GET") {
     const { results } = await env.DB.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all();
@@ -460,6 +489,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       projects: await Promise.all(visible.map((project) => projectSummary(env, project))),
       showcase: await homeShowcase(env),
       models: publicModels(),
+      retiredModels: publicRetiredModels(),
       videosConfigured: Boolean(env.FAL_KEY),
       allowanceDefaultMicro: Number(env.MONTHLY_ALLOWANCE_MICRO) || 5_000_000,
       recipes: builtinRecipes,
@@ -1399,6 +1429,10 @@ async function handlePublic(request, env, url) {
     });
   }
   if (path === "/build.json") return json({ revision: BUILD.revision, builtAt: BUILD.builtAt });
+  if (path === "/capabilities.json") {
+    const manifest = await readCapabilityManifest(env);
+    return json(manifest, 200, { "cache-control": "public, max-age=300, s-maxage=3600" });
+  }
 
   if (path === "/bridge") {
     const token = url.searchParams.get("token");
@@ -1785,5 +1819,8 @@ export default {
         .run();
     })().catch(() => {}));
     ctx.waitUntil(pruneMcpRecords(env));
+    // Read-only capability freshness: real work at most once a day. The every-
+    // minute trigger already exists; a failed check keeps the last good copy.
+    ctx.waitUntil(refreshCapabilities(env).catch((error) => console.error("Capability refresh unavailable", error?.message ?? error)));
   },
 };

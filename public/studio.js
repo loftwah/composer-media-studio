@@ -194,6 +194,7 @@ async function boot() {
   const data = await api("/api/state");
   state.projects = data.projects;
   state.models = data.models;
+  state.retiredModels = data.retiredModels ?? [];
   state.recipes = data.recipes;
   state.videosConfigured = data.videosConfigured;
   state.destinations = data.destinations ?? {};
@@ -248,7 +249,7 @@ function defaultCreate() {
 }
 
 function modelById(id) {
-  return state.models.find((model) => model.id === id) ?? null;
+  return state.models.find((model) => model.id === id) ?? state.retiredModels?.find((model) => model.id === id) ?? null;
 }
 
 function recipeBySlug(slug) {
@@ -939,20 +940,22 @@ function historyView() {
 
 function jobCard(generation) {
   const model = modelById(generation.model);
+  const label = generation.modelLabel ?? model?.label ?? (generation.model === "kling-o1-restyle" ? "Kling O1 footage edit" : generation.model);
   const asset = state.project.assets.find((item) => item.id === generation.assetId);
   const pending = isPending(generation);
   const canCancel = ["admitted", "submitting", "submitted", "running"].includes(generation.status);
   const canRetrySave = ["provider_complete", "saving"].includes(generation.status);
   return `<article class="job" data-job="${esc(generation.id)}">
     <header>
-      <div class="row">${statusChip(generation.status)}<strong>${esc(model?.label ?? (generation.model === "kling-o1-restyle" ? "Kling O1 footage edit" : generation.model))}</strong><span class="small">${esc(generation.kind)} · ${dateLabel(generation.createdAt)} ${timeLabel(generation.createdAt)}</span></div>
+      <div class="row">${statusChip(generation.status)}<strong>${esc(label)}</strong><span class="small">${esc(generation.kind)} · ${dateLabel(generation.createdAt)} ${timeLabel(generation.createdAt)}</span></div>
       <span class="small">Estimated allocation: ${money(generation.costAllocatedMicro ?? generation.costEstimateMicro)}</span>
     </header>
+    ${generation.modelRetired ? `<p class="small">This saved job used a retired model. Its record and result are unchanged. Choose a current model for new work.</p>` : ""}
     <p class="prompt">${esc(generation.prompt)}</p>
     <p class="small">${esc(generation.aspect ?? "")} ${generation.durationSeconds ? `· ${generation.durationSeconds}s` : ""} ${generation.error ? `· ${esc(generation.error.message)}` : ""}</p>
     ${asset ? `<div class="result">${["audio", "video"].includes(asset.kind) && asset.durationMs != null ? `<p class="small">Saved file: ${(asset.durationMs / 1000).toFixed(2)}s</p>` : ""}${asset.kind === "video" ? `<video src="${esc(asset.file)}" controls playsinline preload="none" aria-label="Play ${esc(asset.title)}"></video>` : asset.kind === "audio" ? `<audio src="${esc(asset.file)}" controls preload="none" aria-label="Play ${esc(asset.title)}" style="width:100%"></audio>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}" loading="lazy">`}</div>` : ""}
     <div class="row">
-      ${asset ? `<button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open result</button>${generation.model !== "kling-o1-restyle" ? `<button class="secondary" data-action="reuse-job" data-id="${esc(generation.id)}">Reuse settings</button>` : ""}` : ""}
+      ${asset ? `<button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open result</button>${generation.model !== "kling-o1-restyle" && !generation.modelRetired ? `<button class="secondary" data-action="reuse-job" data-id="${esc(generation.id)}">Reuse settings</button>` : ""}` : ""}
       ${pending && generation.kind === "video" ? `<button class="secondary" data-action="refresh-job" data-id="${esc(generation.id)}">Refresh</button>` : ""}
       ${canCancel ? `<button class="secondary" data-action="cancel-job" data-id="${esc(generation.id)}">Cancel</button>` : ""}
       ${canRetrySave ? `<button data-action="save-retry" data-id="${esc(generation.id)}">Retry saving</button>` : ""}

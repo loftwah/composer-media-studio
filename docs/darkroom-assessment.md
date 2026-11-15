@@ -81,11 +81,13 @@ the authority during the transition.
 Reason 1 above is resolved upstream: since Darkroom 0.7.0 a host can inject its own provider catalogue (`parseMediaCatalogue`; validation and the video cost estimate take it as an argument), so a reviewed fal.ai adapter is possible later. Reason 2 is resolved by the R2 destination below.
 
 `@fungi.computer/darkroom@0.10.0` provides the R2 reference resolver and
-durable image execution for Studio Print (Lucid Origin), Film (Phoenix), Quick
-(FLUX.1 schnell) and Detail (FLUX.2 klein). The Studio keeps the prior Print and
-Film guidance values (5 and 3) and the prior Quick request. Detail uses the
-package’s fitted reference input. Draft remains direct Workers AI; fal routes
-and the Studio’s authority over job status, budget and publication stay in place.
+durable image execution for Studio Print (Lucid Origin), Film (Phoenix), Draft
+(FLUX.2 Klein 9B), Quick (FLUX.1 schnell) and Detail (FLUX.2 klein 4B). The
+Studio keeps the prior Print and Film guidance values (5 and 3) and the prior
+Quick request. Detail uses the package’s fitted reference input. Draft now uses
+the package’s multipart transport for FLUX.2 Klein 9B after SDXL Lightning’s
+published 20 November 2026 retirement; fal routes and the Studio’s authority
+over job status, budget and publication stay in place.
 
 Darkroom 0.10.0 builds a prompt-bearing destination image. Studio discards
 that payload and indexes the exact retained provider original in its own R2.

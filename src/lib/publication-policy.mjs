@@ -32,7 +32,7 @@ const eligible = `a.deleted_at IS NULL AND a.source IN ('generated','variant','a
 // source attribution. Fail closed on legacy/unknown records, references, edits
 // and assembled media until their full public credit and licence are available.
 const attributionSafe = `a.source='generated' AND a.parent_asset_id IS NULL AND g.composition_id IS NULL
-  AND g.model IN ('studio-print','studio-film','studio-draft','studio-quick','studio-score','studio-voice','studio-effect')
+  AND g.model IN ('studio-print','studio-film','studio-craft','studio-draft','studio-quick','studio-score','studio-voice','studio-effect')
   AND CASE WHEN json_valid(g.request_json) THEN
     json_type(g.request_json)='object'
     AND json_type(g.request_json,'$.referenceAssetId')='null'
