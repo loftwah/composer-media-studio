@@ -283,6 +283,7 @@ export function Assemble({
     if (!plan) continue;
     latestByPlan.set(plan.id, Math.max(latestByPlan.get(plan.id) ?? 0, plan.revision));
   }
+  const editing = compositions.find((composition) => composition.id === compose.editingId);
   return (
     <>
       <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} onVoiceDraft={onVoiceDraft} />
@@ -305,8 +306,8 @@ export function Assemble({
           <p className="eyebrow">The cut</p>
           {compose.editingId && (
             <p className="notice calm" style={{ margin: 0 }}>
-              Editing a saved storyboard. Saving updates it in place and keeps
-              every earlier render.
+              Editing {editing?.originSongPlan ? `plan revision ${editing.originSongPlan.revision}` : "a saved storyboard"}
+              {editing?.originSongPlan && latestByPlan.get(editing.originSongPlan.id) !== editing.originSongPlan.revision ? " (an earlier revision)" : ""}. Saving updates it in place and keeps every earlier render.
             </p>
           )}
           <label>

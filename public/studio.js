@@ -436,6 +436,19 @@ function renderReactAssemble() {
   }, canEdit: Boolean(state.session?.actions.includes("edit")), onSongStoryboard: (composition) => {
     if (!state.project || state.project.id !== composition.projectId || state.view !== "project" || state.tab !== "assemble") return;
     state.project.compositions = [composition, ...(state.project.compositions ?? []).filter((item) => item.id !== composition.id)];
+    // A new storyboard is the revision the creator just approved. Load it so
+    // the soundtrack mix and "Save changes" cannot silently target the older
+    // revision that was already open in the editor.
+    state.compose = {
+      shotIds: composition.shots.map((shot) => shot.assetId),
+      shotTrims: Object.fromEntries(composition.shots.filter((shot) => shot.trimStartMs !== undefined && shot.trimEndMs !== undefined).map((shot) => [shot.assetId, { trimStartMs: shot.trimStartMs, trimEndMs: shot.trimEndMs }])),
+      audioAssetId: composition.audioAssetId ?? null,
+      audioTracks: structuredClone(composition.audioTracks ?? []),
+      slateAssetId: composition.slateAssetId ?? null,
+      title: composition.title,
+      editingId: composition.id,
+      expectedUpdatedAt: composition.updatedAt,
+    };
     renderReactAssemble();
   }, compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social") });
 }
