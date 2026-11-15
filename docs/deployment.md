@@ -37,6 +37,24 @@ pnpm run deploy --migrate
 once, deploys with the commit baked in, then reads `/healthz` and `/build.json`
 and fails if the live revision is not the released commit.
 
+Each release carries one monotonic run ID from before `pnpm check` to exact live
+revision identity. It writes a redacted `release-timing/v1` receipt under ignored
+`.release/timing/` and prints total, target and limit. **Exactly 300,000 ms is a
+breach**; only strictly under five minutes passes. A breach finishes the safe
+upload and live check, then creates or updates one open GitHub issue labelled
+`delivery-sla`, fingerprinted by repository, release path and slowest stage.
+Matching breaches comment on the same issue; a different bottleneck opens a
+separate one. A failed GitHub write leaves a redacted event in
+`.release/timing/pending/` for the next run. Run the operational checks with:
+
+```sh
+pnpm release:watchdog --check-stuck
+pnpm release:watchdog --retry-pending
+```
+
+A passing release adds recovery evidence but never closes the breach issue
+automatically. Receipts contain no credentials, signed URLs or private media.
+
 ## Darkroom
 
 Studio Print, Film, Quick and Detail use the exact npm release
