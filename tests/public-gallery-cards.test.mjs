@@ -46,3 +46,14 @@ test('home highlights an existing published preview without changing the gallery
   assert.doesNotMatch(publicGallery({items}), /gallery-hero-art/);
   assert.doesNotMatch(publicGallery({home:true,items:[{slug:'audio',kind:'audio',title:'Sound'}]}), /gallery-hero-art/);
 });
+
+test('the hero asks for its bytes first while every gallery card stays lazy', () => {
+  const items = [ { slug: 'film', kind: 'video', title: 'Film', poster_asset_id: 'poster' }, { slug: 'still', kind: 'image', title: 'Still' } ];
+  const home = publicGallery({ home: true, items });
+  assert.match(home, /class="gallery-hero-art"[^>]*><img src="\/p\/film\/poster" alt="" decoding="async" fetchpriority="high"/);
+  const images = home.match(/<img src="\/p\/[^"]+" alt="" [^>]*>/g) ?? [];
+  const gridCards = images.slice(1);
+  assert.ok(gridCards.length >= 2, images.join('\n'));
+  assert.ok(gridCards.every((tag) => /loading="lazy"/.test(tag) && !/fetchpriority="high"/.test(tag)), gridCards.join('\n'));
+  assert.doesNotMatch(publicGallery({ items }), /fetchpriority="high"/);
+});

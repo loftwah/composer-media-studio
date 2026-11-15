@@ -341,7 +341,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
           ? `<video controls playsinline preload="metadata" ${videoDimensions} ${poster ? `poster="${escapeHtml(poster)}"` : ""} aria-label="${escapeHtml(title)}"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">Your browser cannot play this video. <a href="${escapeHtml(download)}">Download it instead</a>.</video>`
           : isAudio
             ? `<audio controls preload="metadata" aria-label="${escapeHtml(title)}" style="width:100%"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">Your browser cannot play this audio. <a href="${escapeHtml(download)}">Download it instead</a>.</audio>`
-            : `<img src="${escapeHtml(media)}" alt="${escapeHtml(title)}" ${width ? `width="${width}" height="${height}"` : ""} decoding="async">`
+            : `<img src="${escapeHtml(media)}" alt="${escapeHtml(title)}" ${width ? `width="${width}" height="${height}"` : ""} decoding="async" fetchpriority="high">`
       }
     </div>
     <figcaption class="caption">
@@ -585,7 +585,9 @@ export function publicGallery({ items = [], featured = [], hasMore = false, page
   }).join("");
   const heroItem = home ? (items.find((item) => item.kind === "video" && item.poster_asset_id) || items.find((item) => item.kind === "image")) : null;
   const heroSlug = heroItem ? encodeURIComponent(heroItem.slug) : "";
-  const heroArtwork = heroItem ? `<a class="gallery-hero-art" href="/p/${heroSlug}"><img src="/p/${heroSlug}/${heroItem.kind === "image" ? "media" : "poster"}" alt="" decoding="async"><span><small>Published in Media Studio</small><strong>${escapeHtml(heroItem.title)}</strong><span>Explore this work →</span></span></a>` : "";
+  // The hero is the page's largest paint, so it asks for the first bytes. Cards
+  // below it stay lazy: the gallery grid defers offscreen cards in studio.css.
+  const heroArtwork = heroItem ? `<a class="gallery-hero-art" href="/p/${heroSlug}"><img src="/p/${heroSlug}/${heroItem.kind === "image" ? "media" : "poster"}" alt="" decoding="async" fetchpriority="high"><span><small>Published in Media Studio</small><strong>${escapeHtml(heroItem.title)}</strong><span>Explore this work →</span></span></a>` : "";
   const cards = renderCards(items);
   const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));
   return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio." })}

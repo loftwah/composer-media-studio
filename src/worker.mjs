@@ -190,6 +190,15 @@ function rangeHeaders(range, size) {
   };
 }
 
+/** A conditional request for published bytes: compare one strong tag per entry. */
+function matchesEtag(header, etag) {
+  if (!header) return false;
+  return String(header).split(",").some((entry) => {
+    const tag = entry.trim().replace(/^W\//, "");
+    return tag === "*" || tag === etag;
+  });
+}
+
 /** Parse one byte range. Range playback is a real media feature, not a label. */
 function parseRange(header, size) {
   if (!header) return null;
@@ -2051,6 +2060,15 @@ async function servePublished(request, env, assetId, download) {
       status: 416,
       headers: { "content-range": `bytes */${asset.bytes}`, "accept-ranges": "bytes" },
     });
+  const etag = `"${asset.sha256.slice(0, 32)}"`;
+  // The tag comes from the stored bytes and the caller already resolved a live
+  // publication, so an unchanged copy can be reused without sending it again.
+  // The short max-age stays: a withdrawn page stops resolving at the next check.
+  if (!range && matchesEtag(request.headers.get("if-none-match"), etag))
+    return new Response(null, {
+      status: 304,
+      headers: { etag, "cache-control": "public, max-age=60" },
+    });
   let body = inspected;
   if (inspected) {
     if (range) body = inspected.subarray(range.start, range.end + 1);
@@ -2071,7 +2089,7 @@ async function servePublished(request, env, assetId, download) {
     "x-content-type-options": "nosniff",
     "content-security-policy": "default-src 'none'; sandbox",
     "cross-origin-resource-policy": "cross-origin",
-    etag: `"${asset.sha256.slice(0, 32)}"`,
+    etag,
   };
   if (download)
     headers["content-disposition"] = `attachment; filename="published-${asset.id}.${extensionFor(asset.mime)}"`;
