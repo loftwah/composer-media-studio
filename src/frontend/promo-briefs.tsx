@@ -30,6 +30,9 @@ export function PromoBriefs({projectId,canEdit,onVoiceDraft}:{projectId:string;c
   const [pendingFocus,setPendingFocus]=useState<number|null>(null);
   const latest=useRef({draft,saved}); latest.current={draft,saved};
   const sceneStrip=useRef<HTMLOListElement|null>(null);
+  const saveButton=useRef<HTMLButtonElement|null>(null);
+  const conflictSummary=useRef<HTMLElement|null>(null);
+  const conflictFallback=useRef<HTMLDivElement|null>(null);
   const dirty=JSON.stringify(content(draft))!==JSON.stringify(saved ? content(saved) : empty());
   const active=clampScene(activeScene, draft.scenes.length);
   const scene= draft.scenes[active] ?? {spoken:'',visual:''};
@@ -43,6 +46,7 @@ export function PromoBriefs({projectId,canEdit,onVoiceDraft}:{projectId:string;c
   useEffect(()=>()=>{cache.set(projectId,copy(latest.current));},[projectId]);
   useEffect(()=>{if(!dirty)return; const warn=(event:BeforeUnloadEvent)=>event.preventDefault(); window.addEventListener('beforeunload',warn); return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
   useEffect(()=>{if(pendingFocus===null)return; sceneStrip.current?.querySelector<HTMLButtonElement>(`[data-scene-index="${pendingFocus}"]`)?.focus(); setPendingFocus(null);},[pendingFocus,draft.scenes.length]);
+  useEffect(()=>{if(!conflict)return; const frame=requestAnimationFrame(()=>{(newest?conflictSummary.current:conflictFallback.current)?.focus();}); return ()=>cancelAnimationFrame(frame);},[conflict,newest?.revision,conflictLoadFailed]);
   useEffect(()=>{let mounted=true; request(base).then(data=>{if(!mounted)return;setItems(data.briefs);if(!cached&&data.briefs.length){const latest:Saved=data.briefs[0];setSaved(copy(latest));setDraft(copy(content(latest)));setActiveScene(0);}}).catch(e=>{if(mounted)setError(e.message);}); return ()=>{mounted=false;};},[base]);
 
   const mayLeave=()=>!dirty||window.confirm('Discard unsaved changes to this brief?');
@@ -55,8 +59,10 @@ export function PromoBriefs({projectId,canEdit,onVoiceDraft}:{projectId:string;c
     try { const data=await request(base); const briefs=data.briefs as Saved[]; setItems(briefs); const latest=conflictBase(saved?.id ?? null,briefs); setConflictLatest(latest?copy(latest):null); setConflictLoadFailed(false); return latest; }
     catch { setConflictLatest(null); setConflictLoadFailed(true); return null; }
   }
-  function adoptLatest(item:Saved) { setSaved(copy(item));setConflict(false);setConflictLatest(null);setConflictLoadFailed(false);setError('');setMessage(`Revision ${item.revision} is now the base. Your draft is unchanged; save to replace it.`); }
-  function resolveAsNew() { setSaved(null);setConflict(false);setConflictLatest(null);setConflictLoadFailed(false);setError('');setMessage('The saved brief is no longer in this project. Your draft is kept; Save will create a new brief.'); }
+  function focusSave() { requestAnimationFrame(()=>saveButton.current?.focus()); }
+  function adoptLatest(item:Saved) { setSaved(copy(item));setConflict(false);setConflictLatest(null);setConflictLoadFailed(false);setError('');setMessage(`Revision ${item.revision} is now the base. Your draft is unchanged; save to replace it.`);focusSave(); }
+  function resolveAsNew() { setSaved(null);setConflict(false);setConflictLatest(null);setConflictLoadFailed(false);setError('');setMessage('The saved brief is no longer in this project. Your draft is kept; Save will create a new brief.');focusSave(); }
+  function loadSaved(item:Saved) { if(window.confirm(`Replace your draft with saved revision ${item.revision}?`)){open(item);focusSave();} }
   async function retryLatest() { setBusy(true);setError('');try{await loadLatest();}finally{setBusy(false);} }
 
   async function save() {
@@ -133,19 +139,19 @@ export function PromoBriefs({projectId,canEdit,onVoiceDraft}:{projectId:string;c
 
           {conflict && (newest
             ? <details className="promo-conflict" open>
-                <summary>Review latest saved version {newest.revision}</summary>
+                <summary ref={conflictSummary}>Review latest saved version {newest.revision}</summary>
                 <p><strong>Your draft is still here.</strong> Keeping it makes revision {newest.revision} the base; saving will replace that revision.</p>
                 <p><strong>{newest.title}</strong> · {newest.targetSeconds}s · {newest.aspect}</p>
                 <p>{newest.brief}</p>
                 <p>Audience: {newest.audience || '—'} · Call to action: {newest.cta || '—'}</p>
                 <ol>{newest.scenes.map((item,index)=><li key={index}><p>Spoken: {item.spoken || '—'}</p><p>Visual: {item.visual || '—'}</p></li>)}</ol>
-                <div className="row"><button type="button" className="secondary" disabled={busy} onClick={()=>adoptLatest(newest)}>Keep my draft on v{newest.revision}</button><button type="button" className="secondary" disabled={busy} onClick={()=>{if(window.confirm(`Replace your draft with saved revision ${newest.revision}?`))open(newest);}}>Load saved v{newest.revision}</button></div>
+                <div className="row"><button type="button" className="secondary" disabled={busy} onClick={()=>adoptLatest(newest)}>Keep my draft on v{newest.revision}</button><button type="button" className="secondary" disabled={busy} onClick={()=>loadSaved(newest)}>Load saved v{newest.revision}</button></div>
               </details>
-            : <div className="promo-conflict" role="group" aria-label="Resolve the revision conflict">
+            : <div className="promo-conflict" role="group" aria-label="Resolve the revision conflict" ref={conflictFallback} tabIndex={-1}>
                 <p><strong>Revision conflict.</strong> {conflictLoadFailed ? 'The latest saved version could not be loaded. Your draft is still here. Check the connection and try again.' : 'The saved brief is no longer in this project. Your draft is still here.'}</p>
                 <div className="row">{conflictLoadFailed ? <button type="button" className="secondary" disabled={busy} onClick={()=>void retryLatest()}>Retry loading latest</button> : <button type="button" className="secondary" disabled={busy} onClick={resolveAsNew}>Keep my draft as a new brief</button>}</div>
               </div>)}
-          <div className="promo-save-bar"><p className="small">{conflict?'Revision conflict · your draft is still here':status}{!conflict&&dirty&&saved?' · your saved revision is unchanged until you save':''}</p><div className="row"><button type="button" className="secondary" onClick={()=>{if(window.confirm('Discard unsaved changes and load the saved version?'))open(saved);}} disabled={!canEdit||!dirty||busy}>Discard changes</button><button type="submit" disabled={!canEdit||conflict||busy}>{saved?'Save changes':'Save brief'}</button></div></div>
+          <div className="promo-save-bar"><p className="small">{conflict?'Revision conflict · your draft is still here':status}{!conflict&&dirty&&saved?' · your saved revision is unchanged until you save':''}</p><div className="row"><button type="button" className="secondary" onClick={()=>{if(window.confirm('Discard unsaved changes and load the saved version?'))open(saved);}} disabled={!canEdit||!dirty||busy}>Discard changes</button><button ref={saveButton} type="submit" disabled={!canEdit||conflict||busy}>{saved?'Save changes':'Save brief'}</button></div></div>
         </fieldset>
       </form>
     </div>
