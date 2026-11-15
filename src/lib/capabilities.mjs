@@ -114,13 +114,18 @@ async function checkCloudflare(fetchImpl, model, checkedAt) {
   }
 }
 
+export function falModelMatches(endpoint, item) {
+  if (!item || typeof item.id !== "string") return false;
+  return item.id === endpoint || item.id === endpoint.replace(/^fal-ai\//, "");
+}
+
 async function checkFal(fetchImpl, model, checkedAt) {
   const source = `${FAL_MODELS}?keywords=${encodeURIComponent(model.endpoint)}`;
   try {
     const text = await fetchText(fetchImpl, source);
     const payload = JSON.parse(text);
     const item = Array.isArray(payload?.items)
-      ? payload.items.find((candidate) => candidate?.id === model.endpoint)
+      ? payload.items.find((candidate) => falModelMatches(model.endpoint, candidate))
       : null;
     if (!item) throw new Error("The exact endpoint was not returned by model search");
     const parsed = parseFalModel(item);
