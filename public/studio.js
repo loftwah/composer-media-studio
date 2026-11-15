@@ -822,7 +822,7 @@ function reviewView() {
         ${group.rooms.map(reviewRoomCard).join("")}
       </section>`).join("")}
     </section>
-    <p class="small">Reviewer approval is feedback, not permission to publish, schedule, spend, delete or promote a revision. Publish the intended final version separately from the asset. A new render never inherits an earlier approval.</p>
+    <p class="small">Reviewer approval is feedback, not permission to publish, schedule, spend, delete or promote a revision. Publish the intended final version separately from the asset. When you do publish a version that was approved, the publication records that approval and the exact hash it applies to. A new render never inherits an earlier approval.</p>
   </div>`;
 }
 
@@ -1132,6 +1132,7 @@ function publishView() {
           <header><strong>${esc(publication.title)}</strong><span class="small">${dateLabel(publication.createdAt)}</span></header>
           <p class="small"><a href="${esc(publication.path)}" target="_blank" rel="noopener">${esc(location.origin + publication.path)}</a></p>
           <p class="small">${publication.hidden ? "Hidden from gallery · anyone with the link can view" : publication.listed ? "Listed in the public gallery" : "Unlisted · anyone with the link can view"}</p>
+          ${publication.review ? `<p class="small">Approved in a private review for this exact version · ${esc(String(publication.review.assetSha256 ?? "").slice(0, 12))}…</p>` : ""}
           <div class="row"><button class="secondary" data-action="edit-publication" data-id="${esc(publication.id)}">Edit page details</button><button class="secondary" data-action="toggle-listing" data-id="${esc(publication.id)}">${publication.listed && !publication.hidden ? "Remove from gallery" : "Add to public gallery"}</button><a class="button secondary" href="${esc(publication.path)}" target="_blank" rel="noopener">Open page</a><button class="quiet" data-action="revoke" data-id="${esc(publication.id)}">Withdraw</button></div>
         </article>`)
         .join("")}

@@ -636,3 +636,60 @@ test("compare pages escape hostile labels and decision notes", async () => {
   assert.doesNotMatch(html, /<img src=x onerror/);
   assert.doesNotMatch(html, /og:|canonical|twitter:/);
 });
+
+test("publishing an approved version records the review and its exact hash", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const asset = await addMedia(env, project, { id: "asset_approved", kind: "video", durationMs: 4000 });
+  const room = await createRoom(env, project, cookie, asset);
+  const decided = await call(env, `/api/review/${room.token}/decision`, {
+    method: "POST",
+    body: { reviewerName: "Mara Quinn", decision: "approved", note: "Cut 2 is ready." },
+  });
+  assert.equal(decided.status, 200);
+  const published = await call(env, `/api/assets/${asset.id}/publish`, {
+    method: "POST",
+    cookie,
+    body: { title: "Approved cut", description: "" },
+  });
+  assert.equal(published.status, 201);
+  const view = await (await call(env, `/api/projects/${project.id}`, { cookie })).json();
+  const publications = view.project?.publications ?? view.publications ?? [];
+  const publication = publications.find((entry) => entry.title === "Approved cut");
+  assert.equal(publication.review.roomId, room.room.id);
+  assert.equal(publication.review.decision, "approved");
+  assert.equal(publication.review.assetSha256, asset.sha256);
+});
+
+test("an unapproved or stale review is not attached to a publication", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const pending = await addMedia(env, project, { id: "asset_pending", kind: "video", durationMs: 4000 });
+  await createRoom(env, project, cookie, pending);
+  const plain = await call(env, `/api/assets/${pending.id}/publish`, {
+    method: "POST",
+    cookie,
+    body: { title: "Pending cut", description: "" },
+  });
+  assert.equal(plain.status, 201);
+
+  const changed = await addMedia(env, project, { id: "asset_changed", kind: "video", durationMs: 4000 });
+  const room = await createRoom(env, project, cookie, changed);
+  await call(env, `/api/review/${room.token}/decision`, {
+    method: "POST",
+    body: { reviewerName: "Mara Quinn", decision: "approved" },
+  });
+  // A new saved revision must not inherit the earlier approval.
+  await env.DB.prepare("UPDATE assets SET sha256='new-hash' WHERE id=?1").bind(changed.id).run();
+  const stale = await call(env, `/api/assets/${changed.id}/publish`, {
+    method: "POST",
+    cookie,
+    body: { title: "Changed cut", description: "" },
+  });
+  assert.equal(stale.status, 201);
+
+  const view = await (await call(env, `/api/projects/${project.id}`, { cookie })).json();
+  const publications = view.project?.publications ?? view.publications ?? [];
+  assert.equal(publications.find((entry) => entry.title === "Pending cut").review, null);
+  assert.equal(publications.find((entry) => entry.title === "Changed cut").review, null);
+});

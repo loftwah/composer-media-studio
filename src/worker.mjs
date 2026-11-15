@@ -777,6 +777,14 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           listed: Boolean(publication.listed),
           hidden: Boolean(publication.hidden),
           hasThumb: Boolean(publication.has_thumb),
+          review:
+            publication.review_room_id && publication.review_decision === "approved"
+              ? {
+                  roomId: publication.review_room_id,
+                  decision: publication.review_decision,
+                  assetSha256: publication.review_asset_sha256,
+                }
+              : null,
           path: `/p/${publication.slug}`,
           createdAt: publication.created_at,
         })),
@@ -1258,12 +1266,37 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         if (poster) await checkPublicImage(env, poster);
         posterAssetId = poster?.id ?? null;
       }
+      // If this exact saved version was approved in a private review, record
+      // that decision on the publication. It is provenance, not permission:
+      // publishing stays a separate deliberate action and older assets without
+      // a review publish exactly as before.
+      const approval = await env.DB.prepare(
+        `SELECT id, asset_sha256 FROM review_rooms
+         WHERE project_id=?1 AND asset_id=?2 AND asset_sha256=?3 AND decision='approved' AND revoked_at IS NULL
+         ORDER BY decided_at DESC LIMIT 1`,
+      )
+        .bind(asset.project_id, asset.id, asset.sha256)
+        .first();
       const publicationId = id("pub");
       const publicSlug = slug(12);
       await env.DB.prepare(
-        "INSERT INTO publications(id,project_id,asset_id,poster_asset_id,slug,title,description,asset_revision,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        `INSERT INTO publications(id,project_id,asset_id,poster_asset_id,slug,title,description,asset_revision,created_at,review_room_id,review_decision,review_asset_sha256)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)`,
       )
-        .bind(publicationId, asset.project_id, asset.id, posterAssetId, publicSlug, title, description, asset.delete_revision, now())
+        .bind(
+          publicationId,
+          asset.project_id,
+          asset.id,
+          posterAssetId,
+          publicSlug,
+          title,
+          description,
+          asset.delete_revision,
+          now(),
+          approval?.id ?? null,
+          approval ? "approved" : null,
+          approval?.asset_sha256 ?? null,
+        )
         .run();
       return json({ publication: { id: publicationId, path: `/p/${publicSlug}`, title, description } }, 201);
     }
