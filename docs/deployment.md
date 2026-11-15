@@ -109,5 +109,8 @@ video, a funded fal key). Composer never receives those values.
   offers "Retry saving". Retrying does not call the model again.
 - The monthly allowance is one atomic D1 update per project and month. Unknown
   outcomes keep their reservation until reconciled.
-- The project export contains metadata, prompts, lineage, costs and publications;
-  media downloads are separate. An export is not an R2 backup.
+- The metadata project export contains metadata, prompts, lineage, costs and
+  publications; media downloads are separate. It is not an R2 backup or a
+  restore. The portable project bundle and owner CLI add live media bytes and a
+  fresh-installation restore; see [portable project bundles](portable-project.md).
+  Production restore is not verified until an owner runs it against real D1/R2.

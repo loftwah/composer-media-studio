@@ -65,6 +65,12 @@ export class FakeBucket {
       version: "v",
       size: bytes.byteLength,
       ...this.meta.get(key),
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(bytes));
+          controller.close();
+        },
+      }),
       arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
     };
   }

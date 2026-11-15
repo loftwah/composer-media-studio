@@ -61,6 +61,17 @@ import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { readCapabilityManifest, readCapabilityState, refreshCapabilities } from "./lib/capabilities.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
 import {
+  PortableError,
+  beginPortableImport,
+  cleanupPortableImport,
+  commitPortableImport,
+  exportProjectManifest,
+  importStatus,
+  portableInventory,
+  previewPortableImport,
+  stagePortableAsset,
+} from "./lib/portable-bundle.mjs";
+import {
   audioInfo,
   constantTimeEqual,
   escapeHtml,
@@ -140,6 +151,14 @@ async function body(request, limit = 64 * 1024) {
   } catch {
     throw new HttpError(400, "Send a JSON object", "invalid_json");
   }
+}
+
+async function rawPortableBody(request, limit = 64 * 1024 * 1024) {
+  const declared = Number(request.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declared) && declared > limit) throw new HttpError(413, "That media is too large for one bundle entry.", "too_large");
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > limit) throw new HttpError(413, "That media is too large for one bundle entry.", "too_large");
+  return bytes;
 }
 
 function rangeHeaders(range, size) {
@@ -428,6 +447,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/^\/api\/generations\/[a-z0-9_]+$/.test(path) && method === "DELETE") action = "edit";
   if (/^\/api\/generations\/[a-z0-9_]+\/(cancel|reconcile|save-retry)$/.test(path)) action = "generate";
   if (/\/export$/.test(path)) action = "read";
+  if (/^\/api\/projects\/[a-z0-9_]+\/portable-export$/.test(path)) action = "read";
+  if (/^\/api\/studio\//.test(path)) action = "admin";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/scene-proposal\/preview$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/director$/.test(path)) action = "edit";
 
@@ -498,6 +519,43 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       destinations: sharingDestinations(env),
       woodhouseShare: env.WOODHOUSE_SHARE === "true",
     });
+  }
+
+  if (path.startsWith("/api/studio/")) {
+    if (session.mode !== "owner")
+      throw new HttpError(403, "Portable project restore and inventory are installation-owner actions. Use the standalone owner session.", "owner_required");
+    const limit = Number(env.STUDIO_PORTABLE_STORAGE_LIMIT_BYTES) || null;
+    if (path === "/api/studio/imports" && method === "GET") {
+      const projectId = url.searchParams.get("projectId");
+      if (projectId && !/^[a-z0-9_]+$/.test(projectId)) throw new HttpError(400, "Invalid project id.");
+      return json(await portableInventory(env, { projectId: projectId || null }));
+    }
+    if (path === "/api/studio/restore/preview" && method === "POST") {
+      const input = await body(request, 2 * 1024 * 1024);
+      return json(await previewPortableImport(env, input.manifest, { storageLimitBytes: limit }));
+    }
+    if (path === "/api/studio/restore" && method === "POST") {
+      const input = await body(request, 2 * 1024 * 1024);
+      return json(await beginPortableImport(env, input.manifest, { dryRun: input.dryRun === true, storageLimitBytes: limit }), 202);
+    }
+    const cleanupMatch = path.match(/^\/api\/studio\/restore\/([a-z0-9_]+)\/cleanup$/);
+    if (cleanupMatch && method === "POST") {
+      const input = await body(request, 4096);
+      return json(await cleanupPortableImport(env, cleanupMatch[1], { confirm: input.confirm === true }));
+    }
+    const commitMatch = path.match(/^\/api\/studio\/restore\/([a-z0-9_]+)\/commit$/);
+    if (commitMatch && method === "POST") {
+      const input = await body(request, 4096);
+      return json(await commitPortableImport(env, commitMatch[1], { confirm: input.confirm === true }));
+    }
+    const stageMatch = path.match(/^\/api\/studio\/restore\/([a-z0-9_]+)\/assets\/([a-z0-9_]+)$/);
+    if (stageMatch && method === "POST") {
+      const bytes = await rawPortableBody(request);
+      return json(await stagePortableAsset(env, stageMatch[1], stageMatch[2], bytes));
+    }
+    const statusMatch = path.match(/^\/api\/studio\/restore\/([a-z0-9_]+)$/);
+    if (statusMatch && method === "GET") return json(await importStatus(env, statusMatch[1]));
+    throw new HttpError(404, "Restore route not found", "not_found");
   }
 
   if (path === "/api/projects" && method === "POST") {
@@ -773,6 +831,17 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         },
         201,
       );
+    }
+
+    if (rest === "portable-export" && method === "GET") {
+      const manifest = await exportProjectManifest(env, project);
+      return new Response(JSON.stringify(manifest, null, 2), {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "content-disposition": `attachment; filename="${project.slug}-studio-project-manifest.json"`,
+          "cache-control": "no-store",
+        },
+      });
     }
 
     if (rest === "export" && method === "GET") {
@@ -1790,6 +1859,8 @@ export default {
         : await handlePublic(request, env, url);
       return securityHeaders(response, url.pathname.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true");
     } catch (error) {
+      if (error instanceof PortableError)
+        return securityHeaders(json({ error: { code: error.code, message: error.message }, report: error.report }, error.status));
       if (error instanceof HttpError) {
         if (error.status === 401 && !new URL(request.url).pathname.startsWith("/p/"))
           return securityHeaders(json({ error: { code: error.code, message: error.message }, signedIn: false }, 401));
