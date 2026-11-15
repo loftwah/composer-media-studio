@@ -48,7 +48,10 @@ test("LoftwahFM import is private, measured, deduplicated and scoped to a permit
     }
     return statement;
   };
+  const service = t.mock.fn((url, options) => upstream(url, options));
+  env.LOFTWAHFM = { fetch: service };
   const imported = await request({ url: source, rightsConfirmed: true });
+  assert.equal(service.mock.callCount(), 1);
   assert.equal(imported.status, 201, imported.status === 201 ? "" : await imported.text());
   const { asset } = await imported.json();
   assert.equal(asset.title, "After Hours");

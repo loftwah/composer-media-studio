@@ -36,6 +36,9 @@
     "bindings": [{ "name": "MEDIA_OPERATION", "class_name": "MediaOperationDO" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MediaOperationDO"] }],
+  // First-party service binding. Independent installations may remove it;
+  // the importer can also use the published HTTPS media route.
+  "services": [{ "binding": "LOFTWAHFM", "service": "loftwahfm" }],
   "ai": {
     "binding": "AI"
   },

@@ -3,7 +3,7 @@ import { audioInfo, HttpError } from "./util.mjs";
 
 const origin = "https://fm.loftwah.com";
 
-export async function readLoftwahFmTrack(value, limit) {
+export async function readLoftwahFmTrack(value, limit, radio) {
   let url, filename, album;
   try {
     url = new URL(typeof value === "string" && value.length <= 800 ? value.trim() : "");
@@ -21,9 +21,14 @@ export async function readLoftwahFmTrack(value, limit) {
     throw new HttpError(400, "This audio link is too long to preserve with the track.", "invalid_track_link");
   const unavailable = () => new HttpError(502, "LoftwahFM could not supply this MP3. Check the link and try again.", "track_unavailable");
   try {
-    const response = await fetch(source, { redirect: "error", signal: AbortSignal.timeout(12000) });
+    const options = { redirect: "error", signal: AbortSignal.timeout(12000) };
+    const response = radio ? await radio.fetch(source, options) : await fetch(source, options);
     const mime = response.headers.get("content-type")?.split(";")[0].trim();
-    if (response.status !== 200 || mime !== "audio/mpeg" || !response.body) throw unavailable();
+    if (response.status !== 200 || mime !== "audio/mpeg" || !response.body) {
+      console.warn("LoftwahFM track response refused", { status: response.status, audio: mime === "audio/mpeg" });
+      await response.body?.cancel().catch(() => {});
+      throw unavailable();
+    }
     const tooLarge = () => new HttpError(413, "This track exceeds the Studio audio limit.", "too_large");
     if (Number(response.headers.get("content-length")) > limit) throw tooLarge();
     const reader = response.body.getReader();
