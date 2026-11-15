@@ -145,6 +145,9 @@ input, textarea, select {
 }
 textarea { min-height: 96px; resize: vertical; }
 input:focus, textarea:focus, select:focus { border-color: var(--ink); outline: 2px solid color-mix(in srgb, var(--accent-bright) 35%, transparent); outline-offset: 1px; }
+/* A checkbox is a control, not a text field: keep it at its native size inside
+   the flex rows that host it (mute, blind review, import options). */
+input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; border: 0; border-radius: 0; background: none; accent-color: var(--ink); flex: none; }
 fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; margin: 0 0 1rem; }
 legend { padding: 0 0.4rem; font-weight: 600; font-size: 0.85rem; }
 
