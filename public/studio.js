@@ -2558,6 +2558,9 @@ app.addEventListener("change", async (event) => {
   }
   if (kind === "aspect") {
     state.create.aspect = input.value;
+    // The review line names the selected frame and estimate. Without a render
+    // the select changes while the summary keeps claiming the old frame.
+    render();
     return;
   }
   if (kind === "duration") {
