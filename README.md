@@ -44,6 +44,8 @@ A creator can issue a private review link for one exact saved image or film. The
 
 A reviewer can watch or view that version, leave film feedback at a timecode or image feedback at a point, and record an explicit **approved** or **changes requested** decision. Approval is review feedback only: it does not publish, schedule, spend, delete, promote a revision or change project permissions. The creator reads feedback grouped by version, can mark a note resolved, compare two saved versions side by side, see each room's state and issue a new link without losing the recorded feedback. A new render is a new room and never inherits an earlier approval. Review rooms do not call a provider or mutate the saved media.
 
+A reviewer who holds a second private link can paste it on the review page to see both pinned versions together. The comparison validates both tokens by hash and status, requires the same project, rate-limits attempts and returns only each version's label, media facts, status and decision; neither room's feedback is copied or shown against the other version. The page is server-rendered from a same-origin form, the JSON form is `POST /api/review/compare`, and no comparison is stored. On a wide screen the review page keeps a bounded, sticky media stage beside the feedback and decision panels; below 1000px it stacks.
+
 Apply additive migration `0019_review_rooms.sql` before deploying this capability.
 
 ## Storage health

@@ -54,6 +54,8 @@ import {
   openReviewRoom,
   ownerReviewRoomView,
   publicReviewRoomView,
+  compareReviewRoomsForReviewer,
+  assertCompareAttemptAllowed,
   recordReviewDecision,
   recordReviewFailure,
   revokeReviewRoom,
@@ -70,7 +72,7 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage, reviewRoomPage, reviewRefusalPage } from "./lib/ui.mjs";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
@@ -377,7 +379,25 @@ async function handleLogin(request, env) {
   });
 }
 
+async function reviewCompareFormToken(request) {
+  const type = request.headers.get("content-type") ?? "";
+  if (!type.includes("application/x-www-form-urlencoded"))
+    throw new HttpError(415, "Send the second private review link as a form", "unsupported_media_type");
+  const raw = await request.text();
+  if (raw.length > 4096) throw new HttpError(413, "That request is too large", "too_large");
+  return new URLSearchParams(raw).get("compareToken") ?? "";
+}
+
 async function handleReviewApi(request, env, path) {
+  // Comparing two links the reviewer already holds. Both are checked by token
+  // hash and status; the answer is generic unless the pair is valid and open.
+  if (path === "/api/review/compare") {
+    if (request.method !== "POST") throw new HttpError(405, "Method not allowed", "method_not_allowed");
+    assertSameOrigin(request, env);
+    await assertCompareAttemptAllowed(env, request);
+    const input = await body(request, 4096);
+    return json(await compareReviewRoomsForReviewer(env, input?.left, input?.right));
+  }
   const match = path.match(/^\/api\/review\/([A-Za-z0-9_-]{43})(?:\/(feedback|decision))?$/);
   if (!match) throw new HttpError(404, "Not found", "not_found");
   const [, token, operation] = match;
@@ -1543,22 +1563,71 @@ async function handlePublic(request, env, url) {
     });
   }
 
-  const reviewMatch = path.match(/^\/r\/([A-Za-z0-9_-]{1,128})(\/media)?\/?$/);
+  const reviewMatch = path.match(/^\/r\/([A-Za-z0-9_-]{1,128})(\/media|\/compare)?\/?$/);
   if (reviewMatch) {
+    const [, token, extra] = reviewMatch;
+    const refusalTitle = (error) => {
+      switch (error.code) {
+        case "review_revoked":
+          return "This review link was revoked";
+        case "review_expired":
+          return "This review link expired";
+        case "review_version_changed":
+          return "This review link no longer matches the saved version";
+        case "review_asset_unavailable":
+          return "This saved version is no longer available";
+        case "review_compare_unavailable":
+          return "These private review links cannot be compared";
+        case "review_compare_same":
+          return "Choose two different review links";
+        case "review_rate_limited":
+          return "Too many review attempts";
+        case "unsupported_media_type":
+          return "That comparison could not be read";
+        default:
+          return "This review link is not available";
+      }
+    };
+    const reviewPageHeaders = {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "private, no-store",
+      "referrer-policy": "no-referrer",
+      "x-robots-tag": "noindex, nofollow, noarchive",
+    };
+    if (extra === "/compare") {
+      if (request.method !== "POST")
+        return new Response(
+          reviewRefusalPage({
+            title: "Compare two saved versions",
+            message: "Open your private review page, then choose “Compare with another version”.",
+            code: "review_compare_method",
+          }),
+          { status: 405, headers: reviewPageHeaders },
+        );
+      try {
+        await assertCompareAttemptAllowed(env, request);
+        const compareToken = await reviewCompareFormToken(request);
+        const compare = await compareReviewRoomsForReviewer(env, token, compareToken);
+        return new Response(
+          reviewComparePage({ left: compare.left, right: compare.right, primaryToken: token }),
+          { status: 200, headers: reviewPageHeaders },
+        );
+      } catch (error) {
+        if (error instanceof HttpError)
+          return new Response(
+            reviewRefusalPage({
+              title: refusalTitle(error),
+              message: error.message,
+              code: error.code,
+            }),
+            { status: error.status, headers: reviewPageHeaders },
+          );
+        throw error;
+      }
+    }
     if (request.method !== "GET" && request.method !== "HEAD")
       throw new HttpError(405, "Method not allowed", "method_not_allowed");
-    const [, token, extra] = reviewMatch;
     await assertReviewAttemptAllowed(env, request);
-    const refusalTitle = (error) =>
-      error.code === "review_revoked"
-        ? "This review link was revoked"
-        : error.code === "review_expired"
-          ? "This review link expired"
-          : error.code === "review_version_changed"
-            ? "This review link no longer matches the saved version"
-            : error.code === "review_asset_unavailable"
-              ? "This saved version is no longer available"
-              : "This review link is not available";
     if (extra === "/media") {
       try {
         const { room, asset } = await openReviewRoom(env, token);
@@ -1618,6 +1687,7 @@ async function handlePublic(request, env, url) {
         room,
         feedback,
         mediaPath: `/r/${encodeURIComponent(token)}/media`,
+        reviewPath: `/r/${encodeURIComponent(token)}`,
         kind: room.asset_kind,
         title: room.version_label,
         expiresAt: room.expires_at,
@@ -2114,7 +2184,7 @@ export default {
       const response = url.pathname.startsWith("/api/")
         ? await handleApi(request, env, url, ctx)
         : await handlePublic(request, env, url);
-      const reviewPath = /^\/r\/[A-Za-z0-9_-]{1,128}(?:\/media)?\/?$/.test(url.pathname) || url.pathname.startsWith("/api/review/");
+      const reviewPath = /^\/r\/[A-Za-z0-9_-]{1,128}(?:\/(?:media|compare))?\/?$/.test(url.pathname) || url.pathname.startsWith("/api/review/");
       return securityHeaders(response, url.pathname.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true", { noReferrer: reviewPath });
     } catch (error) {
       if (error instanceof PortableError)

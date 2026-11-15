@@ -1,7 +1,7 @@
 /* MIT. Private review rooms and the owner-side review panel. */
 
 .review-page main {
-  max-width: 1040px;
+  max-width: 1120px;
 }
 
 .review-header {
@@ -20,6 +20,23 @@
 
 .review-intro h1 {
   max-width: 22ch;
+  overflow-wrap: anywhere;
+}
+
+/* Phone first: one column in reading order. A wide screen turns this into a
+ * bounded, sticky stage beside the feedback and decision panels. */
+.review-layout {
+  display: block;
+  min-width: 0;
+}
+
+.review-media-column,
+.review-notes-column {
+  min-width: 0;
+}
+
+.review-media-column .review-stage {
+  margin-bottom: 1.4rem;
 }
 
 .review-stage {
@@ -33,9 +50,11 @@
 
 .review-stage video {
   display: block;
-  width: 100%;
-  max-height: 72vh;
+  width: auto;
+  max-width: 100%;
+  max-height: min(70vh, 820px);
   margin: 0 auto;
+  object-fit: contain;
   background: #111;
   border-radius: var(--radius);
 }
@@ -50,8 +69,10 @@
 
 .review-image-frame img {
   display: block;
+  width: auto;
   max-width: 100%;
-  max-height: 72vh;
+  max-height: min(70vh, 820px);
+  object-fit: contain;
   border-radius: var(--radius);
 }
 
@@ -241,6 +262,113 @@ fieldset.review-anchor {
 .review-refusal main {
   max-width: 640px;
   padding-top: clamp(3rem, 12vh, 7rem);
+}
+
+/* Reviewer-side version comparison. Two pinned versions, two decisions, and
+ * no feedback copied between them. */
+.review-compare-entry {
+  margin: 1.2rem 0;
+}
+
+.review-compare-entry h2 {
+  font-size: 1.25rem;
+}
+
+.review-compare-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 0 0 1.2rem;
+}
+
+.review-compare-side {
+  min-width: 0;
+  padding: clamp(0.8rem, 2vw, 1.1rem);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+
+.review-compare-side h2 {
+  margin: 0 0 0.3rem;
+  font-size: clamp(1.1rem, 2.4vw, 1.35rem);
+  overflow-wrap: anywhere;
+}
+
+.review-compare-position {
+  margin: 0 0 0.2rem;
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.review-compare-media {
+  display: flex;
+  justify-content: center;
+  margin: 0.5rem 0 0.7rem;
+}
+
+.review-compare-media video,
+.review-compare-media img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: min(60vh, 560px);
+  object-fit: contain;
+  border-radius: var(--radius);
+  background: #111;
+}
+
+.review-compare-media img {
+  background: var(--paper-deep);
+}
+
+.review-compare-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 0 0 0.5rem;
+}
+
+.review-compare-decision {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.review-compare-actions {
+  margin: 0.8rem 0 0;
+}
+
+.review-compare-primary .review-tag {
+  margin-right: 0.3rem;
+}
+
+.review-compare-page .review-footer a {
+  color: var(--teal);
+}
+
+@media (min-width: 1000px) {
+  .review-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 1.2rem;
+    align-items: start;
+  }
+
+  .review-media-column {
+    position: sticky;
+    top: 1rem;
+    align-self: start;
+  }
+
+  .review-media-column .review-stage {
+    margin-bottom: 0;
+  }
 }
 
 /* Owner-side panel */
@@ -498,13 +626,19 @@ fieldset.review-anchor {
     text-align: left;
   }
 
-  .review-compare-grid {
+  .review-compare-grid,
+  .review-compare-pair {
     grid-template-columns: 1fr;
   }
 
   .review-stage video,
   .review-image-frame img {
-    max-height: 58vh;
+    max-height: min(58vh, 560px);
+  }
+
+  .review-compare-media video,
+  .review-compare-media img {
+    max-height: min(52vh, 460px);
   }
 }
 
