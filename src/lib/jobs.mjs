@@ -274,14 +274,10 @@ export async function dispatchGeneration(env, generation) {
   const model = getModel(generation.model);
   const request = safeJson(generation.request_json, {});
   let reference;
-  let maskReference;
   let inputError;
   let inputFailed = false;
   try {
     reference = await referenceFor(env, generation.project_id, request.referenceAssetId);
-    if (model.kind === "image" && model.edit && request.maskAssetId) {
-      maskReference = await referenceFor(env, generation.project_id, request.maskAssetId);
-    }
   } catch (error) {
     inputFailed = true;
     inputError = error;
@@ -310,6 +306,14 @@ export async function dispatchGeneration(env, generation) {
   }
 
   if (model.kind === "image" && model.edit) {
+    let maskReference;
+    try {
+      maskReference = request.maskAssetId
+        ? await referenceFor(env, generation.project_id, request.maskAssetId)
+        : null;
+    } catch (error) {
+      return failGeneration(env, generation, error, { dispatched: false });
+    }
     try {
       const submitted = await submitImageEdit(env, model, request, [
         {
