@@ -588,12 +588,13 @@ ${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="G
  * never calls a provider. Two takes are shown beside each other because that is
  * the only honest way to answer "which should I use".
  */
-export function comparePage({ revision = "dev", jobs = [], job = null, entries = [], excluded = [], briefNote = null, verdict = null, weakness = null, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, models = {} }) {
+export function comparePage({ revision = "dev", jobs = [], job = null, project = null, entries = [], excluded = [], briefNote = null, verdict = null, weakness = null, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, models = {} }) {
   const money = (micro) => (micro === null || micro === undefined || !Number.isFinite(Number(micro)) ? "unknown" : `$${(Number(micro) / 1_000_000).toFixed(Number(micro) < 10_000 ? 4 : 2)}`);
   const when = (value) => (value ? new Date(Number(value)).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "unknown");
   const label = (id) => escapeHtml(models?.[id]?.label ?? id);
+  const projectQuery = project?.id ? `project=${encodeURIComponent(project.id)}&` : "";
   const tab = (entry) =>
-    `<a class="cmp-tab${entry.id === job?.id ? " is-current" : ""}" href="/compare?job=${encodeURIComponent(entry.id)}"${entry.id === job?.id ? ' aria-current="page"' : ""}>${escapeHtml(entry.label)}<span>${entry.models.length} model${entry.models.length === 1 ? "" : "s"}</span></a>`;
+    `<a class="cmp-tab${entry.id === job?.id ? " is-current" : ""}" href="/compare?${projectQuery}job=${encodeURIComponent(entry.id)}"${entry.id === job?.id ? ' aria-current="page"' : ""}>${escapeHtml(entry.label)}<span>${entry.models.length} model${entry.models.length === 1 ? "" : "s"}</span></a>`;
   const take = (entry) => `
     <article class="cmp-take" data-take="${escapeHtml(entry.model)}" data-generation="${escapeHtml(entry.generationId ?? "")}" data-brief="${escapeHtml(entry.briefKey ?? "")}" data-created="${escapeHtml(String(entry.createdAt ?? ""))}">
       <header>
@@ -642,7 +643,7 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
 <main id="main" class="cmp-page" tabindex="-1">
   <p class="eyebrow">Choose a model</p>
   <h1>Which model should do this job?</h1>
-  <p class="lede">A comparison only makes sense inside one job. These takes were already saved in this studio, so nothing here generates, spends or calls a provider.</p>
+  <p class="lede">A comparison only makes sense inside one job. These takes were already saved${project ? ` in <strong>${escapeHtml(project.name)}</strong>` : ""}, so nothing here generates, spends or calls a provider.</p>
 
   <nav class="cmp-tabs" aria-label="Jobs">${jobs.map(tab).join("")}</nav>
 
@@ -689,7 +690,7 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
       <li>Opening this page never calls a model, so it cannot add a take. New comparisons need a fresh run from the studio.</li>
     </ul>
     <p class="small" id="cmp-status" role="status" aria-live="polite"></p>
-    <div class="row"><button type="button" class="secondary" id="cmp-copy">Copy this review as JSON</button><a class="quiet" href="/">Back to the studio</a></div>
+    <div class="row"><button type="button" class="secondary" id="cmp-copy">Copy this review as JSON</button><a class="quiet" href="${project?.id ? `/#/p/${encodeURIComponent(project.id)}/history` : "/"}">Back to the studio</a></div>
   </section>
 </main>
 <script type="module" src="/compare.js?v=${encodeURIComponent(revision)}"></script>

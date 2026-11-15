@@ -1498,7 +1498,17 @@ async function handlePublic(request, env, url) {
         { status: 401, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
       );
     }
-    const project = await currentProject(env, session);
+    // A project-scoped link keeps the comparison on the studio the owner was
+    // working in. Without it, a bridged session has no project claim and would
+    // show an empty page even though the project holds saved takes.
+    const requestedProject = url.searchParams.get("project");
+    let project = null;
+    if (requestedProject) {
+      const candidate = await loadProject(env, requestedProject, { required: false });
+      if (candidate && projectAccessible(session, candidate)) project = candidate;
+    } else {
+      project = await currentProject(env, session);
+    }
     if (!project) {
       return new Response(
         comparePage({
@@ -1506,9 +1516,10 @@ async function handlePublic(request, env, url) {
           jobs: [],
           job: null,
           entries: [],
+          project: null,
           verdict: {
             headline: "No project yet",
-            detail: "A comparison belongs to a project. Create one in the studio, keep a take, then come back.",
+            detail: "A comparison belongs to a project. Open one in the studio, keep a take, then use Compare models from that project.",
           },
           session,
           composerOrigin: env.COMPOSER_ORIGIN,
@@ -1552,6 +1563,7 @@ async function handlePublic(request, env, url) {
         revision: BUILD.revision,
         jobs,
         job,
+        project,
         entries,
         verdict: compareVerdict({ ...review, models }),
         weakness: compareWeakness(review),

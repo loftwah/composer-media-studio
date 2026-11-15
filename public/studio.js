@@ -283,7 +283,17 @@ function saveSettingsDraft() {
   settingsDrafts.set(form.dataset.projectId, Object.fromEntries(["name", "creativeDirection", "visibility", "referenceTitle", "referenceUrl"].map(key => [key, form.elements[key].value])));
 }
 
+// Keep the header's comparison entry on the studio the owner is actually in.
+// The session claim can be absent on a bridged visit, so the project travels in
+// the URL instead of being guessed from "newest project".
+function syncCompareLink() {
+  const link = document.querySelector('.header-nav a[href^="/compare"]');
+  if (!link) return;
+  link.setAttribute("href", state.projectId ? `/compare?project=${encodeURIComponent(state.projectId)}` : "/compare");
+}
+
 function render() {
+  syncCompareLink();
   clearMixPreview();
   saveShareImportDraft();
   saveSettingsDraft();
