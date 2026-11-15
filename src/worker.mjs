@@ -1214,8 +1214,14 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
       )
       .run();
   } catch (error) {
-    await env.MEDIA.delete(key);
-    throw error;
+    // D1 may have committed the row before its reply was lost. Preserve any
+    // indexed original and let the normal readback confirm the result.
+    const committed = await env.DB.prepare("SELECT id FROM assets WHERE id=?1 AND project_id=?2")
+      .bind(assetId, project.id).first();
+    if (!committed) {
+      await env.MEDIA.delete(key);
+      throw error;
+    }
   }
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
   if (!asset && (localReceipt || footageReceipt)) { await env.MEDIA.delete(key); throw new HttpError(409, "This render receipt expired. Start a new render.", "receipt_expired"); }

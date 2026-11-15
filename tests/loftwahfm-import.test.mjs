@@ -31,6 +31,23 @@ test("LoftwahFM import is private, measured, deduplicated and scoped to a permit
   ]) assert.equal((await request({ url, rightsConfirmed: true })).status, 400);
   assert.equal(upstream.mock.callCount(), 0);
 
+  const prepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = sql => {
+    const statement = prepare(sql);
+    if (sql.includes("INSERT INTO assets")) {
+      const bind = statement.bind;
+      statement.bind = (...args) => {
+        const bound = bind(...args);
+        const run = bound.run;
+        bound.run = async () => {
+          await run();
+          throw new Error("The D1 insert committed, then lost its reply");
+        };
+        return bound;
+      };
+    }
+    return statement;
+  };
   const imported = await request({ url: source, rightsConfirmed: true });
   assert.equal(imported.status, 201, imported.status === 201 ? "" : await imported.text());
   const { asset } = await imported.json();
@@ -38,6 +55,8 @@ test("LoftwahFM import is private, measured, deduplicated and scoped to a permit
   assert.equal(asset.kind, "audio");
   assert.equal(asset.caption, source);
   assert.ok(asset.durationMs >= 2000);
+  const stored = await env.DB.prepare("SELECT r2_key FROM assets WHERE id=?1").bind(asset.id).first();
+  assert.ok(await env.MEDIA.head(stored.r2_key));
 
   const repeated = await request({ url: source, rightsConfirmed: true });
   assert.equal(repeated.status, 200);

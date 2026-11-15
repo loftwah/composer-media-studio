@@ -17,6 +17,8 @@ export async function readLoftwahFmTrack(value, limit) {
   }
 
   const source = `${origin}/media/${album}/${encodeURIComponent(filename)}`;
+  if (source.length > 400)
+    throw new HttpError(400, "This audio link is too long to preserve with the track.", "invalid_track_link");
   const unavailable = () => new HttpError(502, "LoftwahFM could not supply this MP3. Check the link and try again.", "track_unavailable");
   try {
     const response = await fetch(source, { redirect: "error", signal: AbortSignal.timeout(12000) });
