@@ -110,13 +110,3 @@ video, a funded fal key). Composer never receives those values.
   outcomes keep their reservation until reconciled.
 - The project export contains metadata, prompts, lineage, costs and publications;
   media downloads are separate. An export is not an R2 backup.
-
-
-## Optional LoftwahFM soundtrack import
-
-The first-party deployment sets the `LOFTWAHFM` service binding to the
-existing LoftwahFM Worker. Remove it if your account does not operate that
-Worker. Studio can use the public LoftwahFM media route across accounts.
-The importer passes no listener credentials. The upstream public media
-handler still decides whether the track is available, and the Studio requires
-edit access and rights confirmation before preserving the track in a project.

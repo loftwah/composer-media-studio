@@ -3,7 +3,7 @@ import { audioInfo, HttpError } from "./util.mjs";
 
 const origin = "https://fm.loftwah.com";
 
-export async function readLoftwahFmTrack(value, limit, radio) {
+export async function readLoftwahFmTrack(value, limit) {
   let url, filename, album;
   try {
     url = new URL(typeof value === "string" && value.length <= 800 ? value.trim() : "");
@@ -22,8 +22,8 @@ export async function readLoftwahFmTrack(value, limit, radio) {
   const unavailable = () => new HttpError(502, "LoftwahFM could not supply this MP3. Check the link and try again.", "track_unavailable");
   let stage = "request";
   try {
-    const options = { redirect: "error", signal: AbortSignal.timeout(12000) };
-    const response = radio ? await radio.fetch(source, options) : await fetch(source, options);
+    // workerd supports manual and follow. Accept only 200 and never follow a redirect.
+    const response = await fetch(source, { redirect: "manual", signal: AbortSignal.timeout(12000) });
     const mime = response.headers.get("content-type")?.split(";")[0].trim();
     if (response.status !== 200 || mime !== "audio/mpeg" || !response.body) {
       console.warn("LoftwahFM track response refused", { status: response.status, audio: mime === "audio/mpeg" });

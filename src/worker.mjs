@@ -588,7 +588,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       const input = await body(request);
       if (input?.rightsConfirmed !== true)
         throw new HttpError(400, "Confirm you have permission to use this track.", "rights_required");
-      const track = await readLoftwahFmTrack(input.url, MAX_AUDIO_BYTES, env.LOFTWAHFM);
+      const track = await readLoftwahFmTrack(input.url, MAX_AUDIO_BYTES);
       await requireSession(env, request, "edit");
       await assertProjectAccess(env, session, project.id);
       const hash = await sha256Hex(track.bytes);
