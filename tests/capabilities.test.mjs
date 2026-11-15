@@ -59,6 +59,8 @@ test("the manifest names the enabled and retired models with exact endpoints", (
   assert.ok(manifest.models.some((model) => model.id === "studio-craft" && model.endpoint === "@cf/black-forest-labs/flux-2-klein-9b"));
   assert.ok(manifest.retired.some((model) => model.id === "studio-draft" && model.endpoint === "@cf/bytedance/stable-diffusion-xl-lightning"));
   assert.deepEqual(manifest.frames, ["square", "portrait", "landscape", "wide"]);
+  const composer = manifest.models.filter((model) => model.composer).map((model) => model.id);
+  assert.deepEqual(composer, ["studio-print", "studio-film", "studio-craft", "studio-quick", "hailuo-standard", "kling-standard", "studio-score", "studio-voice"]);
 });
 
 function refreshEnv({ fail = false } = {}) {
