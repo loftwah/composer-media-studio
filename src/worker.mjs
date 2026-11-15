@@ -1589,7 +1589,7 @@ export default {
         const pending = await pendingGenerations(env, 8);
         for (const generation of pending) {
           try { await advanceGeneration(env, generation); }
-          catch (error) { if (!generation.deleted_at) console.error("Could not advance Studio job", generation.id, error); }
+          catch { if (!generation.deleted_at) console.error("Could not advance Studio job", generation.id); }
         }
       })(),
     );

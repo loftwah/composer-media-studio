@@ -281,8 +281,13 @@ export async function eraseGenerationResult(env, generation) {
 /** A tombstone blocks new work while object deletion is retried. */
 export async function eraseDeletedGeneration(env, generation) {
   try {
-    if (generation.status === "discarded_after_delete" && generation.error_code !== "erasure_pending") return generation;
-    if (generation.status === "admitted") generation = await cancelGeneration(env, generation);
+    if (generation.status === "discarded_after_delete" && !generation.retained_key && generation.error_code !== "erasure_pending") return generation;
+    if (safeJson(generation.request_json, {}).budgetAdmission === "atomic-v1") {
+      if (generation.status === "admitted") generation = await cancelGeneration(env, generation);
+      // Resume a pre-dispatch cancellation if it wrote status before settling.
+      if (generation.status === "cancelled" && !generation.provider_request_id && generation.cost_observed_micro === null)
+        await releaseReservation(env, generation);
+    }
     await eraseGenerationResult(env, generation);
     await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',error_code=NULL,error_detail=NULL,updated_at=?2 WHERE id=?1 AND deleted_at IS NOT NULL")
       .bind(generation.id, now()).run();
@@ -429,13 +434,18 @@ async function failGeneration(env, generation, error, { dispatched = false } = {
   const status = definitive || !dispatched ? "failed" : "unknown";
   const code = error instanceof HttpError ? error.code : "provider_error";
   const changed = await env.DB.prepare(
-    "UPDATE generations SET status=?2,error_code=?3,error_detail=?4,updated_at=?5 WHERE id=?1 AND status IN ('submitting','submitted','running') RETURNING id",
+    `UPDATE generations SET status=?2,
+      error_code=CASE WHEN deleted_at IS NULL THEN ?3 ELSE 'erasure_pending' END,
+      error_detail=CASE WHEN deleted_at IS NULL THEN ?4 ELSE error_detail END,
+      updated_at=?5 WHERE id=?1 AND status IN ('submitting','submitted','running') RETURNING id`,
   )
     .bind(generation.id, status, code, String(error.message ?? error).slice(0, 240), now())
     .first();
   if (changed && status === "failed") await releaseReservation(env, generation);
   const fresh = await loadGeneration(env, generation.id);
   if (fresh.deleted_at) {
+    // A delete may already have finished by the time dispatch proves no charge.
+    if (!changed && status === "failed") await releaseReservation(env, fresh);
     try { return await eraseDeletedGeneration(env, fresh); }
     catch { return loadGeneration(env, fresh.id); }
   }
@@ -1107,7 +1117,7 @@ export async function cancelGeneration(env, generation) {
     } catch {
       // A lost reply does not prove cancellation; retain the reservation.
     }
-    await env.DB.prepare("UPDATE generations SET error_code='cancel_unconfirmed',updated_at=?2 WHERE id=?1 AND status='cancel_requested' AND provider_request_id=?3").bind(fresh.id, now(), fresh.provider_request_id).run();
+    await env.DB.prepare("UPDATE generations SET error_code=CASE WHEN deleted_at IS NULL THEN 'cancel_unconfirmed' ELSE 'erasure_pending' END,updated_at=?2 WHERE id=?1 AND status='cancel_requested' AND provider_request_id=?3").bind(fresh.id, now(), fresh.provider_request_id).run();
     return loadGeneration(env, fresh.id);
   }
   if (["provider_complete", "saving"].includes(fresh.status)) {
