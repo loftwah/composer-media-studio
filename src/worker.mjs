@@ -51,6 +51,7 @@ import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrig
 import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery } from "./lib/ui.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
+import { checkPublicImage } from "./lib/public-image-privacy.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
 import {
@@ -872,15 +873,17 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     if (action === "publish" && method === "POST") {
       if (asset.deleted_at) throw new HttpError(410, "This asset was deleted", "deleted");
       const input = await body(request);
+      await checkPublicImage(env, asset);
       const title = text(input.title ?? asset.title, 100, "Public title");
       const description = text(input.description ?? "", 300, "Public description", { required: false });
       let posterAssetId = null;
       if (asset.kind === "video" && input.posterAssetId) {
         const poster = await env.DB.prepare(
-          "SELECT id FROM assets WHERE id=?1 AND project_id=?2 AND kind='image' AND deleted_at IS NULL",
+          "SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND kind='image' AND deleted_at IS NULL",
         )
           .bind(String(input.posterAssetId), asset.project_id)
           .first();
+        if (poster) await checkPublicImage(env, poster);
         posterAssetId = poster?.id ?? null;
       }
       const publicationId = id("pub");
@@ -1438,17 +1441,27 @@ async function handlePublic(request, env, url) {
 async function servePublished(request, env, assetId, download) {
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
   if (!asset || asset.deleted_at) throw new HttpError(404, "Not found", "not_found");
+  const inspected = await checkPublicImage(env, asset).catch((error) => {
+    if (error.code !== "publication_metadata_unverified") throw error;
+    throw new HttpError(404, "This media is not available for public sharing", "not_found");
+  });
   const range = parseRange(request.headers.get("range"), asset.bytes);
   if (range?.invalid)
     return new Response(null, {
       status: 416,
       headers: { "content-range": `bytes */${asset.bytes}`, "accept-ranges": "bytes" },
     });
-  const object = await env.MEDIA.get(
-    asset.r2_key,
-    range ? { range: { offset: range.offset, length: range.length } } : undefined,
-  );
-  if (!object) throw new HttpError(410, "This media is no longer available", "unavailable");
+  let body = inspected;
+  if (inspected) {
+    if (range) body = inspected.subarray(range.start, range.end + 1);
+  } else {
+    const object = await env.MEDIA.get(
+      asset.r2_key,
+      range ? { range: { offset: range.offset, length: range.length } } : undefined,
+    );
+    if (!object) throw new HttpError(410, "This media is no longer available", "unavailable");
+    body = object.body;
+  }
   const headers = {
     "content-type": asset.mime,
     ...rangeHeaders(range, asset.bytes),
@@ -1462,7 +1475,7 @@ async function servePublished(request, env, assetId, download) {
   };
   if (download)
     headers["content-disposition"] = `attachment; filename="published-${asset.id}.${extensionFor(asset.mime)}"`;
-  return new Response(request.method === "HEAD" ? null : object.body, {
+  return new Response(request.method === "HEAD" ? null : body, {
     status: range ? 206 : 200,
     headers,
   });

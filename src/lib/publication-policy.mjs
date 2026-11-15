@@ -1,6 +1,7 @@
 // Explicit first-party publication policy. Never infer rights from an asset's source.
 import { HttpError, id, now, slug } from "./util.mjs";
 import { verifiedShareCredit } from "./publication-attribution.mjs";
+import { checkPublicImage } from "./public-image-privacy.mjs";
 
 export function installationAllows(env, projectId) {
   return String(env.FIRST_PARTY_PUBLICATION_PROJECTS ?? "").split(",").map((value) => value.trim()).filter(Boolean).includes(projectId);
@@ -130,7 +131,7 @@ export async function inventory(env, projectId, after = "") {
 // requests and preserving every existing URL and every withdrawal.
 export async function publishCandidate(env, projectId, assetId, { automatic = false } = {}) {
   if (!installationAllows(env, projectId)) return "not_allowed";
-  const candidate = await env.DB.prepare(`SELECT a.parent_asset_id,g.request_json,ref.sha256 AS reference_sha256,ref.caption AS reference_caption,
+  const candidate = await env.DB.prepare(`SELECT a.*,g.request_json,ref.sha256 AS reference_sha256,ref.caption AS reference_caption,
     CASE WHEN ${attributionSafe} OR ${generatedChain} THEN 1 ELSE 0 END AS plain_safe,
     CASE WHEN ${directReference} THEN 1 ELSE 0 END AS share_safe,
     CASE WHEN ${shareChain} THEN 1 ELSE 0 END AS chain_safe
@@ -142,6 +143,12 @@ export async function publishCandidate(env, projectId, assetId, { automatic = fa
   if (!candidate.plain_safe && !candidate.share_safe && !candidate.chain_safe) return "attribution_review_required";
   // Automatic retries must not re-list existing pages, or make network calls for them.
   if (automatic && await env.DB.prepare("SELECT id FROM publications WHERE asset_id=?1 LIMIT 1").bind(assetId).first()) return "existing";
+  try {
+    await checkPublicImage(env, candidate, candidate.request_json);
+  } catch (error) {
+    if (error.code === "publication_metadata_unverified") return "metadata_review_required";
+    throw error;
+  }
   let attribution = [];
   let chainRoot = null;
   if (!candidate.plain_safe) {
