@@ -274,7 +274,8 @@ async function claim(env, generationId, from, to, darkroomVersion = null) {
 export async function eraseGenerationResult(env, generation) {
   if (generation.retained_key && (!isDarkroomGeneration(generation) || generation.retained_key !== darkroomOriginalKey(generation)))
     await env.MEDIA.delete(generation.retained_key);
-  await eraseDarkroomOperation(env, generation);
+  await eraseDarkroomOperation(env, generation, generation.cost_observed_micro === null
+    ? () => settleReservation(env, generation) : null);
   await env.DB.prepare("UPDATE generations SET retained_key=NULL,retained_mime=NULL,retained_bytes=NULL WHERE id=?1")
     .bind(generation.id).run();
 }
@@ -438,9 +439,10 @@ async function failGeneration(env, generation, error, { dispatched = false } = {
     `UPDATE generations SET status=?2,
       error_code=CASE WHEN deleted_at IS NULL THEN ?3 ELSE 'erasure_pending' END,
       error_detail=CASE WHEN deleted_at IS NULL THEN ?4 ELSE error_detail END,
-      updated_at=?5 WHERE id=?1 AND status IN ('submitting','submitted','running') RETURNING id`,
+      updated_at=?5 WHERE id=?1 AND (status IN ('submitting','submitted','running')
+        OR (?6=1 AND status='unknown' AND error_code='dispatch_unknown')) RETURNING id`,
   )
-    .bind(generation.id, status, code, String(error.message ?? error).slice(0, 240), now())
+    .bind(generation.id, status, code, String(error.message ?? error).slice(0, 240), now(), definitive || !dispatched ? 1 : 0)
     .first();
   if (changed && status === "failed") await releaseReservation(env, generation);
   const fresh = await loadGeneration(env, generation.id);
@@ -675,7 +677,13 @@ export async function advanceGeneration(env, generation) {
       )
         .bind(fresh.id, now())
         .run();
-      return loadGeneration(env, fresh.id);
+      const current = await loadGeneration(env, fresh.id);
+      if (isDarkroomGeneration(current) && current.status === "unknown" &&
+          current.error_code === "dispatch_unknown" && !safeJson(current.request_json, {}).darkroomDispatched) {
+        return failGeneration(env, current, new HttpError(502,
+          "This image request stopped before it reached the provider.", "dispatch_not_started"));
+      }
+      return current;
     }
     return fresh;
   }

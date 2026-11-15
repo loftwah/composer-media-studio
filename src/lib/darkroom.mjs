@@ -169,16 +169,19 @@ export async function runDarkroomImage(env, generation, model, settings, referen
   const ai = {
     async run(endpoint, input, options) {
       if (attempted) throw new Error("Studio does not retry a paid image call");
-      const active = await env.DB.prepare(
-        "SELECT id FROM generations WHERE id=?1 AND project_id=?2 AND status='submitting' AND deleted_at IS NULL",
-      ).bind(generation.id, generation.project_id).first();
+      // Persist the dispatch boundary before the only AI call. The same
+      // statement rechecks the job and the reference against deletion.
+      const active = await env.DB.prepare(`
+        UPDATE generations SET request_json=json_set(request_json,'$.darkroomDispatched',1)
+        WHERE id=?1 AND project_id=?2 AND status='submitting' AND deleted_at IS NULL
+          AND (?3 IS NULL OR EXISTS (
+            SELECT 1 FROM assets WHERE id=?3 AND project_id=?2 AND r2_key=?4 AND kind='image' AND deleted_at IS NULL
+          )) RETURNING id
+      `).bind(generation.id, generation.project_id, reference?.asset.id ?? null, reference?.asset.r2_key ?? null).first();
       if (!active) {
-        refusal = preflightError(409, "This image job is no longer active. No image request was sent.", "generation_inactive");
+        refusal = preflightError(409, "This job or its reference is no longer available. No image request was sent.",
+          reference ? "reference_unavailable" : "generation_inactive");
         throw refusal;
-      }
-      if (reference) {
-        try { await authorize(reference.asset.r2_key); }
-        catch (error) { refusal = error; throw error; }
       }
       // Keep Phoenix/Lucid guidance and the original Schnell request shape.
       if (model.id === "studio-print") input = { ...input, guidance: 5 };
@@ -230,15 +233,27 @@ export async function runDarkroomImage(env, generation, model, settings, referen
 
 /** Erase the retained original and verify Darkroom's durable erasure marker.
  * A live lease can refuse erasure; Studio keeps the tombstone queued. */
-export async function eraseDarkroomOperation(env, generation) {
+export async function eraseDarkroomOperation(env, generation, beforeErase = null) {
   if (!isDarkroomGeneration(generation)) return;
   if (!env.MEDIA_OPERATION || !env.APP_ARTIFACTS)
     throw new HttpError(502, "Image cleanup is temporarily unavailable.", "erase_incomplete");
   const operation = operationFor(env, generation);
   await finishRetainedOperation(operation, generation, { erasing: true });
   try {
+    // A written operation is terminal and proves that paid output was retained.
+    await operation.preflightErasure(DARKROOM_NAMESPACE, generation.id);
+    if (beforeErase && (await operation.read())?.state === "written") await beforeErase();
     const result = await operation.erase(DARKROOM_NAMESPACE, generation.id);
-    if (!result.clear) throw new Error("Erasure not confirmed");
+    if (!result.clear) {
+      // In 0.10.0 readErasure also counts workerd's internal _cf_KV
+      // table, which stores its own erasure marker. The package writes the
+      // marker only after clear-all. Confirm that marker, no operation and
+      // no R2 object; never accept a missing object alone as proof.
+      const marker = await operation.preflightErasure(DARKROOM_NAMESPACE, generation.id);
+      if (!marker.erased || (await operation.read()) !== null ||
+          (await env.APP_ARTIFACTS.head(darkroomOriginalKey(generation))) !== null)
+        throw new Error("Erasure not confirmed");
+    }
   } catch {
     throw new HttpError(502, "Image cleanup is pending. The original is no longer accessible through this job.", "erase_incomplete");
   }
