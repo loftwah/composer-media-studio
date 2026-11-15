@@ -8,6 +8,7 @@ import {
   CAPABILITIES_STATE_KEY,
   buildAlerts,
   capabilityManifest,
+  falModelMatches,
   parseCloudflareModelPage,
   parseFalModel,
   refreshCapabilities,
@@ -27,6 +28,9 @@ test("fal model search carries withdrawal and price facts", () => {
     { id: "fal-ai/x", deprecated: true, removed: false, status: "public", pricing: "$0.28", updatedAt: "2026-11-01" },
   );
   assert.equal(parseFalModel(null), null);
+  assert.equal(falModelMatches("fal-ai/elevenlabs/sound-effects/v3", { id: "elevenlabs/sound-effects/v3" }), true);
+  assert.equal(falModelMatches("fal-ai/minimax/hailuo-2.3/standard/image-to-video", { id: "fal-ai/minimax/hailuo-2.3/standard/image-to-video" }), true);
+  assert.equal(falModelMatches("fal-ai/a", { id: "fal-ai/b" }), false);
 });
 
 test("alerts are stable and deduplicated by model and problem", () => {
