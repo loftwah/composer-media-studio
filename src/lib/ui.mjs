@@ -571,23 +571,40 @@ export function publicGallery({ items = [], featured = [], hasMore = false, page
   };
   const option = (value, label, selected) => `<option value="${value}"${selected ? " selected" : ""}>${label}</option>`;
   const controls = `<form class="gallery-controls" action="/gallery" method="get"><label>Search titles and descriptions<input type="search" name="q" value="${escapeHtml(query)}" maxlength="80" placeholder="Search public work"></label><label>Type<select name="kind">${option("", "All media", !kind)}${option("image", "Images", kind === "image")}${option("video", "Video", kind === "video")}${option("audio", "Audio", kind === "audio")}</select></label><label>Order<select name="order">${option("newest", "Newest first", order !== "oldest")}${option("oldest", "Oldest first", order === "oldest")}</select></label><button type="submit">Apply filters</button>${query || kind || order === "oldest" ? '<a href="/gallery">Clear filters</a>' : ""}</form>`;
+  const dimensions = (width, height) =>
+    Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
+      ? ` width="${width}" height="${height}"`
+      : "";
+  const previewImage = (src, width, height) =>
+    `<img src="${src}" alt=""${dimensions(width, height)} loading="lazy" decoding="async">`;
   const renderCards = (entries) => entries.map((item) => {
     const slug = encodeURIComponent(item.slug);
     const title = escapeHtml(item.title);
-    const preview = item.kind === "image"
-      ? `<img src="/p/${slug}/media" alt="" loading="lazy" decoding="async">`
-      : item.kind === "video" && item.poster_asset_id
-        ? `<img src="/p/${slug}/poster" alt="" loading="lazy" decoding="async">`
-        : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
+    // A stored preview is small and regenerable, so it always beats the full
+    // original or a large parent poster. The old routes stay as fallbacks.
+    const preview = item.thumb_id
+      ? previewImage(`/p/${slug}/thumb`, item.thumb_width, item.thumb_height)
+      : item.kind === "image"
+        ? previewImage(`/p/${slug}/media`, item.width, item.height)
+        : item.kind === "video" && item.poster_asset_id
+          ? previewImage(`/p/${slug}/poster`, item.poster_width, item.poster_height)
+          : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
     const action = item.kind === "video" ? "Watch film →" : item.kind === "audio" ? "Listen →" : "View image →";
     const pieceHref = `/p/${slug}${home || (!query && !kind && order !== "oldest" && page === 1) ? "" : `?back=${encodeURIComponent(pageHref(page))}`}`;
     return `<li><a class="gallery-card" href="${escapeHtml(pieceHref)}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(galleryDescription(item.description))}</span>` : ""}</a></li>`;
   }).join("");
-  const heroItem = home ? (items.find((item) => item.kind === "video" && item.poster_asset_id) || items.find((item) => item.kind === "image")) : null;
+  const heroItem = home ? (items.find((item) => item.kind === "video" && (item.poster_asset_id || item.thumb_id)) || items.find((item) => item.kind === "image")) : null;
   const heroSlug = heroItem ? encodeURIComponent(heroItem.slug) : "";
+  const heroSource = heroItem
+    ? heroItem.thumb_id
+      ? { route: "thumb", width: heroItem.thumb_width, height: heroItem.thumb_height }
+      : heroItem.kind === "image"
+        ? { route: "media", width: heroItem.width, height: heroItem.height }
+        : { route: "poster", width: heroItem.poster_width, height: heroItem.poster_height }
+    : null;
   // The hero is the page's largest paint, so it asks for the first bytes. Cards
   // below it stay lazy: the gallery grid defers offscreen cards in studio.css.
-  const heroArtwork = heroItem ? `<a class="gallery-hero-art" href="/p/${heroSlug}"><img src="/p/${heroSlug}/${heroItem.kind === "image" ? "media" : "poster"}" alt="" decoding="async" fetchpriority="high"><span><small>Published in Media Studio</small><strong>${escapeHtml(heroItem.title)}</strong><span>Explore this work →</span></span></a>` : "";
+  const heroArtwork = heroItem ? `<a class="gallery-hero-art" href="/p/${heroSlug}"><img src="/p/${heroSlug}/${heroSource.route}" alt=""${dimensions(heroSource.width, heroSource.height)} decoding="async" fetchpriority="high"><span><small>Published in Media Studio</small><strong>${escapeHtml(heroItem.title)}</strong><span>Explore this work →</span></span></a>` : "";
   const cards = renderCards(items);
   const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));
   return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio." })}

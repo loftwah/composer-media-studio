@@ -5,6 +5,7 @@ import { isLocalRenderProvenance, publicCaption, shareImportProvenance } from ".
 import { shotRange } from "./shot-trims.js";
 import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.js";
 import { prepareVoiceDraft, restoreCreateDraft, switchCreateProject, createEventBelongsToProject, hasCreateDraftChanges, shouldWarnCreateDrafts } from "./voice-handoff.js";
+import { derivativeSize } from "./derivative-size.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -1119,6 +1120,11 @@ function publishView() {
     <div class="spread"><h2 style="margin:0">Published pages</h2><button class="button" data-action="choose-publish">Publish a piece</button></div>
     <p class="small">A published page includes its title, description, media, download link and any eligible public source credits and links. Prompts, other projects and private filenames stay private. Withdrawal stops new visits; downloads already taken cannot be recalled.</p>
     <div class="row"><button class="secondary" data-action="publication-policy">First-party publishing settings</button><button class="secondary" data-action="publication-inventory">Review publication inventory</button></div>
+    ${publications.length ? `<div class="stack" style="margin-top:0.7rem">
+      <button class="secondary" type="button" data-action="backfill-thumbs">Make public previews faster</button>
+      <p class="small" style="margin:0">Adds a small gallery preview where one is missing. Originals and published pages stay unchanged; running it again only fills gaps.</p>
+      <p class="small" style="margin:0" data-thumb-progress role="status" aria-live="polite"></p>
+    </div>` : ""}
     <div class="stack" style="margin-top:0.8rem">
       ${publications.length === 0 ? `<div class="card"><p style="margin:0">Nothing published yet.</p></div>` : ""}
       ${publications
@@ -1868,6 +1874,9 @@ async function handleAction(action, element, keyboard = false) {
       } while (after);
       return;
     }
+    case "backfill-thumbs":
+      await makePublicPreviewsFaster();
+      return;
     case "edit-publication": {
       const projectId = state.projectId;
       const publication = state.project.publications.find((item) => item.id === id);
@@ -2279,6 +2288,174 @@ async function submitCreate() {
   startPolling();
 }
 
+const DERIVATIVE_MAX_BYTES = 1024 * 1024;
+const DERIVATIVE_TIMEOUT_MS = 15_000;
+
+function thumbProgress(message = "") {
+  const node = document.querySelector("[data-thumb-progress]");
+  if (node) node.textContent = message;
+}
+
+function mediaEvent(target, name, timeout = DERIVATIVE_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const settle = (error) => {
+      clearTimeout(timer);
+      target.removeEventListener(name, done);
+      target.removeEventListener("error", fail);
+      if (error) reject(error);
+      else resolve();
+    };
+    const done = () => settle(null);
+    const fail = () => settle(new Error("This media could not be read in the browser."));
+    const timer = setTimeout(() => settle(new Error("Reading this media took too long.")), timeout);
+    target.addEventListener(name, done, { once: true });
+    target.addEventListener("error", fail, { once: true });
+  });
+}
+
+function derivativeCanvas(source, width, height) {
+  const size = derivativeSize(width, height);
+  if (!size) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  // A JPEG fallback has no alpha; fill with paper white instead of black.
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, size.width, size.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, 0, 0, size.width, size.height);
+  return canvas;
+}
+
+function canvasBlob(canvas, type, quality) {
+  return new Promise((resolve) => {
+    try {
+      canvas.toBlob((blob) => resolve(blob), type, quality);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function derivativeBlob(canvas) {
+  if (!canvas) return null;
+  let blob = await canvasBlob(canvas, "image/webp", 0.72);
+  if (!blob || blob.type !== "image/webp" || blob.size > DERIVATIVE_MAX_BYTES)
+    blob = await canvasBlob(canvas, "image/jpeg", 0.78);
+  return blob && blob.size > 0 && blob.size <= DERIVATIVE_MAX_BYTES ? blob : null;
+}
+
+async function imageDerivativeBlob(asset) {
+  if (typeof createImageBitmap !== "function") return null;
+  const response = await fetch(`/api/assets/${encodeURIComponent(asset.id)}/file`, { credentials: "same-origin" });
+  if (!response.ok) return null;
+  const bitmap = await createImageBitmap(await response.blob());
+  try {
+    return await derivativeBlob(derivativeCanvas(bitmap, bitmap.width, bitmap.height));
+  } finally {
+    bitmap.close?.();
+  }
+}
+
+async function videoDerivativeBlob(asset) {
+  // Detached and muted: this reads one frame without playing sound or adding UI.
+  const video = document.createElement("video");
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+  video.crossOrigin = "anonymous";
+  const metadata = mediaEvent(video, "loadedmetadata");
+  video.src = `/api/assets/${encodeURIComponent(asset.id)}/file`;
+  try {
+    await metadata;
+    if (!video.videoWidth || !video.videoHeight) return null;
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+    const seeked = mediaEvent(video, "seeked");
+    video.currentTime = Math.min(1, duration * 0.1);
+    await seeked;
+    return await derivativeBlob(derivativeCanvas(video, video.videoWidth, video.videoHeight));
+  } finally {
+    video.removeAttribute("src");
+    video.load();
+  }
+}
+
+async function uploadDerivative(publication, blob) {
+  const form = new FormData();
+  const extension = blob.type === "image/webp" ? "webp" : "jpg";
+  form.append("file", new File([blob], `thumb.${extension}`, { type: blob.type }));
+  const result = await api(`/api/publications/${encodeURIComponent(publication.id)}/derivative`, {
+    method: "POST",
+    body: form,
+  });
+  return result?.thumb ?? null;
+}
+
+async function makePublicPreviewFaster(publication, asset) {
+  if (!publication?.id || !asset || !["image", "video"].includes(asset.kind)) return false;
+  const blob = asset.kind === "image" ? await imageDerivativeBlob(asset) : await videoDerivativeBlob(asset);
+  if (!blob) return false;
+  const thumb = await uploadDerivative(publication, blob);
+  if (!thumb) return false;
+  publication.hasThumb = true;
+  return true;
+}
+
+async function makePublicPreviewsFaster() {
+  const project = state.project;
+  if (!project) return;
+  const pending = project.publications.filter((publication) => {
+    if (publication.hasThumb) return false;
+    const asset = project.assets.find((item) => item.id === publication.assetId);
+    return asset && ["image", "video"].includes(asset.kind);
+  });
+  if (!pending.length) {
+    notify("Every image and film page already has a fast preview.");
+    return;
+  }
+  const button = document.querySelector('[data-action="backfill-thumbs"]');
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+  }
+  let made = 0;
+  let failure = null;
+  try {
+    for (const [index, publication] of pending.entries()) {
+      if (state.project !== project) {
+        thumbProgress("Stopped because the studio changed.");
+        return;
+      }
+      const asset = project.assets.find((item) => item.id === publication.assetId);
+      thumbProgress(`Making fast preview ${index + 1} of ${pending.length}…`);
+      try {
+        if (!(await makePublicPreviewFaster(publication, asset)))
+          throw new Error("This file could not be captured here.");
+      } catch (error) {
+        failure = { index, error };
+        break;
+      }
+      made += 1;
+      thumbProgress(`Made ${index + 1} of ${pending.length} fast previews.`);
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+  if (failure) {
+    thumbProgress(`Stopped at ${failure.index + 1} of ${pending.length}: ${failure.error.message} Nothing else changed.`);
+    notify(`Stopped after ${made} fast preview${made === 1 ? "" : "s"}. ${failure.error.message}`, "bad");
+    return;
+  }
+  thumbProgress(`Made ${made} of ${pending.length} fast previews.`);
+  notify(`Fast previews ready for ${made} published page${made === 1 ? "" : "s"}.`);
+}
+
 async function publishAsset(assetId, title, description) {
   const asset = state.project.assets.find((item) => item.id === assetId);
   if (!asset) return;
@@ -2308,6 +2485,20 @@ async function publishAsset(assetId, title, description) {
   location.hash = `#/p/${state.projectId}/publish`;
   render();
   notify(`Published at ${result.publication.path}`);
+  // The page is already live. A browser-captured preview is best effort: losing
+  // it never blocks, retracts or delays the publication.
+  const target = state.project?.publications?.find((item) => item.id === result.publication.id)
+    ?? { id: result.publication.id, path: result.publication.path, hasThumb: false };
+  makePublicPreviewFaster(target, asset)
+    .then((ready) => {
+      if (ready) {
+        const live = state.project?.publications?.find((item) => item.id === target.id);
+        if (live) live.hasThumb = true;
+        return;
+      }
+      notify("Published. The fast preview will be added later.");
+    })
+    .catch(() => notify("Published. The fast preview will be added later."));
 }
 
 async function refreshGeneration(id, manual = false) {

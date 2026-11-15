@@ -238,6 +238,18 @@ export function Publish({ publications, origin }: PublishProps) {
         <button type="button" className="secondary" data-action="publication-policy">First-party publishing settings</button>
         <button type="button" className="secondary" data-action="publication-inventory">Review publication inventory</button>
       </div>
+      {publications.length > 0 && (
+        <div className="stack publish-previews">
+          <button type="button" className="secondary" data-action="backfill-thumbs">
+            Make public previews faster
+          </button>
+          <p className="small">
+            Adds a small gallery preview where one is missing. Originals and
+            published pages stay unchanged; running it again only fills gaps.
+          </p>
+          <p className="small" data-thumb-progress role="status" aria-live="polite" />
+        </div>
+      )}
       <div className="stack history-list">
         {publications.length === 0 && (
           <div className="card">

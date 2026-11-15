@@ -77,6 +77,7 @@ import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as comp
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
+import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative } from "./lib/publication-derivatives.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.mjs";
 import { readCapabilityManifest, readCapabilityState, refreshCapabilities } from "./lib/capabilities.mjs";
@@ -291,18 +292,30 @@ function generationView(generation, extra = {}) {
 // Only explicitly configured, still-published films are safe for the home gallery.
 async function homeShowcase(env) {
   const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 8);
-  const rows = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime
+  const rows = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,
+    d.publication_id AS thumb_id,d.width AS thumb_width,d.height AS thumb_height
     FROM publications p JOIN assets a ON a.id=p.asset_id
     LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
+    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='thumb'
     WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
-  return rows.filter(Boolean).slice(0, 3).map((row) => ({ slug: row.slug, title: row.title, description: row.description, mime: row.mime, hasPoster: Boolean(row.poster_asset_id) }));
+  return rows.filter(Boolean).slice(0, 3).map((row) => ({
+    slug: row.slug,
+    title: row.title,
+    description: row.description,
+    mime: row.mime,
+    hasPoster: Boolean(row.poster_asset_id),
+    ...(row.thumb_id ? { thumb_id: row.thumb_id, thumb_width: row.thumb_width, thumb_height: row.thumb_height } : {}),
+  }));
 }
 
 async function publicCatalogue(env, page = 1, limit = 24, { query = "", kind = "", order = "newest" } = {}) {
   const direction = order === "oldest" ? "ASC" : "DESC";
-  const result = await env.DB.prepare(`SELECT p.slug,p.title,p.description,p.created_at,a.kind,a.mime,
-    poster.id AS poster_asset_id FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
+  const result = await env.DB.prepare(`SELECT p.slug,p.title,p.description,p.created_at,a.kind,a.mime,a.width,a.height,
+    poster.id AS poster_asset_id,poster.width AS poster_width,poster.height AS poster_height,
+    d.publication_id AS thumb_id,d.width AS thumb_width,d.height AS thumb_height
+    FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
     LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
+    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='thumb'
     WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL
       AND (?1 = '' OR instr(lower(p.title), lower(?1)) > 0 OR instr(lower(p.description), lower(?1)) > 0)
       AND (?2 = '' OR a.kind = ?2)
@@ -691,7 +704,9 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       const recipes = await env.DB.prepare("SELECT * FROM recipes WHERE project_id=?1 ORDER BY created_at ASC")
         .bind(project.id)
         .all();
-      const publications = await env.DB.prepare("SELECT * FROM publications WHERE project_id=?1 AND revoked_at IS NULL ORDER BY created_at DESC")
+      const publications = await env.DB.prepare(
+        "SELECT p.*,(d.publication_id IS NOT NULL) AS has_thumb FROM publications p LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='thumb' WHERE p.project_id=?1 AND p.revoked_at IS NULL ORDER BY p.created_at DESC",
+      )
         .bind(project.id)
         .all();
       // Reuse resolves from stored relationships and the same-project library.
@@ -761,6 +776,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           posterAssetId: publication.poster_asset_id,
           listed: Boolean(publication.listed),
           hidden: Boolean(publication.hidden),
+          hasThumb: Boolean(publication.has_thumb),
           path: `/p/${publication.slug}`,
           createdAt: publication.created_at,
         })),
@@ -1156,6 +1172,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
     if (!action && method === "DELETE") {
       const timestamp = now();
+      const affected = await env.DB.prepare(
+        "SELECT id FROM publications WHERE (asset_id=?1 OR poster_asset_id=?1) AND revoked_at IS NULL",
+      )
+        .bind(asset.id)
+        .all();
       await env.DB.batch([
         env.DB.prepare(
           "UPDATE assets SET deleted_at=COALESCE(deleted_at,?2),delete_revision=delete_revision+(deleted_at IS NULL),erasure_pending=1,updated_at=?2 WHERE id=?1",
@@ -1164,6 +1185,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           "UPDATE publications SET revoked_at=?2 WHERE (asset_id=?1 OR poster_asset_id=?1) AND revoked_at IS NULL",
         ).bind(asset.id, timestamp),
       ]);
+      try {
+        await deletePublicationDerivatives(env, affected.results.map((row) => row.id));
+      } catch (error) {
+        console.warn("Could not remove previews for a deleted asset", asset.id, error?.message);
+      }
       await eraseAsset(env, asset);
       return json({ deleted: true, ...(asset.deleted_at ? { alreadyDeleted: true } : {}) });
     }
@@ -1243,6 +1269,42 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     }
   }
 
+  const derivativeMatch = path.match(/^\/api\/publications\/([a-z0-9_]+)\/derivative$/);
+  if (derivativeMatch && method === "POST") {
+    // A fast preview is derived from a live publication, never from library
+    // metadata. Withdrawing the page invalidates it with the page itself.
+    const publication = await env.DB.prepare(
+      `SELECT p.id,p.project_id,p.slug,a.kind AS asset_kind,a.deleted_at AS asset_deleted
+       FROM publications p JOIN assets a ON a.id=p.asset_id
+       WHERE p.id=?1 AND p.revoked_at IS NULL`,
+    )
+      .bind(derivativeMatch[1])
+      .first();
+    if (!publication) throw new HttpError(404, "Publication not found", "not_found");
+    await assertProjectAccess(env, session, publication.project_id);
+    if (publication.asset_deleted) throw new HttpError(404, "The published media is no longer available", "not_found");
+    if (!["image", "video"].includes(publication.asset_kind))
+      throw new HttpError(415, "Only images and films can have a fast preview", "unsupported_type");
+    const type = request.headers.get("content-type") ?? "";
+    if (!type.includes("multipart/form-data"))
+      throw new HttpError(415, "Upload the preview as form data", "unsupported_media_type");
+    const form = await request.formData();
+    const file = form.get("file");
+    if (!(file instanceof File)) throw new HttpError(400, "Choose a preview image to upload");
+    if (file.size === 0) throw new HttpError(400, "That preview file is empty");
+    if (file.size > MAX_DERIVATIVE_BYTES)
+      throw new HttpError(413, "A fast preview must stay under 1 MiB", "too_large");
+    const stored = await storeDerivative(env, publication, new Uint8Array(await file.arrayBuffer()));
+    return json({
+      thumb: {
+        path: `/p/${publication.slug}/thumb`,
+        bytes: stored.bytes,
+        width: stored.width,
+        height: stored.height,
+      },
+    });
+  }
+
   const publicationMatch = path.match(/^\/api\/publications\/([a-z0-9_]+)$/);
   if (publicationMatch && method === "PATCH") {
     const input = await body(request);
@@ -1276,6 +1338,12 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     await env.DB.prepare("UPDATE publications SET revoked_at=?2 WHERE id=?1 AND revoked_at IS NULL")
       .bind(row.id, now())
       .run();
+    try {
+      await deletePublicationDerivatives(env, [row.id]);
+    } catch (error) {
+      // The page is already withdrawn, and /p/:slug/thumb checks that first.
+      console.warn("Could not remove a withdrawn publication preview", row.id, error?.message);
+    }
     return json({ revoked: true });
   }
 
@@ -1733,7 +1801,7 @@ async function handlePublic(request, env, url) {
     }
   }
 
-  const publicationMatch = path.match(/^\/p\/([A-Za-z0-9_-]+)(\/poster|\/download|\/media)?$/);
+  const publicationMatch = path.match(/^\/p\/([A-Za-z0-9_-]+)(\/poster|\/download|\/media|\/thumb)?$/);
   if (publicationMatch) {
     const [, publicSlug, extra] = publicationMatch;
     const publication = await env.DB.prepare(
@@ -1748,6 +1816,7 @@ async function handlePublic(request, env, url) {
 
     if (extra === "/download") return servePublished(request, env, publication.asset_id, true);
     if (extra === "/media") return servePublished(request, env, publication.asset_id, false);
+    if (extra === "/thumb") return servePublicationThumb(request, env, publication);
     if (extra === "/poster") {
       if (!publication.poster_asset_id) throw new HttpError(404, "No poster for this page", "not_found");
       return servePublished(request, env, publication.poster_asset_id, false);
@@ -2103,6 +2172,37 @@ async function servePublished(request, env, assetId, download) {
   return new Response(request.method === "HEAD" ? null : body, {
     status: range ? 206 : 200,
     headers,
+  });
+}
+
+async function servePublicationThumb(request, env, publication) {
+  if (request.method !== "GET" && request.method !== "HEAD")
+    throw new HttpError(405, "Method not allowed", "method_not_allowed");
+  const derivative = await env.DB.prepare(
+    "SELECT r2_key,mime,bytes,sha256 FROM publication_derivatives WHERE publication_id=?1 AND kind='thumb'",
+  )
+    .bind(publication.id)
+    .first();
+  if (!derivative) throw new HttpError(404, "No fast preview for this page", "not_found");
+  const etag = `"${derivative.sha256.slice(0, 32)}"`;
+  if (matchesEtag(request.headers.get("if-none-match"), etag))
+    return new Response(null, {
+      status: 304,
+      headers: { etag, "cache-control": "public, max-age=60" },
+    });
+  const object = await env.MEDIA.get(derivative.r2_key);
+  if (!object) throw new HttpError(404, "No fast preview for this page", "not_found");
+  return new Response(request.method === "HEAD" ? null : object.body, {
+    headers: {
+      "content-type": derivative.mime,
+      "content-length": String(derivative.bytes),
+      etag,
+      // A withdrawal must stop resolving quickly, so never cache for long.
+      "cache-control": "public, max-age=60",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+      "cross-origin-resource-policy": "cross-origin",
+    },
   });
 }
 
