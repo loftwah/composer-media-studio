@@ -63,6 +63,7 @@ function CompositionCard({
   assets,
   assemblyCost,
   socialCost,
+  latestRevision,
 }: {
   projectId: string;
   canEdit: boolean;
@@ -72,6 +73,7 @@ function CompositionCard({
   assets: MediaAssetV1[];
   assemblyCost: number;
   socialCost: number;
+  latestRevision: number | null;
 }) {
   const renders = generations.filter((g) => g.compositionId === composition.id);
   const hasTrims = composition.shots.some((shot) => shot.trimStartMs !== undefined || shot.trimEndMs !== undefined);
@@ -94,7 +96,20 @@ function CompositionCard({
               : ""}
           </span>
         </div>
-        <span className="small">{date(composition.createdAt)}</span>
+        <span className="row small" style={{ gap: "0.45rem" }}>
+          {composition.originSongPlan ? (
+            <span>Plan revision {composition.originSongPlan.revision}</span>
+          ) : (
+            <span>Saved storyboard</span>
+          )}
+          {latestRevision !== null &&
+            (composition.originSongPlan?.revision === latestRevision ? (
+              <span className="status ok">Latest saved</span>
+            ) : (
+              <span className="status">Earlier revision</span>
+            ))}
+          <span>Updated {date(composition.updatedAt ?? composition.createdAt)}</span>
+        </span>
       </header>
       {changed && (
         <p className="small" style={{ margin: 0 }}>
@@ -262,6 +277,12 @@ export function Assemble({
   const total = chosen.reduce((sum, a) => sum + (shotRange(compose.shotTrims[a.id] ?? {}, a)?.durationMs ?? 0), 0);
   const mixedBed = audio.find((asset) => asset.id === compose.audioAssetId);
   const staleBed = Boolean(compose.audioAssetId && (!mixedBed?.durationMs || Math.abs(mixedBed.durationMs - total) > 100));
+  const latestByPlan = new Map<string, number>();
+  for (const composition of compositions) {
+    const plan = composition.originSongPlan;
+    if (!plan) continue;
+    latestByPlan.set(plan.id, Math.max(latestByPlan.get(plan.id) ?? 0, plan.revision));
+  }
   return (
     <>
       <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} onVoiceDraft={onVoiceDraft} />
@@ -566,6 +587,7 @@ export function Assemble({
             assets={assets}
             assemblyCost={assemblyCost}
             socialCost={socialCost}
+            latestRevision={c.originSongPlan ? latestByPlan.get(c.originSongPlan.id) ?? null : null}
           />
         ))}
       </div>

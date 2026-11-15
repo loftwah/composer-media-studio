@@ -4,22 +4,22 @@ import './local-render.css';
 import { resolveCaptionSnapshot, type CaptionSnapshot } from './local-captions';
 import { createCaptionPainter, type CaptionStyle } from './caption-paint';
 import { defaultFraming, framingNote, resolveFrame, type FrameAspect, type FrameFit, type FrameQuality, type Framing } from './local-framing';
+import { resolveLocalRenderSnapshot, savedRevisionLabel } from './local-render-snapshot';
 
-async function loadCaptionSnapshot(projectId: string, composition: CompositionV1, signal: AbortSignal) {
+async function loadSavedSnapshot(projectId: string, composition: CompositionV1, signal: AbortSignal, withCaptions: boolean) {
   const base = `/api/projects/${encodeURIComponent(projectId)}`;
   const [projectResponse, plansResponse] = await Promise.all([
     fetch(base, { credentials: 'same-origin', signal }),
-    fetch(`${base}/song-plans`, { credentials: 'same-origin', signal }),
+    withCaptions ? fetch(`${base}/song-plans`, { credentials: 'same-origin', signal }) : Promise.resolve(null),
   ]);
-  if (!projectResponse.ok || !plansResponse.ok) throw new Error('Could not check the saved storyboard and song plan. Try again.');
-  const projectData = await projectResponse.json(), planData = await plansResponse.json();
-  const current: CompositionV1 | undefined = projectData.compositions?.find((item: CompositionV1) => item.id === composition.id);
-  const identity = (item: CompositionV1) => JSON.stringify({id:item.id,updatedAt:item.updatedAt,shots:item.shots,totalMs:item.totalMs,audioAssetId:item.audioAssetId,audioTracks:item.audioTracks,originSongPlan:item.originSongPlan});
-  if (!current || identity(current) !== identity(composition) || !Array.isArray(projectData.assets) || !Array.isArray(planData.plans)) throw new Error('The saved storyboard changed. Reload it before using captions.');
-  const media: MediaAssetV1[] = structuredClone(projectData.assets);
-  const snapshot: CompositionV1 = structuredClone(current);
-  const captions = resolveCaptionSnapshot(snapshot, media, planData.plans.find((item: {id:string}) => item.id === snapshot.originSongPlan?.id));
-  return { snapshot, media, captions };
+  if (!projectResponse.ok || (plansResponse && !plansResponse.ok)) throw new Error('Could not check the saved storyboard and song plan. Try again.');
+  const projectData = await projectResponse.json();
+  const saved = resolveLocalRenderSnapshot(composition, projectData);
+  if (!withCaptions) return { ...saved, captions: undefined };
+  const planData = await plansResponse!.json();
+  if (!Array.isArray(planData.plans)) throw new Error('Could not check the saved song plan. Try again.');
+  const captions = resolveCaptionSnapshot(saved.composition, saved.assets, planData.plans.find((item: {id:string}) => item.id === saved.composition.originSongPlan?.id));
+  return { ...saved, captions };
 }
 
 function CaptionSample({ captions, width, height, style }: { captions: CaptionSnapshot; width: number; height: number; style: CaptionStyle }) {
@@ -44,7 +44,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ blob: Blob; url: string; caption: string; captioned: boolean; framing: string; receiptId: string | null } | null>(null);
+  const [result, setResult] = useState<{ blob: Blob; url: string; caption: string; captioned: boolean; framing: string; receiptId: string | null; revision: string; changed: boolean } | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'uncertain'>('idle');
   const [savedAssetId, setSavedAssetId] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(false);
@@ -65,23 +65,20 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
   const loadSample = async () => {
     captionSampleTask.current?.abort(); const task = new AbortController(); captionSampleTask.current = task;
     setError(''); setCaptionSample(null); setCaptionSampleBusy(true);
-    try { const loaded = await loadCaptionSnapshot(projectId, composition, task.signal); if (!task.signal.aborted) setCaptionSample(loaded.captions); }
+    try { const loaded = await loadSavedSnapshot(projectId, composition, task.signal, true); if (!task.signal.aborted) setCaptionSample(loaded.captions ?? null); }
     catch (err) { if (!task.signal.aborted) setError((err as Error).message || 'Could not preview captions.'); }
     finally { if (captionSampleTask.current === task) { captionSampleTask.current = null; setCaptionSampleBusy(false); } }
   };
   const start = async () => {
     if (busy || controller.current) return;
-    setError(''); setStatus('Checking this browser…'); setBusy(true);
+    setError(''); setStatus('Checking the saved storyboard…'); setBusy(true);
     const task = new AbortController(); controller.current = task;
-    let snapshot = structuredClone(composition), media = structuredClone(assets);
     const chosenFraming = { ...framing }, chosenCaptionStyle = captionStyle;
     try {
-      let captions: CaptionSnapshot | undefined;
-      if (includeCaptions) {
-        setStatus('Checking the saved storyboard and song plan…');
-        const loaded = await loadCaptionSnapshot(projectId, snapshot, task.signal);
-        snapshot = loaded.snapshot; media = loaded.media; captions = loaded.captions;
-      }
+      const saved = await loadSavedSnapshot(projectId, composition, task.signal, includeCaptions);
+      if (task.signal.aborted) return;
+      const { composition: snapshot, assets: media, captions } = saved;
+      if (saved.changed) setStatus('This card was showing an older save. Rendering the current saved storyboard…');
       let receiptId: string | null = null;
       if (canEdit) {
         setStatus('Recording the saved storyboard snapshot…');
@@ -103,8 +100,9 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
       if (preview.current) URL.revokeObjectURL(preview.current);
       const url = URL.createObjectURL(blob); preview.current = url; saveAttempt.current = false; setSaveState('idle'); setSavedAssetId('');
       const frameDescription = framingNote(frame);
-      const caption = `Browser MP4 from saved storyboard; ${frameDescription}${captions ? `; owner-confirmed captions (${chosenCaptionStyle === 'lower-third' ? 'lower-third' : 'classic'})` : ''}. ${receiptId ? 'Source evidence is in the private render receipt.' : 'No private render receipt was created.'}`;
-      setResult({blob,url,caption,captioned:Boolean(captions),framing:frameDescription,receiptId}); setStatus('MP4 ready to preview or download.');
+      const revision = savedRevisionLabel(snapshot);
+      const caption = `Browser MP4 from saved storyboard; ${revision}; ${frameDescription}${captions ? `; owner-confirmed captions (${chosenCaptionStyle === 'lower-third' ? 'lower-third' : 'classic'})` : ''}. ${receiptId ? 'Source evidence is in the private render receipt.' : 'No private render receipt was created.'}`;
+      setResult({blob,url,caption,captioned:Boolean(captions),framing:frameDescription,receiptId,revision,changed:saved.changed}); setStatus('MP4 ready to preview or download.');
     } catch (err) { if (task.signal.aborted) setStatus('Local render cancelled.'); else setError((err as Error).message || 'The local render failed.'); }
     finally { if (controller.current === task) controller.current = null; setBusy(false); }
   };
@@ -131,9 +129,10 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
   try { if (firstAsset) frame = resolveFrame(framing, firstAsset); } catch { /* renderer reports missing dimensions */ }
   const resetSourcePreview = () => { setReadyPreviewKey(''); setSourcePreviewError(false); };
   return <details className="local-render" onToggle={event => setExpanded(event.currentTarget.open)}><summary>Render MP4 on this device</summary>
-    <p className="small">Uses the saved storyboard and WAV soundtrack mix on this device. No provider or generation charge. It uses H.264/AAC when your browser supports them and keeps other clip audio muted. Trim points select the nearest source frame at or before each 30 fps output frame; originals stay unchanged. AAC encoding can add a short tail. Maximum 6 clips, 60 seconds, 4K source frames and 128 MiB input.</p>
+    <p className="small"><strong>Saved storyboard:</strong> {savedRevisionLabel(composition)} · {composition.shots.length} shots · {(composition.totalMs / 1000).toFixed(1)}s. The MP4 always reads this saved version from the server, even if this card is old.</p>
+    <p className="small">Renders on this device from the saved clips and WAV soundtrack mix. No provider or generation charge. It uses H.264/AAC when your browser supports them and keeps other clip audio muted. Trim points select the nearest source frame at or before each 30 fps output frame; originals stay unchanged. AAC encoding can add a short tail. Maximum 6 clips, 60 seconds, 4K source frames and 128 MiB input.</p>
     <div className="local-framing"><div className="local-framing-fields"><label>Output quality<select value={framing.quality ?? "standard"} disabled={busy} onChange={event => setFraming(current => ({ ...current, quality: event.target.value as FrameQuality }))}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Output frame<select value={framing.aspect} disabled={busy} onChange={event => setFraming(current => ({ ...current, aspect: event.target.value as FrameAspect }))}><option value="source">First shot orientation (default)</option><option value="16:9">Landscape 16:9</option><option value="9:16">Portrait 9:16</option><option value="1:1">Square 1:1</option></select></label><label>Fit inside frame<select value={framing.fit} disabled={busy} onChange={event => setFraming(current => ({ ...current, fit: event.target.value as FrameFit }))}><option value="contain">Show whole shot (may add bars)</option><option value="cover">Fill frame (centre crops edges)</option></select></label><label>Shot to inspect<select value={Math.min(previewIndex, Math.max(0, composition.shots.length - 1))} disabled={busy} onChange={event => { setPreviewIndex(Number(event.target.value)); resetSourcePreview(); }}>{composition.shots.map((shot, index) => <option key={`${shot.assetId}-${index}`} value={index}>Shot {index + 1}: {assets.find(asset => asset.id === shot.assetId)?.title ?? 'Unavailable clip'}</option>)}</select></label></div>
-      <p className="small">{framing.fit === 'cover' ? 'Fill removes edges where a shot has a different shape. Check each shot before rendering.' : 'Show whole shot keeps every edge; bars can appear where the shapes differ.'} HD may enlarge smaller source clips and uses more device resources. This source preview starts at the saved in-point; playback can continue beyond the selected end. Captions are added only to the final MP4.</p>
+      <p className="small"><strong>Previewing {savedRevisionLabel(composition)}.</strong> {framing.fit === 'cover' ? 'Fill removes edges where a shot has a different shape. Check each shot before rendering.' : 'Show whole shot keeps every edge; bars can appear where the shapes differ.'} HD may enlarge smaller source clips and uses more device resources. This source preview starts at the saved in-point; playback can continue beyond the selected end. Captions are added only to the final MP4.</p>
       {expanded && frame && selectedAsset ? <div className="local-framing-preview" style={{ aspectRatio: `${frame.width} / ${frame.height}` }}><video key={`${selectedAsset.id}-${selectedShot?.trimStartMs ?? 0}`} src={selectedAsset.file} controls muted playsInline preload="metadata" aria-label={`Framing preview for shot ${previewIndex + 1}: ${selectedAsset.title}`} style={{ objectFit: framing.fit }} onLoadedMetadata={event => { const start = (selectedShot?.trimStartMs ?? 0) / 1000; if (start > 0) event.currentTarget.currentTime = start; }} onLoadedData={() => { if (!(selectedShot?.trimStartMs ?? 0)) setReadyPreviewKey(previewKey); }} onSeeked={() => setReadyPreviewKey(previewKey)} onError={() => { setReadyPreviewKey(''); setSourcePreviewError(true); }}/></div> : <p className="small">A source preview is unavailable. Check the saved clips.</p>}
       {expanded && !sourcePreviewReady && !sourcePreviewError && frame && selectedAsset && <p role="status" className="small">Loading source preview…</p>}
       {expanded && sourcePreviewError && <p className="notice">The source preview could not be loaded. Check the clip before choosing a crop.</p>}
@@ -144,6 +143,6 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     {includeCaptions && <div><label>Caption look<select value={captionStyle} disabled={busy} onChange={event=>setCaptionStyle(event.target.value as CaptionStyle)}><option value="classic">Classic subtitle</option><option value="lower-third">Left lower-third</option></select></label><p className="small">The sample and final MP4 use the same look. {canEdit ? 'If you save the MP4, its private receipt records this choice.' : 'This read-only render has no saved receipt.'}</p><button type="button" className="secondary" disabled={busy || captionSampleBusy} onClick={() => void loadSample()}>{captionSampleBusy ? 'Loading captions…' : 'Preview saved captions'}</button>{captionSample && frame && <><p className="small">Saved captions on a neutral background, using the same text layout and output frame as the MP4. This does not preview your footage. Rendering checks the saved revision again.</p><CaptionSample captions={captionSample} width={frame.width} height={frame.height} style={captionStyle} /></>}</div>}
     <div className="row"><button type="button" className="secondary" onClick={() => void start()} disabled={busy || saveState === 'saving' || (framing.fit === 'cover' && !sourcePreviewReady)}>Make local MP4</button>{busy && <button type="button" className="quiet" onClick={() => controller.current?.abort()}>Cancel</button>}</div>
     {status && <p role="status" className="small">{status}</p>}{error && <p role="alert" className="notice">{error}</p>}
-    {result && <div className="local-render-result"><p className="small">{result.framing}. {result.captioned ? 'This preview and download contain the saved captions.' : 'This preview and download do not contain captions.'} Changed framing and caption-look settings apply to the next render.</p><video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${composition.title}`} /><div className="row"><a className="button secondary" href={result.url} download="studio-local-render.mp4">Download MP4</a>{canEdit && saveState !== 'saved' && <button type="button" className="secondary" disabled={saveState !== 'idle' || busy} onClick={() => void save()}>{saveState === 'saving' ? 'Saving…' : 'Save to library'}</button>}{savedAssetId && <a href={`#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(savedAssetId)}`}>Open saved video</a>}</div></div>}
+    {result && <div className="local-render-result"><p className="small"><strong>Rendered from {result.revision}.</strong> {result.framing}. {result.captioned ? 'This preview and download contain the saved captions.' : 'This preview and download do not contain captions.'} Changed framing and caption-look settings apply to the next render.</p>{result.changed && <p className="notice warn">This card was showing an older save. The MP4 used the current saved storyboard, not the earlier preview.</p>}<video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${composition.title}`} /><div className="row"><a className="button secondary" href={result.url} download="studio-local-render.mp4">Download MP4</a>{canEdit && saveState !== 'saved' && <button type="button" className="secondary" disabled={saveState !== 'idle' || busy} onClick={() => void save()}>{saveState === 'saving' ? 'Saving…' : 'Save to library'}</button>}{savedAssetId && <a href={`#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(savedAssetId)}`}>Open saved video</a>}</div></div>}
   </details>;
 }
