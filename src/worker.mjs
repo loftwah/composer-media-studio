@@ -1953,6 +1953,12 @@ async function handlePublic(request, env, url) {
       project = await currentProject(env, session);
     }
     if (!project) {
+      const { results: candidates } = await env.DB.prepare(
+        "SELECT id,name,workspace_id,updated_at FROM projects ORDER BY updated_at DESC LIMIT 60",
+      ).all();
+      const projects = candidates
+        .filter((candidate) => projectAccessible(session, candidate))
+        .map((candidate) => ({ id: candidate.id, name: candidate.name, updatedAt: candidate.updated_at }));
       return new Response(
         comparePage({
           revision: BUILD.revision,
@@ -1960,6 +1966,7 @@ async function handlePublic(request, env, url) {
           job: null,
           entries: [],
           project: null,
+          projects,
           verdict: {
             headline: "No project yet",
             detail: "A comparison belongs to a project. Open one in the studio, keep a take, then use Compare models from that project.",

@@ -482,4 +482,16 @@ dialog h2 { margin: 0; }
 .cmp-field{display:flex;flex-direction:column;gap:4px;flex:1 1 150px}
 .cmp-field-time{flex:0 1 90px}
 .cmp-field input{min-height:42px;padding:8px 10px;font:inherit;font-size:14px;border-radius:8px;border:1px solid var(--line,rgba(0,0,0,.2));background:transparent;color:inherit}
+.cmp-blind-toggle{display:flex;align-items:center;gap:10px;max-width:70ch;margin:20px 0 0;font-size:14px}
+.cmp-blind-toggle input{width:20px;height:20px;flex:none;margin:0}
+.cmp-blind-name{display:none}
+.cmp-grid.is-blind .cmp-model-name{display:none}
+.cmp-grid.is-blind .cmp-blind-name{display:inline}
+.cmp-grid.is-blind .cmp-cost{display:none}
+.cmp-grid.is-blind .cmp-take.is-revealed .cmp-model-name{display:inline}
+.cmp-grid.is-blind .cmp-take.is-revealed .cmp-blind-name{display:none}
+.cmp-grid.is-blind .cmp-take.is-revealed .cmp-cost{display:block}
+.cmp-projects{display:grid;gap:10px;max-width:70ch;margin:16px 0 0;padding:0;list-style:none}
+.cmp-projects a{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:44px;padding:10px 12px;border:1px solid var(--line,rgba(0,0,0,.14));border-radius:10px;text-decoration:none}
+.cmp-projects a:hover{border-color:var(--accent,#c2470a)}
 @media(max-width:640px){.cmp-grid{grid-template-columns:1fr}.cmp-facts{grid-template-columns:1fr}.cmp-vote{flex-direction:column;align-items:stretch}}
