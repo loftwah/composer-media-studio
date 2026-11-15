@@ -241,8 +241,13 @@ export async function runDarkroomImage(env, generation, model, settings, referen
   } catch (error) {
     if (!attempted) {
       // The bounded reason is also in the worker log so a released failure can
-      // be diagnosed without exposing the private prompt.
-      console.error("darkroom preflight", generation.id, error?.name ?? "Error", String(error?.message ?? "").slice(0, 200));
+      // be diagnosed without exposing the private prompt. Darkroom wraps the
+      // real cause in a stage error; keep its one-line identity too.
+      console.error(
+        "darkroom preflight", generation.id,
+        error?.name ?? "Error", String(error?.message ?? "").slice(0, 200),
+        error?.cause?.name ?? "-", String(error?.cause?.message ?? "").slice(0, 200),
+      );
       throw refusal ?? preflightFailure(error);
     }
     throw new HttpError(502, "The image request may have run. Check this job to recover the original without generating again.", "provider_error");
