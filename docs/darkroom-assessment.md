@@ -78,6 +78,8 @@ the authority during the transition.
 
 ## Update 2026-11-15: still images only
 
+Reason 1 above is resolved upstream: since Darkroom 0.7.0 a host can inject its own provider catalogue (`parseMediaCatalogue`; validation and the video cost estimate take it as an argument), so a reviewed fal.ai adapter is possible later. Reason 2 is resolved by the R2 destination below.
+
 `@fungi.computer/darkroom@0.10.0` now ships `createR2MediaDestination`, so Darkroom
 can read references from and write results to this studio's `MEDIA` bucket without
 a Computer. Studio Print, Film, Quick and Detail use it (`src/lib/darkroom.mjs`).
