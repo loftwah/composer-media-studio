@@ -1,5 +1,6 @@
 // MIT. Media Studio Worker: owner studio, public pages and the job engine.
 
+import { readLoftwahFmTrack } from "./lib/loftwahfm-import.mjs";
 import { darkroomOriginalKey, isDarkroomGeneration } from "./lib/darkroom.mjs";
 import {
   allowedActions,
@@ -581,6 +582,24 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         .bind(project.id, name, direction, visibility, JSON.stringify(defaults), JSON.stringify(references), now())
         .run();
       return json({ project: await projectSummary(env, await loadProject(env, project.id)) });
+    }
+
+    if (rest === "assets/loftwahfm" && method === "POST") {
+      const input = await body(request);
+      if (input?.rightsConfirmed !== true)
+        throw new HttpError(400, "Confirm you have permission to use this track.", "rights_required");
+      const track = await readLoftwahFmTrack(input.url, MAX_AUDIO_BYTES);
+      await requireSession(env, request, "edit");
+      await assertProjectAccess(env, session, project.id);
+      const hash = await sha256Hex(track.bytes);
+      const identity = await sha256Hex(new TextEncoder().encode(JSON.stringify([project.id, track.source, hash])));
+      const importId = "asset_" + identity;
+      const existing = await env.DB.prepare("SELECT * FROM assets WHERE id=?1 AND project_id=?2").bind(importId, project.id).first();
+      if (existing?.deleted_at) throw new HttpError(409, "This imported track was previously removed from this project.", "removed_track");
+      if (existing) return json({ asset: assetView(existing) });
+      return storeAsset(env, project, track.bytes, {
+        mime: "audio/mpeg", title: track.title, caption: track.source, importId, hash,
+      });
     }
 
     if (rest === "assets/woodhouse" && method === "POST" && env.WOODHOUSE_SHARE === "true") {
@@ -1195,8 +1214,14 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
       )
       .run();
   } catch (error) {
-    await env.MEDIA.delete(key);
-    throw error;
+    // D1 may have committed the row before its reply was lost. Preserve any
+    // indexed original and let the normal readback confirm the result.
+    const committed = await env.DB.prepare("SELECT id FROM assets WHERE id=?1 AND project_id=?2")
+      .bind(assetId, project.id).first();
+    if (!committed) {
+      await env.MEDIA.delete(key);
+      throw error;
+    }
   }
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
   if (!asset && (localReceipt || footageReceipt)) { await env.MEDIA.delete(key); throw new HttpError(409, "This render receipt expired. Start a new render.", "receipt_expired"); }

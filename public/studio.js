@@ -432,6 +432,7 @@ function renderReactAssemble() {
   }, onAssetSaved: (asset) => {
     if (!state.project || state.project.id !== projectId) return;
     state.project.assets = [asset, ...state.project.assets.filter((item) => item.id !== asset.id)];
+    if (asset.kind === "audio" && state.view === "project" && state.tab === "assemble") renderReactAssemble();
   }, canEdit: Boolean(state.session?.actions.includes("edit")), onSongStoryboard: (composition) => {
     if (!state.project || state.project.id !== composition.projectId || state.view !== "project" || state.tab !== "assemble") return;
     state.project.compositions = [composition, ...(state.project.compositions ?? []).filter((item) => item.id !== composition.id)];
