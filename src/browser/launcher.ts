@@ -4,7 +4,20 @@
 (() => {
   const dialog = document.querySelector<HTMLDialogElement>("#app-navigation");
   const trigger = document.querySelector<HTMLButtonElement>("[data-open-apps]");
-  if (!dialog || !trigger) return;
+  // A trigger without its dialog is a dead control. Remove it rather than ship a
+  // button that toggles attributes and opens nothing. If this script runs before
+  // the rest of the document, wait for the dialog to have its chance to exist.
+  if (!dialog) {
+    if (!trigger) return;
+    const drop = () => {
+      if (!document.querySelector("#app-navigation")) trigger.remove();
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", drop, { once: true });
+    else drop();
+    return;
+  }
+  if (!trigger) return;
+  const localScope = dialog.dataset.launcherScope === "local";
   const search = dialog.querySelector<HTMLInputElement>('input[type="search"]');
   const closeButton = dialog.querySelector<HTMLButtonElement>("[data-close-apps]");
   const status = dialog.querySelector<HTMLElement>('[role="status"]');
@@ -75,6 +88,10 @@
   };
   // Studio routes share the explicitly selected Composer home. They navigate
   // normally and retain the destination's own authentication boundary.
+  // A shell with data-launcher-scope="local" (Media Studio) omits this list and
+  // authors its own destinations, so Composer-only routes never appear there.
+  // This copy also points Get Ready at the canonical docs page rather than the
+  // legacy /docs redirect.
   const tasks = [
     { name: "Explore App Composer", path: "/discover", description: "Working tools and recent releases", keywords: "new latest shipped features work discover", icon: "stacks" },
     { name: "Collections", path: "/collections", description: "Browse and save visual pins", keywords: "collection collections board pins gallery design art print covers", icon: "book" },
@@ -92,7 +109,7 @@
     { name: "Runbooks & resources", path: "/resources", description: "Take the operating kit and working examples", keywords: "resources runbooks incident pipeline hooks cheatsheet download kit", icon: "book" },
     { name: "Follow-along tutorial", path: "/learn", description: "Learn by making something", keywords: "help learn start tutorial", icon: "book" },
     { name: "Content and form builder", path: "/init/content", description: "Design your own content model", keywords: "build fields form cms collection", icon: "settings" },
-    { name: "Get Ready library and CLI", path: "/docs#standalone-get-ready", description: "Use the standalone tools", keywords: "package command terminal mcp", icon: "terminal" },
+    { name: "Get Ready library and CLI", path: "/docs/how-it-works#standalone-get-ready", description: "Use the standalone tools", keywords: "package command terminal mcp", icon: "terminal" },
     { name: "The whole platform", path: "/architecture", description: "See how the pieces connect", keywords: "architecture system", icon: "stacks" },
     { name: "CMS, cloud, commerce and email guide", path: "/guide", description: "Choose the services your app needs", keywords: "cloudflare emdash shop mail", icon: "book" },
     { name: "Manage mini-apps", path: "/_emdash/admin/plugins/composer-miniapps/apps", description: "Open the invited owner studio", keywords: "admin edit moderation approve profile", icon: "settings" },
@@ -127,7 +144,9 @@
     entry.append(link);
     list?.append(entry);
   }
-  for (const task of tasks) {
+  // A Studio shell lists its own destinations. Composer's task routes only exist
+  // on Composer, so keep them out of a local-scope menu.
+  if (!localScope) for (const task of tasks) {
     const entry = document.createElement("li");
     entry.setAttribute("data-destination", "");
     entry.dataset.keywords = task.keywords;
@@ -213,14 +232,17 @@
     hint.append(keycap, document.createTextNode(label));
     keys.append(hint);
   }
-  const all = dialog.querySelector<HTMLAnchorElement>(".launcher-all") ?? document.createElement("a");
-  all.className = "launcher-all";
-  all.href = new URL("apps", composerHome).href;
-  all.replaceChildren(document.createTextNode("All apps"), icon(["M7 17L17 7M7 7h10v10"]));
-  footer.append(keys, all);
+  const all = dialog.querySelector<HTMLAnchorElement>(".launcher-all") ?? (localScope ? null : document.createElement("a"));
+  if (all) {
+    all.className = "launcher-all";
+    all.href = new URL("apps", composerHome).href;
+    all.replaceChildren(document.createTextNode("All apps"), icon(["M7 17L17 7M7 7h10v10"]));
+  }
+  footer.append(keys);
+  if (all) footer.append(all);
   dialog.append(footer);
   if (search) {
-    search.placeholder = "Search apps, photos, SEO, build…";
+    if (!localScope) search.placeholder = "Search apps, photos, SEO, build…";
     search.spellcheck = false;
     search.setAttribute("aria-describedby", keys.id);
   }
