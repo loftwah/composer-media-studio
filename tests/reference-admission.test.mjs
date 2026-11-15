@@ -63,3 +63,27 @@ test('a failed reference lookup cannot release a reservation claimed by another 
   assert.equal(calls, 1);
   assert.ok((await budgetSnapshot(env, project.id)).reservedMicro > 0);
 });
+
+for (const unavailable of ['deleted', 'missing bytes']) {
+  test(`a mask ${unavailable} after admission fails safely before the edit provider`, async () => {
+    const { env, project } = await setup({ allowance: 100000 });
+    const bytes = jpeg(512, 512);
+    for (const id of ['source', 'mask']) {
+      await env.MEDIA.put(`fixture/${id}.jpg`, bytes);
+      await env.DB.prepare("INSERT INTO assets(id,project_id,kind,r2_key,mime,bytes,width,height,sha256,title,source,created_at,updated_at) VALUES(?1,?2,'image',?3,'image/jpeg',?4,512,512,'fixture','Still','upload',1,1)")
+        .bind(`asset_${id}`, project.id, `fixture/${id}.jpg`, bytes.length).run();
+    }
+    const { generation } = await createGeneration(env, project, {
+      kind: 'image', model: 'studio-fill', prompt: 'A replacement sky', aspect: 'match-reference', referenceAssetId: 'asset_source', maskAssetId: 'asset_mask', clientRequestId: 'mask_fixture_1',
+    });
+    assert.equal(generation.status, 'admitted');
+    assert.ok((await budgetSnapshot(env, project.id)).reservedMicro > 0);
+    if (unavailable === 'deleted') await env.DB.prepare('UPDATE assets SET deleted_at=2 WHERE id=?1').bind('asset_mask').run();
+    else await env.MEDIA.delete('fixture/mask.jpg');
+    // A missing FAL key would also be reported as a provider error if dispatch were attempted.
+    const result = await dispatchGeneration(env, generation);
+    assert.equal(result.status, 'failed');
+    assert.equal(result.error_code, 'reference_unavailable');
+    assert.equal((await budgetSnapshot(env, project.id)).reservedMicro, 0);
+  });
+}

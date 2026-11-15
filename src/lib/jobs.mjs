@@ -274,13 +274,17 @@ export async function dispatchGeneration(env, generation) {
   const model = getModel(generation.model);
   const request = safeJson(generation.request_json, {});
   let reference;
-  let referenceError;
-  let referenceFailed = false;
+  let maskReference;
+  let inputError;
+  let inputFailed = false;
   try {
     reference = await referenceFor(env, generation.project_id, request.referenceAssetId);
+    if (model.kind === "image" && model.edit && request.maskAssetId) {
+      maskReference = await referenceFor(env, generation.project_id, request.maskAssetId);
+    }
   } catch (error) {
-    referenceFailed = true;
-    referenceError = error;
+    inputFailed = true;
+    inputError = error;
   }
 
   if (!(await claim(env, generation.id, "admitted", "submitting"))) {
@@ -290,7 +294,7 @@ export async function dispatchGeneration(env, generation) {
   }
 
   // Only the dispatcher that claimed this admission may release its reservation.
-  if (referenceFailed) return failGeneration(env, generation, referenceError, { dispatched: false });
+  if (inputFailed) return failGeneration(env, generation, inputError, { dispatched: false });
 
   if (model.restyle) {
     let sourceUrl;
@@ -307,9 +311,6 @@ export async function dispatchGeneration(env, generation) {
 
   if (model.kind === "image" && model.edit) {
     try {
-      const maskReference = request.maskAssetId
-        ? await referenceFor(env, generation.project_id, request.maskAssetId)
-        : null;
       const submitted = await submitImageEdit(env, model, request, [
         {
           bytes: reference.bytes,
