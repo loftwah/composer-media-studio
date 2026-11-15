@@ -182,3 +182,41 @@ test('MCP preserves a private subject origin through explicit and legacy scene u
     assert.equal(saved.isError,undefined,JSON.stringify(saved)); assert.equal(saved.structuredContent.plan.scenes[0].subjectOrigin.subjectId,subject.id);
   } finally { await client.close(); }
 });
+
+test('MCP applies the exact reviewed scene revision, reads it back and refuses a stale revision', async () => {
+  const { createSongPlan, updateSongPlan } = await import('../src/lib/song-plans.mjs');
+  const { env, project } = await setup();
+  await addAsset(env, project, { id: 'asset_song1', kind: 'audio', durationMs: 20000 });
+  await addAsset(env, project, { id: 'asset_image1', kind: 'image' });
+  await addAsset(env, project, { id: 'asset_take01', kind: 'video', durationMs: 6000 });
+  let plan = await createSongPlan(env, project, { songAssetId: 'asset_song1', rightsConfirmed: true, title: 'Fictional revision plan', aspect: '16:9', startMs: 0, endMs: 12000, sceneCount: 3 });
+  plan = await updateSongPlan(env, project, plan.id, { ...plan, expectedRevision: 1, scenes: plan.scenes.map((scene, index) => ({ ...scene, direction: `Saved direction ${index + 1}`, selectedTakeId: index === 0 ? 'asset_take01' : null })) });
+  const cookie = 'studio_session=' + await createSession(env, { mode: 'bridge', actor: 'user', workspace: 'workspace', project: project.id, actions: ['read', 'edit'] });
+  const client = await connect(async ({ method, path, body }) => {
+    const response = await worker.fetch(new Request('https://studio.test' + path, { method, headers: { cookie, origin: 'https://studio.test', 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) }), env);
+    return { status: response.status, body: await response.json() };
+  });
+  try {
+    const first = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: project.id } });
+    const revision = first.structuredContent.plans[0].revision;
+    assert.equal(revision, plan.revision);
+    const changes = [{ sceneId: plan.scenes[1].id, direction: 'A slower push-in with warmer practical light.' }];
+    const preview = await client.callTool({ name: 'studio_preview_scene_proposal', arguments: { projectId: project.id, planId: plan.id, expectedRevision: revision, changes } });
+    assert.equal(preview.isError, undefined, JSON.stringify(preview));
+    const applied = await client.callTool({ name: 'studio_apply_scene_proposal', arguments: { projectId: project.id, planId: plan.id, expectedRevision: revision, changes, reviewDigest: preview.structuredContent.reviewDigest, approved: true } });
+    assert.equal(applied.isError, undefined, JSON.stringify(applied));
+    const reopened = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: project.id } });
+    const saved = reopened.structuredContent.plans[0];
+    assert.equal(saved.revision, revision + 1);
+    assert.equal(saved.scenes[1].direction, 'A slower push-in with warmer practical light.');
+    assert.equal(saved.scenes[0].direction, 'Saved direction 1');
+    assert.equal(saved.scenes[0].selectedTakeId, 'asset_take01');
+    assert.equal(saved.scenes[2].direction, 'Saved direction 3');
+    const staleApply = await client.callTool({ name: 'studio_apply_scene_proposal', arguments: { projectId: project.id, planId: plan.id, expectedRevision: revision, changes, reviewDigest: preview.structuredContent.reviewDigest, approved: true } });
+    assert.equal(staleApply.isError, true);
+    const stalePreview = await client.callTool({ name: 'studio_preview_scene_proposal', arguments: { projectId: project.id, planId: plan.id, expectedRevision: revision, changes } });
+    assert.equal(stalePreview.isError, true);
+    const unchanged = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: project.id } });
+    assert.equal(unchanged.structuredContent.plans[0].revision, revision + 1);
+  } finally { await client.close(); }
+});

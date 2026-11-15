@@ -40,6 +40,7 @@ import {
 } from "./lib/jobs.mjs";
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { previewSceneProposal, applySceneProposal } from "./lib/scene-proposals.mjs";
+import { proposeSceneDirection } from "./lib/director.mjs";
 import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
@@ -428,6 +429,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/^\/api\/generations\/[a-z0-9_]+\/(cancel|reconcile|save-retry)$/.test(path)) action = "generate";
   if (/\/export$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/scene-proposal\/preview$/.test(path)) action = "read";
+  if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/director$/.test(path)) action = "edit";
 
   const session = scopedAgent ?? await requireSession(env, request, action);
   if (scopedAgent && !can(session, action))
@@ -687,6 +689,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     if (rest === "song-plans" && method === "GET") return json({ plans: await listSongPlans(env, project) });
     if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);
     const sceneProposal = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/scene-proposal\/(preview|apply)$/);
+    const directorProposal = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/director$/);
+    if (directorProposal && method === "POST") return json(await proposeSceneDirection(env, project, directorProposal[1], await body(request, 8192)));
     if (sceneProposal && method === "POST") {
       const input=await body(request,16384);
       return json(sceneProposal[2] === "preview" ? await previewSceneProposal(env,project,sceneProposal[1],input) : await applySceneProposal(env,project,sceneProposal[1],input));
