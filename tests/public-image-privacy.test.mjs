@@ -63,6 +63,18 @@ test("Darkroom metadata and signed originals stay private across publication rou
   const full = await fetchStudio(`${publication.path}/media`);
   assert.equal(full.status, 200);
   assert.deepEqual(new Uint8Array(await full.arrayBuffer()), PNG_1x1);
+  // A returning reader re-validates instead of downloading the bytes again, and
+  // a range request (video seeking) still gets its partial body.
+  const tag = full.headers.get("etag");
+  assert.ok(tag, "published media exposes a validator");
+  const unchanged = await fetchStudio(`${publication.path}/media`, { headers: { "if-none-match": tag } });
+  assert.equal(unchanged.status, 304);
+  assert.equal((await unchanged.arrayBuffer()).byteLength, 0);
+  const stale = await fetchStudio(`${publication.path}/media`, { headers: { "if-none-match": '"stale-tag"' } });
+  assert.equal(stale.status, 200);
+  const seeking = await fetchStudio(`${publication.path}/media`, { headers: { "if-none-match": tag, range: "bytes=0-7" } });
+  assert.equal(seeking.status, 206);
+  assert.deepEqual(new Uint8Array(await seeking.arrayBuffer()), PNG_1x1.subarray(0, 8));
   const partial = await fetchStudio(`${publication.path}/download`, { headers: { range: "bytes=0-7" } });
   assert.equal(partial.status, 206);
   assert.deepEqual(new Uint8Array(await partial.arrayBuffer()), PNG_1x1.subarray(0, 8));
