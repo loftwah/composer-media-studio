@@ -58,5 +58,34 @@
       "media-bytes"
     ],
     "mediaDownload": "/api/assets/:asset/download"
+  },
+  "portableBundle": {
+    "version": 1,
+    "format": "studio-project-bundle/v1",
+    "manifest": "/api/projects/:project/portable-export",
+    "restore": "/api/studio/restore",
+    "command": "node scripts/studio-project.mjs",
+    "includes": [
+      "project",
+      "references",
+      "assets",
+      "media-bytes",
+      "content-hashes",
+      "generations",
+      "recipes",
+      "compositions",
+      "subject-versions",
+      "song-plans",
+      "footage-plans",
+      "promo-briefs",
+      "publications"
+    ],
+    "excludes": [
+      "provider-keys",
+      "session-cookies",
+      "signed-urls",
+      "budget-reservations",
+      "public-urls"
+    ]
   }
 }

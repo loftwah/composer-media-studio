@@ -44,6 +44,7 @@ export function createStudioMcpHandler(dispatch, options = {}) {
     register('studio_get_asset', 'Inspect a saved asset in the current project.', assetArg, ({ assetId }) => `/api/assets/${assetId}`);
     register('studio_get_job', 'Read the last saved job state and budget without polling or advancing any provider job.', generationArg, ({ generationId }) => `/api/generations/${generationId}`);
     register('studio_export_project', 'Read the project export, including asset and job records; media bytes download separately.', projectArg, ({ projectId }) => `/api/projects/${projectId}/export`);
+    register('studio_export_portable_manifest', 'Read the sealed portable project manifest, including owned media hashes and sizes. Media bytes are downloaded separately by the owner CLI; this does not restore, publish, generate or spend.', projectArg, ({ projectId }) => `/api/projects/${projectId}/portable-export`);
     const download = z.object({ assetId: id, offset: z.number().int().min(0), length: z.number().int().min(1).max(49152).default(49152) }).strict();
     server.registerTool('studio_download_asset_chunk', { description: 'Read one bounded base64-encoded chunk of an owned asset. Repeat with the next offset to download the full file; original bytes and metadata stay in Studio.', inputSchema: download, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } }, async ({ assetId, offset, length }) => {
       try {

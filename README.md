@@ -42,6 +42,8 @@ Every request shows an estimate before submission. The monthly allowance reserva
 
 `0003_audio_and_assembly.sql` widens the saved media kinds to include audio and adds compositions. SQLite cannot widen a `CHECK` constraint in place, so the two tables that enumerate kinds are rebuilt with every existing row copied; no data is dropped. Apply it with `pnpm migrate:remote` before deploying the worker that needs it.
 
+`0018_portable_project_imports.sql` adds restart-safe restore staging and bundle idempotency. Apply it before using portable project import on an existing installation.
+
 ## Run locally
 
 ```sh
@@ -71,7 +73,8 @@ The Apps launcher is the locally committed Composer distribution and source at A
 - Media bytes live in the studio's R2 bucket; metadata in its D1 database. Darkroom may only read a live image in the same project. The Studio indexes the exact original from the operation’s fixed private R2 key. The copy with embedded prompts is never stored; originals with unverified metadata or signatures stay private.
 - Composer receives a source pin, not credentials. The studio runs after detaching Composer and has no licence callback.
 - Deleting media withdraws pages using it. A tombstone prevents a late provider result from restoring deleted media.
-- The private project export includes project records, references, prompts, lineage, costs, publications, subject versions and song plans (which may contain lyrics and scene directions), but not Studio provider keys, session cookies or media bytes. User-authored text and links can still contain sensitive information; share it carefully. Media downloads are separate; the export is not an R2 backup or an importable restore.
+- The private metadata export at `/api/projects/:id/export` includes project records, references, prompts, lineage, costs, publications, subject versions and song plans (which may contain lyrics and scene directions), but not Studio provider keys, session cookies or media bytes. User-authored text and links can still contain sensitive information; share it carefully. It remains available for backward compatibility and is not itself an importable restore.
+- A portable project bundle at `/api/projects/:id/portable-export` plus the owner CLI includes the same records and every live media original with content hashes, and can be restored into a fresh owner-controlled installation. Provider keys, sessions and signed URLs are excluded; restored publications start withdrawn and hidden. See [portable project bundles](docs/portable-project.md) for exact commands, the deterministic archive format, limits and the current verification boundary.
 
 See [the reuse note](docs/darkroom-assessment.md) for the bounded Darkroom decision and [the deployment notes](docs/deployment.md).
 
