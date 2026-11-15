@@ -125,17 +125,26 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
     ${session ? `<a href="/compare">Compare models</a>` : ""}
     ${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}
     <a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener">Help</a>
-    ${launcherHome ? '<div class="app-launcher"><button type="button" class="secondary apps-trigger" data-open-apps aria-label="Open apps" title="Apps and shortcuts (Ctrl/Cmd+K)" aria-haspopup="dialog"><span>Apps</span><kbd>Ctrl K</kbd></button></div>' : ""}
+    ${launcherHome ? `<div class="app-launcher">
+      <button type="button" class="secondary apps-trigger" data-open-apps aria-controls="app-navigation" aria-label="Open apps" title="Apps and shortcuts (Ctrl/Cmd+K)" aria-haspopup="dialog"><span>Apps</span><kbd>Ctrl K</kbd></button>
+      <dialog data-composer-home="${escapeHtml(launcherHome)}" data-launcher-scope="local" id="app-navigation" aria-labelledby="app-navigation-title">
+        <div class="dialog-heading"><h2 id="app-navigation-title">Apps and shortcuts</h2><button type="button" data-close-apps autofocus>Close</button></div>
+        <label>Find an app or task<input type="search" placeholder="App name, gallery, compare…" autocomplete="off"></label>
+        <p class="small" role="status" aria-live="polite"></p>
+        <ul>
+          <li data-destination data-local-launcher-group="studio"><a href="#/"><span>Studio projects<small>Private work in this studio</small></span></a></li>
+          <li data-destination data-local-launcher-group="studio"><a href="/gallery"><span>Public gallery<small>Work published from studios</small></span></a></li>
+          ${session ? '<li data-destination data-local-launcher-group="studio"><a href="/compare"><span>Compare models<small>Saved takes for the same job</small></span></a></li>' : ""}
+          ${woodhouseShare ? '<li data-destination data-local-launcher-group="studio"><a href="/portfolio"><span>Share artwork<small>Woodhouse Share originals</small></span></a></li>' : ""}
+          <li data-destination data-local-launcher-group="studio"><a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener"><span>Help<small>Studio guides and limits</small></span></a></li>
+        </ul>
+      </dialog>
+    </div>` : ""}
     <button class="quiet" id="signout" type="button">Sign out</button>
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
   </nav>
   ${context}
-</header>${launcherHome ? `<dialog data-composer-home="${escapeHtml(launcherHome)}" id="app-navigation" aria-labelledby="app-navigation-title">
-  <div class="dialog-heading"><h2 id="app-navigation-title">Apps and shortcuts</h2><button type="button" data-close-apps autofocus>Close</button></div>
-  <label>Find an app or task<input type="search" placeholder="App name, Get Ready, Init…" autocomplete="off"></label>
-  <p class="small" role="status" aria-live="polite"></p><ul></ul>
-  <a class="launcher-all" href="${escapeHtml(new URL("apps", launcherHome).href)}">Browse all apps</a>
-</dialog><script src="/brand/launcher.js" defer></script>` : ""}`;
+</header>${launcherHome ? '<script src="/brand/launcher.js" defer></script>' : ""}`;
 }
 
 export function shell({ revision, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
