@@ -604,6 +604,7 @@ export function comparePage({ revision = "dev", jobs = [], job = null, project =
         </div>
         <span class="cmp-badge" data-take-badge hidden>Your pick</span>
       </header>
+      ${entry.settings?.reference ? `<a class="cmp-source" href="/api/assets/${encodeURIComponent(entry.settings.reference)}/file" target="_blank" rel="noreferrer"><img src="/api/assets/${encodeURIComponent(entry.settings.reference)}/file" alt="Source still used for this take" loading="lazy" decoding="async"><span>Source still</span></a>` : ""}
       <div class="cmp-media">
         ${
           entry.previewUrl
@@ -686,6 +687,7 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
       <li>The provider charge stays “not reported” unless a provider actually told us what it billed. An allocation is the studio's own budget figure, never an invoice.</li>
       <li>These are the newest saved takes per model, not repeated trials. A difference you can see is a difference in one take, not a reliability score.</li>
       <li>Takes are only compared when they share the same instruction and settings. Anything generated from a different brief is listed separately.</li>
+      <li>The source still is shown with each take. A clip can run for the requested length and still replace the subject; that is a review finding, not a hidden pass.</li>
       <li>Your pick and your note are stored in this browser only and bound to the exact saved take. They are private by default and are not published anywhere.</li>
       <li>Opening this page never calls a model, so it cannot add a take. New comparisons need a fresh run from the studio.</li>
     </ul>

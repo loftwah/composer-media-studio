@@ -216,7 +216,7 @@ test('a review is bound to the exact saved take, not just the model name', async
         kind: "video",
         previewUrl: null,
         prompt: "slow push in",
-        settings: { aspect: "from-image", durationSeconds: 5 },
+        settings: { aspect: "from-image", durationSeconds: 5, reference: "asset_ref" },
         cost: { estimateMicro: 240000, allocatedMicro: 240000, providerChargedMicro: null },
       },
     ],
@@ -225,4 +225,6 @@ test('a review is bound to the exact saved take, not just the model name', async
   assert.match(html, /data-generation="gen_a"/);
   assert.match(html, /data-brief="brief_a"/);
   assert.match(html, /bound to the exact saved take/);
+  assert.match(html, /\/api\/assets\/asset_ref\/file/);
+  assert.match(html, /Source still used for this take/);
 });
