@@ -167,3 +167,37 @@ test('a comparison with a reported charge has no charge weakness', () => {
   });
   assert.equal(result, null);
 });
+
+test('takes made from different briefs are not presented as a comparison', async () => {
+  const { likeForLike } = await import("../src/lib/comparisons.mjs");
+  const split = likeForLike([
+    { model: "motion-a", briefKey: "aaaa1111", prompt: "slow push in", settings: { aspect: "from-image", durationSeconds: 6 } },
+    { model: "motion-b", briefKey: "bbbb2222", prompt: "gentle parallax left", settings: { aspect: "from-image", durationSeconds: 6 } },
+  ]);
+  assert.equal(split.likeForLike, false);
+  assert.equal(split.chosen.length, 1);
+  assert.equal(split.excluded.length, 1);
+  assert.match(split.reason, /not generated from the same brief/);
+});
+
+test('the largest like-for-like group becomes the comparison', async () => {
+  const { likeForLike } = await import("../src/lib/comparisons.mjs");
+  const split = likeForLike([
+    { model: "a", briefKey: "same" },
+    { model: "b", briefKey: "same" },
+    { model: "c", briefKey: "other" },
+  ]);
+  assert.equal(split.likeForLike, true);
+  assert.deepEqual(split.chosen.map((entry) => entry.model), ["a", "b"]);
+  assert.deepEqual(split.excluded.map((entry) => entry.model), ["c"]);
+});
+
+test('a brief fingerprint ignores case and spacing but not settings', async () => {
+  const { toEntry } = await import("../src/lib/comparisons.mjs");
+  const one = toEntry({ id: "g1", model: "m", kind: "video", request_json: '{"prompt":"Slow  push IN","durationSeconds":6}' }, "motion");
+  const two = toEntry({ id: "g2", model: "m", kind: "video", request_json: '{"prompt":"slow push in","durationSeconds":6}' }, "motion");
+  const three = toEntry({ id: "g3", model: "m", kind: "video", request_json: '{"prompt":"slow push in","durationSeconds":10}' }, "motion");
+  assert.equal(one.briefKey, two.briefKey);
+  assert.notEqual(one.briefKey, three.briefKey);
+  assert.equal(three.settings.durationSeconds, 10);
+});

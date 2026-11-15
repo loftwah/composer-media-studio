@@ -154,6 +154,8 @@ export function toEntry(row, jobId) {
     durationMs: Number.isFinite(Number(row.duration_ms)) ? Number(row.duration_ms) : null,
     sha256: row.sha256 ?? null,
     prompt: promptOf(row.request_json),
+    settings: settingsOf(row.request_json),
+    briefKey: briefKeyFor(row.request_json),
     createdAt,
     cost: {
       estimateMicro: numberOrNull(row.cost_estimate_micro),
@@ -169,6 +171,45 @@ function numberOrNull(value) {
   return value === null || value === undefined || !Number.isFinite(number) ? null : number;
 }
 
+/**
+ * The settings that must match before two takes are the same job. Aspect and
+ * requested length change the work, so a portrait still is not comparable with a
+ * wide one and a five-second clip is not comparable with a ten-second clip.
+ * @param {unknown} raw
+ */
+function settingsOf(raw) {
+  if (typeof raw !== "string" || !raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      aspect: typeof parsed?.aspect === "string" ? parsed.aspect : null,
+      durationSeconds: Number.isFinite(Number(parsed?.durationSeconds)) ? Number(parsed.durationSeconds) : null,
+      reference: typeof parsed?.referenceAssetId === "string" ? parsed.referenceAssetId : null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * A short, stable fingerprint of the instruction and the settings. Two takes with
+ * different fingerprints were not asked for the same thing, so putting them side
+ * by side as a comparison would be misleading no matter how similar they look.
+ * FNV-1a is enough here: this is a grouping key, not a security boundary.
+ * @param {unknown} raw
+ */
+function briefKeyFor(raw) {
+  const prompt = promptOf(raw).trim().toLowerCase().replace(/\s+/g, " ");
+  const settings = settingsOf(raw);
+  const canonical = `${prompt}|${settings.aspect ?? ""}|${settings.durationSeconds ?? ""}|${settings.reference ?? ""}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 /** @param {unknown} raw */
 function promptOf(raw) {
   if (typeof raw !== "string" || !raw) return "";
@@ -179,6 +220,42 @@ function promptOf(raw) {
   } catch {
     return "";
   }
+}
+
+/**
+ * Split takes into like-for-like groups. A comparison is only honest inside one
+ * group: same instruction, same aspect, same requested length, same source. The
+ * largest group becomes the comparison and everything else is reported as not
+ * comparable rather than quietly averaged in.
+ * @param {any[]} entries
+ */
+export function likeForLike(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  /** @type {Map<string, any[]>} */
+  const groups = new Map();
+  for (const entry of list) {
+    const key = entry.briefKey ?? "unknown";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  const chosen = ordered[0]?.[1] ?? [];
+  const excluded = ordered.slice(1).flatMap(([, group]) => group);
+  return {
+    chosen,
+    excluded,
+    groups: ordered.length,
+    // "Like for like" describes the group being shown, not the whole workspace:
+    // two takes on the same brief are a comparison even when a third take on a
+    // different brief exists beside it.
+    likeForLike: chosen.length >= 2,
+    reason:
+      ordered.length <= 1
+        ? null
+        : `These takes were not generated from the same brief or settings, so they are listed separately instead of being compared: ${excluded
+            .map((entry) => entry.model)
+            .join(", ")}.`,
+  };
 }
 
 /**

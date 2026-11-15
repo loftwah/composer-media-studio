@@ -588,7 +588,7 @@ ${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="G
  * never calls a provider. Two takes are shown beside each other because that is
  * the only honest way to answer "which should I use".
  */
-export function comparePage({ revision = "dev", jobs = [], job = null, entries = [], verdict = null, weakness = null, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, models = {} }) {
+export function comparePage({ revision = "dev", jobs = [], job = null, entries = [], excluded = [], briefNote = null, verdict = null, weakness = null, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, models = {} }) {
   const money = (micro) => (micro === null || micro === undefined || !Number.isFinite(Number(micro)) ? "unknown" : `$${(Number(micro) / 1_000_000).toFixed(Number(micro) < 10_000 ? 4 : 2)}`);
   const when = (value) => (value ? new Date(Number(value)).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "unknown");
   const label = (id) => escapeHtml(models?.[id]?.label ?? id);
@@ -658,7 +658,20 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
       : ""
   }
 
+  ${briefNote ? `<p class="notice warn" role="note">${escapeHtml(briefNote)}</p>` : ""}
+
   ${entries.length > 0 ? `<div class="cmp-grid">${entries.map(take).join("")}</div>` : `<p class="notice calm">No saved takes for this job yet. Create one from the studio, then come back: a comparison is built from work you already kept.</p>`}
+
+  ${
+    excluded.length > 0
+      ? `<section class="cmp-section" aria-labelledby="excluded-title"><h2 id="excluded-title">Saved, but not comparable</h2><p>These takes did the same kind of job with a different brief or different settings, so they are not ranked against the ones above.</p><ul>${excluded
+          .map(
+            (entry) =>
+              `<li><strong>${label(entry.model)}</strong> <span class="small">${escapeHtml(entry.settings?.aspect ?? "aspect unknown")} · ${entry.settings?.durationSeconds ? `${entry.settings.durationSeconds}s` : "length unknown"} · ${entry.prompt ? escapeHtml(entry.prompt.slice(0, 90)) : "no brief recorded"}</span></li>`,
+          )
+          .join("")}</ul></section>`
+      : ""
+  }
 
   ${
     weakness
@@ -671,6 +684,7 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
     <ul>
       <li>The provider charge stays “not reported” unless a provider actually told us what it billed. An allocation is the studio's own budget figure, never an invoice.</li>
       <li>These are the newest saved takes per model, not repeated trials. A difference you can see is a difference in one take, not a reliability score.</li>
+      <li>Takes are only compared when they share the same instruction and settings. Anything generated from a different brief is listed separately.</li>
       <li>Your pick and your note are stored in this browser only. They are private by default and are not published anywhere.</li>
       <li>Opening this page never calls a model, so it cannot add a take. New comparisons need a fresh run from the studio.</li>
     </ul>

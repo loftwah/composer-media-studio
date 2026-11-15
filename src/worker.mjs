@@ -52,7 +52,7 @@ import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./l
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
 import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage } from "./lib/ui.mjs";
-import { costSummary, jobCatalogue, latestPerModel, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
+import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
@@ -1523,6 +1523,8 @@ async function handlePublic(request, env, url) {
     const requested = url.searchParams.get("job") ?? "";
     const job = jobs.find((entry) => entry.id === requested) ?? jobs.find((entry) => entry.comparable) ?? jobs[0] ?? null;
     let entries = [];
+    let excluded = [];
+    let briefNote = null;
     if (job && job.models.length > 0) {
       const placeholders = job.models.map((_, index) => `?${index + 2}`).join(",");
       const rows = await env.DB.prepare(
@@ -1535,10 +1537,14 @@ async function handlePublic(request, env, url) {
       )
         .bind(project.id, ...job.models.map((model) => model.id))
         .all();
-      entries = latestPerModel(rows.results, job.id).map((entry) => ({
+      const all = latestPerModel(rows.results, job.id).map((entry) => ({
         ...entry,
         previewUrl: entry.assetId ? `/api/assets/${encodeURIComponent(entry.assetId)}/file` : null,
       }));
+      const split = likeForLike(all);
+      entries = split.chosen;
+      excluded = split.excluded;
+      briefNote = split.reason;
     }
     const review = { job, entries };
     return new Response(
@@ -1549,6 +1555,8 @@ async function handlePublic(request, env, url) {
         entries,
         verdict: compareVerdict({ ...review, models }),
         weakness: compareWeakness(review),
+        excluded,
+        briefNote,
         session,
         composerOrigin: env.COMPOSER_ORIGIN,
         storyUrl: env.PUBLIC_STORY_URL,
