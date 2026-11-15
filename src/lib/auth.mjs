@@ -15,6 +15,10 @@ const BRIDGE_SESSION_MS = 30 * 60 * 1000;
 const ACTIONS = ["read", "edit", "generate", "publish", "admin"];
 const PRIVILEGED = new Set(["edit", "generate", "publish", "admin"]);
 
+/** How long a private read may reuse one Composer grant check. A revoked
+ * member loses private reads within this window, not at cookie expiry. */
+export const GRANT_CACHE_MS = 60 * 1000;
+
 function encode(value) {
   return btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
@@ -168,12 +172,62 @@ export function can(session, action) {
   return allowedActions(session).includes(action);
 }
 
-/** Re-check the current Composer grant. Called for every privileged studio
- * action, so revoking a grant takes effect at the next dispatch even when the
- * browser still holds a studio session. Standalone owner sessions do not call
- * Composer and remain independent. */
-export async function verifyComposerGrant(env, session, action = "read") {
-  if (session.mode === "owner") return true;
+/** A project belongs to the workspace that created it.
+ *
+ * Projects created before workspace binding keep a NULL workspace, so they stay
+ * installation-wide until an owner reviews and assigns them. A project claim in
+ * the session can only narrow that access, never widen it. An MCP token issued
+ * from a standalone owner session keeps that installation ownership. */
+export function projectAccessible(session, project) {
+  if (!project) return false;
+  if (session?.mode === "owner" || session?.installationOwner === true) return true;
+  if (!session?.workspace) return false;
+  if (project.workspace_id && project.workspace_id !== session.workspace) return false;
+  if (session.project && session.project !== project.id) return false;
+  return true;
+}
+
+async function grantCacheKey(env, session) {
+  if (!env.SESSION_SECRET) return null;
+  return sign(
+    env.SESSION_SECRET,
+    `studio-grant:${session.actor}|${session.workspace}|${session.revision}`,
+  );
+}
+
+async function readCachedGrant(env, session) {
+  if (!env.DB) return null;
+  const key = await grantCacheKey(env, session);
+  if (!key) return null;
+  const row = await env.DB.prepare(
+    "SELECT actions,expires_at FROM grant_checks WHERE key=?1",
+  )
+    .bind(key)
+    .first()
+    .catch(() => null);
+  if (!row || row.expires_at <= now()) return null;
+  try {
+    return normaliseActions(JSON.parse(row.actions));
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedGrant(env, session, actions) {
+  if (!env.DB) return;
+  const key = await grantCacheKey(env, session);
+  if (!key) return;
+  const timestamp = now();
+  await env.DB.prepare(
+    "INSERT INTO grant_checks(key,actions,checked_at,expires_at) VALUES(?1,?2,?3,?4) ON CONFLICT(key) DO UPDATE SET actions=?2,checked_at=?3,expires_at=?4",
+  )
+    .bind(key, JSON.stringify(actions), timestamp, timestamp + GRANT_CACHE_MS)
+    .run()
+    .catch(() => {});
+}
+
+/** Ask Composer for the current grant of this exact actor and workspace. */
+async function composerGrant(env, session) {
   const origin = typeof env.COMPOSER_ORIGIN === "string" ? env.COMPOSER_ORIGIN : "";
   const secret = env.BRIDGE_SECRET;
   if (!/^https:\/\//.test(origin) || !secret)
@@ -223,7 +277,37 @@ export async function verifyComposerGrant(env, session, action = "read") {
       "The signed-in account or workspace changed. Reopen the studio from App Composer.",
       "forbidden",
     );
-  const current = normaliseActions(payload.actions);
+  return normaliseActions(payload.actions);
+}
+
+/** Re-check the current Composer grant. Called for every privileged studio
+ * action, so revoking a grant takes effect at the next dispatch even when the
+ * browser still holds a studio session. Standalone owner sessions do not call
+ * Composer and remain independent. */
+export async function verifyComposerGrant(env, session, action = "read") {
+  if (session.mode === "owner") return true;
+  const current = await composerGrant(env, session);
+  if (!current.includes("read") || !current.includes(action))
+    throw new HttpError(
+      403,
+      `This studio's current grant no longer includes ${action}. Reopen the studio from App Composer if access is restored.`,
+      "forbidden",
+    );
+  return true;
+}
+
+/** Re-check a current grant for a private read.
+ *
+ * Reads share one bounded check so a video can range through its bytes without
+ * a Composer round trip per request. A cached grant still has to include the
+ * action, so a revoked member is refused as soon as the check expires. */
+export async function verifyComposerRead(env, session, action = "read") {
+  if (session.mode === "owner") return true;
+  let current = await readCachedGrant(env, session);
+  if (!current) {
+    current = await composerGrant(env, session);
+    await writeCachedGrant(env, session, current);
+  }
   if (!current.includes("read") || !current.includes(action))
     throw new HttpError(
       403,
@@ -244,6 +328,7 @@ export async function requireSession(env, request, action = "read") {
       "forbidden",
     );
   if (PRIVILEGED.has(action)) await verifyComposerGrant(env, session, action);
+  else await verifyComposerRead(env, session, action);
   return session;
 }
 

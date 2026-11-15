@@ -8,12 +8,14 @@ import {
   claimHandoff,
   clearCookie,
   createSession,
+  projectAccessible,
   readBridgeToken,
   readSession,
   recordLoginFailure,
   requireSession,
   sessionCookie,
   sessionBinding,
+  verifyComposerRead,
   verifyPassphrase,
 } from "./lib/auth.mjs";
 import {
@@ -243,6 +245,23 @@ async function publicCatalogue(env, page = 1, limit = 24, { query = "", kind = "
   return { items: result.results.slice(0, limit), hasMore: result.results.length > limit };
 }
 
+/** Every private route that names a project checks the same binding: the
+ * project must belong to this session's workspace and, when the handoff named
+ * one project, to that project. Standalone owner sessions own every project. */
+async function assertProjectAccess(env, session, projectId) {
+  if (!projectId || session.mode === "owner") return;
+  const project = await env.DB.prepare("SELECT id,workspace_id FROM projects WHERE id=?1")
+    .bind(projectId)
+    .first();
+  if (!project) throw new HttpError(404, "Project not found", "not_found");
+  if (!projectAccessible(session, project))
+    throw new HttpError(
+      403,
+      "This project belongs to another workspace or to a different studio link. Reopen Media Studio from the workspace that owns it.",
+      "forbidden",
+    );
+}
+
 async function projectSummary(env, project) {
   const counts = await env.DB.prepare(
     "SELECT kind, COUNT(*) AS n FROM assets WHERE project_id=?1 AND deleted_at IS NULL GROUP BY kind",
@@ -338,14 +357,26 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
   if (path === "/api/session") {
     const session = await readSession(env, request);
+    // A bridge session reports the actions it still has, not the actions it had
+    // when the handoff was minted. Revoked access empties the permissions and
+    // the studio asks to be reopened from Composer instead of failing mid-edit.
+    let live = session;
+    if (session && session.mode !== "owner") {
+      try {
+        await verifyComposerRead(env, session, "read");
+      } catch {
+        live = null;
+      }
+    }
     return json({
-      signedIn: Boolean(session),
-      localImportBinding: await sessionBinding(env, session),
-      mode: session?.mode ?? null,
-      actor: session?.actorName ?? session?.actor ?? null,
-      workspace: session?.workspaceName ?? session?.workspace ?? null,
-      project: session?.project ?? null,
-      actions: allowedActions(session),
+      signedIn: Boolean(live),
+      localImportBinding: await sessionBinding(env, live),
+      mode: live?.mode ?? null,
+      actor: live?.actorName ?? live?.actor ?? null,
+      workspace: live?.workspaceName ?? live?.workspace ?? null,
+      project: live?.project ?? null,
+      actions: allowedActions(live),
+      revoked: Boolean(session && !live),
       composerOrigin: typeof env.COMPOSER_ORIGIN === "string" ? env.COMPOSER_ORIGIN : null,
       storyUrl: typeof env.PUBLIC_STORY_URL === "string" ? env.PUBLIC_STORY_URL : null,
     });
@@ -370,12 +401,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   const session = scopedAgent ?? await requireSession(env, request, action);
   if (scopedAgent && !can(session, action))
     throw new HttpError(403, "This agent connection does not permit this action.", "forbidden");
-  if (session.mode !== "owner" && session.project && projectIdFromPath && session.project !== projectIdFromPath)
-    throw new HttpError(
-      403,
-      "This studio session is scoped to another project. Reopen the project from App Composer.",
-      "forbidden",
-    );
+  if (projectIdFromPath) await assertProjectAccess(env, session, projectIdFromPath);
 
   if (method !== "GET" && method !== "HEAD") assertSameOrigin(request, env);
 
@@ -412,9 +438,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
   if (path === "/api/state" && method === "GET") {
     const { results } = await env.DB.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all();
-    const visible = session.mode !== "owner" && session.project
-      ? results.filter((project) => project.id === session.project)
-      : results;
+    const visible = results.filter((project) => projectAccessible(session, project));
     return json({
       projects: await Promise.all(visible.map((project) => projectSummary(env, project))),
       showcase: await homeShowcase(env),
@@ -434,10 +458,13 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     const visibility = input.visibility === "unlisted" ? "unlisted" : "private";
     const projectId = id("prj");
     const timestamp = now();
+    // A project created through a Composer handoff belongs to that workspace.
+    // A standalone owner session keeps creating installation-owned projects.
+    const workspaceId = session.mode === "owner" ? null : session.workspace;
     await env.DB.prepare(
-      "INSERT INTO projects(id,name,slug,creative_direction,visibility,defaults_json,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+      "INSERT INTO projects(id,name,slug,creative_direction,visibility,defaults_json,workspace_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
     )
-      .bind(projectId, name, slug(8), creativeDirection, visibility, JSON.stringify(defaultDefaults()), timestamp, timestamp)
+      .bind(projectId, name, slug(8), creativeDirection, visibility, JSON.stringify(defaultDefaults()), workspaceId, timestamp, timestamp)
       .run();
     const project = await loadProject(env, projectId);
     return json({ project: await projectSummary(env, project) }, 201);
@@ -771,10 +798,14 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   const assetMatch = path.match(/^\/api\/assets\/([a-z0-9_]+)(?:\/(file|download|publish|local-render-receipt|footage-export-receipt|footage-preflight))?$/);
   if (assetMatch) {
     const [, assetId, action] = assetMatch;
-    const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
+    const asset = await env.DB.prepare(
+      "SELECT a.*,p.workspace_id AS project_workspace_id FROM assets a JOIN projects p ON p.id=a.project_id WHERE a.id=?1",
+    )
+      .bind(assetId)
+      .first();
     if (!asset) throw new HttpError(404, "Asset not found", "not_found");
-    if (session.mode !== "owner" && session.project && asset.project_id !== session.project)
-      throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
+    if (!projectAccessible(session, { id: asset.project_id, workspace_id: asset.project_workspace_id }))
+      throw new HttpError(403, "This asset belongs to another workspace or to a different studio link.", "forbidden");
 
     if (action === "footage-preflight" && method === "GET") return json({ measurement: await measureFootageSource(env, asset) });
 
@@ -906,8 +937,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     if (!editingText && typeof input.listed !== "boolean" && typeof input.hidden !== "boolean") throw new HttpError(400, "Send listed or hidden as a boolean", "invalid");
     const row = await env.DB.prepare("SELECT id,project_id FROM publications WHERE id=?1 AND revoked_at IS NULL").bind(publicationMatch[1]).first();
     if (!row) throw new HttpError(404, "Publication not found", "not_found");
-    if (session.mode !== "owner" && session.project && row.project_id !== session.project)
-      throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
+    await assertProjectAccess(env, session, row.project_id);
     if (editingText) {
       if (Object.hasOwn(input, "listed") || Object.hasOwn(input, "hidden") || typeof input.title !== "string" || typeof input.description !== "string" || typeof input.expectedTitle !== "string" || typeof input.expectedDescription !== "string") throw new HttpError(400, "Send the original and new title and description with the edit.", "invalid");
       const title = text(input.title, 100, "Public title");
@@ -929,8 +959,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (publicationMatch && method === "DELETE") {
     const row = await env.DB.prepare("SELECT id,project_id FROM publications WHERE id=?1").bind(publicationMatch[1]).first();
     if (!row) throw new HttpError(404, "Publication not found", "not_found");
-    if (session.mode !== "owner" && session.project && row.project_id !== session.project)
-      throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
+    await assertProjectAccess(env, session, row.project_id);
     await env.DB.prepare("UPDATE publications SET revoked_at=?2 WHERE id=?1 AND revoked_at IS NULL")
       .bind(row.id, now())
       .run();
@@ -941,8 +970,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (generationMatch) {
     const [, generationId, action] = generationMatch;
     let generation = await loadGeneration(env, generationId);
-    if (session.mode !== "owner" && session.project && generation.project_id !== session.project)
-      throw new HttpError(403, "This studio session is scoped to another project.", "forbidden");
+    await assertProjectAccess(env, session, generation.project_id);
     if (method === "GET" && !action) {
       // The browser may advance a multi-stage render here. MCP read-only
       // connections must only observe saved state: advancing a social render
@@ -1615,6 +1643,11 @@ export default {
         catch { /* The tombstone stays pending for the next sweep. */ }
       }
     })());
+    ctx.waitUntil((async () => {
+      await env.DB.prepare("DELETE FROM grant_checks WHERE expires_at < ?1")
+        .bind(now() - 60 * 60 * 1000)
+        .run();
+    })().catch(() => {}));
     ctx.waitUntil(pruneMcpRecords(env));
   },
 };

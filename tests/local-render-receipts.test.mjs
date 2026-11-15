@@ -33,10 +33,10 @@ test('six-shot receipt is private, bound once to server-hashed bytes, and replay
   const read=await call(`/api/assets/${asset.id}/local-render-receipt`); assert.equal(read.status,200); const saved=(await read.json()).receipt;
   assert.equal(saved.evidence.snapshot,'server_verified'); assert.equal(saved.evidence.render,'browser_reported'); assert.equal(saved.shots.length,6); assert.equal(saved.shots[5].endMs,2000); assert.equal(saved.output.sha256,asset.sha256);
   assert.equal((await call(`/api/assets/${asset.id}/local-render-receipt`,{cookie:''})).status,401);
-  const other='studio_session='+await createSession(env,{mode:'bridge',project:'prj_other',actions:['read']});
+  const other='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:'prj_other',actions:['read']});
   assert.equal((await call(`/api/assets/${asset.id}/local-render-receipt`,{cookie:other})).status,403);
   assert.equal((await call(`/api/projects/${project.id}/compositions/${saved.storyboard.id}/local-render-receipts`,{method:'POST',cookie:other,body:{}})).status,403);
-  const readOnly='studio_session='+await createSession(env,{mode:'bridge',project:project.id,actions:['read']});
+  const readOnly='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:project.id,actions:['read']});
   assert.equal((await call(`/api/assets/${asset.id}/local-render-receipt`,{cookie:readOnly})).status,200);
   assert.equal((await call(`/api/projects/${project.id}/compositions/${saved.storyboard.id}/local-render-receipts`,{method:'POST',cookie:readOnly,body:{}})).status,403);
   const ordinary=await call(`/api/assets/${asset.id}`); const assetData=await ordinary.json(); assert.equal(assetData.asset.hasLocalRenderReceipt,true); assert.equal(JSON.stringify(assetData).includes('snapshot'),false);

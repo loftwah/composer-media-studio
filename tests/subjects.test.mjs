@@ -27,9 +27,9 @@ test('approved subject versions remain private, immutable and included in projec
   assert.equal((await (await call(base)).json()).subjects.length,1);
   assert.equal((await (await call(`/api/projects/${project.id}/export`)).json()).subjects.length,2);
   assert.equal((await call(base,'GET',undefined,'')).status,401);
-  const other='studio_session='+await createSession(env,{mode:'bridge',project:'prj_other',actions:['read','edit']});
+  const other='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:'prj_other',actions:['read','edit']});
   assert.equal((await call(base,'GET',undefined,other)).status,403);
-  const readOnly='studio_session='+await createSession(env,{mode:'bridge',project:project.id,actions:['read']});
+  const readOnly='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:project.id,actions:['read']});
   assert.equal((await call(base,'POST',input,readOnly)).status,403);
   assert.equal((await call('/gallery','GET',undefined,'')).status,200);
   const gallery=await (await call('/gallery','GET',undefined,'')).text(); assert.equal(gallery.includes('Moss revised'),false);
