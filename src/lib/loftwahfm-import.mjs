@@ -20,6 +20,7 @@ export async function readLoftwahFmTrack(value, limit, radio) {
   if (source.length > 400)
     throw new HttpError(400, "This audio link is too long to preserve with the track.", "invalid_track_link");
   const unavailable = () => new HttpError(502, "LoftwahFM could not supply this MP3. Check the link and try again.", "track_unavailable");
+  let stage = "request";
   try {
     const options = { redirect: "error", signal: AbortSignal.timeout(12000) };
     const response = radio ? await radio.fetch(source, options) : await fetch(source, options);
@@ -31,6 +32,7 @@ export async function readLoftwahFmTrack(value, limit, radio) {
     }
     const tooLarge = () => new HttpError(413, "This track exceeds the Studio audio limit.", "too_large");
     if (Number(response.headers.get("content-length")) > limit) throw tooLarge();
+    stage = "body";
     const reader = response.body.getReader();
     const parts = [];
     let size = 0;
@@ -54,12 +56,17 @@ export async function readLoftwahFmTrack(value, limit, radio) {
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
+    stage = "measure";
     const audio = audioInfo(bytes);
     if (audio.format !== "mp3" || !Number.isFinite(audio.durationMs) || audio.durationMs < 2000)
       throw new HttpError(415, "Studio could not measure this MP3. Try another track.", "unsupported_type");
     return { bytes, source, title: filename.slice(0, -4).slice(0, 100) };
   } catch (error) {
     if (error instanceof HttpError) throw error;
+    console.warn("LoftwahFM track transfer error", {
+      stage,
+      cause: String(error?.message ?? error).replace(/https?:\/\/\S+/g, "[url]").slice(0, 160),
+    });
     throw unavailable();
   }
 }
