@@ -59,7 +59,22 @@ export function PromoBriefs({projectId,canEdit,onVoiceDraft}:{projectId:string;c
 
     <div className="promo-workbench">
       <aside className="promo-rail" aria-label="Saved briefs and scenes">
-        <label>Saved brief<select value={saved?.id ?? ''} disabled={busy} onChange={event=>{const item=items.find(x=>x.id===event.target.value)??null;if(!mayLeave()){event.currentTarget.value=saved?.id??'';return;}open(item);}}><option value="">New brief</option>{items.map(item=><option key={item.id} value={item.id}>{item.title} · v{item.revision}</option>)}</select></label>
+        <label>
+          Saved brief
+          <span className="promo-saved-select">
+            <select value={saved?.id ?? ''} disabled={busy} onChange={event => {
+              const item = items.find(brief => brief.id === event.target.value) ?? null;
+              if (!mayLeave()) {
+                event.currentTarget.value = saved?.id ?? '';
+                return;
+              }
+              open(item);
+            }}>
+              <option value="">New brief</option>
+              {items.map(item => <option key={item.id} value={item.id}>{item.title} · v{item.revision}</option>)}
+            </select>
+          </span>
+        </label>
         <p className="small">A saved brief does not start a provider request. Open the script in Studio Voice, review the words and estimate, then choose the saved audio in the scene planner.</p>
 
         <nav className="promo-scene-strip" aria-label="Scenes">
