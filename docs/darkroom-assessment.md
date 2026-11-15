@@ -80,16 +80,23 @@ the authority during the transition.
 
 Reason 1 above is resolved upstream: since Darkroom 0.7.0 a host can inject its own provider catalogue (`parseMediaCatalogue`; validation and the video cost estimate take it as an argument), so a reviewed fal.ai adapter is possible later. Reason 2 is resolved by the R2 destination below.
 
-`@fungi.computer/darkroom@0.10.0` now ships `createR2MediaDestination`, so Darkroom
-can read references from and write results to this studio's `MEDIA` bucket without
-a Computer. Studio Print, Film, Quick and Detail use it (`src/lib/darkroom.mjs`).
-The decision above stands for everything else: Studio Draft (SDXL Lightning) is not
-in Darkroom's catalogue, video and edits are fal.ai, and the job ledger, budget
-reservation and tombstones stay in `src/lib/jobs.mjs`. Darkroom is the provider and
-storage step inside that engine, not a second one. Deleting a generated still, or
-discarding a deleted job, also erases Darkroom's retained copy under
-`media-output/` in `APP_ARTIFACTS` through Darkroom's own `erase`.
+`@fungi.computer/darkroom@0.10.0` provides the R2 reference resolver and
+durable image execution for Studio Print (Lucid Origin), Film (Phoenix), Quick
+(FLUX.1 schnell) and Detail (FLUX.2 klein). The Studio keeps the prior Print and
+Film guidance values (5 and 3) and the prior Quick request. Detail uses the
+package’s fitted reference input. Draft remains direct Workers AI; fal routes
+and the Studio’s authority over job status, budget and publication stay in place.
 
-One visible change: Darkroom builds its own Workers AI input and has no
-`guidance` setting, so Studio Print (Lucid Origin, was `guidance: 5`) and Studio
-Film (Phoenix, was `guidance: 3`) now use the model defaults.
+Darkroom 0.10.0 builds a prompt-bearing destination image. Studio discards
+that payload and indexes the exact retained provider original in its own R2.
+Public images are checked before publishing and serving; signed originals and
+other inputs with unverified metadata stay private and unchanged. Recovery
+reads that same paid original and never dispatches again. Studio’s deletion
+queue blocks access immediately and retries until the operation confirms erasure.
+
+Useful upstream changes: an option to omit private metadata at the destination;
+a namespace-scoped, read-only retained-output receipt for unmetered and
+intermediate operations; phase/dispatch evidence for definitive preflight
+failures; and an erasure method that can safely fence expired claims. The
+Studio’s compatibility adapter covers the current version without requiring
+an upstream release for any of these.

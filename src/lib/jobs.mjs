@@ -32,7 +32,7 @@ import {
   validateSettings,
   cancelVideo,
 } from "./providers.mjs";
-import { DARKROOM_VERSION, eraseDarkroomOperation, isDarkroomGeneration, recoverDarkroomImage, runDarkroomImage, usesDarkroom } from "./darkroom.mjs";
+import { DARKROOM_VERSION, darkroomOriginalKey, eraseDarkroomOperation, isDarkroomGeneration, recoverDarkroomImage, runDarkroomImage, usesDarkroom } from "./darkroom.mjs";
 import { builtinRecipe } from "./recipes.mjs";
 import { signRenderLink } from "./render-links.mjs";
 import { measureFootageSource } from "./footage-preflight.mjs";
@@ -272,7 +272,8 @@ async function claim(env, generationId, from, to, darkroomVersion = null) {
 }
 
 export async function eraseGenerationResult(env, generation) {
-  if (generation.retained_key) await env.MEDIA.delete(generation.retained_key);
+  if (generation.retained_key && (!isDarkroomGeneration(generation) || generation.retained_key !== darkroomOriginalKey(generation)))
+    await env.MEDIA.delete(generation.retained_key);
   await eraseDarkroomOperation(env, generation);
   await env.DB.prepare("UPDATE generations SET retained_key=NULL,retained_mime=NULL,retained_bytes=NULL WHERE id=?1")
     .bind(generation.id).run();
@@ -456,6 +457,10 @@ async function failGeneration(env, generation, error, { dispatched = false } = {
 export async function saveGeneration(env, generation, bytes, format) {
   const mime = mimeFor(format, bytes);
   const fresh = await loadGeneration(env, generation.id);
+  const darkroom = isDarkroomGeneration(fresh);
+  // At this point exact provider bytes are already retained. Settle the one
+  // Studio reservation before indexing so a crash cannot leave a saved job held.
+  if (darkroom && fresh.cost_observed_micro === null) await settleReservation(env, fresh);
   if (fresh.status === "saved") {
     if (fresh.output_asset_id && !fresh.deleted_at) {
       try { await publishCandidate(env, fresh.project_id, fresh.output_asset_id, { automatic: true }); }
@@ -464,7 +469,7 @@ export async function saveGeneration(env, generation, bytes, format) {
     return fresh;
   }
   if (fresh.deleted_at) {
-    await settleReservation(env, generation);
+    if (!darkroom) await settleReservation(env, generation);
     return eraseDeletedGeneration(env, fresh);
   }
 
@@ -480,15 +485,19 @@ export async function saveGeneration(env, generation, bytes, format) {
     )
       .bind(generation.id, existingAsset.id, now())
       .run();
-    await settleReservation(env, generation);
+    if (!darkroom) await settleReservation(env, generation);
     try { await publishCandidate(env, generation.project_id, existingAsset.id, { automatic: true }); }
     catch (error) { console.warn("Automatic publication skipped:", String(error.message ?? error).slice(0, 120)); }
     return loadGeneration(env, generation.id);
   }
   const extension = extensionFor(mime);
-  const retainedKey = fresh.retained_key ?? `projects/${generation.project_id}/generations/${generation.id}/retained.${extension}`;
+  // APP_ARTIFACTS and MEDIA are aliases for the same bucket. The single
+  // immutable Darkroom object is also the Studio original, with no copy that
+  // could be stranded between an R2 put, indexing, and a concurrent delete.
+  const retainedKey = darkroom ? darkroomOriginalKey(fresh) :
+    fresh.retained_key ?? `projects/${generation.project_id}/generations/${generation.id}/retained.${extension}`;
   if (!fresh.retained_key) {
-    await env.MEDIA.put(retainedKey, bytes, { httpMetadata: { contentType: mime } });
+    if (!darkroom) await env.MEDIA.put(retainedKey, bytes, { httpMetadata: { contentType: mime } });
     const retained = await env.DB.prepare(
       "UPDATE generations SET retained_key=?2,retained_mime=?3,retained_bytes=?4,status='saving',updated_at=?5 WHERE id=?1 AND deleted_at IS NULL AND status<>'saved' RETURNING id",
     )
@@ -497,16 +506,18 @@ export async function saveGeneration(env, generation, bytes, format) {
     if (!retained) {
       const current = await loadGeneration(env, generation.id);
       if (!current.deleted_at) return current;
-      await env.MEDIA.delete(retainedKey);
-      await settleReservation(env, generation);
+      if (!darkroom) {
+        await env.MEDIA.delete(retainedKey);
+        await settleReservation(env, generation);
+      }
       return eraseDeletedGeneration(env, current);
     }
   }
 
   const request = safeJson(fresh.request_json, {});
   const assetId = id("asset");
-  const assetKey = `projects/${generation.project_id}/assets/${assetId}/original.${extension}`;
-  await env.MEDIA.put(assetKey, bytes, { httpMetadata: { contentType: mime } });
+  const assetKey = darkroom ? retainedKey : `projects/${generation.project_id}/assets/${assetId}/original.${extension}`;
+  if (!darkroom) await env.MEDIA.put(assetKey, bytes, { httpMetadata: { contentType: mime } });
   const kind = kindForMime(mime);
   const size = sizeForBytes(mime, bytes);
   const source = getModel(fresh.model)?.render
@@ -567,10 +578,10 @@ export async function saveGeneration(env, generation, bytes, format) {
       ).bind(generation.id, assetId, timestamp),
     ]);
     if (!(indexed.meta?.changes ?? indexed.changes)) {
-      await env.MEDIA.delete(assetKey);
+      if (!darkroom) await env.MEDIA.delete(assetKey);
       const current = await loadGeneration(env, generation.id);
       if (current.deleted_at) {
-        await settleReservation(env, generation);
+        if (!darkroom) await settleReservation(env, generation);
         return eraseDeletedGeneration(env, current);
       }
       return current;
@@ -578,13 +589,13 @@ export async function saveGeneration(env, generation, bytes, format) {
   } catch (error) {
     // An ambiguous D1 reply may already have committed the asset. Preserve it.
     const current = await loadGeneration(env, generation.id);
-    if (current.output_asset_id !== assetId) await env.MEDIA.delete(assetKey);
+    if (!darkroom && current.output_asset_id !== assetId) await env.MEDIA.delete(assetKey);
     if (current.status === "saved") {
-      await settleReservation(env, generation);
+      if (!darkroom) await settleReservation(env, generation);
       return current;
     }
     if (current.deleted_at) {
-      await settleReservation(env, generation);
+      if (!darkroom) await settleReservation(env, generation);
       return eraseDeletedGeneration(env, current);
     }
     // The provider already produced bytes. Keep them retained for a save retry.
@@ -596,7 +607,7 @@ export async function saveGeneration(env, generation, bytes, format) {
     throw new HttpError(500, "The result was created but could not be saved. Retry saving; it will not generate again.", "save_failed");
   }
 
-  await settleReservation(env, generation);
+  if (!darkroom) await settleReservation(env, generation);
   try { await publishCandidate(env, generation.project_id, assetId, { automatic: true }); }
   catch (error) { console.warn("Automatic publication skipped:", String(error.message ?? error).slice(0, 120)); }
   return loadGeneration(env, generation.id);

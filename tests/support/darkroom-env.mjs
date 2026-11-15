@@ -4,7 +4,6 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { MediaOperationDO } from "@fungi.computer/darkroom/cloudflare";
-import { FakeBucket } from "../harness.mjs";
 
 /** One MediaOperationDO per operation name. */
 function operations(env) {
@@ -56,7 +55,7 @@ function operations(env) {
 /** Add APP_ARTIFACTS, IMAGES and MEDIA_OPERATION to a harness env. */
 export function withDarkroom(env) {
   env.darkroom = { imageReads: 0 };
-  env.APP_ARTIFACTS = new FakeBucket();
+  env.APP_ARTIFACTS = env.MEDIA;
   env.IMAGES = {
     async info(stream) {
       await new Response(stream).arrayBuffer();

@@ -39,17 +39,29 @@ and fails if the live revision is not the released commit.
 
 ## Darkroom
 
-Studio Print, Film, Quick and Detail stills run through Darkroom
-(`@fungi.computer/darkroom` 0.10.0). `wrangler.jsonc` adds three bindings for it:
-`IMAGES` (Cloudflare Images, which needs an account on current billing),
-`MEDIA_OPERATION` (a SQLite Durable Object, created by the `v1` migration on the
-next deploy) and `APP_ARTIFACTS` (the `media-studio` bucket again; Darkroom keeps
-retained bytes under `media-output/`). Reference images are read from, and results
-are written to, `MEDIA`. Video and every fal.ai model are unchanged.
+Studio Print, Film, Quick and Detail use the exact npm release
+`@fungi.computer/darkroom@0.10.0`. Run `pnpm deploy --migrate` for the first
+deployment to apply the additive D1 erasure queue and the Worker’s `v1`
+SQLite Durable Object migration. Do not reset either store. Keep `MEDIA` and
+`APP_ARTIFACTS` bound to the **same private bucket**. Darkroom writes one
+immutable provider original under `media-output/`; Studio indexes that same
+file. The decorated destination payload with the private prompt is discarded.
+Signed or otherwise unverified originals remain downloadable only in Studio.
 
-`pnpm-workspace.yaml` temporarily lets pnpm install the three same-day Darkroom
-packages past the 24-hour release gate; remove those entries after the date in the
-comment.
+Studio keeps the authorization, budget, publication and deletion records.
+Reconcile and Retry saving only read or finish the existing operation; they
+never call Workers AI. If paid execution cannot be established and no original
+was retained, the reservation remains for reconciliation. Deletion blocks
+access first and retries storage erasure from the existing cron.
+
+`IMAGES` fits Detail references. Cloudflare bills transformations separately
+from model calls and [documents a Free plan allowance](https://developers.cloudflare.com/images/pricing/).
+Durable Object requests/storage and R2 count against their respective service
+limits. Check the target account before enabling more usage. Draft remains
+direct Workers AI; edits, video and audio remain on fal.ai.
+
+The lockfile pins the three newly published packages. Remove the exact
+temporary release-age exceptions after the date in `pnpm-workspace.yaml`.
 
 ## Optional public destinations
 
@@ -73,7 +85,7 @@ Launch Kit or provider dependency.
 Init exports the pinned source, the studio defaults and the creative direction.
 The agent creates an owner-controlled repository from that pin, replaces the
 operator's account, Worker name, route and storage identifiers with the owner's,
-creates the D1/R2 resources and AI binding, applies `migrations/0001.sql`, sets
+creates the D1/R2 resources and AI/Images bindings, applies the complete D1 migration set, sets
 the owner passphrase and session secret, and deploys through the guarded command.
 The owner is asked only for the passphrase/session values (and, if they choose
 video, a funded fal key). Composer never receives those values.

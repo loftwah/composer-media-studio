@@ -1,6 +1,6 @@
 // MIT. Media Studio Worker: owner studio, public pages and the job engine.
 
-import { isDarkroomGeneration } from "./lib/darkroom.mjs";
+import { darkroomOriginalKey, isDarkroomGeneration } from "./lib/darkroom.mjs";
 import {
   allowedActions,
   can,
@@ -108,8 +108,10 @@ function assertSameOrigin(request, env) {
 
 async function eraseAsset(env, asset) {
   try {
-    await env.MEDIA.delete(asset.r2_key);
-    if (asset.generation_id) await eraseGenerationResult(env, await loadGeneration(env, asset.generation_id));
+    const generation = asset.generation_id ? await loadGeneration(env, asset.generation_id) : null;
+    if (!generation || !isDarkroomGeneration(generation) || asset.r2_key !== darkroomOriginalKey(generation))
+      await env.MEDIA.delete(asset.r2_key);
+    if (generation) await eraseGenerationResult(env, generation);
     await env.DB.prepare("UPDATE assets SET erasure_pending=0 WHERE id=?1").bind(asset.id).run();
   } catch (error) {
     await env.DB.prepare("UPDATE assets SET updated_at=?2 WHERE id=?1").bind(asset.id, now()).run();

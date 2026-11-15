@@ -14,14 +14,14 @@ async function fixture() {
     kind: "image", model: "studio-print", prompt: "Fictional fixture", aspect: "square", clientRequestId: "req_delete",
   });
   const cookie = `studio_session=${await createSession(env)}`;
-  const remove = path => worker.fetch(new Request(`https://studio.test/api/${path}`, {
-    method: "DELETE", headers: { cookie },
+  const access = (path, method) => worker.fetch(new Request(`https://studio.test/api/${path}`, {
+    method, headers: { cookie },
   }), env, { waitUntil() {} });
-  return { env, project, generation, remove };
+  return { env, project, generation, remove: path => access(path, "DELETE"), read: path => access(path, "GET") };
 }
 
 test("an interrupted asset deletion is retried by the sweep after the tombstone", async () => {
-  const { env, generation, remove } = await fixture();
+  const { env, generation, remove, read } = await fixture();
   const saved = await dispatchGeneration(env, generation);
   assert.equal(saved.status, "saved", saved.error_detail);
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(saved.output_asset_id).first();
@@ -33,7 +33,8 @@ test("an interrupted asset deletion is retried by the sweep after the tombstone"
     return erase(key);
   };
   assert.equal((await remove(`assets/${asset.id}`)).status, 502);
-  assert.equal(await env.MEDIA.head(asset.r2_key), null);
+  assert.equal(asset.r2_key, saved.retained_key);
+  assert.equal((await read(`assets/${asset.id}/file`)).status, 410);
   assert.ok(await env.MEDIA.head(saved.retained_key));
   assert.ok(await env.APP_ARTIFACTS.head(retained));
 

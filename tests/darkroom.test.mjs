@@ -47,10 +47,11 @@ test("a Studio Print still is generated through Darkroom and saved to R2", async
   assert.equal(env.aiCalls[0].model, "@cf/leonardo/lucid-origin");
   assert.deepEqual(env.aiCalls[0].input, { prompt: "A paper-cut greenhouse", width: 1024, height: 1024, guidance: 5 });
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE generation_id=?1").bind(generation.id).first();
+  assert.equal(asset.r2_key, saved.retained_key);
   assert.deepEqual(env.MEDIA.objects.get(asset.r2_key), OUTPUT);
   assert.deepEqual(env.MEDIA.objects.get(saved.retained_key), OUTPUT);
   assert.deepEqual(env.APP_ARTIFACTS.objects.get(`media-output/v1/media:${generation.id}`), OUTPUT);
-  assert.equal(env.MEDIA.puts.includes(darkroomOutputKey(generation)), false, "the prompt-bearing handoff never reached R2");
+  assert.deepEqual(env.MEDIA.puts, [asset.r2_key], "only one copy reached R2; no prompt-bearing handoff");
 });
 
 test("a reference is read from R2 through Darkroom for Studio Detail", async () => {

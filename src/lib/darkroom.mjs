@@ -65,6 +65,10 @@ export function authorizeKey(env, generation) {
   };
 }
 
+export function darkroomOriginalKey(generation) {
+  return `media-output/v1/media:${generation.id}`;
+}
+
 export function isDarkroomGeneration(generation) {
   return safeJson(generation?.request_json, {})?.darkroomVersion === DARKROOM_VERSION;
 }
@@ -96,7 +100,7 @@ async function readOriginal(env, generation, operation) {
   const state = await operation.read();
   if (!state || state.state !== "written") return null;
   assertOperationScope(state, generation);
-  const key = `media-output/v1/${state.operationId}`;
+  const key = darkroomOriginalKey(generation);
   const object = await env.APP_ARTIFACTS.get(key);
   const format = formats.get(object?.httpMetadata?.contentType);
   if (!object || !format || format !== state.image?.format || object.size < 1 || object.size > 32 * 1024 * 1024)
