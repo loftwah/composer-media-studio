@@ -272,7 +272,8 @@ dialog h2 { margin: 0; }
   .header-nav a:not(.button), .header-nav button.quiet { padding: .5rem .4rem; font-size: .8rem; }
   .header-nav .theme-toggle { margin-left: .1rem; padding-inline: .6rem !important; }
   .brand-by { font-size: .56rem; }
-  .tabs button { padding: 0.6rem 0.5rem; font-size: 0.82rem; white-space: nowrap; }
+  .tabs { flex-wrap: wrap; overflow-x: visible; gap: 0; }
+  .tabs button { padding: 0.6rem 0.5rem; font-size: 0.82rem; white-space: normal; flex: 1 1 auto; }
   main { padding: 1rem; }
   .asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
   .asset .meta { padding: 0.5rem; }
