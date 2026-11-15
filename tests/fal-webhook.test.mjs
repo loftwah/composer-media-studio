@@ -134,7 +134,7 @@ test("a provider error delivery fails the job with its own detail", async () => 
     assert.equal(job.status, "failed");
     assert.equal(job.error_code, "provider_rejected");
     assert.match(job.error_detail, /422|video_urls/);
-    assert.equal(job.cost_observed_micro, null);
+    assert.equal(job.cost_allocated_micro, null);
   });
 });
 

@@ -158,7 +158,7 @@ test("a lost dispatch reply is unknown and keeps its reservation", async () => {
   const budget = await budgetSnapshot(env, project.id);
   assert.equal(budget.reservedMicro, 1_200);
   const fresh = await loadGeneration(env, generation.id);
-  assert.equal(fresh.cost_observed_micro, null);
+  assert.equal(fresh.cost_allocated_micro, null);
 });
 
 test("a reference must belong to the same project and be a still", async () => {

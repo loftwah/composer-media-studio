@@ -172,7 +172,7 @@ function CompositionCard({
                 </strong>
                 <span className="small">
                   Estimated allocation:{" "}
-                  {money(g.costObservedMicro ?? g.costEstimateMicro)}
+                  {money(g.costAllocatedMicro ?? g.costEstimateMicro)}
                 </span>
               </div>
               {asset ? (

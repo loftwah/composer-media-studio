@@ -77,7 +77,7 @@ export interface CreateProps {
 export interface GenerationV1 {
   id: string; model: string; kind: string; status: string; prompt: string;
   aspect: string | null; durationSeconds: number | null; assetId: string | null;
-  createdAt: string | number; costObservedMicro: number | null; costEstimateMicro: number;
+  createdAt: string | number; costAllocatedMicro: number | null; costEstimateMicro: number;
   error: { code: string; message: string } | null;
 }
 export interface PublicationV1 { id: string; title: string; path: string; createdAt: string | number; listed: boolean; hidden: boolean }

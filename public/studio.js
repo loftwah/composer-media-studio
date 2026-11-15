@@ -891,7 +891,7 @@ function compositionCard(composition) {
       ${renders.map((generation) => {
         const asset = state.project.assets.find((item) => item.id === generation.assetId);
         return `<div class="render-row" data-job="${esc(generation.id)}">
-          <div class="row">${statusChip(generation.status)}<strong>${esc(generation.variant === "social" ? "9:16 cut" : "Assembled master")}</strong><span class="small">Estimated allocation: ${money(generation.costObservedMicro ?? generation.costEstimateMicro)}</span></div>
+          <div class="row">${statusChip(generation.status)}<strong>${esc(generation.variant === "social" ? "9:16 cut" : "Assembled master")}</strong><span class="small">Estimated allocation: ${money(generation.costAllocatedMicro ?? generation.costEstimateMicro)}</span></div>
           ${asset ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video><p class="small" style="margin:0">${asset.width} × ${asset.height} · ${(asset.durationMs / 1000).toFixed(2)}s · ${bytesLabel(asset.bytes)} · assembled from ${esc(String(composition.shots.length))} shots</p>` : `<p class="small" style="margin:0">${generation.error ? esc(generation.error.message) : "Provider is rendering."}</p>`}
           <div class="row">
             ${asset ? `<a class="button secondary" href="${esc(asset.download)}" download>Download</a><button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open</button><button class="secondary" data-action="publish-asset" data-id="${esc(asset.id)}">Publish</button>` : ""}
@@ -936,7 +936,7 @@ function jobCard(generation) {
   return `<article class="job" data-job="${esc(generation.id)}">
     <header>
       <div class="row">${statusChip(generation.status)}<strong>${esc(model?.label ?? (generation.model === "kling-o1-restyle" ? "Kling O1 footage edit" : generation.model))}</strong><span class="small">${esc(generation.kind)} · ${dateLabel(generation.createdAt)} ${timeLabel(generation.createdAt)}</span></div>
-      <span class="small">Estimated allocation: ${money(generation.costObservedMicro ?? generation.costEstimateMicro)}</span>
+      <span class="small">Estimated allocation: ${money(generation.costAllocatedMicro ?? generation.costEstimateMicro)}</span>
     </header>
     <p class="prompt">${esc(generation.prompt)}</p>
     <p class="small">${esc(generation.aspect ?? "")} ${generation.durationSeconds ? `· ${generation.durationSeconds}s` : ""} ${generation.error ? `· ${esc(generation.error.message)}` : ""}</p>

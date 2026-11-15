@@ -127,14 +127,14 @@ async function admitJob(env, projectId, generationId, clientRequestId, cost, tim
 export async function transferReservation(env, generation, settle) {
   const period = periodKey(generation.created_at), timestamp = now(), amount = generation.cost_reserved_micro;
   const [claimed] = await env.DB.batch([
-    env.DB.prepare(`UPDATE generations SET cost_observed_micro=?2,updated_at=?3 WHERE id=?1 AND cost_observed_micro IS NULL
+    env.DB.prepare(`UPDATE generations SET cost_allocated_micro=?2,updated_at=?3 WHERE id=?1 AND cost_allocated_micro IS NULL
       AND EXISTS(SELECT 1 FROM budgets WHERE project_id=?4 AND period=?5)`).bind(generation.id, settle ? amount : 0, timestamp, generation.project_id, period),
     env.DB.prepare(`UPDATE budgets SET reserved_micro=MAX(0,reserved_micro-?3),spent_micro=spent_micro+?4,updated_at=?5
       WHERE project_id=?1 AND period=?2 AND changes()=1`).bind(generation.project_id,period,amount,settle ? amount : 0,timestamp),
   ]);
   if ((claimed.meta?.changes ?? claimed.changes ?? 0) === 0) {
     const fresh = await loadGeneration(env, generation.id);
-    if (fresh.cost_observed_micro === null) throw new HttpError(409, "The job's budget record is unavailable; its reservation was retained.", "budget_unavailable");
+    if (fresh.cost_allocated_micro === null) throw new HttpError(409, "The job's budget record is unavailable; its reservation was retained.", "budget_unavailable");
   }
 }
 async function settleReservation(env, generation) { await transferReservation(env, generation, true); }
@@ -274,7 +274,7 @@ async function claim(env, generationId, from, to, darkroomVersion = null) {
 export async function eraseGenerationResult(env, generation) {
   if (generation.retained_key && (!isDarkroomGeneration(generation) || generation.retained_key !== darkroomOriginalKey(generation)))
     await env.MEDIA.delete(generation.retained_key);
-  await eraseDarkroomOperation(env, generation, generation.cost_observed_micro === null
+  await eraseDarkroomOperation(env, generation, generation.cost_allocated_micro === null
     ? () => settleReservation(env, generation) : null);
   await env.DB.prepare("UPDATE generations SET retained_key=NULL,retained_mime=NULL,retained_bytes=NULL WHERE id=?1")
     .bind(generation.id).run();
@@ -287,7 +287,7 @@ export async function eraseDeletedGeneration(env, generation) {
     if (safeJson(generation.request_json, {}).budgetAdmission === "atomic-v1") {
       if (generation.status === "admitted") generation = await cancelGeneration(env, generation);
       // Resume a pre-dispatch cancellation if it wrote status before settling.
-      if (generation.status === "cancelled" && !generation.provider_request_id && generation.cost_observed_micro === null)
+      if (generation.status === "cancelled" && !generation.provider_request_id && generation.cost_allocated_micro === null)
         await releaseReservation(env, generation);
     }
     await eraseGenerationResult(env, generation);
@@ -462,7 +462,7 @@ export async function saveGeneration(env, generation, bytes, format) {
   const darkroom = isDarkroomGeneration(fresh);
   // At this point exact provider bytes are already retained. Settle the one
   // Studio reservation before indexing so a crash cannot leave a saved job held.
-  if (darkroom && fresh.cost_observed_micro === null) await settleReservation(env, fresh);
+  if (darkroom && fresh.cost_allocated_micro === null) await settleReservation(env, fresh);
   if (fresh.status === "saved") {
     if (fresh.output_asset_id && !fresh.deleted_at) {
       try { await publishCandidate(env, fresh.project_id, fresh.output_asset_id, { automatic: true }); }

@@ -58,7 +58,7 @@ test("a COMPLETED queue status that carries the model's error is a terminal fail
   assert.match(value.error_detail, /permission/i);
   // The request identity survives, so a bounded reconcile is still possible.
   assert.equal(value.provider_request_id, "req_status");
-  assert.equal(value.cost_observed_micro, null);
+  assert.equal(value.cost_allocated_micro, null);
   // Nothing tried to read a result that cannot exist.
   assert.equal(calls.length, 1);
 });
@@ -81,7 +81,7 @@ test("a 403 while reading the result is recorded as permission, not funding", as
   assert.equal(value.status, "unknown");
   assert.equal(value.error_code, "provider_permission");
   assert.match(value.error_detail, /HTTP 403/);
-  assert.equal(value.cost_observed_micro, null);
+  assert.equal(value.cost_allocated_micro, null);
 });
 
 test("a transient result read keeps the job recoverable instead of failing it", async () => {

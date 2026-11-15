@@ -46,12 +46,13 @@ import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
 import { measureFootageSource } from "./lib/footage-preflight.mjs";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.mjs";
-import { publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
+import { models, publicModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery } from "./lib/ui.mjs";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage } from "./lib/ui.mjs";
+import { costSummary, jobCatalogue, latestPerModel, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
@@ -212,7 +213,7 @@ function generationView(generation, extra = {}) {
     maskSha256: request.maskSha256 ?? null,
     parentAssetId: request.parentAssetId ?? null,
     costEstimateMicro: generation.cost_estimate_micro,
-    costObservedMicro: generation.cost_observed_micro,
+    costAllocatedMicro: generation.cost_allocated_micro,
     error: generation.error_code
       ? { code: generation.error_code, message: generation.error_detail ?? "" }
       : null,
@@ -249,6 +250,21 @@ async function publicCatalogue(env, page = 1, limit = 24, { query = "", kind = "
 /** Every private route that names a project checks the same binding: the
  * project must belong to this session's workspace and, when the handoff named
  * one project, to that project. Standalone owner sessions own every project. */
+/** The project a page should speak about: the session's claimed project when the
+ * studio link named one, otherwise the owner's most recently used project. */
+async function currentProject(env, session) {
+  if (session?.project) {
+    const claimed = await loadProject(env, session.project, { required: false });
+    if (claimed && projectAccessible(session, claimed)) return claimed;
+  }
+  // Only a standalone owner session may fall back to "the newest project".
+  // A bridged workspace session without a project claim gets nothing rather than
+  // another workspace's work.
+  if (session?.mode !== "owner") return null;
+  const newest = await env.DB.prepare("SELECT * FROM projects ORDER BY updated_at DESC LIMIT 1").first();
+  return newest ?? null;
+}
+
 async function assertProjectAccess(env, session, projectId) {
   if (!projectId || session.mode === "owner") return;
   const project = await env.DB.prepare("SELECT id,workspace_id FROM projects WHERE id=?1")
@@ -782,7 +798,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         promoBriefs: await listPromoBriefs(env, project),
         notes: [
           "Studio provider keys and session cookies are not included; project text and links may contain sensitive information.",
-          "Cost figures reflect Studio estimates and reservations, not verified provider invoice charges; the legacy costObservedMicro field is an allocated estimate.",
+          "Cost figures reflect Studio estimates and reservations, not verified provider invoice charges; the legacy costAllocatedMicro field is an allocated estimate.",
           "Song plans may contain private lyrics, scene directions and subject and reference history. Share this file deliberately.",
           "This export is not a restore: project import is not supported.",
           "Media bytes are downloaded separately from each asset's download path while it exists.",
@@ -1466,6 +1482,81 @@ async function handlePublic(request, env, url) {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" },
     });
+  }
+  if (path === "/compare") {
+    const session = await readSession(env, request);
+    if (!session) {
+      return new Response(
+        loginPage({
+          next: "/compare",
+          revision: BUILD.revision,
+          bridged: Boolean(env.BRIDGE_SECRET),
+          composerOrigin: env.COMPOSER_ORIGIN,
+          storyUrl: env.PUBLIC_STORY_URL,
+          woodhouseShare: env.WOODHOUSE_SHARE === "true",
+        }),
+        { status: 401, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+      );
+    }
+    const project = await currentProject(env, session);
+    if (!project) {
+      return new Response(
+        comparePage({
+          revision: BUILD.revision,
+          jobs: [],
+          job: null,
+          entries: [],
+          verdict: {
+            headline: "No project yet",
+            detail: "A comparison belongs to a project. Create one in the studio, keep a take, then come back.",
+          },
+          session,
+          composerOrigin: env.COMPOSER_ORIGIN,
+          storyUrl: env.PUBLIC_STORY_URL,
+          woodhouseShare: env.WOODHOUSE_SHARE === "true",
+          models,
+        }),
+        { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+      );
+    }
+    const jobs = jobCatalogue(models);
+    const requested = url.searchParams.get("job") ?? "";
+    const job = jobs.find((entry) => entry.id === requested) ?? jobs.find((entry) => entry.comparable) ?? jobs[0] ?? null;
+    let entries = [];
+    if (job && job.models.length > 0) {
+      const placeholders = job.models.map((_, index) => `?${index + 2}`).join(",");
+      const rows = await env.DB.prepare(
+        `SELECT g.id, g.model, g.kind, g.request_json, g.cost_estimate_micro, g.cost_allocated_micro, g.provider_charged_micro,
+                g.created_at, g.completed_at, a.id AS asset_id, a.mime, a.bytes, a.width, a.height, a.duration_ms, a.sha256
+         FROM generations g JOIN assets a ON a.id = g.output_asset_id
+         WHERE g.project_id = ?1 AND g.status = 'saved' AND g.deleted_at IS NULL AND a.deleted_at IS NULL
+           AND g.model IN (${placeholders})
+         ORDER BY COALESCE(g.completed_at, g.created_at) DESC LIMIT 60`,
+      )
+        .bind(project.id, ...job.models.map((model) => model.id))
+        .all();
+      entries = latestPerModel(rows.results, job.id).map((entry) => ({
+        ...entry,
+        previewUrl: entry.assetId ? `/api/assets/${encodeURIComponent(entry.assetId)}/file` : null,
+      }));
+    }
+    const review = { job, entries };
+    return new Response(
+      comparePage({
+        revision: BUILD.revision,
+        jobs,
+        job,
+        entries,
+        verdict: compareVerdict({ ...review, models }),
+        weakness: compareWeakness(review),
+        session,
+        composerOrigin: env.COMPOSER_ORIGIN,
+        storyUrl: env.PUBLIC_STORY_URL,
+        woodhouseShare: env.WOODHOUSE_SHARE === "true",
+        models,
+      }),
+      { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+    );
   }
   if (path === "/" || path === "/studio") {
     const session = await readSession(env, request);
