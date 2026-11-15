@@ -71,23 +71,27 @@ export async function storeDerivative(env, publication, bytes) {
 /** Withdrawal wins over cached previews, so drop both the row and its bytes. */
 export async function deletePublicationDerivatives(env, publicationIds) {
   const ids = [...new Set(publicationIds.filter((value) => typeof value === "string" && value))];
-  if (!ids.length) return;
-  const placeholders = ids.map((_, index) => `?${index + 1}`).join(",");
-  const rows = await env.DB.prepare(
-    `SELECT r2_key FROM publication_derivatives WHERE publication_id IN (${placeholders})`,
-  )
-    .bind(...ids)
-    .all();
-  for (const row of rows.results) {
-    // The row is removed even if R2 refuses: a withdrawn page must never serve
-    // its preview again. An orphaned object can be cleaned up later.
-    try {
-      await env.MEDIA.delete(row.r2_key);
-    } catch (error) {
-      console.warn("Could not delete a publication derivative", row.r2_key, error?.message);
+  // D1 allows 100 bound parameters per query. An asset can back more
+  // publications than that, so clean in bounded batches.
+  for (let start = 0; start < ids.length; start += 90) {
+    const chunk = ids.slice(start, start + 90);
+    const placeholders = chunk.map((_, index) => `?${index + 1}`).join(",");
+    const rows = await env.DB.prepare(
+      `SELECT r2_key FROM publication_derivatives WHERE publication_id IN (${placeholders})`,
+    )
+      .bind(...chunk)
+      .all();
+    for (const row of rows.results) {
+      // The row is removed even if R2 refuses: a withdrawn page must never serve
+      // its preview again. An orphaned object can be cleaned up later.
+      try {
+        await env.MEDIA.delete(row.r2_key);
+      } catch (error) {
+        console.warn("Could not delete a publication derivative", row.r2_key, error?.message);
+      }
     }
+    await env.DB.prepare(`DELETE FROM publication_derivatives WHERE publication_id IN (${placeholders})`)
+      .bind(...chunk)
+      .run();
   }
-  await env.DB.prepare(`DELETE FROM publication_derivatives WHERE publication_id IN (${placeholders})`)
-    .bind(...ids)
-    .run();
 }
