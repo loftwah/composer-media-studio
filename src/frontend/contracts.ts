@@ -86,7 +86,7 @@ export interface PublishProps { publications: PublicationV1[]; origin: string }
 
 export interface AudioTrackV1 { assetId: string; role: string; startMs: number; trimStartMs: number; trimEndMs: number; gainDb: number; fadeInMs: number; fadeOutMs: number }
 export interface ShotV1 { assetId: string; trimStartMs?: number; trimEndMs?: number; durationMs?: number }
-export interface ComposeStateV1 { shotIds: string[]; shotTrims: Record<string, { trimStartMs: number; trimEndMs: number }>; audioAssetId: string | null; audioTracks: AudioTrackV1[]; title: string; editingId: string | null }
+export interface ComposeStateV1 { shotIds: string[]; shotTrims: Record<string, { trimStartMs: number; trimEndMs: number }>; audioAssetId: string | null; audioTracks: AudioTrackV1[]; title: string; editingId: string | null; slateAssetId?: string | null }
 export interface SongPlanOriginV1 { id: string; revision: number; songSha256: string; sourceStartMs: number; sourceEndMs: number; scenes: { id: string; selectedTakeId: string | null; startMs: number; endMs: number; trimStartMs?: number; trimEndMs?: number }[] }
 export interface CompositionV1 { originSongPlan?: SongPlanOriginV1; id: string; projectId?: string; title: string; shots: ShotV1[]; totalMs: number; audioAssetId: string | null; audioTracks?: AudioTrackV1[]; createdAt: string | number; updatedAt?: string | number; slateAssetId?: string | null }
 export interface ComposeGenerationV1 extends GenerationV1 { compositionId?: string; variant?: string }

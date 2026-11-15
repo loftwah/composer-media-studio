@@ -3,6 +3,7 @@ import { PromoBriefs } from "./promo-briefs";
 import { shotRange } from "../../public/shot-trims.js";
 import { FootagePlans } from "./footage-plans";
 import { SongPlans } from "./song-plans";
+import { draftMatchesSaved } from "./compose-state";
 import type {
   AssembleProps,
   CompositionV1,
@@ -10,6 +11,7 @@ import type {
   MediaAssetV1,
   SettingsProps,
 } from "./contracts";
+
 
 const pending = (status: string) =>
   [
@@ -284,6 +286,9 @@ export function Assemble({
     latestByPlan.set(plan.id, Math.max(latestByPlan.get(plan.id) ?? 0, plan.revision));
   }
   const editing = compositions.find((composition) => composition.id === compose.editingId);
+  const editingDirty = editing
+    ? !draftMatchesSaved(compose, editing)
+    : Boolean(compose.title.trim() || compose.shotIds.length || compose.audioTracks.length || compose.audioAssetId || compose.slateAssetId);
   return (
     <>
       <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} onVoiceDraft={onVoiceDraft} />
@@ -307,7 +312,10 @@ export function Assemble({
           {compose.editingId && (
             <p className="notice calm" style={{ margin: 0 }}>
               Editing {editing?.originSongPlan ? `plan revision ${editing.originSongPlan.revision}` : "a saved storyboard"}
-              {editing?.originSongPlan && latestByPlan.get(editing.originSongPlan.id) !== editing.originSongPlan.revision ? " (an earlier revision)" : ""}. Saving updates it in place and keeps every earlier render.
+              {editing?.originSongPlan && latestByPlan.get(editing.originSongPlan.id) !== editing.originSongPlan.revision ? " (an earlier revision)" : ""}
+              {". "}
+              <span className={`status ${editingDirty ? "run" : "ok"}`} role="status">{editingDirty ? "Unsaved changes" : "Saved"}</span>
+              {" "}Saving updates it in place and keeps every earlier render.
             </p>
           )}
           <label>
