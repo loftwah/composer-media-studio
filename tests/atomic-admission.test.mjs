@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, jpeg } from './harness.mjs';
+import { withDarkroom } from './support/darkroom-env.mjs';
 import { createGeneration, createRender, dispatchGeneration, cancelGeneration, transferReservation, budgetSnapshot, loadGeneration, advanceGeneration } from '../src/lib/jobs.mjs';
 const input=(key='request_fixture_1')=>({kind:'image',model:'studio-quick',prompt:'Fictional',aspect:'square',clientRequestId:key});
 function stallFirstBatch(env) { let enter,release;const entered=new Promise(r=>enter=r), wait=new Promise(r=>release=r),batch=env.DB.batch.bind(env.DB);let first=true;env.DB.batch=async statements=>{if(first){first=false;enter();await wait;}return batch(statements)};return {entered,release}; }
@@ -24,7 +25,7 @@ test('duplicate ledger transitions do not steal a different job reservation',asy
  await Promise.all([transferReservation(env,b,true),transferReservation(env,b,true)]);budget=await budgetSnapshot(env,project.id);assert.equal(budget.reservedMicro,0);assert.equal(budget.spentMicro,b.cost_reserved_micro);
 });
 test('in-flight cancellation and an ambiguous AI error retain the reservation',async()=>{
- const {env,project}=await setup({allowance:10000});let enter,release;const entered=new Promise(r=>enter=r),wait=new Promise(r=>release=r);let calls=0;
+ const {env,project}=await setup({allowance:10000});let enter,release;const entered=new Promise(r=>enter=r),wait=new Promise(r=>release=r);let calls=0;withDarkroom(env);
  env.AI={run:async()=>{calls++;enter();await wait;throw new Error('fictional lost reply');}};
  const job=(await createGeneration(env,project,input())).generation;const pending=dispatchGeneration(env,job);await entered;
  const cancelled=await cancelGeneration(env,job);assert.equal(cancelled.status,'submitting');assert.equal(cancelled.error_code,'cancel_unconfirmed');assert.equal((await budgetSnapshot(env,project.id)).reservedMicro,job.cost_reserved_micro);

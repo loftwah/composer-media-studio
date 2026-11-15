@@ -46,16 +46,31 @@ export class SqliteD1 {
 export class FakeBucket {
   constructor() {
     this.objects = new Map();
+    this.meta = new Map();
+    this.puts = [];
   }
-  async put(key, bytes) {
+  async put(key, bytes, options = {}) {
+    // A conditional write (Darkroom's immutable output) refuses an existing key.
+    if (options.onlyIf && this.objects.has(key)) return null;
     this.objects.set(key, new Uint8Array(bytes));
+    this.meta.set(key, { httpMetadata: options.httpMetadata, customMetadata: options.customMetadata });
+    this.puts.push(key);
+    return { version: `v${this.puts.length}` };
   }
   async get(key) {
     const bytes = this.objects.get(key);
     if (!bytes) return null;
     return {
+      key,
+      version: "v",
+      size: bytes.byteLength,
+      ...this.meta.get(key),
       arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
     };
+  }
+  async head(key) {
+    const bytes = this.objects.get(key);
+    return bytes ? { key, version: "v", size: bytes.byteLength, ...this.meta.get(key) } : null;
   }
   async delete(key) {
     this.objects.delete(key);

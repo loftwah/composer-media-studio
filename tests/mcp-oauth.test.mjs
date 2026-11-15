@@ -4,6 +4,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
 import { setup, addAsset, jpeg } from './harness.mjs';
+import { withDarkroom } from './support/darkroom-env.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
@@ -182,6 +183,7 @@ test('edit and publish grants are explicit, project scoped and use existing Stud
 test('generation requires explicit elicitation, bound estimate, budget and idempotency', async () => {
   const { env, project } = await setup();
   let providerCalls = 0;
+  withDarkroom(env);
   const image = new Uint8Array(300); image.set(jpeg(1024, 1024));
   env.AI = { run: async () => { providerCalls++; return { image: Buffer.from(image).toString('base64') }; } };
   const cookie = 'studio_session=' + await createSession(env);

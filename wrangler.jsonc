@@ -24,10 +24,24 @@
     {
       "binding": "MEDIA",
       "bucket_name": "media-studio"
+    },
+    {
+      // Darkroom keeps each operation's retained bytes here, under media-output/.
+      // Same bucket as MEDIA, so nothing new to create.
+      "binding": "APP_ARTIFACTS",
+      "bucket_name": "media-studio"
     }
   ],
+  "durable_objects": {
+    "bindings": [{ "name": "MEDIA_OPERATION", "class_name": "MediaOperationDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MediaOperationDO"] }],
   "ai": {
     "binding": "AI"
+  },
+  // Darkroom fits reference images read from MEDIA to the selected model.
+  "images": {
+    "binding": "IMAGES"
   },
   "assets": {
     "directory": "./public",

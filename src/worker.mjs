@@ -24,6 +24,7 @@ import {
   createGeneration,
   createRender,
   dispatchGeneration,
+  eraseDarkroomOperation,
   updateComposition,
   dispatchRender,
   loadGeneration,
@@ -806,6 +807,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         .bind(asset.id, now())
         .run();
       await env.MEDIA.delete(asset.r2_key);
+      // A generated still also has Darkroom's retained copy; deleting it must not leave the media behind.
+      if (asset.generation_id) await eraseDarkroomOperation(env, await loadGeneration(env, asset.generation_id));
       return json({ deleted: true });
     }
 
@@ -964,6 +967,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         .bind(generation.id, now())
         .run();
       if (generation.retained_key) await env.MEDIA.delete(generation.retained_key);
+      await eraseDarkroomOperation(env, generation);
       if (["submitted", "running", "cancel_requested"].includes(generation.status))
         await cancelGeneration(env, generation);
       return json({ deleted: true });
@@ -1454,6 +1458,9 @@ function retainDispatch(ctx, promise) {
   if (ctx) ctx.waitUntil(promise);
   return promise;
 }
+
+// Darkroom runs each generation in its own Durable Object; wrangler.jsonc binds it as MEDIA_OPERATION.
+export { MediaOperationDO } from "@fungi.computer/darkroom/cloudflare";
 
 export default {
   async fetch(request, env, ctx) {
