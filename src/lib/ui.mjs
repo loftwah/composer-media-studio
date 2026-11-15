@@ -602,18 +602,18 @@ ${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="G
  * never calls a provider. Two takes are shown beside each other because that is
  * the only honest way to answer "which should I use".
  */
-export function comparePage({ revision = "dev", jobs = [], job = null, project = null, entries = [], excluded = [], briefNote = null, verdict = null, weakness = null, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, models = {} }) {
+export function comparePage({ revision = "dev", jobs = [], job = null, project = null, projects = [], entries = [], excluded = [], briefNote = null, verdict = null, weakness = null, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, models = {} }) {
   const money = (micro) => (micro === null || micro === undefined || !Number.isFinite(Number(micro)) ? "unknown" : `$${(Number(micro) / 1_000_000).toFixed(Number(micro) < 10_000 ? 4 : 2)}`);
   const when = (value) => (value ? new Date(Number(value)).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "unknown");
   const label = (id) => escapeHtml(models?.[id]?.label ?? id);
   const projectQuery = project?.id ? `project=${encodeURIComponent(project.id)}&` : "";
   const tab = (entry) =>
     `<a class="cmp-tab${entry.id === job?.id ? " is-current" : ""}" href="/compare?${projectQuery}job=${encodeURIComponent(entry.id)}"${entry.id === job?.id ? ' aria-current="page"' : ""}>${escapeHtml(entry.label)}<span>${entry.models.length} model${entry.models.length === 1 ? "" : "s"}</span></a>`;
-  const take = (entry) => `
+  const take = (entry, index) => `
     <article class="cmp-take" data-take="${escapeHtml(entry.model)}" data-generation="${escapeHtml(entry.generationId ?? "")}" data-brief="${escapeHtml(entry.briefKey ?? "")}" data-created="${escapeHtml(String(entry.createdAt ?? ""))}">
       <header>
         <div>
-          <h3>${label(entry.model)}</h3>
+          <h3><span class="cmp-model-name">${label(entry.model)}</span><span class="cmp-blind-name">Take ${String.fromCharCode(65 + index)}</span></h3>
           <p class="small">${escapeHtml(entry.kind)} · saved ${when(entry.createdAt)}</p>
         </div>
         <span class="cmp-badge" data-take-badge hidden>Your pick</span>
@@ -632,9 +632,9 @@ export function comparePage({ revision = "dev", jobs = [], job = null, project =
       </div>
       ${entry.prompt ? `<p class="cmp-prompt"><span class="small">Brief</span>${escapeHtml(entry.prompt)}</p>` : ""}
       <dl class="cmp-facts">
-        <div><dt>Estimate</dt><dd>${money(entry.cost.estimateMicro)}</dd></div>
-        <div><dt>Allocated</dt><dd>${money(entry.cost.allocatedMicro)}</dd></div>
-        <div><dt>Provider charge</dt><dd>${entry.cost.providerChargedMicro === null ? "not reported" : money(entry.cost.providerChargedMicro)}</dd></div>
+        <div class="cmp-cost"><dt>Estimate</dt><dd>${money(entry.cost.estimateMicro)}</dd></div>
+        <div class="cmp-cost"><dt>Allocated</dt><dd>${money(entry.cost.allocatedMicro)}</dd></div>
+        <div class="cmp-cost"><dt>Provider charge</dt><dd>${entry.cost.providerChargedMicro === null ? "not reported" : money(entry.cost.providerChargedMicro)}</dd></div>
         ${entry.width && entry.height ? `<div><dt>Size</dt><dd>${entry.width}×${entry.height}</dd></div>` : ""}
         ${entry.durationMs ? `<div><dt>Length</dt><dd>${(entry.durationMs / 1000).toFixed(1)}s</dd></div>` : ""}
         ${entry.sha256 ? `<div class="cmp-hash"><dt>Output hash</dt><dd><code>${escapeHtml(String(entry.sha256).slice(0, 18))}…</code></dd></div>` : ""}
@@ -660,6 +660,14 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
   <h1>Which model should do this job?</h1>
   <p class="lede">A comparison only makes sense inside one job. These takes were already saved${project ? ` in <strong>${escapeHtml(project.name)}</strong>` : ""}, so nothing here generates, spends or calls a provider.</p>
 
+  ${projects.length && !project ? `<section class="cmp-section" aria-labelledby="cmp-projects-title">
+    <h2 id="cmp-projects-title">Choose a studio</h2>
+    <p>Saved takes belong to the studio that made them. Choose one to review its matched outputs.</p>
+    <ul class="cmp-projects">${projects.map((choice) => `<li><a href="/compare?project=${encodeURIComponent(choice.id)}"><span>${escapeHtml(choice.name)}</span><span class="small">Open comparison</span></a></li>`).join("")}</ul>
+  </section>` : ""}
+
+  ${entries.length > 0 ? `<label class="cmp-blind-toggle"><input type="checkbox" data-blind-mode checked> <span>Blind review: hide model names and costs until you choose a take</span></label>` : ""}
+
   <nav class="cmp-tabs" aria-label="Jobs">${jobs.map(tab).join("")}</nav>
 
   ${
@@ -676,7 +684,7 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
 
   ${briefNote ? `<p class="notice warn" role="note">${escapeHtml(briefNote)}</p>` : ""}
 
-  ${entries.length > 0 ? `<div class="cmp-grid">${entries.map(take).join("")}</div>` : `<p class="notice calm">No saved takes for this job yet. Create one from the studio, then come back: a comparison is built from work you already kept.</p>`}
+  ${entries.length > 0 ? `<div class="cmp-grid is-blind">${entries.map(take).join("")}</div>` : `<p class="notice calm">No saved takes for this job yet. Create one from the studio, then come back: a comparison is built from work you already kept.</p>`}
 
   ${
     excluded.length > 0

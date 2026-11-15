@@ -72,6 +72,18 @@ function payloadFor(take) {
   };
 }
 
+function applyBlind() {
+  const grid = document.querySelector(".cmp-grid");
+  if (!grid) return;
+  const toggle = document.querySelector("[data-blind-mode]");
+  const blind = toggle instanceof HTMLInputElement ? toggle.checked : grid.classList.contains("is-blind");
+  grid.classList.toggle("is-blind", blind);
+  for (const take of grid.querySelectorAll("[data-take]")) {
+    const entry = entryFor(read(), take);
+    take.classList.toggle("is-revealed", Boolean(entry.pick || entry.reject));
+  }
+}
+
 function paint() {
   const review = read();
   const takes = [...document.querySelectorAll("[data-take]")];
@@ -96,6 +108,7 @@ function paint() {
         ? "No pick recorded on this device yet."
         : `${picked.length} take${picked.length === 1 ? "" : "s"} picked on this device. Your notes stay here until you copy them.`;
   }
+  applyBlind();
   const verdict = document.querySelector("[data-verdict]");
   const title = verdict?.querySelector("[data-verdict-title]");
   const detail = verdict?.querySelector("[data-verdict-detail]");
@@ -162,6 +175,9 @@ function main() {
       });
     }
   }
+
+  const blind = document.querySelector("[data-blind-mode]");
+  blind?.addEventListener("change", applyBlind);
 
   document.getElementById("cmp-copy")?.addEventListener("click", async () => {
     const payload = {
