@@ -5,6 +5,7 @@ public/creative/
 dist/
 .tmp/
 output/
+.release/
 .dev.vars
 *.log
 .DS_Store

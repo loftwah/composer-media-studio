@@ -11,6 +11,7 @@
     "check": "tsc --noEmit && node scripts/launcher-assets.mjs --check && node --import ./tests/support/workers-runtime.mjs --test tests/*.test.mjs",
     "test": "node --import ./tests/support/workers-runtime.mjs --test tests/*.test.mjs",
     "deploy": "node scripts/deploy.mjs",
+    "release:watchdog": "node scripts/release-watchdog.mjs --repo loftwah/composer-media-studio",
     "migrate:local": "wrangler d1 migrations apply media-studio --local",
     "migrate:remote": "wrangler d1 migrations apply media-studio --remote"
   },
