@@ -96,6 +96,24 @@ function paint() {
         ? "No pick recorded on this device yet."
         : `${picked.length} take${picked.length === 1 ? "" : "s"} picked on this device. Your notes stay here until you copy them.`;
   }
+  const verdict = document.querySelector("[data-verdict]");
+  const title = verdict?.querySelector("[data-verdict-title]");
+  const detail = verdict?.querySelector("[data-verdict-detail]");
+  if (verdict && title && detail) {
+    if (!verdict.dataset.recordedTitle) {
+      verdict.dataset.recordedTitle = title.textContent ?? "";
+      verdict.dataset.recordedDetail = detail.textContent ?? "";
+    }
+    if (picked.length > 0) {
+      const label = picked[0].querySelector("h3")?.textContent?.trim() || modelOf(picked[0]);
+      title.textContent = `You chose ${label} on this device`;
+      detail.textContent =
+        "The recorded costs stay exactly as shown. Your private note is bound to this exact saved take.";
+    } else {
+      title.textContent = verdict.dataset.recordedTitle;
+      detail.textContent = verdict.dataset.recordedDetail;
+    }
+  }
 }
 
 /** @param {Element} take @param {string} field @param {boolean} value */

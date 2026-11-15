@@ -650,7 +650,7 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
 
   ${
     verdict
-      ? `<section class="cmp-verdict" aria-labelledby="verdict-title"><p class="eyebrow">Verdict</p><h2 id="verdict-title">${escapeHtml(verdict.headline)}</h2><p>${escapeHtml(verdict.detail)}</p></section>`
+      ? `<section class="cmp-verdict" aria-labelledby="verdict-title" data-verdict><p class="eyebrow">Verdict</p><h2 id="verdict-title" data-verdict-title>${escapeHtml(verdict.headline)}</h2><p data-verdict-detail>${escapeHtml(verdict.detail)}</p></section>`
       : ""
   }
 
