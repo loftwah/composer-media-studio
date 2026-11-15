@@ -16,6 +16,8 @@
   --ink-soft: #3f4249;
   --muted: #5c616a;
   --line: #cfc7b9;
+  /* Shared authoring surfaces use --border; keep it tied to the theme line. */
+  --border: var(--line);
   --accent: #c74400;
   --accent-bright: #fc5b05;
   --accent-soft: #ffe4d3;
