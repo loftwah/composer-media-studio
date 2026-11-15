@@ -4,13 +4,18 @@
 // in this browser and are never sent to the worker. Nothing here can create a
 // take, call a provider or spend money — the page is built from work already
 // saved, and this script only records what the owner thought of it.
+//
+// A vote belongs to one exact saved take, not to a model name. Each entry is
+// keyed by job + generation, so a newer take is reviewed on its own and an old
+// note cannot silently follow a model into a different run.
 
-const KEY = "media-studio:compare-review:v1";
+const KEY = "media-studio:compare-review:v2";
+const LEGACY_KEY = "media-studio:compare-review:v1";
 
 /** @returns {Record<string, {pick?: boolean, reject?: boolean, reason?: string, at?: string}>} */
-function read() {
+function read(key = KEY) {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(KEY) ?? "{}");
+    const parsed = JSON.parse(window.localStorage.getItem(key) ?? "{}");
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -26,18 +31,52 @@ function write(value) {
   }
 }
 
-/** @param {string} id */
-function scope(id) {
-  const job = new URLSearchParams(window.location.search).get("job") ?? "default";
-  return `${job}::${id}`;
+function currentJob() {
+  return new URLSearchParams(window.location.search).get("job") ?? "default";
+}
+
+/** @param {Element} take */
+function modelOf(take) {
+  return take.getAttribute("data-take") ?? "";
+}
+
+/** @param {Element} take */
+function keyFor(take) {
+  const generation = take.getAttribute("data-generation") ?? "";
+  return `${currentJob()}::${generation || "unknown"}::${modelOf(take)}`;
+}
+
+/**
+ * The exact take's note. A note saved by the earlier model-keyed version is
+ * still shown for the same model and job so an existing private review is not
+ * lost; the next edit writes the generation-scoped record.
+ * @param {Record<string, any>} review
+ * @param {Element} take
+ */
+function entryFor(review, take) {
+  return review[keyFor(take)] ?? read(LEGACY_KEY)[`${currentJob()}::${modelOf(take)}`] ?? {};
+}
+
+/** @param {Element} take */
+function payloadFor(take) {
+  const entry = entryFor(read(), take);
+  return {
+    model: modelOf(take),
+    generationId: take.getAttribute("data-generation") || null,
+    briefKey: take.getAttribute("data-brief") || null,
+    createdAt: Number(take.getAttribute("data-created")) || null,
+    pick: Boolean(entry.pick),
+    reject: Boolean(entry.reject),
+    reason: entry.reason ?? "",
+    at: entry.at ?? "",
+  };
 }
 
 function paint() {
   const review = read();
   const takes = [...document.querySelectorAll("[data-take]")];
   for (const take of takes) {
-    const id = take.getAttribute("data-take") ?? "";
-    const entry = review[scope(id)] ?? {};
+    const entry = entryFor(review, take);
     const pick = take.querySelector("[data-pick]");
     const reject = take.querySelector("[data-reject]");
     const badge = take.querySelector("[data-take-badge]");
@@ -50,7 +89,7 @@ function paint() {
     if (at instanceof HTMLInputElement && document.activeElement !== at) at.value = entry.at ?? "";
   }
   const status = document.getElementById("cmp-status");
-  const picked = takes.filter((take) => review[scope(take.getAttribute("data-take") ?? "")]?.pick);
+  const picked = takes.filter((take) => entryFor(review, take).pick);
   if (status) {
     status.textContent =
       picked.length === 0
@@ -59,17 +98,19 @@ function paint() {
   }
 }
 
-/** @param {string} id @param {string} field @param {boolean} value */
-function setFlag(id, field, value) {
+/** @param {Element} take @param {string} field @param {boolean} value */
+function setFlag(take, field, value) {
   const review = read();
-  const key = scope(id);
+  const key = keyFor(take);
   const entry = review[key] ?? {};
-  // One pick per job: choosing a take clears every other pick, and choosing one
-  // that was rejected clears the rejection instead of holding both.
+  const jobPrefix = `${currentJob()}::`;
+  // One pick per job, and one state per take. A pick in another job is left
+  // alone: choosing a still does not erase the choice made for a motion take.
   if (field === "pick" && value) {
     for (const other of Object.keys(review)) {
-      if (other.endsWith(`::${id}`)) continue;
-      if (review[other]?.pick) review[other] = { ...review[other], pick: false };
+      if (other !== key && other.startsWith(jobPrefix) && review[other]?.pick) {
+        review[other] = { ...review[other], pick: false };
+      }
     }
   }
   if (field === "pick" && value) entry.reject = false;
@@ -82,20 +123,19 @@ function setFlag(id, field, value) {
 
 function main() {
   for (const take of document.querySelectorAll("[data-take]")) {
-    const id = take.getAttribute("data-take") ?? "";
     take.querySelector("[data-pick]")?.addEventListener("click", () => {
-      const current = read()[scope(id)]?.pick === true;
-      setFlag(id, "pick", !current);
+      const current = entryFor(read(), take).pick === true;
+      setFlag(take, "pick", !current);
     });
     take.querySelector("[data-reject]")?.addEventListener("click", () => {
-      const current = read()[scope(id)]?.reject === true;
-      setFlag(id, "reject", !current);
+      const current = entryFor(read(), take).reject === true;
+      setFlag(take, "reject", !current);
     });
     for (const field of ["reason", "at"]) {
       const input = take.querySelector(field === "reason" ? "[data-reason]" : "[data-at]");
       input?.addEventListener("change", () => {
         const review = read();
-        const key = scope(id);
+        const key = keyFor(take);
         const entry = review[key] ?? {};
         entry[field] = input instanceof HTMLInputElement ? input.value.trim() : "";
         review[key] = entry;
@@ -106,23 +146,17 @@ function main() {
   }
 
   document.getElementById("cmp-copy")?.addEventListener("click", async () => {
-    const review = read();
-    const job = new URLSearchParams(window.location.search).get("job") ?? "default";
     const payload = {
-      schema: "media-studio-comparison-review/v1",
-      job,
+      schema: "media-studio-comparison-review/v2",
+      job: currentJob(),
       recordedAt: new Date().toISOString(),
-      takes: [...document.querySelectorAll("[data-take]")].map((take) => {
-        const id = take.getAttribute("data-take") ?? "";
-        const entry = review[scope(id)] ?? {};
-        return { model: id, pick: Boolean(entry.pick), reject: Boolean(entry.reject), reason: entry.reason ?? "", at: entry.at ?? "" };
-      }),
+      takes: [...document.querySelectorAll("[data-take]")].map(payloadFor),
     };
     const text = JSON.stringify(payload, null, 2);
     const status = document.getElementById("cmp-status");
     try {
       await navigator.clipboard.writeText(text);
-      if (status) status.textContent = "Review copied to the clipboard as JSON.";
+      if (status) status.textContent = "Review copied to the clipboard as JSON, bound to these exact takes.";
     } catch {
       if (status) status.textContent = "The clipboard was unavailable. Select the review text from the page instead.";
       window.prompt("Copy this review:", text);

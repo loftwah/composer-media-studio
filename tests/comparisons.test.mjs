@@ -201,3 +201,28 @@ test('a brief fingerprint ignores case and spacing but not settings', async () =
   assert.notEqual(one.briefKey, three.briefKey);
   assert.equal(three.settings.durationSeconds, 10);
 });
+
+test('a review is bound to the exact saved take, not just the model name', async () => {
+  const { comparePage } = await import("../src/lib/ui.mjs");
+  const html = comparePage({
+    revision: "test",
+    job: { id: "motion", label: "Motion from a still", purpose: "Animate a still.", settings: "Same still, same length.", models: [] },
+    entries: [
+      {
+        model: "h3",
+        generationId: "gen_a",
+        briefKey: "brief_a",
+        createdAt: 1,
+        kind: "video",
+        previewUrl: null,
+        prompt: "slow push in",
+        settings: { aspect: "from-image", durationSeconds: 5 },
+        cost: { estimateMicro: 240000, allocatedMicro: 240000, providerChargedMicro: null },
+      },
+    ],
+    models: { h3: { label: "H3 Max Turbo" } },
+  });
+  assert.match(html, /data-generation="gen_a"/);
+  assert.match(html, /data-brief="brief_a"/);
+  assert.match(html, /bound to the exact saved take/);
+});

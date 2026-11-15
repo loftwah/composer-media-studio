@@ -595,7 +595,7 @@ export function comparePage({ revision = "dev", jobs = [], job = null, entries =
   const tab = (entry) =>
     `<a class="cmp-tab${entry.id === job?.id ? " is-current" : ""}" href="/compare?job=${encodeURIComponent(entry.id)}"${entry.id === job?.id ? ' aria-current="page"' : ""}>${escapeHtml(entry.label)}<span>${entry.models.length} model${entry.models.length === 1 ? "" : "s"}</span></a>`;
   const take = (entry) => `
-    <article class="cmp-take" data-take="${escapeHtml(entry.model)}">
+    <article class="cmp-take" data-take="${escapeHtml(entry.model)}" data-generation="${escapeHtml(entry.generationId ?? "")}" data-brief="${escapeHtml(entry.briefKey ?? "")}" data-created="${escapeHtml(String(entry.createdAt ?? ""))}">
       <header>
         <div>
           <h3>${label(entry.model)}</h3>
@@ -685,7 +685,7 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
       <li>The provider charge stays “not reported” unless a provider actually told us what it billed. An allocation is the studio's own budget figure, never an invoice.</li>
       <li>These are the newest saved takes per model, not repeated trials. A difference you can see is a difference in one take, not a reliability score.</li>
       <li>Takes are only compared when they share the same instruction and settings. Anything generated from a different brief is listed separately.</li>
-      <li>Your pick and your note are stored in this browser only. They are private by default and are not published anywhere.</li>
+      <li>Your pick and your note are stored in this browser only and bound to the exact saved take. They are private by default and are not published anywhere.</li>
       <li>Opening this page never calls a model, so it cannot add a take. New comparisons need a fresh run from the studio.</li>
     </ul>
     <p class="small" id="cmp-status" role="status" aria-live="polite"></p>
