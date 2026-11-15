@@ -271,7 +271,29 @@ async function claim(env, generationId, from, to, darkroomVersion = null) {
   return Boolean(row);
 }
 
-export { eraseDarkroomOperation };
+export async function eraseGenerationResult(env, generation) {
+  if (generation.retained_key) await env.MEDIA.delete(generation.retained_key);
+  await eraseDarkroomOperation(env, generation);
+  await env.DB.prepare("UPDATE generations SET retained_key=NULL,retained_mime=NULL,retained_bytes=NULL WHERE id=?1")
+    .bind(generation.id).run();
+}
+
+/** A tombstone blocks new work while object deletion is retried. */
+export async function eraseDeletedGeneration(env, generation) {
+  try {
+    if (generation.status === "discarded_after_delete" && generation.error_code !== "erasure_pending") return generation;
+    if (generation.status === "admitted") generation = await cancelGeneration(env, generation);
+    await eraseGenerationResult(env, generation);
+    await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',error_code=NULL,error_detail=NULL,updated_at=?2 WHERE id=?1 AND deleted_at IS NOT NULL")
+      .bind(generation.id, now()).run();
+    return loadGeneration(env, generation.id);
+  } catch (error) {
+    await env.DB.prepare("UPDATE generations SET error_code='erasure_pending',error_detail='Deletion is pending. Studio will retry cleanup.',updated_at=?2 WHERE id=?1 AND deleted_at IS NOT NULL")
+      .bind(generation.id, now()).run();
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(502, "Deletion is pending. Studio will retry cleanup.", "erasure_pending");
+  }
+}
 
 export async function dispatchGeneration(env, generation) {
   const model = getModel(generation.model);
@@ -412,7 +434,12 @@ async function failGeneration(env, generation, error, { dispatched = false } = {
     .bind(generation.id, status, code, String(error.message ?? error).slice(0, 240), now())
     .first();
   if (changed && status === "failed") await releaseReservation(env, generation);
-  return loadGeneration(env, generation.id);
+  const fresh = await loadGeneration(env, generation.id);
+  if (fresh.deleted_at) {
+    try { return await eraseDeletedGeneration(env, fresh); }
+    catch { return loadGeneration(env, fresh.id); }
+  }
+  return fresh;
 }
 
 /** Persist exact output bytes, then the asset record. Never calls inference. */
@@ -427,11 +454,8 @@ export async function saveGeneration(env, generation, bytes, format) {
     return fresh;
   }
   if (fresh.deleted_at) {
-    await eraseDarkroomOperation(env, fresh);
-    await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',updated_at=?2 WHERE id=?1")
-      .bind(generation.id, now())
-      .run();
-    return loadGeneration(env, generation.id);
+    await settleReservation(env, generation);
+    return eraseDeletedGeneration(env, fresh);
   }
 
   const hash = await sha256Hex(bytes);
@@ -455,11 +479,18 @@ export async function saveGeneration(env, generation, bytes, format) {
   const retainedKey = fresh.retained_key ?? `projects/${generation.project_id}/generations/${generation.id}/retained.${extension}`;
   if (!fresh.retained_key) {
     await env.MEDIA.put(retainedKey, bytes, { httpMetadata: { contentType: mime } });
-    await env.DB.prepare(
-      "UPDATE generations SET retained_key=?2,retained_mime=?3,retained_bytes=?4,status='saving',updated_at=?5 WHERE id=?1",
+    const retained = await env.DB.prepare(
+      "UPDATE generations SET retained_key=?2,retained_mime=?3,retained_bytes=?4,status='saving',updated_at=?5 WHERE id=?1 AND deleted_at IS NULL AND status<>'saved' RETURNING id",
     )
       .bind(generation.id, retainedKey, mime, bytes.length, now())
-      .run();
+      .first();
+    if (!retained) {
+      const current = await loadGeneration(env, generation.id);
+      if (!current.deleted_at) return current;
+      await env.MEDIA.delete(retainedKey);
+      await settleReservation(env, generation);
+      return eraseDeletedGeneration(env, current);
+    }
   }
 
   const request = safeJson(fresh.request_json, {});
@@ -474,10 +505,10 @@ export async function saveGeneration(env, generation, bytes, format) {
       ? "variant"
       : "generated";
   const timestamp = now();
-  try {
-    await env.DB.prepare(
+  const indexAsset = env.DB.prepare(
       `INSERT INTO assets(id,project_id,kind,r2_key,mime,bytes,width,height,duration_ms,sample_rate,channels,sha256,title,caption,source,parent_asset_id,generation_id,created_at,updated_at)
-       VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18)`,
+       SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18
+       WHERE EXISTS (SELECT 1 FROM generations WHERE id=?17 AND deleted_at IS NULL AND status<>'saved')`,
     )
       .bind(
         assetId,
@@ -517,23 +548,44 @@ export async function saveGeneration(env, generation, bytes, format) {
         request.parentAssetId ?? request.referenceAssetId ?? null,
         generation.id,
         timestamp,
-      )
-      .run();
+      );
+  try {
+    const [indexed] = await env.DB.batch([
+      indexAsset,
+      env.DB.prepare(
+        "UPDATE generations SET status='saved',output_asset_id=?2,completed_at=?3,updated_at=?3,error_code=NULL,error_detail=NULL WHERE id=?1 AND changes()=1",
+      ).bind(generation.id, assetId, timestamp),
+    ]);
+    if (!(indexed.meta?.changes ?? indexed.changes)) {
+      await env.MEDIA.delete(assetKey);
+      const current = await loadGeneration(env, generation.id);
+      if (current.deleted_at) {
+        await settleReservation(env, generation);
+        return eraseDeletedGeneration(env, current);
+      }
+      return current;
+    }
   } catch (error) {
+    // An ambiguous D1 reply may already have committed the asset. Preserve it.
+    const current = await loadGeneration(env, generation.id);
+    if (current.output_asset_id !== assetId) await env.MEDIA.delete(assetKey);
+    if (current.status === "saved") {
+      await settleReservation(env, generation);
+      return current;
+    }
+    if (current.deleted_at) {
+      await settleReservation(env, generation);
+      return eraseDeletedGeneration(env, current);
+    }
     // The provider already produced bytes. Keep them retained for a save retry.
     await env.DB.prepare(
-      "UPDATE generations SET status='provider_complete',error_code='save_failed',error_detail=?2,updated_at=?3 WHERE id=?1",
+      "UPDATE generations SET status='provider_complete',error_code='save_failed',error_detail=?2,updated_at=?3 WHERE id=?1 AND deleted_at IS NULL AND status<>'saved'",
     )
       .bind(generation.id, String(error.message ?? error).slice(0, 200), now())
       .run();
     throw new HttpError(500, "The result was created but could not be saved. Retry saving; it will not generate again.", "save_failed");
   }
 
-  await env.DB.prepare(
-    "UPDATE generations SET status='saved',output_asset_id=?2,completed_at=?3,updated_at=?3,error_code=NULL,error_detail=NULL WHERE id=?1",
-  )
-    .bind(generation.id, assetId, now())
-    .run();
   await settleReservation(env, generation);
   try { await publishCandidate(env, generation.project_id, assetId, { automatic: true }); }
   catch (error) { console.warn("Automatic publication skipped:", String(error.message ?? error).slice(0, 120)); }
@@ -570,14 +622,7 @@ function sizeForBytes(mime, bytes) {
 /** Advance one asynchronous job. Safe to call repeatedly from polling or cron. */
 export async function advanceGeneration(env, generation) {
   const fresh = await loadGeneration(env, generation.id);
-  if (fresh.deleted_at) {
-    if (fresh.retained_key) await env.MEDIA.delete(fresh.retained_key);
-    await eraseDarkroomOperation(env, fresh);
-    await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',retained_key=NULL,updated_at=?2 WHERE id=?1")
-      .bind(fresh.id, now())
-      .run();
-    return loadGeneration(env, fresh.id);
-  }
+  if (fresh.deleted_at) return eraseDeletedGeneration(env, fresh);
 
   if (["provider_complete", "saving"].includes(fresh.status) && fresh.retained_key) {
     const stored = await env.MEDIA.get(fresh.retained_key);
@@ -1086,7 +1131,7 @@ export async function reconcileGeneration(env, generation) {
 
 export async function pendingGenerations(env, limit = 8) {
   const { results } = await env.DB.prepare(
-    "SELECT * FROM generations WHERE status IN ('submitting','submitted','running','provider_complete','saving') ORDER BY updated_at ASC LIMIT ?1",
+    "SELECT * FROM generations WHERE status IN ('submitting','submitted','running','provider_complete','saving') OR (deleted_at IS NOT NULL AND error_code='erasure_pending') ORDER BY updated_at ASC LIMIT ?1",
   )
     .bind(limit)
     .all();

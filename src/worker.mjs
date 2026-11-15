@@ -25,7 +25,8 @@ import {
   createGeneration,
   createRender,
   dispatchGeneration,
-  eraseDarkroomOperation,
+  eraseDeletedGeneration,
+  eraseGenerationResult,
   updateComposition,
   dispatchRender,
   loadGeneration,
@@ -102,6 +103,18 @@ function assertSameOrigin(request, env) {
   if (env.PUBLIC_ORIGIN) allowed.add(env.PUBLIC_ORIGIN.replace(/\/$/, ""));
   if (!allowed.has(origin))
     throw new HttpError(403, "This request came from another site", "origin_refused");
+}
+
+async function eraseAsset(env, asset) {
+  try {
+    await env.MEDIA.delete(asset.r2_key);
+    if (asset.generation_id) await eraseGenerationResult(env, await loadGeneration(env, asset.generation_id));
+    await env.DB.prepare("UPDATE assets SET erasure_pending=0 WHERE id=?1").bind(asset.id).run();
+  } catch (error) {
+    await env.DB.prepare("UPDATE assets SET updated_at=?2 WHERE id=?1").bind(asset.id, now()).run();
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(502, "Deletion is pending. Studio will retry cleanup.", "erasure_pending");
+  }
 }
 
 async function body(request, limit = 64 * 1024) {
@@ -795,22 +808,17 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     }
 
     if (!action && method === "DELETE") {
-      if (asset.deleted_at) return json({ deleted: true, alreadyDeleted: true });
-      await env.DB.prepare(
-        "UPDATE assets SET deleted_at=?2,delete_revision=delete_revision+1,updated_at=?2 WHERE id=?1",
-      )
-        .bind(asset.id, now())
-        .run();
-      await env.DB.prepare("UPDATE publications SET revoked_at=?2 WHERE asset_id=?1 AND revoked_at IS NULL")
-        .bind(asset.id, now())
-        .run();
-      await env.DB.prepare("UPDATE publications SET revoked_at=?2 WHERE poster_asset_id=?1 AND revoked_at IS NULL")
-        .bind(asset.id, now())
-        .run();
-      await env.MEDIA.delete(asset.r2_key);
-      // A generated still also has Darkroom's retained copy; deleting it must not leave the media behind.
-      if (asset.generation_id) await eraseDarkroomOperation(env, await loadGeneration(env, asset.generation_id));
-      return json({ deleted: true });
+      const timestamp = now();
+      await env.DB.batch([
+        env.DB.prepare(
+          "UPDATE assets SET deleted_at=COALESCE(deleted_at,?2),delete_revision=delete_revision+(deleted_at IS NULL),erasure_pending=1,updated_at=?2 WHERE id=?1",
+        ).bind(asset.id, timestamp),
+        env.DB.prepare(
+          "UPDATE publications SET revoked_at=?2 WHERE (asset_id=?1 OR poster_asset_id=?1) AND revoked_at IS NULL",
+        ).bind(asset.id, timestamp),
+      ]);
+      await eraseAsset(env, asset);
+      return json({ deleted: true, ...(asset.deleted_at ? { alreadyDeleted: true } : {}) });
     }
 
     if (action === "file" && (method === "GET" || method === "HEAD")) {
@@ -966,19 +974,20 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return json({ generation: generationView(generation), budget: await budgetSnapshot(env, generation.project_id) });
     }
     if (method === "DELETE" && !action) {
-      if (generation.status === "saved")
-        throw new HttpError(409, "Saved results are removed from the library, not from their generation record", "saved_result");
-      if (generation.deleted_at) return json({ deleted: true, alreadyDeleted: true });
-      await env.DB.prepare(
-        "UPDATE generations SET deleted_at=?2,delete_revision=delete_revision+1,updated_at=?2 WHERE id=?1",
-      )
-        .bind(generation.id, now())
-        .run();
-      if (generation.retained_key) await env.MEDIA.delete(generation.retained_key);
-      await eraseDarkroomOperation(env, generation);
+      const alreadyDeleted = Boolean(generation.deleted_at);
+      if (!alreadyDeleted) {
+        generation = await env.DB.prepare(
+          `UPDATE generations SET deleted_at=?2,delete_revision=delete_revision+1,updated_at=?2,error_code='erasure_pending'
+           WHERE id=?1 AND deleted_at IS NULL AND status<>'saved'
+             AND NOT EXISTS(SELECT 1 FROM assets WHERE generation_id=?1 AND deleted_at IS NULL) RETURNING *`,
+        ).bind(generation.id, now()).first() ?? await loadGeneration(env, generation.id);
+        if (!generation.deleted_at)
+          throw new HttpError(409, "Saved results are removed from the library, not from their generation record", "saved_result");
+      }
       if (["submitted", "running", "cancel_requested"].includes(generation.status))
-        await cancelGeneration(env, generation);
-      return json({ deleted: true });
+        generation = await cancelGeneration(env, generation);
+      await eraseDeletedGeneration(env, generation);
+      return json({ deleted: true, ...(alreadyDeleted ? { alreadyDeleted: true } : {}) });
     }
   }
 
@@ -1578,9 +1587,19 @@ export default {
     ctx.waitUntil(
       (async () => {
         const pending = await pendingGenerations(env, 8);
-        for (const generation of pending) await advanceGeneration(env, generation);
+        for (const generation of pending) {
+          try { await advanceGeneration(env, generation); }
+          catch (error) { if (!generation.deleted_at) console.error("Could not advance Studio job", generation.id, error); }
+        }
       })(),
     );
+    ctx.waitUntil((async () => {
+      const { results } = await env.DB.prepare("SELECT * FROM assets WHERE erasure_pending=1 ORDER BY updated_at LIMIT 8").all();
+      for (const asset of results) {
+        try { await eraseAsset(env, asset); }
+        catch { /* The tombstone stays pending for the next sweep. */ }
+      }
+    })());
     ctx.waitUntil(pruneMcpRecords(env));
   },
 };
