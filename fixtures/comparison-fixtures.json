@@ -16,7 +16,11 @@
       "sha256Prefix": "7758a17cd5e12dd1",
       "title": "The line across the margin",
       "provenance": "Generated in this studio with a served Workers AI image model, reviewed and kept. No third-party artwork, no stock photography, no model release needed.",
-      "usedFor": ["motion", "reference-edit", "masked-edit"]
+      "usedFor": [
+        "motion",
+        "reference-edit",
+        "masked-edit"
+      ]
     },
     {
       "id": "footage-after-hours-room-wall",
@@ -29,9 +33,11 @@
       "height": 360,
       "durationMs": 33041,
       "sha256Prefix": "9c6120d6f236a378",
-      "title": "Local render — After Hours — The Room Wall",
+      "title": "Local render \u2014 After Hours \u2014 The Room Wall",
       "provenance": "Assembled on this device from takes made in this studio and uploaded back as our own source. 33 seconds; comparisons use one six-second section so the run stays bounded.",
-      "usedFor": ["footage-edit"]
+      "usedFor": [
+        "footage-edit"
+      ]
     },
     {
       "id": "audio-after-hours-mix",
@@ -42,9 +48,13 @@
       "bytes": 5821244,
       "durationMs": 33000,
       "sha256Prefix": "6d2fe9f8df1e575e",
-      "title": "Mixed soundtrack — After Hours — The Room Wall",
+      "title": "Mixed soundtrack \u2014 After Hours \u2014 The Room Wall",
       "provenance": "Built from studio-generated score, narration and effects. Used as the audio bed the script brief is written against.",
-      "usedFor": ["voice", "music", "effects"]
+      "usedFor": [
+        "voice",
+        "music",
+        "effects"
+      ]
     }
   ],
   "matchedRuns": [
@@ -52,7 +62,10 @@
       "id": "motion-five-seconds",
       "job": "motion",
       "why": "Both served models support a five-second clip, so the duration does not confound the comparison.",
-      "models": ["h3-max-turbo", "kling-standard"],
+      "models": [
+        "h3-max-turbo",
+        "kling-standard"
+      ],
       "settings": {
         "referenceAssetId": "asset_9c507145eaac4ebd9907001db1796085",
         "durationSeconds": 5,
@@ -60,8 +73,112 @@
       },
       "estimateMicro": 590000,
       "estimateBasis": "h3-max-turbo 5s at the published US$0.04/s plus one reserved second (US$0.24) and Kling 2.5 Turbo Pro 5s (US$0.35). Estimates from the served registry, not an invoice.",
-      "status": "prepared, not run",
-      "blockedOn": "Owner approval for the spend. The studio's fal account is the operator's; nothing here charges it without that decision."
+      "status": "run and reviewed on 2026-11-15",
+      "reviewedAt": "2026-11-15T10:14:39Z",
+      "reviewSurface": "https://media.loftwah.com/compare?job=motion",
+      "results": [
+        {
+          "model": "h3-max-turbo",
+          "generationId": "gen_a403ff20177a4b328be390efdac72e4e",
+          "assetId": "asset_4ee04be7afe743e4b136a9b6feac34ce",
+          "sha256": "c01e4a8f60a727bf86be6fb6c7b11c64a9d594877d3a5338088bc040c17ea97e",
+          "width": 1344,
+          "height": 768,
+          "durationMs": 5184,
+          "bytes": 2658207,
+          "estimateMicro": 240000,
+          "allocatedMicro": 240000,
+          "providerChargedMicro": null,
+          "review": {
+            "pick": true,
+            "reject": false,
+            "reason": "Keeps the approved still, paper grain and lamp glow. The slow push reads as the requested camera move.",
+            "at": "0:01"
+          }
+        },
+        {
+          "model": "kling-standard",
+          "generationId": "gen_1e7d9f9ebe8741f9a0491dfbd9aa23e9",
+          "assetId": "asset_9c0b45ad2b804e338dcb398ce08c2488",
+          "sha256": "71454b5665cf8dda332888501a4f67ad9fb6bdb1c830e503706c5b4c5d14cd2a",
+          "width": 1920,
+          "height": 1080,
+          "durationMs": 5042,
+          "bytes": 14658571,
+          "estimateMicro": 350000,
+          "allocatedMicro": 350000,
+          "providerChargedMicro": null,
+          "review": {
+            "pick": false,
+            "reject": true,
+            "reason": "The clip replaces the approved paper desk with an unrelated mountaineer scene. It does not preserve the source still, the lamp or the margin.",
+            "at": "0:02"
+          }
+        }
+      ],
+      "finding": "Kling did not preserve the approved reference. The comparison now shows the source still beside each take so this is visible before a verdict.",
+      "remaining": "Provider invoice is not linked; both providerChargedMicro values stay null. One take per model, not a reliability score."
+    },
+    {
+      "id": "still-square",
+      "job": "still",
+      "why": "Both served image models accept the same square brief with no reference, so the comparison is only about the produced still.",
+      "models": [
+        "studio-film",
+        "studio-print"
+      ],
+      "settings": {
+        "aspect": "square",
+        "referenceCount": 0,
+        "prompt": "An editorial paper-cut still of a quiet desk at night: one warm lamp, a single burnt-orange mark on the margin, deep teal shadows, room for a headline. No text, no people."
+      },
+      "estimateMicro": 45000,
+      "estimateBasis": "studio-film 1024px US$0.02 plus studio-print 1024px US$0.03 from the served registry. Estimates, not invoices.",
+      "status": "run and reviewed on 2026-11-15",
+      "reviewedAt": "2026-11-15T10:19:50Z",
+      "reviewSurface": "https://media.loftwah.com/compare?job=still",
+      "results": [
+        {
+          "model": "studio-film",
+          "generationId": "gen_3135ac7862a04f6499fc7611655f33f9",
+          "assetId": "asset_c963a474e3f54fe2b1e03defdad7d499",
+          "sha256": "5f265cfa7f20c64ff9b39a6dfd8a05a2dac2a3eb14ef175d2ad1cb6432b8881d",
+          "width": 1024,
+          "height": 1024,
+          "durationMs": null,
+          "bytes": 553808,
+          "estimateMicro": 20000,
+          "allocatedMicro": 20000,
+          "providerChargedMicro": null,
+          "review": {
+            "pick": true,
+            "reject": false,
+            "reason": "Full paper-cut desk, warm lamp and torn edge, with quiet space for a headline. It matches the brief.",
+            "at": ""
+          }
+        },
+        {
+          "model": "studio-print",
+          "generationId": "gen_041c1632200744b4bdb2d18ff2c20f99",
+          "assetId": "asset_d35064a3fa6947b48b8a2c45e57e8507",
+          "sha256": "f82eaf2f4eb0ba37f969c59b8398179be66a69bd585389023fd6bedc6ba58352",
+          "width": 1024,
+          "height": 1024,
+          "durationMs": null,
+          "bytes": 370438,
+          "estimateMicro": 25000,
+          "allocatedMicro": 25000,
+          "providerChargedMicro": null,
+          "review": {
+            "pick": false,
+            "reject": true,
+            "reason": "Abstract close-up of a lamp and paper. It loses the desk, the book and the headline space the brief asked for.",
+            "at": ""
+          }
+        }
+      ],
+      "finding": "Studio Film preserved the full desk composition and headline space; Studio Print produced a close-up abstraction.",
+      "remaining": "Provider invoice is not linked; both providerChargedMicro values stay null. One take per model, not a reliability score."
     }
   ]
 }

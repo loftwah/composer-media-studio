@@ -228,3 +228,24 @@ test('a review is bound to the exact saved take, not just the model name', async
   assert.match(html, /\/api\/assets\/asset_ref\/file/);
   assert.match(html, /Source still used for this take/);
 });
+
+test('the pinned comparison fixtures keep the matched runs and their reviews', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const fixture = JSON.parse(await readFile(new URL('../fixtures/comparison-fixtures.json', import.meta.url), 'utf8'));
+  assert.equal(fixture.schema, 'media-studio-comparison-fixtures/v1');
+  assert.ok(fixture.matchedRuns.length >= 2);
+  for (const run of fixture.matchedRuns) {
+    assert.equal(run.models.length, 2, `${run.id} compares two models`);
+    assert.equal(run.results.length, 2, `${run.id} records both results`);
+    assert.match(run.reviewedAt, /^2026-11-15T/);
+    for (const result of run.results) {
+      assert.match(result.generationId, /^gen_[a-f0-9]{32}$/);
+      assert.match(result.sha256, /^[a-f0-9]{64}$/);
+      assert.ok(result.providerChargedMicro === null || Number.isInteger(result.providerChargedMicro));
+      assert.equal(typeof result.review.reason, 'string');
+      assert.ok(result.review.reason.length > 10);
+    }
+    const picked = run.results.filter(result => result.review.pick);
+    assert.equal(picked.length, 1, `${run.id} has one picked take`);
+  }
+});
