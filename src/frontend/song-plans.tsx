@@ -106,7 +106,7 @@ function SceneCaptionContext({ scene, cues, changed, index }: { scene: Scene; cu
     <button type="button" className="quiet" onClick={() => { const heading = document.getElementById('song-captions-heading'); heading?.scrollIntoView({ block:'start' }); heading?.focus({ preventScroll:true }); }}>Go to captions</button>
   </details>;
 }
-export function SongPlans({ projectId, assets, canEdit, onStoryboard }: { projectId: string; assets: MediaAssetV1[]; canEdit: boolean; onStoryboard: (composition: CompositionV1) => void }) {
+export function SongPlans({ projectId, assets, canEdit, onStoryboard, onAssetSaved }: { projectId: string; assets: MediaAssetV1[]; canEdit: boolean; onStoryboard: (composition: CompositionV1) => void; onAssetSaved: (asset: MediaAssetV1) => void }) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/song-plans`;
   const songs = assets.filter(a => a.kind === 'audio' && a.durationMs && a.durationMs >= 2000);
   const images = assets.filter(a => a.kind === 'image');
@@ -122,6 +122,11 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard }: { projec
   const [end, setEnd] = useState(seconds(Math.min(songs[0]?.durationMs ?? 30000, 60000)));
   const [count, setCount] = useState('4');
   const [rights, setRights] = useState(false);
+  const [trackUrl, setTrackUrl] = useState('');
+  const [trackRights, setTrackRights] = useState(false);
+  const [importingTrack, setImportingTrack] = useState(false);
+  const [trackStatus, setTrackStatus] = useState('');
+  const [trackError, setTrackError] = useState('');
   const [captionRights, setCaptionRights] = useState(cached?.captionRights ?? false);
   const [captionOffset, setCaptionOffset] = useState('');
   const [showCaptionShift, setShowCaptionShift] = useState(false);
@@ -165,6 +170,29 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard }: { projec
   const changeScene = (index: number, patch: Partial<Scene>) => setDraft(current => current && ({ ...current, scenes: current.scenes.map((scene, i) => i === index ? { ...scene, ...patch } : scene) }));
   const changeCue = (index: number, patch: Partial<Cue>) => setCues(current => current.map((cue, i) => i === index ? { ...cue, ...patch } : cue));
   const mayLeave = () => !(changedPlan || changedCues || changedDirection || changedReference || changedStarts) || window.confirm('Discard unsaved changes to this plan?');
+  const importTrack = async () => {
+    if (!canEdit || !trackRights || importingTrack) return;
+    setImportingTrack(true);
+    setTrackStatus('');
+    setTrackError('');
+    try {
+      const { asset } = await request(`/api/projects/${encodeURIComponent(projectId)}/assets/loftwahfm`, 'POST', {
+        url: trackUrl, rightsConfirmed: trackRights,
+      }) as { asset: MediaAssetV1 };
+      onAssetSaved(asset);
+      setSongId(asset.id);
+      setStart('0');
+      setEnd(seconds(Math.min(asset.durationMs ?? 30000, 60000)));
+      setRights(false);
+      setTrackRights(false);
+      setTrackUrl('');
+      setTrackStatus(`${asset.title} is saved in this project and selected for your next plan.`);
+    } catch (error) {
+      setTrackError(error instanceof Error ? error.message : 'Studio could not confirm the import. Try the same link again.');
+    } finally {
+      setImportingTrack(false);
+    }
+  };
   const selectedSong = songs.find(song => song.id === songId);
   const takeReview = saved?.scenes.map((scene, index) => {
     const take = videos.find(video => video.id === scene.selectedTakeId);
@@ -208,7 +236,21 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard }: { projec
     {loading ? <p>Loading saved plans…</p> : <>
       {!canEdit && <p className="small">This connection can view and download plans; editing requires project edit access.</p>}
       <div className="song-plan-columns">
-        <div><h3>Start with a song</h3>{songs.length === 0 ? <p>No measured audio yet. Upload an MP3 or WAV in the library, then return here.</p> : <form className="stack" onSubmit={e => { e.preventDefault(); if (!mayLeave()) return; void run(async () => { const result = await request(base, 'POST', { songAssetId: songId, rightsConfirmed: rights, title, aspect: '16:9', startMs: milliseconds(start), endMs: milliseconds(end), sceneCount: Number(count) }); setPlans(current => [result.plan, ...current]); open(result.plan); setTitle(''); setRights(false); setMessage('Plan saved. Adjust the suggested scenes below.'); }); }}>
+        <div><h3>Start with a song</h3>
+        {canEdit && <details className="song-plan-portability">
+          <summary>Import a LoftwahFM track</summary>
+          <p className="small">Paste a direct MP3 link from <a href="https://fm.loftwah.com/" target="_blank" rel="noreferrer">LoftwahFM</a>. Studio keeps a private copy and its source link in this project.</p>
+          <form className="stack" onSubmit={event => { event.preventDefault(); void importTrack(); }}>
+            <fieldset disabled={importingTrack || busy}>
+              <label>LoftwahFM MP3 link<input type="url" required maxLength={800} value={trackUrl} onChange={event => { setTrackUrl(event.target.value); setTrackRights(false); setTrackError(''); setTrackStatus(''); }} /></label>
+              <label className="song-check"><input type="checkbox" checked={trackRights} onChange={event => setTrackRights(event.target.checked)} /> I own this track or have permission to use it.</label>
+              <button type="submit" className="secondary" disabled={!trackRights || !trackUrl.trim()}>{importingTrack ? 'Importing track…' : 'Import and select track'}</button>
+            </fieldset>
+          </form>
+          {trackError && <p className="notice" role="alert">{trackError}</p>}
+          <p className="small" role="status">{importingTrack ? 'Copying the MP3 into this project…' : trackStatus}</p>
+        </details>}
+        {songs.length === 0 ? <p>No measured audio yet. Upload an MP3 or WAV in the library, then return here.</p> : <form className="stack" onSubmit={e => { e.preventDefault(); if (!mayLeave()) return; void run(async () => { const result = await request(base, 'POST', { songAssetId: songId, rightsConfirmed: rights, title, aspect: '16:9', startMs: milliseconds(start), endMs: milliseconds(end), sceneCount: Number(count) }); setPlans(current => [result.plan, ...current]); open(result.plan); setTitle(''); setRights(false); setMessage('Plan saved. Adjust the suggested scenes below.'); }); }}>
           <fieldset disabled={!canEdit || busy}><label>Song<select value={songId} onChange={e => { const id = e.target.value; setSongId(id); setRights(false); setStart('0'); setEnd(seconds(Math.min(songs.find(s => s.id === id)?.durationMs ?? 30000, 60000))); }}>{songs.map(song => <option key={song.id} value={song.id}>{song.title} · {seconds(song.durationMs ?? 0)}s</option>)}</select></label>
           {selectedSong && <audio controls preload="none" src={selectedSong.file} aria-label={`Listen to ${selectedSong.title}`} />}
           <label>Plan title<input required maxLength={80} value={title} onChange={e => setTitle(e.target.value)} placeholder="My music video" /></label>
