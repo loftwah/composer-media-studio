@@ -1,0 +1,67 @@
+{
+  "schema": "media-studio-comparison-fixtures/v1",
+  "recorded": "2026-11-15T09:05:00Z",
+  "note": "One rights-cleared still, one section of our own footage and one script/audio brief, pinned by asset id and content hash. A comparison run reads from these so two models are asked for exactly the same thing.",
+  "origin": "https://media.loftwah.com",
+  "fixtures": [
+    {
+      "id": "still-the-line-across-the-margin",
+      "role": "reference still",
+      "kind": "image",
+      "mime": "image/png",
+      "assetId": "asset_9c507145eaac4ebd9907001db1796085",
+      "bytes": 1363238,
+      "width": 1536,
+      "height": 864,
+      "sha256Prefix": "7758a17cd5e12dd1",
+      "title": "The line across the margin",
+      "provenance": "Generated in this studio with a served Workers AI image model, reviewed and kept. No third-party artwork, no stock photography, no model release needed.",
+      "usedFor": ["motion", "reference-edit", "masked-edit"]
+    },
+    {
+      "id": "footage-after-hours-room-wall",
+      "role": "source footage",
+      "kind": "video",
+      "mime": "video/mp4",
+      "assetId": "asset_53e0b83b53f541e1b3eb83c1154a90cb",
+      "bytes": 5490517,
+      "width": 640,
+      "height": 360,
+      "durationMs": 33041,
+      "sha256Prefix": "9c6120d6f236a378",
+      "title": "Local render — After Hours — The Room Wall",
+      "provenance": "Assembled on this device from takes made in this studio and uploaded back as our own source. 33 seconds; comparisons use one six-second section so the run stays bounded.",
+      "usedFor": ["footage-edit"]
+    },
+    {
+      "id": "audio-after-hours-mix",
+      "role": "audio bed",
+      "kind": "audio",
+      "mime": "audio/wav",
+      "assetId": "asset_13742a8111c643029350b078fd9941cf",
+      "bytes": 5821244,
+      "durationMs": 33000,
+      "sha256Prefix": "6d2fe9f8df1e575e",
+      "title": "Mixed soundtrack — After Hours — The Room Wall",
+      "provenance": "Built from studio-generated score, narration and effects. Used as the audio bed the script brief is written against.",
+      "usedFor": ["voice", "music", "effects"]
+    }
+  ],
+  "matchedRuns": [
+    {
+      "id": "motion-five-seconds",
+      "job": "motion",
+      "why": "Both served models support a five-second clip, so the duration does not confound the comparison.",
+      "models": ["h3-max-turbo", "kling-standard"],
+      "settings": {
+        "referenceAssetId": "asset_9c507145eaac4ebd9907001db1796085",
+        "durationSeconds": 5,
+        "prompt": "Subtle cinematic motion: a slow push in on the line across the margin. Keep the paper grain, the warm lamp glow and the single burnt-orange marks steady. No new objects, no text, no camera shake."
+      },
+      "estimateMicro": 590000,
+      "estimateBasis": "h3-max-turbo 5s at the published US$0.04/s plus one reserved second (US$0.24) and Kling 2.5 Turbo Pro 5s (US$0.35). Estimates from the served registry, not an invoice.",
+      "status": "prepared, not run",
+      "blockedOn": "Owner approval for the spend. The studio's fal account is the operator's; nothing here charges it without that decision."
+    }
+  ]
+}
