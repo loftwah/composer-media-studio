@@ -78,10 +78,18 @@ function applyBlind() {
   const toggle = document.querySelector("[data-blind-mode]");
   const blind = toggle instanceof HTMLInputElement ? toggle.checked : grid.classList.contains("is-blind");
   grid.classList.toggle("is-blind", blind);
+  let chosen = false;
   for (const take of grid.querySelectorAll("[data-take]")) {
     const entry = entryFor(read(), take);
-    take.classList.toggle("is-revealed", Boolean(entry.pick || entry.reject));
+    const revealed = Boolean(entry.pick || entry.reject);
+    chosen ||= revealed;
+    take.classList.toggle("is-revealed", revealed);
   }
+  // The verdict names the models and their costs. Keep it out of sight until
+  // the reviewer has made a choice, otherwise blind review would be a label
+  // above a spoiler.
+  const verdict = document.querySelector("[data-verdict]");
+  if (verdict instanceof HTMLElement) verdict.hidden = blind && !chosen;
 }
 
 function paint() {
