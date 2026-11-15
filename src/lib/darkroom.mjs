@@ -86,6 +86,26 @@ function requireBindings(env, needsReference) {
     throw preflightError(503, "This studio cannot reach its image service yet. No image request was sent.", "provider_unconfigured");
 }
 
+/** A paid request that fails before dispatch must say why.
+ *
+ * Darkroom's reference preparation rejects an unsupported or oversized
+ * reference and its Images dependency can be unavailable for billing reasons.
+ * Those errors used to collapse into one generic message, which hid the real
+ * reason from the studio, the agent and the release record. The package's own
+ * wording is fixed text, never provider detail, so it is safe to return. */
+export function preflightFailure(error) {
+  const message = typeof error?.message === "string" ? error.message.trim() : "";
+  if (/legacy billing|9432/i.test(message))
+    return preflightError(
+      503,
+      "Cloudflare Images is not available on this account because it is on legacy billing. Reference images need the Images binding. No image request was sent.",
+      "provider_billing",
+    );
+  if (error?.name === "MediaSettingsError" && message && message.length <= 200)
+    return preflightError(400, `The reference image was refused: ${message}. No image request was sent.`, "reference_invalid");
+  return preflightError(502, "The image service could not prepare this request. No image request was sent.", "provider_preflight");
+}
+
 const formats = new Map([
   ["image/png", "png"],
   ["image/jpeg", "jpeg"],
@@ -218,9 +238,12 @@ export async function runDarkroomImage(env, generation, model, settings, referen
   let outcome;
   try {
     outcome = await generateMedia(host, { requestId: generation.id, path, settings: request }, signal);
-  } catch {
+  } catch (error) {
     if (!attempted) {
-      throw refusal ?? preflightError(502, "The image service could not prepare this request. No image request was sent.", "provider_preflight");
+      // The bounded reason is also in the worker log so a released failure can
+      // be diagnosed without exposing the private prompt.
+      console.error("darkroom preflight", generation.id, error?.name ?? "Error", String(error?.message ?? "").slice(0, 200));
+      throw refusal ?? preflightFailure(error);
     }
     throw new HttpError(502, "The image request may have run. Check this job to recover the original without generating again.", "provider_error");
   }
