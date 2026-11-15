@@ -293,12 +293,26 @@ export function toBase64(bytes) {
   return btoa(binary);
 }
 
+/** The still, video and sound generation models Composer Init offers. Editing
+ * and render routes stay in the Studio manifest but are not Init choices. */
+const composerSelection = new Set([
+  "studio-print",
+  "studio-film",
+  "studio-craft",
+  "studio-quick",
+  "hailuo-standard",
+  "kling-standard",
+  "studio-score",
+  "studio-voice",
+]);
+
 export function publicModels() {
   return Object.values(models).filter(model => !model.restyle).map((model) => ({
     id: model.id,
     label: model.label,
     kind: model.kind,
     endpoint: model.endpoint,
+    composer: composerSelection.has(model.id),
     description: model.description,
     aspects: model.aspects ?? [],
     durations: model.durations ?? null,
