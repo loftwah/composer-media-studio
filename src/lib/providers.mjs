@@ -162,7 +162,7 @@ export const models = {
     id: "studio-effect",
     label: "Studio Effect",
     provider: PROVIDER_FAL,
-    endpoint: "fal-ai/elevenlabs/sound-effects/v2",
+    endpoint: "fal-ai/elevenlabs/sound-effects/v3",
     kind: "audio",
     description:
       "One short sound effect or atmosphere cue from a written description, using ElevenLabs' sound-effects model through fal.ai. Saved as its own asset so it can be mixed separately.",

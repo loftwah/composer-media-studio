@@ -12,7 +12,7 @@ import {
   advanceGeneration,
   budgetSnapshot,
 } from "../src/lib/jobs.mjs";
-import { getModel, validateSettings, publicModels, publicRetiredModels, estimateCost } from "../src/lib/providers.mjs";
+import { getModel, validateSettings, publicModels, publicRetiredModels, estimateCost, submitAudio } from "../src/lib/providers.mjs";
 import { imageSize, videoInfo, sniffMedia } from "../src/lib/util.mjs";
 import { PNG_1x1, jpeg, setup } from "./harness.mjs";
 
@@ -49,6 +49,33 @@ test("the retiring draft model is withdrawn but keeps its exact attribution", ()
   const retired = publicRetiredModels().find((model) => model.id === "studio-draft");
   assert.equal(retired.endpoint, "@cf/bytedance/stable-diffusion-xl-lightning");
   assert.equal(retired.retiredAt, "2026-11-20");
+});
+
+test("Studio Effect uses the current fal sound-effects endpoint and request shape", async () => {
+  const original = globalThis.fetch;
+  let url;
+  let body;
+  globalThis.fetch = async (input, init) => {
+    url = String(input);
+    body = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      request_id: "request_effect",
+      status_url: "https://queue.fal.run/request_effect/status",
+      response_url: "https://queue.fal.run/request_effect",
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    await submitAudio({ FAL_KEY: "fictional-test-key" }, getModel("studio-effect"), {
+      prompt: "a soft ceramic chime",
+      durationSeconds: 4,
+    });
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.match(url, /fal-ai\/elevenlabs\/sound-effects\/v3$/);
+  assert.equal(body.text, "a soft ceramic chime");
+  assert.equal(body.duration_seconds, 4);
+  assert.equal(body.enable_safety_checker, true);
 });
 
 test("image and video bytes are read without trusting the client", () => {

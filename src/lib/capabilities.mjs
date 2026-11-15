@@ -12,7 +12,7 @@ export const CAPABILITIES_LAST_GOOD_KEY = "capabilities/last-good.json";
 export const CAPABILITIES_STATE_KEY = "capabilities/state.json";
 export const CAPABILITIES_REFRESH_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
+const MAX_SOURCE_BYTES = 12 * 1024 * 1024;
 
 const CLOUDFLARE_DOCS = "https://developers.cloudflare.com/workers-ai/models";
 const FAL_MODELS = "https://fal.ai/api/models";
