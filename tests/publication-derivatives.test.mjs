@@ -198,6 +198,36 @@ test("uploads refuse other projects, read-only links, non-images, audio pages an
   assert.equal((await call(env, "/p/public-still/thumb")).status, 404);
 });
 
+test("a published film with no chosen poster still shares its stored preview", async () => {
+  const { env, project, video, poster, image } = await fixture();
+  await publish(env, project, { id: "pub_video", assetId: video.id, slug: "public-film" });
+  await insertDerivative(env, project, "pub_video", { width: 720, height: 1280 });
+  const page = await call(env, "/p/public-film");
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /poster="\/p\/public-film\/thumb"/);
+  assert.match(html, /property="og:image" content="https:\/\/studio\.test\/p\/public-film\/thumb"/);
+  assert.match(html, /property="og:image:type" content="image\/jpeg"/);
+  assert.match(html, /property="og:image:width" content="720"/);
+  assert.match(html, /property="og:image:height" content="1280"/);
+  assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  assert.match(html, /property="og:video" content="https:\/\/studio\.test\/p\/public-film\/media"/);
+  assert.equal((await call(env, "/p/public-film/thumb")).status, 200);
+
+  // A chosen image poster still wins over the gallery preview.
+  await publish(env, project, { id: "pub_poster", assetId: video.id, posterAssetId: poster.id, slug: "public-film-poster" });
+  await insertDerivative(env, project, "pub_poster", { width: 720, height: 480 });
+  const withPoster = await (await call(env, "/p/public-film-poster")).text();
+  assert.match(withPoster, /poster="\/p\/public-film-poster\/poster"/);
+  assert.match(withPoster, /property="og:image" content="https:\/\/studio\.test\/p\/public-film-poster\/poster"/);
+  assert.match(withPoster, /property="og:image:width" content="\d+"/);
+
+  // An image publication still shares the image itself.
+  await publish(env, project, { id: "pub_image_page", assetId: image.id, slug: "public-still" });
+  const still = await (await call(env, "/p/public-still")).text();
+  assert.match(still, /property="og:image" content="https:\/\/studio\.test\/p\/public-still\/media"/);
+});
+
 test("withdrawal and asset deletion stop the preview immediately and remove its bytes", async () => {
   const { env, project, cookie, image } = await fixture();
   await publish(env, project, { id: "pub_image", assetId: image.id, slug: "public-still" });

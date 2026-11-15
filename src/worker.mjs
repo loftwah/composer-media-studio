@@ -1866,12 +1866,24 @@ async function handlePublic(request, env, url) {
         .first();
     }
     const usablePoster = posterAsset && !posterAsset.deleted_at && posterAsset.kind === "image" ? posterAsset : null;
+    // A published film with no chosen poster still has a stored preview from the
+    // gallery pipeline. Use it for the video poster and the share image so a
+    // shared link keeps its thumbnail instead of falling back to text-only.
+    const preview = !usablePoster && publication.asset_kind === "video"
+      ? await env.DB.prepare(
+          "SELECT mime,width,height FROM publication_derivatives WHERE publication_id=?1 AND kind='thumb'",
+        )
+          .bind(publication.id)
+          .first()
+      : null;
     const poster =
       publication.asset_kind === "image"
         ? `/p/${publication.slug}/download`
         : usablePoster
           ? `/p/${publication.slug}/poster`
-          : null;
+          : preview
+            ? `/p/${publication.slug}/thumb`
+            : null;
     const destinations = sharingDestinations(env);
     // Only permit a local gallery return; never turn a public link into an open redirect.
     let galleryBack = "/gallery";
@@ -1906,9 +1918,9 @@ async function handlePublic(request, env, url) {
       media: `/p/${publication.slug}/media`,
       download: `/p/${publication.slug}/download`,
       poster,
-      posterMime: usablePoster?.mime ?? null,
-      posterWidth: usablePoster?.width ?? null,
-      posterHeight: usablePoster?.height ?? null,
+      posterMime: usablePoster?.mime ?? preview?.mime ?? null,
+      posterWidth: usablePoster?.width ?? preview?.width ?? null,
+      posterHeight: usablePoster?.height ?? preview?.height ?? null,
       buildUrl: destinations.buildUrl,
       storyUrl: destinations.storyUrl,
       origin: env.PUBLIC_ORIGIN || url.origin,
