@@ -44,6 +44,24 @@ import { proposeSceneDirection } from "./lib/director.mjs";
 import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
+import {
+  addReviewFeedback,
+  assertFeedbackAttemptAllowed,
+  assertReviewAttemptAllowed,
+  compareReviewRooms,
+  createReviewRoom,
+  listReviewRooms,
+  openReviewRoom,
+  ownerReviewRoomView,
+  publicReviewRoomView,
+  recordReviewDecision,
+  recordReviewFailure,
+  revokeReviewRoom,
+  reviewFeedbackForRoom,
+  rotateReviewRoomToken,
+  setFeedbackResolved,
+  pruneReviewAttempts,
+} from "./lib/review-rooms.mjs";
 import { measureFootageSource } from "./lib/footage-preflight.mjs";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.mjs";
@@ -52,7 +70,7 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage } from "./lib/ui.mjs";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage, reviewRoomPage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
@@ -100,10 +118,10 @@ const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 
-function securityHeaders(response, woodhouse = false) {
+function securityHeaders(response, woodhouse = false, { noReferrer = false } = {}) {
   const headers = new Headers(response.headers);
   headers.set("x-content-type-options", "nosniff");
-  headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  headers.set("referrer-policy", noReferrer ? "no-referrer" : "strict-origin-when-cross-origin");
   headers.set("x-frame-options", "DENY");
   headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
   headers.set(
@@ -358,6 +376,51 @@ async function handleLogin(request, env) {
   });
 }
 
+async function handleReviewApi(request, env, path) {
+  const match = path.match(/^\/api\/review\/([A-Za-z0-9_-]{43})(?:\/(feedback|decision))?$/);
+  if (!match) throw new HttpError(404, "Not found", "not_found");
+  const [, token, operation] = match;
+  if (operation && request.method !== "POST") throw new HttpError(405, "Method not allowed", "method_not_allowed");
+  if (!operation && request.method !== "GET") throw new HttpError(405, "Method not allowed", "method_not_allowed");
+  if (operation) assertSameOrigin(request, env);
+
+  await assertReviewAttemptAllowed(env, request);
+  let access;
+  try {
+    access = await openReviewRoom(env, token);
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 404 || error.status === 410))
+      await recordReviewFailure(env, request).catch(() => {});
+    throw error;
+  }
+  const { room } = access;
+  if (!operation) {
+    const feedback = await reviewFeedbackForRoom(env, room);
+    return json({ room: publicReviewRoomView(room, feedback) });
+  }
+  if (operation === "feedback") {
+    await assertFeedbackAttemptAllowed(env, room, request);
+    const input = await body(request, 8 * 1024);
+    const feedback = await addReviewFeedback(env, room, input);
+    const updated = await env.DB.prepare("SELECT * FROM review_rooms WHERE id=?1 AND project_id=?2")
+      .bind(room.id, room.project_id)
+      .first();
+    return json(
+      {
+        feedback,
+        room: publicReviewRoomView(updated, await reviewFeedbackForRoom(env, updated)),
+      },
+      201,
+    );
+  }
+  const input = await body(request, 8 * 1024);
+  await recordReviewDecision(env, room, input);
+  const updated = await env.DB.prepare("SELECT * FROM review_rooms WHERE id=?1 AND project_id=?2")
+    .bind(room.id, room.project_id)
+    .first();
+  return json({ room: publicReviewRoomView(updated, await reviewFeedbackForRoom(env, updated)) });
+}
+
 async function handleApi(request, env, url, ctx, scopedAgent = null) {
   const path = url.pathname.replace(/\/+$/, "");
   const method = request.method;
@@ -404,6 +467,10 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   // verifies fal's Ed25519 signature and can only update the job that already
   // holds the delivered request id, so it sits before the session gate.
   if (path === "/api/fal/webhook" && method === "POST") return handleFalWebhook(request, env);
+
+  // A private review link is a bearer capability. It is checked by hash on
+  // every request and never inherits an owner session or project access.
+  if (path.startsWith("/api/review/")) return handleReviewApi(request, env, path);
 
   if (path === "/api/session") {
     const session = await readSession(env, request);
@@ -731,6 +798,35 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     const subjectMatch = rest && rest.match(/^subjects\/([a-z0-9_]+)$/);
     if (subjectMatch && method === "GET") return json({ versions: await subjectVersions(env, project, subjectMatch[1]) });
     if (subjectMatch && method === "PATCH") return json({ subject: await saveSubject(env, project, await body(request), subjectMatch[1]) });
+
+    if (rest === "review-rooms" && method === "GET") return json({ rooms: await listReviewRooms(env, project) });
+    if (rest === "review-rooms" && method === "POST") {
+      const created = await createReviewRoom(env, project, await body(request));
+      return json(
+        {
+          room: ownerReviewRoomView(created.room),
+          reviewUrl: `/r/${created.token}`,
+        },
+        201,
+      );
+    }
+    if (rest === "review-rooms/compare" && method === "GET") {
+      const left = new URL(request.url).searchParams.get("left") ?? "";
+      const right = new URL(request.url).searchParams.get("right") ?? "";
+      if (!/^[a-z0-9_]+$/.test(left) || !/^[a-z0-9_]+$/.test(right))
+        throw new HttpError(400, "Choose two saved review versions", "review_compare_invalid");
+      return json(await compareReviewRooms(env, project, left, right));
+    }
+    const reviewFeedbackMatch = rest && rest.match(/^review-rooms\/([a-z0-9_]+)\/feedback\/([a-z0-9_]+)$/);
+    if (reviewFeedbackMatch && method === "PATCH")
+      return json({ feedback: await setFeedbackResolved(env, project, reviewFeedbackMatch[1], reviewFeedbackMatch[2], await body(request)) });
+    const reviewRoomMatch = rest && rest.match(/^review-rooms\/([a-z0-9_]+)(?:\/(revoke|rotate))?$/);
+    if (reviewRoomMatch && method === "POST" && reviewRoomMatch[2] === "revoke")
+      return json({ room: await revokeReviewRoom(env, project, reviewRoomMatch[1]) });
+    if (reviewRoomMatch && method === "POST" && reviewRoomMatch[2] === "rotate") {
+      const rotated = await rotateReviewRoomToken(env, project, reviewRoomMatch[1]);
+      return json({ room: rotated.room, reviewUrl: `/r/${rotated.token}` });
+    }
 
     if (rest === "footage-plans" && method === "GET") return json({ plans: await listFootagePlans(env, project) });
     if (rest === "footage-plans" && method === "POST") return json({ plan: await createFootagePlan(env, project, await body(request)) }, 201);
@@ -1397,6 +1493,117 @@ async function handlePublic(request, env, url) {
     });
   }
 
+  const reviewMatch = path.match(/^\/r\/([A-Za-z0-9_-]{1,128})(\/media)?\/?$/);
+  if (reviewMatch) {
+    if (request.method !== "GET" && request.method !== "HEAD")
+      throw new HttpError(405, "Method not allowed", "method_not_allowed");
+    const [, token, extra] = reviewMatch;
+    await assertReviewAttemptAllowed(env, request);
+    const refusalTitle = (error) =>
+      error.code === "review_revoked"
+        ? "This review link was revoked"
+        : error.code === "review_expired"
+          ? "This review link expired"
+          : error.code === "review_version_changed"
+            ? "This review link no longer matches the saved version"
+            : error.code === "review_asset_unavailable"
+              ? "This saved version is no longer available"
+              : "This review link is not available";
+    if (extra === "/media") {
+      try {
+        const { room, asset } = await openReviewRoom(env, token);
+        const range = parseRange(request.headers.get("range"), asset.bytes);
+        if (range?.invalid)
+          return new Response(null, {
+            status: 416,
+            headers: {
+              "content-range": `bytes */${asset.bytes}`,
+              "accept-ranges": "bytes",
+              "cache-control": "private, no-store",
+              "referrer-policy": "no-referrer",
+              "x-robots-tag": "noindex, nofollow, noarchive",
+            },
+          });
+        const object = await env.MEDIA.get(
+          asset.r2_key,
+          range ? { range: { offset: range.offset, length: range.length } } : undefined,
+        );
+        if (!object)
+          return new Response("This saved version is no longer available.", {
+            status: 410,
+            headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow, noarchive" },
+          });
+        return new Response(request.method === "HEAD" ? null : object.body, {
+          status: range ? 206 : 200,
+          headers: {
+            "content-type": room.asset_mime,
+            ...rangeHeaders(range, asset.bytes),
+            "cache-control": "private, no-store",
+            "referrer-policy": "no-referrer",
+            "x-robots-tag": "noindex, nofollow, noarchive",
+            "x-content-type-options": "nosniff",
+            etag: `"${room.asset_sha256.slice(0, 32)}"`,
+          },
+        });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          if (error.status === 404 || error.status === 410) await recordReviewFailure(env, request).catch(() => {});
+          return new Response(error.message, {
+            status: error.status,
+            headers: {
+              "content-type": "text/plain; charset=utf-8",
+              "cache-control": "private, no-store",
+              "referrer-policy": "no-referrer",
+              "x-robots-tag": "noindex, nofollow, noarchive",
+            },
+          });
+        }
+        throw error;
+      }
+    }
+    try {
+      const { room } = await openReviewRoom(env, token);
+      const feedback = await reviewFeedbackForRoom(env, room);
+      const html = reviewRoomPage({
+        room,
+        feedback,
+        mediaPath: `/r/${encodeURIComponent(token)}/media`,
+        kind: room.asset_kind,
+        title: room.version_label,
+        expiresAt: room.expires_at,
+      });
+      return new Response(html, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "private, no-store",
+          "referrer-policy": "no-referrer",
+          "x-robots-tag": "noindex, nofollow, noarchive",
+        },
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        if (error.status === 404 || error.status === 410) await recordReviewFailure(env, request).catch(() => {});
+        return new Response(
+          reviewRefusalPage({
+            title: refusalTitle(error),
+            message: error.message,
+            code: error.code,
+          }),
+          {
+            status: error.status,
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "cache-control": "private, no-store",
+              "referrer-policy": "no-referrer",
+              "x-robots-tag": "noindex, nofollow, noarchive",
+            },
+          },
+        );
+      }
+      throw error;
+    }
+  }
+
   const publicationMatch = path.match(/^\/p\/([A-Za-z0-9_-]+)(\/poster|\/download|\/media)?$/);
   if (publicationMatch) {
     const [, publicSlug, extra] = publicationMatch;
@@ -1857,7 +2064,8 @@ export default {
       const response = url.pathname.startsWith("/api/")
         ? await handleApi(request, env, url, ctx)
         : await handlePublic(request, env, url);
-      return securityHeaders(response, url.pathname.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true");
+      const reviewPath = /^\/r\/[A-Za-z0-9_-]{1,128}(?:\/media)?\/?$/.test(url.pathname) || url.pathname.startsWith("/api/review/");
+      return securityHeaders(response, url.pathname.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true", { noReferrer: reviewPath });
     } catch (error) {
       if (error instanceof PortableError)
         return securityHeaders(json({ error: { code: error.code, message: error.message }, report: error.report }, error.status));
@@ -1894,6 +2102,7 @@ export default {
         .run();
     })().catch(() => {}));
     ctx.waitUntil(pruneMcpRecords(env));
+    ctx.waitUntil(pruneReviewAttempts(env).catch(() => {}));
     // Read-only capability freshness: real work at most once a day. The every-
     // minute trigger already exists; a failed check keeps the last good copy.
     ctx.waitUntil(refreshCapabilities(env).catch((error) => console.error("Capability refresh unavailable", error?.message ?? error)));

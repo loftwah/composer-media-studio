@@ -58,6 +58,10 @@ const state = {
   filter: "all",
   query: "",
   create: null,
+  reviewRooms: null,
+  reviewCompare: null,
+  reviewLinks: new Map(),
+  reviewPresetAssetId: null,
   compose: { shotIds: [], shotTrims: {}, audioAssetId: null, audioTracks: [], slateAssetId: null, title: "", editingId: null },
   busy: false,
   polling: null,
@@ -208,6 +212,7 @@ async function boot() {
     if (state.view === "asset") state.assetId = route.assetId;
     await loadProject(state.projectId);
   }
+  if (state.view === "project" && state.tab === "review") await loadReviewRooms(state.projectId).catch((error) => { state.reviewRooms = []; notify(error.message, "bad"); });
   if (state.view === "home") await creativeModuleReady;
   bootReady = true;
   render();
@@ -217,6 +222,12 @@ async function boot() {
 async function loadProject(id) {
   const data = await api(`/api/projects/${id}`);
   if (state.projectId !== id) return data;
+  if (state.project && state.project.id !== id) {
+    state.reviewRooms = null;
+    state.reviewCompare = null;
+    state.reviewLinks?.clear();
+    state.reviewPresetAssetId = null;
+  }
   state.project = data.project;
   state.project.assets = data.assets;
   state.project.generations = data.generations;
@@ -227,6 +238,13 @@ async function loadProject(id) {
   state.create = switchCreateProject(projectCreateDrafts, projectCreateDefaults, createProjectId, state.create, id, defaultCreate);
   createProjectId = id;
   return data;
+}
+
+async function loadReviewRooms(projectId) {
+  const data = await api(`/api/projects/${encodeURIComponent(projectId)}/review-rooms`);
+  if (state.projectId !== projectId || state.project?.id !== projectId) return null;
+  state.reviewRooms = data.rooms ?? [];
+  return state.reviewRooms;
 }
 
 function defaultCreate() {
@@ -585,7 +603,7 @@ function projectView() {
     </div>
     ${budgetStrip(project.budget)}
     <nav class="tabs" aria-label="Studio sections">
-      ${["library", "create", "assemble", "history", "publish", "settings"]
+      ${["library", "create", "assemble", "history", "publish", "review", "settings"]
         .map((tab) => `<button role="tab" aria-selected="${state.tab === tab}" data-action="tab" data-tab="${tab}">${tab[0].toUpperCase() + tab.slice(1)}${tab === "history" && project.generations.some(isPending) ? " ·" : ""}</button>`)
         .join("")}
     </nav>
@@ -595,6 +613,7 @@ function projectView() {
       ${state.tab === "assemble" ? (creativeHome ? '<div id="creative-media"></div>' : composeView()) : ""}
       ${state.tab === "history" ? `${uncertainRestyleProjects.has(project.id) ? `<div class="notice" role="status">${historyReadErrors.has(project.id) ? "Could not refresh History. The list may be out of date." : "A recent request may take time to appear. Check History again before starting another."} <button class="secondary" data-action="refresh-uncertain-history">Refresh History</button></div>` : ""}${creativeHome ? '<div id="creative-media"></div>' : historyView()}` : ""}
       ${state.tab === "publish" ? (creativeHome ? '<div id="creative-media"></div>' : publishView()) : ""}
+      ${state.tab === "review" ? reviewView() : ""}
       ${state.tab === "settings" ? (creativeHome ? '<div id="creative-media"></div>' : settingsView()) : ""}
     </section>`;
 }
@@ -675,6 +694,134 @@ function assetCard(asset) {
     </div>
     <button data-action="open-asset" data-id="${esc(asset.id)}">Open</button>
   </article>`;
+}
+
+function reviewStatusLabel(room) {
+  if (room.status === "revoked") return "Link revoked";
+  if (room.status === "expired") return "Link expired";
+  if (room.decision === "approved") return "Approved";
+  if (room.decision === "changes_requested") return "Changes requested";
+  return "Awaiting review";
+}
+
+function reviewStatusClass(room) {
+  if (room.status !== "open") return room.status;
+  if (room.decision === "approved") return "approved";
+  if (room.decision === "changes_requested") return "changes";
+  return "open";
+}
+
+function reviewWhen(timestamp) {
+  return timestamp ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp)) : "";
+}
+
+function reviewTimecode(ms) {
+  const total = Math.max(0, Number(ms) || 0);
+  const minutes = Math.floor(total / 60000);
+  const seconds = Math.floor((total % 60000) / 1000);
+  const tenths = Math.floor((total % 1000) / 100);
+  return `${minutes}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
+function reviewFeedbackItems(room) {
+  if (!room.feedback?.length) return '<p class="small">No feedback on this version yet.</p>';
+  return `<ul class="review-feedback-owner">${room.feedback.map((item) => `
+    <li${item.resolvedAt ? ' class="resolved"' : ""}>
+      <div class="spread"><strong>${esc(item.author)}</strong><span class="small">${esc(reviewWhen(item.createdAt))}${item.resolvedAt ? " · resolved" : ""}</span></div>
+      ${Number.isFinite(item.atMs)
+        ? `<button type="button" class="review-timecode" data-action="review-seek" data-room="${esc(room.id)}" data-ms="${Number(item.atMs)}" aria-label="Play this version from ${esc(reviewTimecode(item.atMs))}">${esc(reviewTimecode(item.atMs))}${Number.isFinite(item.endMs) ? `–${esc(reviewTimecode(item.endMs))}` : ""}</button>`
+        : item.region
+          ? `<span class="review-point">Point ${Math.round(Number(item.region.x) * 100)}% across, ${Math.round(Number(item.region.y) * 100)}% down</span>`
+          : ""}
+      <p>${esc(item.body)}</p>
+      <button type="button" class="quiet" data-action="review-resolve" data-room="${esc(room.id)}" data-id="${esc(item.id)}" data-resolved="${item.resolvedAt ? "1" : "0"}">${item.resolvedAt ? "Reopen note" : "Mark resolved"}</button>
+    </li>`).join("")}</ul>`;
+}
+
+function reviewRoomCard(room) {
+  const link = state.reviewLinks.get(room.id);
+  const dimensions = room.width && room.height ? `${room.width} × ${room.height}` : "";
+  const duration = room.durationMs ? `${(room.durationMs / 1000).toFixed(1)}s` : "";
+  const meta = [room.kind, dimensions, duration, room.sourceKind === "storyboard_render" ? (room.compositionRevision ? `storyboard revision ${reviewWhen(room.compositionRevision)}` : "storyboard render") : "saved asset", room.decision === "approved" ? "Reviewer approved" : room.decision === "changes_requested" ? "Changes requested" : "Awaiting review", `SHA-256 ${room.sha256.slice(0, 12)}…`, `Expires ${reviewWhen(room.expiresAt)}`].filter(Boolean).join(" · ");
+  const preview = room.kind === "video"
+    ? `<video controls playsinline preload="metadata" data-review-video="${esc(room.id)}" src="/api/assets/${encodeURIComponent(room.assetId)}/file" aria-label="Saved version: ${esc(room.versionLabel)}"></video>`
+    : `<img src="/api/assets/${encodeURIComponent(room.assetId)}/file" alt="Saved version: ${esc(room.versionLabel)}" loading="lazy">`;
+  return `<article class="review-room-card" data-review-room="${esc(room.id)}">
+    <div class="review-version-head"><div><h3>${esc(room.versionLabel)}</h3><p class="small" style="margin:0">${esc(room.assetTitle)}</p></div><span class="review-badge ${reviewStatusClass(room)}">${esc(reviewStatusLabel(room))}</span></div>
+    <p class="review-version-meta">${esc(meta)}</p>
+    ${room.status === "open" ? `<label class="review-compare-choice small"><input type="checkbox" data-review-compare value="${esc(room.id)}" aria-label="Select ${esc(room.versionLabel)} for comparison"> Select for comparison</label>` : ""}
+    ${link ? `<div class="review-link"><label class="sr-only" for="review-link-${esc(room.id)}">Private review link</label><input id="review-link-${esc(room.id)}" readonly value="${esc(link)}"><button type="button" class="button secondary" data-action="review-copy-link" data-id="${esc(room.id)}">Copy link</button><span class="small">Shown once. Replacing it invalidates this one.</span></div>` : `<p class="small">The private link is shown only when created. Use “Replace link” to issue a new one.</p>`}
+    <div class="review-room-actions">
+      ${room.status === "open" ? `<button type="button" class="secondary" data-action="review-rotate" data-id="${esc(room.id)}">Replace link</button>` : ""}
+      ${room.status === "open" ? `<button type="button" class="quiet" data-action="review-revoke" data-id="${esc(room.id)}">Revoke link</button>` : ""}
+      <a class="quiet" href="#/a/${encodeURIComponent(state.projectId)}/${encodeURIComponent(room.assetId)}">Open version in studio</a>
+    </div>
+    <details class="asset-technical"><summary>Preview version and ${room.feedbackCount} note${room.feedbackCount === 1 ? "" : "s"}</summary>${preview}${reviewFeedbackItems(room)}</details>
+    ${room.decisionNote ? `<p class="small">Decision note: ${esc(room.decisionNote)}</p>` : ""}
+  </article>`;
+}
+
+function reviewCompareView() {
+  const comparison = state.reviewCompare;
+  if (!comparison) return "";
+  const side = (room, label) => {
+    const media = room.kind === "video"
+      ? `<video controls playsinline preload="metadata" src="/api/assets/${encodeURIComponent(room.assetId)}/file" aria-label="${label}: ${esc(room.versionLabel)}"></video>`
+      : `<img src="/api/assets/${encodeURIComponent(room.assetId)}/file" alt="${label}: ${esc(room.versionLabel)}">`;
+    return `<figure><figcaption><strong>${esc(label)} · ${esc(room.versionLabel)}</strong><span class="review-badge ${reviewStatusClass(room)}">${esc(reviewStatusLabel(room))}</span><br>${esc(room.kind)} · SHA-256 ${esc(room.sha256.slice(0, 12))}… · ${room.feedbackCount} note${room.feedbackCount === 1 ? "" : "s"}</figcaption>${media}<p class="small">${room.decisionNote ? esc(room.decisionNote) : "No decision note."}</p></figure>`;
+  };
+  return `<section class="review-compare" aria-labelledby="review-compare-title">
+    <div class="spread"><div><h2 id="review-compare-title">Saved versions side by side</h2><p class="small">Both versions are read from this project's saved assets. A decision on one does not carry to the other.</p></div><button type="button" class="quiet" data-action="review-compare-clear">Close comparison</button></div>
+    <div class="review-compare-grid">${side(comparison.left, "Version A")}${side(comparison.right, "Version B")}</div>
+  </section>`;
+}
+
+function reviewView() {
+  const canEdit = state.session?.actions.includes("edit") ?? false;
+  const assets = (state.project?.assets ?? []).filter((asset) => asset.kind === "image" || asset.kind === "video");
+  if (!state.reviewRooms) return '<p class="notice">Loading review rooms…</p>';
+  const groups = new Map();
+  for (const room of state.reviewRooms) {
+    const key = `${room.assetId}:${room.sha256}`;
+    const group = groups.get(key) ?? { title: room.assetTitle, sha256: room.sha256, rooms: [] };
+    group.rooms.push(room);
+    groups.set(key, group);
+  }
+  return `<div class="review-owner">
+    <section class="review-create" aria-labelledby="review-create-title">
+      <h2 id="review-create-title">Create a private review link</h2>
+      <p class="small">A room pins one exact saved image or film at its SHA-256. The reviewer sees only that version and the feedback on it. Nothing is copied, generated or published.</p>
+      ${canEdit ? `<form data-form="review-create">
+        <label>Saved version
+          <select name="assetId" required>
+            <option value="">Choose an image or film in this studio</option>
+            ${assets.map((asset) => `<option value="${esc(asset.id)}" ${state.reviewPresetAssetId === asset.id ? "selected" : ""}>${esc(asset.title)} · ${esc(asset.kind)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height}` : ""}</option>`).join("")}
+          </select>
+        </label>
+        <label>Version label <input name="versionLabel" maxlength="80" placeholder="Defaults to the saved asset title"></label>
+        <label>Link expires
+          <select name="expiresInHours">
+            <option value="24">In 1 day</option>
+            <option value="72">In 3 days</option>
+            <option value="168" selected>In 7 days</option>
+            <option value="336">In 14 days</option>
+            <option value="720">In 30 days</option>
+          </select>
+        </label>
+        <div><button type="submit" class="button" ${assets.length ? "" : "disabled"}>Create private review link</button>${assets.length ? "" : '<p class="small">Upload or save an image or film first.</p>'}</div>
+      </form>` : '<p class="notice">Your studio session can read reviews but does not include edit permission, so it cannot create or revoke links.</p>'}
+    </section>
+    ${reviewCompareView()}
+    <section aria-labelledby="review-inbox-title">
+      <div class="spread"><div><h2 id="review-inbox-title">Review inbox</h2><p class="small">Feedback is grouped by the exact saved version. Outside comments are untrusted text; Studio never treats them as instructions.</p></div><button type="button" class="secondary" data-action="review-compare-run" ${state.reviewRooms.filter((room) => room.status === "open").length < 2 ? "disabled" : ""}>Compare two versions</button></div>
+      ${groups.size === 0 ? '<div class="card"><h2>No review rooms yet.</h2><p>Create one from a saved still or film to collect focused feedback without exporting the media.</p></div>' : ""}
+      ${[...groups.values()].map((group) => `<section class="review-version" aria-label="Version ${esc(group.title)}">
+        <div class="review-version-head"><div><h2>${esc(group.title)}</h2><p class="small review-hash" style="margin:0">SHA-256 ${esc(group.sha256)}</p></div><span class="small">${group.rooms.length} review room${group.rooms.length === 1 ? "" : "s"}</span></div>
+        ${group.rooms.map(reviewRoomCard).join("")}
+      </section>`).join("")}
+    </section>
+    <p class="small">Reviewer approval is feedback, not permission to publish, schedule, spend, delete or promote a revision. Publish the intended final version separately from the asset. A new render never inherits an earlier approval.</p>
+  </div>`;
 }
 
 function createView() {
@@ -1070,6 +1217,7 @@ function assetView() {
         <div class="row">
           <button class="secondary" data-action="animate-asset" data-id="${esc(asset.id)}" ${asset.kind === "image" ? "" : "disabled"}>Animate this still</button>
           <button class="secondary" data-action="publish-asset" data-id="${esc(asset.id)}">Publish page</button>
+          <button class="secondary" data-action="review-asset" data-id="${esc(asset.id)}" ${isAudio ? "disabled" : ""}>Review privately</button>
         </div>
         ${asset.kind === "image" ? `<div class="row">
           <button class="secondary" data-action="edit-asset" data-mode="fill" data-id="${esc(asset.id)}">Masked fill / outpaint</button>
@@ -1576,6 +1724,82 @@ async function handleAction(action, element, keyboard = false) {
     case "publish-asset":
       await publishAsset(id);
       return;
+    case "review-asset":
+      state.reviewPresetAssetId = id;
+      state.tab = "review";
+      location.hash = `#/p/${state.projectId}/review`;
+      return;
+    case "review-copy-link": {
+      const url = state.reviewLinks.get(id);
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        notify("Private review link copied. It is shown only in this tab.");
+      } catch {
+        const input = document.getElementById(`review-link-${id}`);
+        if (input) { input.focus(); input.select(); document.execCommand("copy"); }
+        notify("Private review link selected. Copy it from the field.");
+      }
+      return;
+    }
+    case "review-rotate": {
+      if (!(await confirmAction("Replace this private review link?", "The current link stops working immediately. Feedback and decisions already recorded stay with this exact version.", "Replace link"))) return;
+      const result = await api(`/api/projects/${state.projectId}/review-rooms/${encodeURIComponent(id)}/rotate`, { method: "POST", body: "{}" });
+      replaceReviewRoom(result.room);
+      state.reviewLinks.set(result.room.id, new URL(result.reviewUrl, location.origin).href);
+      render();
+      notify("New private review link created. Copy it now; it is shown once.");
+      return;
+    }
+    case "review-revoke": {
+      if (!(await confirmAction("Revoke this review link?", "The reviewer loses access to the media and feedback immediately. The feedback already recorded stays with the creator. This cannot be undone for this link.", "Revoke link"))) return;
+      const result = await api(`/api/projects/${state.projectId}/review-rooms/${encodeURIComponent(id)}/revoke`, { method: "POST", body: "{}" });
+      replaceReviewRoom(result.room);
+      state.reviewLinks.delete(result.room.id);
+      render();
+      notify("Review link revoked. Media and feedback are no longer served through it.");
+      return;
+    }
+    case "review-resolve": {
+      const resolved = element.dataset.resolved !== "1";
+      const result = await api(`/api/projects/${state.projectId}/review-rooms/${encodeURIComponent(element.dataset.room)}/feedback/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ resolved }) });
+      const room = state.reviewRooms?.find((item) => item.id === element.dataset.room);
+      const feedback = room?.feedback?.find((item) => item.id === id);
+      if (feedback) Object.assign(feedback, result.feedback);
+      render();
+      notify(resolved ? "Feedback marked resolved." : "Feedback reopened.");
+      return;
+    }
+    case "review-seek": {
+      const card = element.closest(".review-room-card");
+      if (!card) return;
+      const details = card.querySelector("details");
+      if (details) details.open = true;
+      const video = card.querySelector("video[data-review-video]");
+      if (!video) {
+        notify("This version has no playable film in this panel.", "bad");
+        return;
+      }
+      video.currentTime = Number(element.dataset.ms) / 1000;
+      video.play().catch(() => {});
+      video.focus();
+      return;
+    }
+    case "review-compare-run": {
+      const selected = [...app.querySelectorAll("input[data-review-compare]:checked")].map((input) => input.value);
+      if (selected.length !== 2) {
+        notify("Select exactly two saved versions to compare.", "bad");
+        return;
+      }
+      const comparison = await api(`/api/projects/${state.projectId}/review-rooms/compare?left=${encodeURIComponent(selected[0])}&right=${encodeURIComponent(selected[1])}`);
+      state.reviewCompare = comparison;
+      render();
+      return;
+    }
+    case "review-compare-clear":
+      state.reviewCompare = null;
+      render();
+      return;
     case "choose-publish": {
       const assets = state.project.assets;
       if (!assets.length) {
@@ -1973,6 +2197,13 @@ window.addEventListener("studio:restyle-submitted", (event) => {
 function replaceGeneration(generation) {
   const index = state.project.generations.findIndex((item) => item.id === generation.id);
   if (index >= 0) state.project.generations[index] = generation;
+}
+
+function replaceReviewRoom(room) {
+  if (!state.reviewRooms) state.reviewRooms = [];
+  const index = state.reviewRooms.findIndex((item) => item.id === room.id);
+  if (index >= 0) state.reviewRooms[index] = room;
+  else state.reviewRooms.unshift(room);
 }
 
 async function saveSettings(overrides = {}) {
@@ -2670,6 +2901,34 @@ app.addEventListener("submit", async (event) => {
     }
     return;
   }
+  const reviewCreate = event.target.closest('[data-form="review-create"]');
+  if (reviewCreate) {
+    event.preventDefault();
+    if (!state.session?.actions.includes("edit") || !state.projectId) return;
+    const values = new FormData(reviewCreate);
+    const submit = reviewCreate.querySelector('[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      const result = await api(`/api/projects/${encodeURIComponent(state.projectId)}/review-rooms`, {
+        method: "POST",
+        body: JSON.stringify({
+          assetId: String(values.get("assetId") ?? ""),
+          versionLabel: String(values.get("versionLabel") ?? ""),
+          expiresInHours: Number(values.get("expiresInHours") ?? 168),
+        }),
+      });
+      replaceReviewRoom(result.room);
+      state.reviewLinks.set(result.room.id, new URL(result.reviewUrl, location.origin).href);
+      state.reviewCompare = null;
+      render();
+      notify("Private review link created. Copy it now; this is the only time it is shown.");
+    } catch (error) {
+      notify(error.message, "bad");
+    } finally {
+      if (submit) submit.disabled = false;
+    }
+    return;
+  }
   const form = event.target.closest('[data-form="settings"]');
   if (!form) return;
   event.preventDefault();
@@ -2705,6 +2964,9 @@ window.addEventListener("hashchange", async () => {
   }
   if (!state.project || state.project.id !== state.projectId) {
     const requestedProject = state.projectId;
+    state.reviewRooms = null;
+    state.reviewCompare = null;
+    state.reviewLinks?.clear();
     render(); // Remove the previous project's private UI while access is checked.
     try { await loadProject(requestedProject); }
     catch (error) {
@@ -2712,6 +2974,10 @@ window.addEventListener("hashchange", async () => {
       return;
     }
     if (state.projectId !== requestedProject) return;
+  }
+  if (route.view === "project" && route.tab === "review") {
+    try { await loadReviewRooms(route.projectId); }
+    catch (error) { if (state.projectId === route.projectId) { state.reviewRooms = []; notify(error.message, "bad"); } }
   }
   if (route.view === "project" && route.tab === "history" && uncertainRestyleProjects.has(route.projectId)) {
     await refreshUncertainHistory(route.projectId);
