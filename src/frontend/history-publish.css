@@ -5,6 +5,12 @@
 .history-list {
   margin-top: 0.8rem;
 }
+.publish-previews {
+  margin-top: 0.7rem;
+}
+.publish-previews p {
+  margin: 0;
+}
 .history-list > .card p {
   margin: 0;
 }

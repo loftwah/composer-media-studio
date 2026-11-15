@@ -81,7 +81,7 @@ export interface GenerationV1 {
   createdAt: string | number; costAllocatedMicro: number | null; costEstimateMicro: number;
   error: { code: string; message: string } | null;
 }
-export interface PublicationV1 { id: string; title: string; path: string; createdAt: string | number; listed: boolean; hidden: boolean }
+export interface PublicationV1 { id: string; title: string; path: string; createdAt: string | number; listed: boolean; hidden: boolean; hasThumb?: boolean }
 export interface HistoryProps { generations: GenerationV1[]; assets: MediaAssetV1[]; models: ModelV1[] }
 export interface PublishProps { publications: PublicationV1[]; origin: string }
 
