@@ -743,6 +743,18 @@ function stagingAssetList(manifest, projectId, map) {
   }));
 }
 
+/** Remember a staged key even when the object was written by an earlier attempt
+ * that died before saving its bookkeeping. Re-reads the row so two uploads
+ * cannot drop each other's entry. */
+async function recordStagedKey(env, importId, key) {
+  const row = await env.DB.prepare('SELECT staged_keys_json FROM project_bundle_imports WHERE id=?1').bind(importId).first();
+  const staged = new Set(safeJson(row?.staged_keys_json, []));
+  if (staged.has(key)) return false;
+  staged.add(key);
+  await env.DB.prepare('UPDATE project_bundle_imports SET staged_keys_json=?2,updated_at=?3 WHERE id=?1').bind(importId, JSON.stringify([...staged]), Date.now()).run();
+  return true;
+}
+
 export async function stagePortableAsset(env, importId, sourceAssetId, bytes) {
   const row = await env.DB.prepare('SELECT * FROM project_bundle_imports WHERE id=?1').bind(importId).first();
   if (!row) throw new PortableError(404, 'import_not_found', 'That restore does not exist.');
@@ -765,12 +777,11 @@ export async function stagePortableAsset(env, importId, sourceAssetId, bytes) {
     const stored = new Uint8Array(await existing.arrayBuffer());
     const storedHash = await sha256Bytes(stored);
     if (storedHash !== asset.sha256) throw new PortableError(409, 'staging_conflict', 'A different object already uses this restore path.');
+    await recordStagedKey(env, importId, key);
     return { status: 'already_staged', assetId: map.assets[asset.id], key, sha256: actual, bytes: bytes.byteLength };
   }
   await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: asset.mime }, customMetadata: { sha256: actual, import: importId } });
-  const staged = new Set(safeJson(row.staged_keys_json, []));
-  staged.add(key);
-  await env.DB.prepare('UPDATE project_bundle_imports SET staged_keys_json=?2,updated_at=?3 WHERE id=?1').bind(importId, JSON.stringify([...staged]), Date.now()).run();
+  await recordStagedKey(env, importId, key);
   return { status: 'staged', assetId: map.assets[asset.id], key, sha256: actual, bytes: bytes.byteLength };
 }
 
