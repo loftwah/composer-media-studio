@@ -23,7 +23,7 @@ test('HD receipt saves a private, source-linked clip once with explicit provenan
  assert.equal((await upload(receipt.id)).status,200); assert.equal((await upload(receipt.id,mp4(1280,720,5,1))).status,409);
  const read=await call(`/api/assets/${asset.id}/footage-export-receipt`); assert.equal(read.status,200); const saved=(await read.json()).receipt; assert.equal(saved.source.sha256,sha); assert.equal(saved.plan.revision,1); assert.equal(saved.evidence.render,'browser_reported'); assert.equal(saved.framing.width,1280);
  assert.equal((await call(`/api/assets/${asset.id}/footage-export-receipt`,{cookie:''})).status,401);
- const other='studio_session='+await createSession(env,{mode:'bridge',project:'prj_other',actions:['read']}); assert.equal((await call(`/api/assets/${asset.id}/footage-export-receipt`,{cookie:other})).status,403);
+ const other='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:'prj_other',actions:['read']}); assert.equal((await call(`/api/assets/${asset.id}/footage-export-receipt`,{cookie:other})).status,403);
  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
 });
 test('stale revision or deleted source prevents first binding, while old input stays intact',async()=>{
@@ -33,5 +33,5 @@ test('stale revision or deleted source prevents first binding, while old input s
 });
 test('strict settings, duration and project permission are enforced',async()=>{
  const {env,project,plan,call,start}=await fixture(); assert.equal((await start({quality:'ultra'})).status,400); assert.equal((await start({extra:'secret'})).status,400);
- const ro='studio_session='+await createSession(env,{mode:'bridge',project:project.id,actions:['read']}); assert.equal((await call(`/api/projects/${project.id}/footage-plans/${plan.id}/export-receipts`,{method:'POST',cookie:ro,body:{}})).status,403);
+ const ro='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:project.id,actions:['read']}); assert.equal((await call(`/api/projects/${project.id}/footage-plans/${plan.id}/export-receipts`,{method:'POST',cookie:ro,body:{}})).status,403);
 });

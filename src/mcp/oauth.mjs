@@ -1,5 +1,5 @@
 // MIT. Narrow OAuth 2.1 authorization-code/PKCE flow for Studio MCP read access.
-import { readSession, verifyComposerGrant, can } from '../lib/auth.mjs';
+import { readSession, verifyComposerGrant, can, projectAccessible } from '../lib/auth.mjs';
 import { escapeHtml, id, json, now, sha256Hex, slug } from '../lib/util.mjs';
 
 const TOKEN_LIFETIME = 30 * 60 * 1000;
@@ -80,8 +80,8 @@ async function projectAllowed(env, session, project, scopes = ['studio.read']) {
   // A null bridge project is the existing workspace-wide Studio grant. The
   // issued MCP token below is still bound to the one project selected here.
   if (session.mode !== 'owner' && !(session.project === project || (session.project === null && session.projectClaimExplicit === true))) return false;
-  const row = await env.DB.prepare('SELECT id FROM projects WHERE id=?1').bind(project).first();
-  if (!row) return false;
+  const row = await env.DB.prepare('SELECT id,workspace_id FROM projects WHERE id=?1').bind(project).first();
+  if (!row || !projectAccessible(session, row)) return false;
   if (session.mode !== 'owner') for (const scope of scopes) await verifyComposerGrant(env, session, SCOPE_ACTIONS[scope]);
   return true;
 }
@@ -223,5 +223,5 @@ export async function authorizeMcp(request, env) {
   const original = JSON.parse(row.issuer_json);
   const scopes = row.scopes.split(' ');
   if (!scopes.every(scope => SCOPE_ACTIONS[scope]) || !await projectAllowed(env, original, row.project_id, scopes)) return null;
-  return { mode: 'agent', actor: original.actor, workspace: original.workspace, project: row.project_id, agentTokenId: row.id, actions: scopes.map(scope => SCOPE_ACTIONS[scope]) };
+  return { mode: 'agent', installationOwner: original.mode === 'owner', actor: original.actor, workspace: original.workspace, project: row.project_id, agentTokenId: row.id, actions: scopes.map(scope => SCOPE_ACTIONS[scope]) };
 }

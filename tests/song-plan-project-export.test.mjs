@@ -19,7 +19,7 @@ test('private project export includes only its own song plans, captions and subj
   const revised=await updateSongPlan(env,owner,plan.id,{...plan,expectedRevision:1,scenes:plan.scenes.map((s,i)=>i?s:{...s,subjectOrigin:{subjectId:subject.id,revision:1}})});
   await updateSongCaptions(env,owner,plan.id,{expectedRevision:revised.revision,rightsConfirmed:true,cues:[{id:'cue_001',startMs:0,endMs:1000,text:owner===project?'Private lyric one':'Private lyric other',speaker:''}]});
  }
- const cookie='studio_session='+await createSession(env,{mode:'bridge',project:project.id,actions:['read']});
+ const cookie='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:project.id,actions:['read']});
  const get=(id,auth=cookie)=>worker.fetch(new Request(`https://studio.test/api/projects/${id}/export`,{headers:auth?{cookie:auth}:{}}),env);
  assert.equal((await get(project.id,'')).status,401); assert.equal((await get(other.id)).status,403);
  const response=await get(project.id);assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const payload=await response.json();

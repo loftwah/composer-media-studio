@@ -17,12 +17,12 @@ test('private brief saves and exports without a generation, and enforces scoped 
  assert.equal((await (await call(base)).json()).briefs.length,1);
  assert.equal((await (await call(`/api/projects/${project.id}/export`)).json()).promoBriefs[0].id,brief.id);
  assert.equal((await call(base,'GET',undefined,'')).status,401);
- const other='studio_session='+await createSession(env,{mode:'bridge',project:'prj_other',actions:['read','edit']});
+ const other='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:'prj_other',actions:['read','edit']});
  assert.equal((await call(base,'GET',undefined,other)).status,403);
  assert.ok([403,503].includes((await call(`${base}/${brief.id}`,'PATCH',{...input,expectedRevision:1},other)).status));
  await env.DB.prepare("INSERT INTO projects(id,name,slug,creative_direction,visibility,defaults_json,created_at,updated_at) VALUES('prj_other','Other','other','','private','{}',1,1)").run();
  assert.equal((await call(`/api/projects/prj_other/promo-briefs/${brief.id}`,'PATCH',{...input,expectedRevision:1})).status,404);
- const readOnly='studio_session='+await createSession(env,{mode:'bridge',project:project.id,actions:['read']});
+ const readOnly='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:project.id,actions:['read']});
  assert.equal((await call(base,'POST',input,readOnly)).status,403);
  const gallery=await (await call('/gallery','GET',undefined,'')).text(); assert.equal(gallery.includes(input.title),false);
  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);

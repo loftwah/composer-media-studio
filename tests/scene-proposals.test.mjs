@@ -18,8 +18,8 @@ test('changed proposals, revisions, sources, or permissions cannot be applied',a
  const {env,project,plan,changes,call}=await fixture(); const input={expectedRevision:plan.revision,changes}; const digest=(await (await call('preview',input)).json()).reviewDigest;
  assert.equal((await call('apply',{...input,changes:[{sceneId:plan.scenes[1].id,direction:'Different'}],reviewDigest:digest,approved:true})).status,409);
  assert.equal((await call('preview',{...input,changes:[{sceneId:plan.scenes[0].id,referenceAssetId:'asset_missing'}]})).status,400);
- const readOnly='studio_session='+await createSession(env,{mode:'bridge',project:project.id,actions:['read']}); assert.equal((await call('preview',input,readOnly)).status,200); assert.equal((await call('apply',{...input,reviewDigest:digest,approved:true},readOnly)).status,403);
- const wrongProject='studio_session='+await createSession(env,{mode:'bridge',project:'prj_other',actions:['read']}); assert.equal((await call('preview',input,wrongProject)).status,403);
+ const readOnly='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:project.id,actions:['read']}); assert.equal((await call('preview',input,readOnly)).status,200); assert.equal((await call('apply',{...input,reviewDigest:digest,approved:true},readOnly)).status,403);
+ const wrongProject='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:'prj_other',actions:['read']}); assert.equal((await call('preview',input,wrongProject)).status,403);
  await env.DB.prepare("UPDATE assets SET sha256='changed' WHERE id='asset_image1'").run(); assert.equal((await call('apply',{...input,reviewDigest:digest,approved:true})).status,409);
  await env.DB.prepare('UPDATE song_plans SET revision=revision+1 WHERE id=?1').bind(plan.id).run(); assert.equal((await call('apply',{...input,reviewDigest:digest,approved:true})).status,409);
 });

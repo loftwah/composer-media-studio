@@ -17,7 +17,7 @@ test('inspects stored MP4 metadata and all video packet timings without a provid
  assert.equal(result.video.width,768); assert.equal(result.video.height,960); assert.equal(result.video.durationSeconds,5.875); assert.equal(result.video.frames,141); assert.equal(result.video.averageFps,24); assert.equal(result.video.minimumPacketFps,24); assert.equal(result.video.maximumPacketFps,24); assert.match(result.note,/not verified/); assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
 });
 test('requires a permitted session, matching bytes, supported size and a live asset',async()=>{
- const {env,call}=await fixture(); assert.equal((await call('')).status,401); const other='studio_session='+await createSession(env,{mode:'bridge',project:'prj_other',actions:['read']}); assert.equal((await call(other)).status,403);
+ const {env,call}=await fixture(); assert.equal((await call('')).status,401); const other='studio_session='+await createSession(env,{mode:'bridge',workspace:'ws-personal',project:'prj_other',actions:['read']}); assert.equal((await call(other)).status,403);
  await env.DB.prepare("UPDATE assets SET sha256='wrong' WHERE id='asset_source1'").run(); assert.equal((await call()).status,409);
  await env.DB.prepare("UPDATE assets SET bytes=16777217 WHERE id='asset_source1'").run(); assert.equal((await call()).status,400);
  await env.DB.prepare("UPDATE assets SET deleted_at=1 WHERE id='asset_source1'").run(); assert.equal((await call()).status,400);

@@ -123,13 +123,49 @@ export function mp3FrameHeader() {
   return Uint8Array.from([0xff, 0xfb, 0x90, 0x00]);
 }
 
+/** Composer's grant endpoint is the one authority a bridge session re-checks.
+ * This stand-in answers only that URL with the identity and actions the studio
+ * already signed, which is what a fully granted workspace returns. A test that
+ * needs a revocation replaces globalThis.fetch itself. */
+const composerGrantEndpoint = "https://composer.test/api/studio/access";
+export function installComposerStub() {
+  const prior = globalThis.fetch;
+  if (prior?.__studioComposerStub) return prior;
+  const stub = async (input, init) => {
+    const url = typeof input === "string" ? input : input?.url;
+    if (url === composerGrantEndpoint && init?.body) {
+      const body = JSON.parse(String(init.body));
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          actor: body.actor,
+          workspace: body.workspace,
+          actions: body.actions,
+          revision: body.revision,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return prior(input, init);
+  };
+  stub.__studioComposerStub = true;
+  globalThis.fetch = stub;
+  return stub;
+}
+
 export async function setup({ allowance = 5_000_000, projectId = "prj_test" } = {}) {
+  installComposerStub();
   const env = {
     DB: new SqliteD1(),
     MEDIA: new FakeBucket(),
     MONTHLY_ALLOWANCE_MICRO: allowance,
     PUBLIC_ORIGIN: "https://studio.test",
     SESSION_SECRET: "test-session-secret-that-is-long-enough",
+    // A bridge session re-checks Composer on every privileged action and on
+    // each bounded window of private reads. Tests run without network, so the
+    // harness answers only that endpoint below.
+    BRIDGE_SECRET: "test-bridge-secret-that-is-also-long-enough",
+    COMPOSER_ORIGIN: "https://composer.test",
   };
   const timestamp = Date.now();
   await env.DB.prepare(
