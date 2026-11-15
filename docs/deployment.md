@@ -30,17 +30,17 @@ npx wrangler d1 migrations apply media-studio --remote
 printf '%s' "$OWNER_PASSPHRASE" | npx wrangler secret put OWNER_PASSPHRASE
 printf '%s' "$SESSION_SECRET" | npx wrangler secret put SESSION_SECRET
 printf '%s' "$FAL_KEY" | npx wrangler secret put FAL_KEY   # optional, video only
-pnpm deploy --migrate
+pnpm run deploy --migrate
 ```
 
-`pnpm deploy` refuses a dirty tree or unpushed `main`, runs the focused checks
+`pnpm run deploy` refuses a dirty tree or unpushed `main`, runs the focused checks
 once, deploys with the commit baked in, then reads `/healthz` and `/build.json`
 and fails if the live revision is not the released commit.
 
 ## Darkroom
 
 Studio Print, Film, Quick and Detail use the exact npm release
-`@fungi.computer/darkroom@0.10.0`. Run `pnpm deploy --migrate` for the first
+`@fungi.computer/darkroom@0.10.0`. Run `pnpm run deploy --migrate` for the first
 deployment to apply the additive D1 erasure queue and the Worker’s `v1`
 SQLite Durable Object migration. Do not reset either store. Keep `MEDIA` and
 `APP_ARTIFACTS` bound to the **same private bucket**. Darkroom writes one
@@ -94,7 +94,7 @@ video, a funded fal key). Composer never receives those values.
 
 1. Change and review the studio source.
 2. Push the reviewed `main`.
-3. Run `pnpm deploy` in the studio repository.
+3. Run `pnpm run deploy` in the studio repository.
 4. Promote the new commit and manifest digest in Composer's
    `config/media-studio-standalone.json` and re-export affected specifications.
 5. Keep the previous commit recorded for code rollback. Media and metadata
