@@ -101,9 +101,13 @@ function brandByline() {
 function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, helpHref = "/help" }) {
   const bridged = session?.mode === "bridge";
   let launcherHome = null;
+  let composerStudioEntry = null;
   try {
     const candidate = new URL(composerOrigin);
-    if (candidate.protocol === "https:" && !candidate.username && !candidate.password) launcherHome = candidate.origin + "/";
+    if (candidate.protocol === "https:" && !candidate.username && !candidate.password) {
+      launcherHome = candidate.origin + "/";
+      composerStudioEntry = new URL("/media-studio/studio", candidate.origin).href;
+    }
   } catch { /* The launcher is optional when no valid Composer origin is configured. */ }
   const context = session
     ? `<p class="session-context"><span>${bridged ? "Opened from App Composer" : "Standalone owner session"}</span>${
@@ -115,7 +119,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
   return `<header class="site-header">
   <a class="wordmark" href="#/" aria-label="Media Studio home">${mark}<span>Media Studio</span>${brandByline()}</a>
   <nav class="header-nav" aria-label="Studio">
-    ${bridged && composerOrigin ? `<a class="quiet" href="${escapeHtml(composerOrigin)}/">App Composer</a>` : ""}
+    ${bridged && composerStudioEntry ? `<a class="quiet" href="${escapeHtml(composerStudioEntry)}">App Composer</a>` : ""}
     ${storyUrl ? `<a class="quiet" href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     <a href="#/">Projects</a>
     ${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}
