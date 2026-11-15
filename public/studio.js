@@ -393,6 +393,7 @@ function renderReactLibrary() {
   creativeHome.renderLibrary(app.querySelector("#creative-media"), {
     projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter, comparing: comparison.active, compareIds: comparison.ids,
     canImportShare: state.woodhouseShare && state.session?.actions.includes("edit"),
+    canViewStorage: state.session?.actions.includes("admin") ?? false,
   });
 }
 
@@ -1233,7 +1234,7 @@ function assetView() {
 
 /* ---------- dialogs ---------- */
 
-function ask({ title, copy, fields = [], submit = "Continue", media = "" }) {
+function ask({ title, copy, fields = [], submit = "Continue", cancelLabel = "Cancel", media = "" }) {
   return new Promise((resolve) => {
     confirmDialog.querySelector("#confirm-title").textContent = title;
     confirmDialog.querySelector("#confirm-copy").innerHTML = `
@@ -1247,6 +1248,7 @@ function ask({ title, copy, fields = [], submit = "Continue", media = "" }) {
         .join("")}`;
     const form = confirmDialog.querySelector("#confirm-form");
     form.querySelector('button[value="ok"]').textContent = submit;
+    form.querySelector('button[value="cancel"]').textContent = cancelLabel;
     // A previous submission must not turn an Escape or backdrop dismissal into OK.
     confirmDialog.returnValue = "";
     const isEdited = () => [...form.querySelectorAll("input, textarea")].some((input) => input.value !== input.defaultValue);
@@ -2384,10 +2386,58 @@ function uploadFile(file) {
   });
 }
 
+async function fileSha256(file) {
+  if (!globalThis.crypto?.subtle) throw new Error("Browser hashing is unavailable");
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function preflightUpload(projectId, file) {
+  const mime = file.type || "";
+  if (!mime) return null;
+  const sha256 = await fileSha256(file);
+  const result = await api(`/api/projects/${encodeURIComponent(projectId)}/assets/preflight`, {
+    method: "POST",
+    body: JSON.stringify({ sha256, size: file.size, mime }),
+  });
+  return result?.duplicate ? { ...result, fingerprint: { sha256, size: file.size, mime } } : null;
+}
+
 async function uploadFiles(files) {
   const list = [...files];
   if (!list.length) return;
+  const projectId = state.projectId;
   for (const file of list) {
+    if (state.projectId !== projectId) return;
+    let existing = null;
+    try {
+      existing = await preflightUpload(projectId, file);
+    } catch {
+      // A hash or lookup failure must not block the existing upload path. The
+      // duplicate offer is a convenience, not a new gate.
+    }
+    if (existing?.duplicate) {
+      const choice = await ask({
+        title: "This original is already here",
+        copy: `“${esc(existing.duplicate.title)}” already has exactly these bytes, size and type. Reusing it keeps its current rights, lineage and history, and does not upload a second file.`,
+        submit: "Reuse existing original",
+        cancelLabel: "Upload another copy",
+      });
+      if (choice) {
+        try {
+          const reused = await api(`/api/projects/${encodeURIComponent(projectId)}/assets/reuse`, {
+            method: "POST",
+            body: JSON.stringify({ assetId: existing.duplicate.id, ...existing.fingerprint }),
+          });
+          if (state.projectId === projectId && !state.project.assets.some((asset) => asset.id === reused.asset.id))
+            state.project.assets.unshift(reused.asset);
+          notify(`Reused “${reused.asset.title}”. No new file was uploaded.`);
+        } catch (error) {
+          notify(error.message, "bad");
+        }
+        continue;
+      }
+    }
     try {
       const result = await uploadFile(file);
       state.project.assets.unshift(result.asset);

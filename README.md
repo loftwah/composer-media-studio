@@ -46,6 +46,16 @@ A reviewer can watch or view that version, leave film feedback at a timecode or 
 
 Apply additive migration `0019_review_rooms.sql` before deploying this capability.
 
+## Storage health
+
+The Library has a compact **Storage health** panel for the studio owner or an admin grant. It reads the project's saved records and checks the exact R2 objects without deleting, moving, re-encoding or publishing anything. It shows bytes by media kind, originals versus derivatives, missing objects, published and protected assets, incomplete legacy rows and exact duplicate content.
+
+The same read-only report is available at `GET /api/projects/:id/storage-report` (owner/admin only; add `?download=1` for a JSON download). Per-asset **Used in** detail is at `GET /api/projects/:id/assets/:assetId/uses`. Uses come only from saved lineage, generations, storyboards, audio tracks, slates, publications, subject versions, song and footage plans, render receipts and review rooms. An asset with incomplete provenance is reported as `unknown`, never as `unused`; a used or published asset is never labelled unused because a reference is missing.
+
+Before an upload, the Library hashes the file in the browser and asks `POST /api/projects/:id/assets/preflight` with the SHA-256, byte size and MIME. A match must be exact, live and in the same project. **Reuse existing original** calls `POST /api/projects/:id/assets/reuse`, which returns the existing saved asset without copying bytes, creating a row or changing lineage, rights or relationships. A shared filename with different bytes is not a duplicate, and another project's asset is never disclosed. If hashing or the preflight fails, the existing upload path still runs.
+
+This slice is deliberately read-only. Reclaiming storage remains a separate, explicitly approved follow-up with its own dependency and tombstone checks; there is no auto-purge in this report.
+
 ## Migrations
 
 `0003_audio_and_assembly.sql` widens the saved media kinds to include audio and adds compositions. SQLite cannot widen a `CHECK` constraint in place, so the two tables that enumerate kinds are rebuilt with every existing row copied; no data is dropped. Apply it with `pnpm migrate:remote` before deploying the worker that needs it.

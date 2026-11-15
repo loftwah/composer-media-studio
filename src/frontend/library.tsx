@@ -7,6 +7,7 @@ import { FootageRestyle } from "./footage-restyle";
 import { Assemble, Settings } from "./assemble-settings";
 import { History, Publish } from "./history-publish";
 import { isLocalRenderProvenance, shareImportProvenance } from "../../public/asset-caption.js";
+import { AssetUses, StorageHealthPanel } from "./storage-health";
 import "./library.css";
 
 const bytesLabel = (bytes: number) => !bytes ? "—" : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -25,7 +26,7 @@ function AssetCard({ asset, comparing, selected, full }: { asset: MediaAssetV1; 
   </article>;
 }
 
-function Library({ projectId, assets, query, filter, canImportShare, comparing, compareIds }: LibraryProps) {
+function Library({ projectId, assets, query, filter, canImportShare, canViewStorage, comparing, compareIds }: LibraryProps) {
   const selected = compareIds.map(id => assets.find(asset => asset.id === id && asset.kind === "image")).filter((asset): asset is MediaAssetV1 => Boolean(asset));
   const trimmed = query.trim().toLowerCase();
   const visible = assets.filter(asset => (filter === "all" || asset.kind === filter) && (!trimmed || `${asset.title} ${asset.caption} ${asset.mime} ${asset.source}`.toLowerCase().includes(trimmed)));
@@ -35,6 +36,7 @@ function Library({ projectId, assets, query, filter, canImportShare, comparing, 
       <input id="search" type="search" placeholder="Search titles, captions, types…" defaultValue={query} data-input="search" />
       <div className="row" role="group" aria-label="Filter">{(["all", "image", "video", "audio"] as const).map(value => <button key={value} type="button" className="quiet" data-action="filter" data-filter={value} aria-pressed={filter === value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
     </div><div className="row"><button type="button" className="secondary" data-action="compare-mode" aria-pressed={comparing}>{comparing ? "Close comparison" : "Compare stills"}</button><label className="button secondary library-upload" htmlFor="upload">Upload media<input id="upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" hidden data-input="upload" /></label></div></div>
+    {canViewStorage && <StorageHealthPanel key={projectId} projectId={projectId}/>}
     {comparing && <section className="compare-panel" aria-labelledby="compare-title">
       <div className="spread"><div><h2 id="compare-title">Compare stills</h2><p className="small">Choose two images from this studio to review them side by side. Your originals stay unchanged.</p></div><button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button></div>
       <p className="sr-only" role="status">{selected.length} of 2 images selected</p>
@@ -125,6 +127,7 @@ function AssetViewer({ projectId, asset, still, launchKitUrl, reentryUrl }: View
         <dl className="kv"><dt>Size</dt><dd>{bytesLabel(asset.bytes)}</dd>{Boolean(asset.width) && <><dt>Frame</dt><dd>{asset.width} × {asset.height}</dd></>}{Boolean(asset.durationMs) && <><dt>Duration</dt><dd>{(asset.durationMs! / 1000).toFixed(1)}s</dd></>}{isAudio && Boolean(asset.sampleRate) && <><dt>Audio</dt><dd>{asset.sampleRate} Hz · {asset.channels ?? "—"} channel{asset.channels === 1 ? "" : "s"}</dd></>}<dt>Type</dt><dd>{asset.mime}</dd><dt>Added</dt><dd>{dateLabel(asset.createdAt)}</dd></dl>
         {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id} reentryUrl={reentryUrl}/>}
         {isVideo && <PrivateFootageReceipt key={asset.id} assetId={asset.id}/>}
+        <AssetUses key={`uses-${asset.id}`} projectId={projectId} assetId={asset.id}/>
         {isVideo && <details className="asset-technical"><summary>Restyle this clip</summary><FootageRestyle key={asset.id} projectId={projectId} assetId={asset.id}/></details>}
         <details className="asset-technical"><summary>Technical details</summary><dl className="kv"><dt>SHA-256</dt><dd>{asset.sha256}</dd></dl>{localRender && <p>{asset.caption}</p>}{shareProvenance && <div><p>{shareProvenance.credit}</p><p><a href={shareProvenance.catalogue} target="_blank" rel="noopener noreferrer">Share catalogue record</a>{shareProvenance.source && <> · <a href={shareProvenance.source} target="_blank" rel="noopener noreferrer">Source notes</a></>}</p></div>}</details>
         <div className="row"><a className="button secondary" href={asset.download} download>Download</a><button type="button" className="secondary" data-action="rename-asset" data-id={asset.id}>Rename</button>{still && <button type="button" className="secondary" data-action="vary-asset" data-id={still.id}>{isVideo ? "Make a variation of its still" : "Make a variation"}</button>}</div>
