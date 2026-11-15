@@ -1,5 +1,6 @@
 // MIT. Media Studio Worker: owner studio, public pages and the job engine.
 
+import { isDarkroomGeneration } from "./lib/darkroom.mjs";
 import {
   allowedActions,
   can,
@@ -949,6 +950,13 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return json({ generation: generationView(generation), budget: await budgetSnapshot(env, generation.project_id) });
     }
     if (method === "POST" && action === "save-retry") {
+      if (generation.deleted_at) throw new HttpError(410, "This job has been deleted.", "unavailable");
+      if (isDarkroomGeneration(generation)) {
+        generation = await advanceGeneration(env, generation);
+        if (generation.status !== "saved")
+          throw new HttpError(409, "No result has been confirmed yet. Check this same job again.", "nothing_to_save");
+        return json({ generation: generationView(generation), budget: await budgetSnapshot(env, generation.project_id) });
+      }
       if (!generation.retained_key)
         throw new HttpError(409, "No retained result is waiting to be saved", "nothing_to_save");
       const object = await env.MEDIA.get(generation.retained_key);

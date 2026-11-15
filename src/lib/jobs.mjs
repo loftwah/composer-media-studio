@@ -32,7 +32,7 @@ import {
   validateSettings,
   cancelVideo,
 } from "./providers.mjs";
-import { eraseDarkroomOperation, runDarkroomImage, usesDarkroom } from "./darkroom.mjs";
+import { DARKROOM_VERSION, eraseDarkroomOperation, isDarkroomGeneration, recoverDarkroomImage, runDarkroomImage, usesDarkroom } from "./darkroom.mjs";
 import { builtinRecipe } from "./recipes.mjs";
 import { signRenderLink } from "./render-links.mjs";
 import { measureFootageSource } from "./footage-preflight.mjs";
@@ -261,12 +261,12 @@ export async function createGeneration(env, project, input) {
 }
 
 /** Atomically take the dispatch lease so two callers cannot both submit. */
-async function claim(env, generationId, from, to) {
+async function claim(env, generationId, from, to, darkroomVersion = null) {
   const row = await env.DB.prepare(
-    `UPDATE generations SET status=?3, updated_at=?4 WHERE id=?1 AND status=?2
+    `UPDATE generations SET status=?3, updated_at=?4, request_json=CASE WHEN ?5 IS NULL THEN request_json ELSE json_set(request_json,'$.darkroomVersion',?5) END WHERE id=?1 AND status=?2
       AND deleted_at IS NULL AND CASE WHEN json_valid(request_json) THEN json_extract(request_json,'$.budgetAdmission')='atomic-v1' ELSE 0 END RETURNING id`,
   )
-    .bind(generationId, from, to, now())
+    .bind(generationId, from, to, now(), darkroomVersion)
     .first();
   return Boolean(row);
 }
@@ -286,7 +286,8 @@ export async function dispatchGeneration(env, generation) {
     inputError = error;
   }
 
-  if (!(await claim(env, generation.id, "admitted", "submitting"))) {
+  const darkroom = usesDarkroom(model);
+  if (!(await claim(env, generation.id, "admitted", "submitting", darkroom ? DARKROOM_VERSION : null))) {
     const current = await loadGeneration(env, generation.id);
     if (current.status === "admitted" && safeJson(current.request_json, {}).budgetAdmission !== "atomic-v1") throw new HttpError(409, "This older job's reservation cannot be verified. Do not retry it automatically.", "admission_unverified");
     return current;
@@ -339,7 +340,7 @@ export async function dispatchGeneration(env, generation) {
 
   if (model.kind === "image") {
     try {
-      const output = usesDarkroom(model)
+      const output = darkroom
         ? await runDarkroomImage(env, generation, model, request, reference)
         : await runImage(env, model, request, reference ? [reference] : []);
       return await saveGeneration(env, generation, output.bytes, output.format);
@@ -426,7 +427,7 @@ export async function saveGeneration(env, generation, bytes, format) {
     return fresh;
   }
   if (fresh.deleted_at) {
-    await eraseDarkroomOperation(env, generation);
+    await eraseDarkroomOperation(env, fresh);
     await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',updated_at=?2 WHERE id=?1")
       .bind(generation.id, now())
       .run();
@@ -584,7 +585,12 @@ export async function advanceGeneration(env, generation) {
       const bytes = new Uint8Array(await stored.arrayBuffer());
       return saveGeneration(env, fresh, bytes, formatForMime(fresh.retained_mime));
     }
-    return fresh;
+    if (!isDarkroomGeneration(fresh)) return fresh;
+  }
+
+  if (isDarkroomGeneration(fresh) && ["submitting", "unknown", "provider_complete", "saving"].includes(fresh.status)) {
+    const output = await recoverDarkroomImage(env, fresh);
+    if (output) return saveGeneration(env, fresh, output.bytes, output.format);
   }
 
   // A result read that failed leaves the job at provider_complete with no saved
@@ -1067,6 +1073,7 @@ export async function cancelGeneration(env, generation) {
 
 export async function reconcileGeneration(env, generation) {
   const fresh = await loadGeneration(env, generation.id);
+  if (isDarkroomGeneration(fresh)) return advanceGeneration(env, fresh);
   if (fresh.status === "unknown") {
     if (fresh.provider_request_id) return advanceGeneration(env, { ...fresh, status: "submitted" });
     await env.DB.prepare("UPDATE generations SET error_code='needs_support',updated_at=?2 WHERE id=?1")

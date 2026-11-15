@@ -13,12 +13,13 @@ import {
   createR2MediaDestination,
   createWorkersAiMediaProvider,
 } from "@fungi.computer/darkroom/cloudflare";
-import { aspectDimensions, getModel } from "./providers.mjs";
-import { HttpError } from "./util.mjs";
+import { aspectDimensions } from "./providers.mjs";
+import { HttpError, safeJson } from "./util.mjs";
 
 /** The id a Darkroom reference must carry; it names this studio's bucket. */
 export const DARKROOM_DESTINATION = "media-studio";
 const DARKROOM_NAMESPACE = "media-studio";
+export const DARKROOM_VERSION = "0.10.0";
 
 /**
  * Studio models whose Workers AI endpoint Darkroom's catalogue also carries.
@@ -33,7 +34,7 @@ const darkroomModels = new Map([
 ]);
 
 export function usesDarkroom(model) {
-  return darkroomModels.has(model.id);
+  return darkroomModels.has(model?.id);
 }
 
 /** Where Darkroom saves one generation's result before the studio retains it. */
@@ -64,88 +65,177 @@ export function authorizeKey(env, generation) {
   };
 }
 
-function requireBindings(env) {
-  if (!env.AI) throw new HttpError(502, "Workers AI is not configured; nothing was submitted.", "provider_unconfigured");
-  if (!env.IMAGES || !env.MEDIA_OPERATION)
-    throw new HttpError(502, "The IMAGES and MEDIA_OPERATION bindings are required for Darkroom; nothing was submitted.", "provider_unconfigured");
+export function isDarkroomGeneration(generation) {
+  return safeJson(generation?.request_json, {})?.darkroomVersion === DARKROOM_VERSION;
 }
 
-function refusal(error) {
-  // Darkroom wraps host refusals; surface the studio's own HttpError.
-  for (let cause = error; cause; cause = cause.cause) if (cause instanceof HttpError) return cause;
-  return null;
+function preflightError(status, message, code) {
+  return Object.assign(new HttpError(status, message, code), { definitive: true });
 }
 
-/**
- * Generate one still through Darkroom and return the exact bytes it saved.
- * The generation id is the Darkroom request id, so a retry reuses the saved
- * output instead of calling Workers AI again.
- */
+function operationFor(env, generation) {
+  return env.MEDIA_OPERATION.getByName(`media:${generation.id}`);
+}
+
+function requireBindings(env, needsReference) {
+  if (!env.AI || !env.MEDIA_OPERATION || !env.APP_ARTIFACTS || (needsReference && !env.IMAGES))
+    throw preflightError(503, "This studio cannot reach its image service yet. No image request was sent.", "provider_unconfigured");
+}
+
+const formats = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpeg"],
+  ["image/webp", "webp"],
+  ["image/gif", "gif"],
+]);
+
+/** Darkroom 0.10.0 exposes readShare only for metered successes. Studio's
+ * unmetered operation reaches "written" instead. Verify the scoped operation
+ * and read the fixed immutable output key used by this exact package's erasure. */
+async function readOriginal(env, generation, operation) {
+  const state = await operation.read();
+  if (!state || state.state !== "written") return null;
+  assertOperationScope(state, generation);
+  const key = `media-output/v1/${state.operationId}`;
+  const object = await env.APP_ARTIFACTS.get(key);
+  const format = formats.get(object?.httpMetadata?.contentType);
+  if (!object || !format || format !== state.image?.format || object.size < 1 || object.size > 32 * 1024 * 1024)
+    throw new HttpError(502, "The original image is unavailable. Check this job again to recover it.", "provider_invalid");
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  if (bytes.byteLength !== object.size)
+    throw new HttpError(502, "The original image read was incomplete. Check this job again.", "provider_invalid");
+  return { bytes, format };
+}
+
+function assertOperationScope(operation, generation) {
+  if (operation.requestId !== generation.id || operation.operationId !== `media:${generation.id}` ||
+      operation.namespace !== DARKROOM_NAMESPACE || operation.owner !== "studio")
+    throw new HttpError(502, "The image operation did not match this Studio job.", "provider_invalid");
+}
+
+/** Finish only existing operation state. A DO claim can adopt bytes committed
+ * just before a worker crashed, and has no path to invoking Workers AI. */
+async function finishRetainedOperation(operation, generation, { erasing = false } = {}) {
+  const current = await operation.read();
+  if (!current) return;
+  assertOperationScope(current, generation);
+  if (!["generating", "writing", ...(erasing ? ["estimating"] : [])].includes(current.state)) return;
+  const claim = await operation.claim();
+  if (claim.kind !== "claimed") return;
+  if (claim.operation.state === "estimating") {
+    await operation.releaseEstimate(claim.leaseId);
+  } else if (claim.operation.state === "writing") {
+    // The package verifies the object version and length when reading its lease.
+    try {
+      const bytes = await operation.readGenerated(claim.leaseId);
+      await operation.recordWrittenWithoutSettlement(claim.leaseId, "studio-retained-original", {
+        bytes: bytes.byteLength, format: claim.operation.image.format,
+      });
+    } catch (error) {
+      await operation.releaseWrite(claim.leaseId).catch(() => {});
+      throw error;
+    }
+  }
+}
+
+export async function recoverDarkroomImage(env, generation) {
+  if (!isDarkroomGeneration(generation)) return null;
+  if (!env.MEDIA_OPERATION || !env.APP_ARTIFACTS)
+    throw new HttpError(503, "Image recovery is temporarily unavailable. Check the same job again.", "provider_unconfigured");
+  const operation = operationFor(env, generation);
+  await finishRetainedOperation(operation, generation);
+  return readOriginal(env, generation, operation);
+}
+
+/** Start one paid request. Studio holds the dispatch lease; disable the
+ * package's capacity retry and keep the existing provider input defaults. */
 export async function runDarkroomImage(env, generation, model, settings, reference, signal) {
-  requireBindings(env);
+  requireBindings(env, model.references > 0);
   const { width, height } = aspectDimensions(settings.aspect, reference);
   const path = darkroomOutputKey(generation);
-  const request = {
-    prompt: settings.prompt,
-    model: darkroomModels.get(model.id),
-    width,
-    height,
-  };
+  const request = { prompt: settings.prompt, model: darkroomModels.get(model.id), width, height };
   if (model.references > 0) {
-    if (!reference) throw new HttpError(400, "Select a reference image for this model");
+    if (!reference) throw preflightError(400, "Select a reference image for this model", "reference_unavailable");
     request.references = [{ computerId: DARKROOM_DESTINATION, path: reference.asset.r2_key }];
   }
-  const host = {
-    scope: {
-      actorId: generation.project_id,
-      namespace: DARKROOM_NAMESPACE,
-      owner: "studio",
-      destinationId: DARKROOM_DESTINATION,
+
+  let attempted = false;
+  let refusal;
+  const authorize = authorizeKey(env, generation);
+  const ai = {
+    async run(endpoint, input, options) {
+      if (attempted) throw new Error("Studio does not retry a paid image call");
+      const active = await env.DB.prepare(
+        "SELECT id FROM generations WHERE id=?1 AND project_id=?2 AND status='submitting' AND deleted_at IS NULL",
+      ).bind(generation.id, generation.project_id).first();
+      if (!active) {
+        refusal = preflightError(409, "This image job is no longer active. No image request was sent.", "generation_inactive");
+        throw refusal;
+      }
+      if (reference) {
+        try { await authorize(reference.asset.r2_key); }
+        catch (error) { refusal = error; throw error; }
+      }
+      // Keep Phoenix/Lucid guidance and the original Schnell request shape.
+      if (model.id === "studio-print") input = { ...input, guidance: 5 };
+      if (model.id === "studio-film") {
+        input = { ...input, guidance: 3 };
+        delete input.num_steps;
+      }
+      if (model.id === "studio-quick") input = { prompt: settings.prompt, width, height };
+      attempted = true;
+      return env.AI.run(endpoint, input, options);
     },
+  };
+  const destination = createR2MediaDestination({
+    bucket: env.MEDIA,
+    destinationId: DARKROOM_DESTINATION,
+    fit: env.IMAGES ? createImagesReferenceFitter(env.IMAGES) : undefined,
+    authorize: async (key) => {
+      try { await authorize(key); }
+      catch (error) { refusal = error; throw error; }
+    },
+  });
+  const host = {
+    scope: { actorId: generation.project_id, namespace: DARKROOM_NAMESPACE, owner: "studio", destinationId: DARKROOM_DESTINATION },
     operations: env.MEDIA_OPERATION,
-    provider: createWorkersAiMediaProvider(env.AI),
-    // The studio pays its own Workers AI account and keeps its own ledger.
+    provider: createWorkersAiMediaProvider(ai),
     metering: "unmetered",
-    destination: createR2MediaDestination({
-      bucket: env.MEDIA,
-      destinationId: DARKROOM_DESTINATION,
-      fit: createImagesReferenceFitter(env.IMAGES),
-      authorize: authorizeKey(env, generation),
-    }),
+    destination: {
+      ...destination,
+      // The DO has already stored the provider's exact bytes. The decorated
+      // handoff contains the private prompt; do not write it to any bucket.
+      write: (key) => destination.authorize(key),
+    },
   };
   let outcome;
   try {
     outcome = await generateMedia(host, { requestId: generation.id, path, settings: request }, signal);
-  } catch (error) {
-    const own = refusal(error);
-    if (own) throw own;
-    throw new HttpError(502, `Image generation was not accepted: ${String(error.message ?? error).slice(0, 160)}`, "provider_error");
+  } catch {
+    if (!attempted) {
+      throw refusal ?? preflightError(502, "The image service could not prepare this request. No image request was sent.", "provider_preflight");
+    }
+    throw new HttpError(502, "The image request may have run. Check this job to recover the original without generating again.", "provider_error");
   }
   if (outcome.kind !== "succeeded")
-    throw new HttpError(502, "Darkroom did not finish this image; nothing was saved. Start a new request.", "provider_error");
-  const object = await env.MEDIA.get(path);
-  if (!object) throw new HttpError(502, "Darkroom reported a result that is not in the bucket", "provider_invalid");
-  const bytes = new Uint8Array(await object.arrayBuffer());
-  // The studio retains its own copy under the generation; this one was only the hand-off.
-  await env.MEDIA.delete(path);
-  return { bytes, format: outcome.format };
+    throw new HttpError(502, "The image result is not confirmed. Check this job before making a new request.", "provider_unknown");
+  const original = await readOriginal(env, generation, operationFor(env, generation)).catch(() => null);
+  if (!original) throw new HttpError(502, "The image is pending recovery. Check the same job again.", "provider_invalid");
+  return original;
 }
 
-/**
- * Erase Darkroom's retained copy of one generation: the immutable output under
- * media-output/ in APP_ARTIFACTS and the operation's own storage. Darkroom's
- * public erase refuses an operation that is still running; that job erases when
- * the studio next discards it, so the refusal is not an error here.
- */
+/** Erase the retained original and verify Darkroom's durable erasure marker.
+ * A live lease can refuse erasure; Studio keeps the tombstone queued. */
 export async function eraseDarkroomOperation(env, generation) {
-  if (!env.MEDIA_OPERATION || !generation) return;
-  const model = getModel(generation.model);
-  if (!model || !usesDarkroom(model)) return;
+  if (!isDarkroomGeneration(generation)) return;
+  if (!env.MEDIA_OPERATION || !env.APP_ARTIFACTS)
+    throw new HttpError(502, "Image cleanup is temporarily unavailable.", "erase_incomplete");
+  const operation = operationFor(env, generation);
+  await finishRetainedOperation(operation, generation, { erasing: true });
   try {
-    const result = await env.MEDIA_OPERATION.getByName(`media:${generation.id}`).erase(DARKROOM_NAMESPACE, generation.id);
-    if (!result.clear) throw new HttpError(502, "Darkroom's retained copy could not be confirmed erased", "erase_incomplete");
-  } catch (error) {
-    if (String(error?.message).includes("still active")) return;
-    throw error;
+    const result = await operation.erase(DARKROOM_NAMESPACE, generation.id);
+    if (!result.clear) throw new Error("Erasure not confirmed");
+  } catch {
+    throw new HttpError(502, "Image cleanup is pending. The original is no longer accessible through this job.", "erase_incomplete");
   }
 }

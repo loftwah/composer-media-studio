@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { authorizeKey, darkroomOutputKey } from "../src/lib/darkroom.mjs";
-import { createGeneration, dispatchGeneration } from "../src/lib/jobs.mjs";
+import { budgetSnapshot, createGeneration, dispatchGeneration } from "../src/lib/jobs.mjs";
 import worker from "../src/worker.mjs";
 import { createSession } from "../src/lib/auth.mjs";
 import { PNG_1x1, setup } from "./harness.mjs";
@@ -12,7 +12,7 @@ import { withDarkroom } from "./support/darkroom-env.mjs";
 
 const OUTPUT = Uint8Array.from(PNG_1x1);
 
-async function studio({ fit = true } = {}) {
+async function studio() {
   const { env, project } = await setup();
   withDarkroom(env);
   env.aiCalls = [];
@@ -40,25 +40,17 @@ async function admit(env, project, input) {
 test("a Studio Print still is generated through Darkroom and saved to R2", async () => {
   const { env, project } = await studio();
   const generation = await admit(env, project, { model: "studio-print", prompt: "A paper-cut greenhouse", aspect: "square", clientRequestId: "req_print" });
-  const written = new Map();
-  const put = env.MEDIA.put.bind(env.MEDIA);
-  env.MEDIA.put = async (key, bytes, options) => { written.set(key, new Uint8Array(bytes)); return put(key, bytes, options); };
   const saved = await dispatchGeneration(env, generation);
 
   assert.equal(saved.status, "saved", saved.error_detail);
   assert.equal(env.aiCalls.length, 1);
   assert.equal(env.aiCalls[0].model, "@cf/leonardo/lucid-origin");
-  assert.equal(env.aiCalls[0].input.prompt, "A paper-cut greenhouse");
-  // Darkroom wrote the result into the studio's bucket at the generation's own key...
-  assert.ok(env.MEDIA.puts.includes(darkroomOutputKey(generation)));
-  // ...and the studio retained exact bytes and an asset from them.
+  assert.deepEqual(env.aiCalls[0].input, { prompt: "A paper-cut greenhouse", width: 1024, height: 1024, guidance: 5 });
   const asset = await env.DB.prepare("SELECT * FROM assets WHERE generation_id=?1").bind(generation.id).first();
-  const result = written.get(darkroomOutputKey(generation));
-  assert.ok(result.byteLength > 0);
-  assert.deepEqual([...env.MEDIA.objects.get(asset.r2_key)], [...result]);
-  assert.deepEqual([...env.MEDIA.objects.get(saved.retained_key)], [...result]);
-  // The hand-off copy is not left behind.
-  assert.equal(env.MEDIA.objects.has(darkroomOutputKey(generation)), false);
+  assert.deepEqual(env.MEDIA.objects.get(asset.r2_key), OUTPUT);
+  assert.deepEqual(env.MEDIA.objects.get(saved.retained_key), OUTPUT);
+  assert.deepEqual(env.APP_ARTIFACTS.objects.get(`media-output/v1/media:${generation.id}`), OUTPUT);
+  assert.equal(env.MEDIA.puts.includes(darkroomOutputKey(generation)), false, "the prompt-bearing handoff never reached R2");
 });
 
 test("a reference is read from R2 through Darkroom for Studio Detail", async () => {
@@ -142,4 +134,62 @@ test("a still deleted while its job runs is erased when the job is discarded", a
   assert.equal(await env.APP_ARTIFACTS.head(`media-output/v1/media:${generation.id}`), null);
   assert.equal(env.MEDIA.objects.has(darkroomOutputKey(generation)), false);
   assert.equal(await env.DB.prepare("SELECT id FROM assets WHERE generation_id=?1").bind(generation.id).first(), null);
+});
+
+test("Film and Quick keep their previously qualified provider arguments", async () => {
+  for (const [model, guidance] of [["studio-film", 3], ["studio-quick", undefined]]) {
+    const { env, project } = await studio();
+    const generation = await admit(env, project, { model, prompt: "Test frame", aspect: "square", clientRequestId: "req_defaults" });
+    const result = await dispatchGeneration(env, generation);
+    assert.equal(result.status, "saved", result.error_detail);
+    assert.deepEqual(env.aiCalls[0].input, { prompt: "Test frame", width: 1024, height: 1024,
+      ...(guidance === undefined ? {} : { guidance }) });
+  }
+});
+
+test("missing reference-fitting binding releases the reservation before inference", async () => {
+  const { env, project } = await studio();
+  const key = "projects/prj_test/assets/asset_ref/original.png";
+  await addStill(env, project, "asset_ref", key);
+  delete env.IMAGES;
+  const generation = await admit(env, project, { model: "studio-detail", prompt: "Test frame", aspect: "square", referenceAssetId: "asset_ref", clientRequestId: "req_missing_binding" });
+  assert.ok((await budgetSnapshot(env, project.id)).reservedMicro > 0);
+  const failed = await dispatchGeneration(env, generation);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error_code, "provider_unconfigured");
+  assert.equal(env.aiCalls.length, 0);
+  assert.equal((await budgetSnapshot(env, project.id)).reservedMicro, 0);
+});
+
+test("saving a retained original after a lost result read does not dispatch twice", async () => {
+  const { env, project } = await studio();
+  const generation = await admit(env, project, { model: "studio-print", prompt: "Test frame", aspect: "square", clientRequestId: "req_recover" });
+  const get = env.APP_ARTIFACTS.get.bind(env.APP_ARTIFACTS);
+  env.APP_ARTIFACTS.get = async () => { throw new Error("Transient result read failure"); };
+  const unknown = await dispatchGeneration(env, generation);
+  assert.equal(unknown.status, "unknown");
+  assert.equal((await budgetSnapshot(env, project.id)).reservedMicro, 25_000);
+  assert.match(unknown.error_detail, /recover|again|unavailable/);
+  env.APP_ARTIFACTS.get = get;
+  const cookie = `studio_session=${await createSession(env)}`;
+  const path = `https://studio.test/api/generations/${generation.id}/save-retry`;
+  const response = await worker.fetch(new Request(path, { method: "POST", headers: { cookie } }), env, { waitUntil() {} });
+  assert.equal(response.status, 200);
+  const saved = await response.json();
+  assert.equal(saved.generation.status, "saved");
+  assert.equal(saved.budget.reservedMicro, 0);
+  assert.equal(saved.budget.spentMicro, 25_000);
+  assert.equal(env.aiCalls.length, 1);
+});
+
+test("a lost paid reply does not suggest a fresh request or issue Darkroom's capacity retry", async () => {
+  const { env, project } = await studio();
+  let calls = 0;
+  env.AI.run = async () => { calls += 1; throw new Error("3040: Capacity temporarily exceeded"); };
+  const generation = await admit(env, project, { model: "studio-print", prompt: "Test frame", aspect: "square", clientRequestId: "req_unknown" });
+  const pending = await dispatchGeneration(env, generation);
+  assert.equal(pending.status, "unknown");
+  assert.match(pending.error_detail, /Check this job/);
+  assert.equal((await budgetSnapshot(env, project.id)).reservedMicro, 25_000);
+  assert.equal(calls, 1);
 });
