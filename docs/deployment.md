@@ -10,6 +10,8 @@
 | D1 | `media-studio` (`c3451e4b-48b7-44cd-bf0e-7d953f763df2`) |
 | R2 | `media-studio` bound as `MEDIA` |
 | Workers AI | binding `AI` |
+| Images | binding `IMAGES`, fits reference images for Darkroom |
+| Darkroom | Durable Object `MEDIA_OPERATION` (class `MediaOperationDO`, migration `v1`) and R2 binding `APP_ARTIFACTS`, the same `media-studio` bucket |
 | Cron | `* * * * *` for job reconciliation |
 | Runtime secrets | `OWNER_PASSPHRASE`, `SESSION_SECRET`, `FAL_KEY` |
 | Optional public destinations | `PUBLIC_BUILD_URL`, `PUBLIC_STORY_URL`, `LAUNCH_KIT_URL` |
@@ -22,7 +24,7 @@ repository contains no credential, session cookie or provider key.
 
 ```sh
 npx wrangler d1 create media-studio
-npx wrangler r2 bucket create media-studio
+npx wrangler r2 bucket create media-studio   # also backs APP_ARTIFACTS; no second bucket
 # put the returned database_id in wrangler.jsonc
 npx wrangler d1 migrations apply media-studio --remote
 printf '%s' "$OWNER_PASSPHRASE" | npx wrangler secret put OWNER_PASSPHRASE
@@ -34,6 +36,20 @@ pnpm deploy --migrate
 `pnpm deploy` refuses a dirty tree or unpushed `main`, runs the focused checks
 once, deploys with the commit baked in, then reads `/healthz` and `/build.json`
 and fails if the live revision is not the released commit.
+
+## Darkroom
+
+Studio Print, Film, Quick and Detail stills run through Darkroom
+(`@fungi.computer/darkroom` 0.10.0). `wrangler.jsonc` adds three bindings for it:
+`IMAGES` (Cloudflare Images, which needs an account on current billing),
+`MEDIA_OPERATION` (a SQLite Durable Object, created by the `v1` migration on the
+next deploy) and `APP_ARTIFACTS` (the `media-studio` bucket again; Darkroom keeps
+retained bytes under `media-output/`). Reference images are read from, and results
+are written to, `MEDIA`. Video and every fal.ai model are unchanged.
+
+`pnpm-workspace.yaml` temporarily lets pnpm install the three same-day Darkroom
+packages past the 24-hour release gate; remove those entries after the date in the
+comment.
 
 ## Optional public destinations
 

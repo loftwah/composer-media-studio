@@ -75,3 +75,19 @@ Update path: pin the exact published version, run its published checks in the
 studio repository, add the catalogue entry and adapter, migrate the existing job
 rows by stable request id, and keep the current tombstones and budget ledger as
 the authority during the transition.
+
+## Update 2026-11-15: still images only
+
+`@fungi.computer/darkroom@0.10.0` now ships `createR2MediaDestination`, so Darkroom
+can read references from and write results to this studio's `MEDIA` bucket without
+a Computer. Studio Print, Film, Quick and Detail use it (`src/lib/darkroom.mjs`).
+The decision above stands for everything else: Studio Draft (SDXL Lightning) is not
+in Darkroom's catalogue, video and edits are fal.ai, and the job ledger, budget
+reservation and tombstones stay in `src/lib/jobs.mjs`. Darkroom is the provider and
+storage step inside that engine, not a second one. Deleting a generated still, or
+discarding a deleted job, also erases Darkroom's retained copy under
+`media-output/` in `APP_ARTIFACTS` through Darkroom's own `erase`.
+
+One visible change: Darkroom builds its own Workers AI input and has no
+`guidance` setting, so Studio Print (Lucid Origin, was `guidance: 5`) and Studio
+Film (Phoenix, was `guidance: 3`) now use the model defaults.

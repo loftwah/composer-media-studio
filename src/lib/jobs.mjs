@@ -32,6 +32,7 @@ import {
   validateSettings,
   cancelVideo,
 } from "./providers.mjs";
+import { eraseDarkroomOperation, runDarkroomImage, usesDarkroom } from "./darkroom.mjs";
 import { builtinRecipe } from "./recipes.mjs";
 import { signRenderLink } from "./render-links.mjs";
 import { measureFootageSource } from "./footage-preflight.mjs";
@@ -270,6 +271,8 @@ async function claim(env, generationId, from, to) {
   return Boolean(row);
 }
 
+export { eraseDarkroomOperation };
+
 export async function dispatchGeneration(env, generation) {
   const model = getModel(generation.model);
   const request = safeJson(generation.request_json, {});
@@ -320,7 +323,9 @@ export async function dispatchGeneration(env, generation) {
 
   if (model.kind === "image") {
     try {
-      const output = await runImage(env, model, request, reference ? [reference] : []);
+      const output = usesDarkroom(model)
+        ? await runDarkroomImage(env, generation, model, request, reference)
+        : await runImage(env, model, request, reference ? [reference] : []);
       return await saveGeneration(env, generation, output.bytes, output.format);
     } catch (error) {
       return failGeneration(env, generation, error, { dispatched: true });
@@ -405,6 +410,7 @@ export async function saveGeneration(env, generation, bytes, format) {
     return fresh;
   }
   if (fresh.deleted_at) {
+    await eraseDarkroomOperation(env, generation);
     await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',updated_at=?2 WHERE id=?1")
       .bind(generation.id, now())
       .run();
@@ -549,6 +555,7 @@ export async function advanceGeneration(env, generation) {
   const fresh = await loadGeneration(env, generation.id);
   if (fresh.deleted_at) {
     if (fresh.retained_key) await env.MEDIA.delete(fresh.retained_key);
+    await eraseDarkroomOperation(env, fresh);
     await env.DB.prepare("UPDATE generations SET status='discarded_after_delete',retained_key=NULL,updated_at=?2 WHERE id=?1")
       .bind(fresh.id, now())
       .run();

@@ -10,7 +10,7 @@ Projects, uploads, thumbnails, the viewer, search and filters, renaming, downloa
 
 ## Generation
 
-- **Images** — Cloudflare Workers AI on this studio's own account. Studio Draft (SDXL Lightning) supports square, portrait, landscape and wide frames. Studio Detail (FLUX.2 klein) takes one selected still and makes a reference-guided variation.
+- **Images** — Cloudflare Workers AI on this studio's own account, run through [Darkroom](https://www.npmjs.com/package/@fungi.computer/darkroom) for Studio Print, Film, Quick and Detail. Darkroom reads a reference from, and writes the result to, this studio's `MEDIA` R2 bucket; it needs no Computer. It fits a reference with the `IMAGES` binding and keeps each job in a `MEDIA_OPERATION` Durable Object. Studio Draft (SDXL Lightning) is not in Darkroom's catalogue and keeps its direct Workers AI call. Studio Draft (SDXL Lightning) supports square, portrait, landscape and wide frames. Studio Detail (FLUX.2 klein) takes one selected still and makes a reference-guided variation.
 - **Edits** — fal.ai on this studio's own key. Studio Fill (`fal-ai/flux-pro/v1/fill`) takes a still and an exactly matching mask for a real inpaint; the same tool builds a 25% extended frame for outpaint. Studio Cutout (`fal-ai/birefnet/v2`) removes the background and returns a transparent PNG; Studio Upscale (`fal-ai/clarity-upscaler`) doubles the still. Every edit keeps the original and saves the result as a separate variant with its own hash.
 - **Video** — fal.ai through this studio's own key. Hailuo 2.3 Standard, Kling 2.5 Turbo Pro, or MiniMax H3 Max Turbo, image-to-video, 5–15 seconds depending on model. H3 produced saved videos on the Media Studio installation shown here, including [Bubbles](https://media.loftwah.com/p/Z8Ve3dyfywAKyAc4) and [SHOALSHOT](https://media.loftwah.com/p/5xFh02VhvCRteXtb). Availability and funding depend on each studio's provider account. The job is asynchronous: submit, poll, copy the finished MP4 into this studio's R2.
 - **Sound** — fal.ai through the same key. Studio Score (`fal-ai/stable-audio`) makes a 10–30 second instrumental bed; Studio Voice (`fal-ai/elevenlabs/tts/eleven-v3`) narrates text supplied by the owner; Studio Effect (`fal-ai/elevenlabs/sound-effects/v2`) makes one short cue. Each is saved as its own audio asset with a real duration, sample rate and channel count read from the bytes, and can be published or used in a composition.
@@ -52,6 +52,8 @@ printf '%s' "$(openssl rand -hex 32)" | npx wrangler secret put SESSION_SECRET -
 pnpm dev
 ```
 
+Stills from Studio Print, Film, Quick and Detail run through Darkroom, which needs the `IMAGES`, `MEDIA_OPERATION` and `APP_ARTIFACTS` bindings already in `wrangler.jsonc`. `pnpm dev` supplies them locally; no new bucket is needed. To try it, open a project, choose Studio Detail with one of its stills as the reference, and generate. The result lands in the project library as before.
+
 Optional video on a local or deployed studio: `npx wrangler secret put FAL_KEY`.
 
 Optional public destinations: `PUBLIC_BUILD_URL` ("Build your own Media Studio"), `PUBLIC_STORY_URL` ("See how this was made") and `LAUNCH_KIT_URL` ("Open Launch Kit"). Each is a plain HTTPS installation variable; omit an independent studio's absent destination and the link is not rendered. Invalid, non-HTTPS or credential-bearing values are ignored.
@@ -64,7 +66,7 @@ The Apps launcher is the locally committed Composer distribution and source at A
 
 - A standalone studio uses one owner passphrase and an HttpOnly signed session. There is no multi-tenant registration.
 - An installation opened from App Composer accepts a short-lived signed handoff naming the current actor, workspace, selected project and read/edit/generate/publish/admin actions. Privileged actions re-check the current Composer grant on the server; a revoked member stops the next dispatch. The Composer cookies and provider keys never reach this origin.
-- Media bytes live in the studio's R2 bucket; metadata in its D1 database.
+- Media bytes live in the studio's R2 bucket; metadata in its D1 database. Darkroom may only read a still that is a live image in the same project, and write the one key it was given for that generation; the studio checks every key it is handed.
 - Composer receives a source pin, not credentials. The studio runs after detaching Composer and has no licence callback.
 - Deleting media withdraws pages using it. A tombstone prevents a late provider result from restoring deleted media.
 - The private project export includes project records, references, prompts, lineage, costs, publications, subject versions and song plans (which may contain lyrics and scene directions), but not Studio provider keys, session cookies or media bytes. User-authored text and links can still contain sensitive information; share it carefully. Media downloads are separate; the export is not an R2 backup or an importable restore.

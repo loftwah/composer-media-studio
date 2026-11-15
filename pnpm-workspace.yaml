@@ -1,6 +1,8 @@
 allowBuilds:
   esbuild: true
   workerd: true
+  # Darkroom reads image metadata with exifreader; its install script is only a donation notice.
+  exifreader: false
 # Grandfather only these exact, already pinned and deployed Studio main versions.
 # Remove both exceptions after 2026-11-14 17:05 UTC, when they pass the 24h gate.
 minimumReleaseAge: 1440
@@ -8,3 +10,8 @@ minimumReleaseAgeStrict: true
 minimumReleaseAgeExclude:
   - wrangler@4.162.0
   - miniflare@5.20261113.0-beta
+  # Darkroom 0.10.0 and its two same-day dependencies. Remove these three
+  # exceptions after 2026-11-16 01:00 UTC, when they pass the 24h gate.
+  - "@fungi.computer/darkroom@0.10.0"
+  - "@fungi.computer/agar@0.17.0"
+  - "@fungi.computer/puffball@0.9.0"
