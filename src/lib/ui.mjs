@@ -122,7 +122,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
     ${bridged && composerStudioEntry ? `<a class="quiet" href="${escapeHtml(composerStudioEntry)}">App Composer</a>` : ""}
     ${storyUrl ? `<a class="quiet" href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     <a href="#/">Projects</a>
-    <a href="/compare">Compare models</a>
+    ${session ? `<a href="/compare">Compare models</a>` : ""}
     ${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}
     <a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener">Help</a>
     ${launcherHome ? '<div class="app-launcher"><button type="button" class="secondary apps-trigger" data-open-apps aria-label="Open apps" title="Apps and shortcuts (Ctrl/Cmd+K)" aria-haspopup="dialog"><span>Apps</span><kbd>Ctrl K</kbd></button></div>' : ""}
