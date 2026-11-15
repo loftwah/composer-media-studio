@@ -45,8 +45,9 @@ function head({
   kind = "website",
   extra = "",
   theme = true,
+  private: isPrivate = false,
 }) {
-  const hasImage = Boolean(image);
+  const hasImage = Boolean(image) && !isPrivate;
   const width = Number.isInteger(imageWidth) && imageWidth > 0 ? imageWidth : null;
   const height = Number.isInteger(imageHeight) && imageHeight > 0 ? imageHeight : null;
   const type = typeof imageType === "string" && imageType.startsWith("image/") ? imageType : null;
@@ -79,17 +80,18 @@ function head({
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeHtml(description)}">
 <meta name="theme-color" content="#f4f0e8">
+${isPrivate ? '<meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer">' : ""}
 <link rel="icon" href="/brand/composer-icon-tile.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/brand/composer-icon-tile.svg">
 <link rel="preload" href="/brand/space-grotesk.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="${styles}">
 ${theme ? '<script src="/theme.js" defer></script>' : ""}
-${imageTags}
-<meta property="og:type" content="${kind}">
+${isPrivate ? "" : imageTags}
+${isPrivate ? "" : `<meta property="og:type" content="${kind}">
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="${escapeHtml(description)}">
 ${url ? `<meta property="og:url" content="${escapeHtml(url)}"><link rel="canonical" href="${escapeHtml(url)}">` : ""}
-${twitter}
+${twitter}`}
 ${extra}
 </head>`;
 }
@@ -152,7 +154,7 @@ export function shell({ revision, session = null, composerOrigin = null, storyUr
     title: "Media Studio — make, assemble and keep images, video and sound",
     description:
       "An independent studio for uploads, image generation, reference variations, masked fills, background removal, upscaling, image-to-video, generated music, narration and effects, bounded multi-track assembly, saved compositions and deliberate publishing.",
-    extra: `<meta name="robots" content="noindex"><link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}"><link rel="stylesheet" href="/brand/launcher.css">`,
+    extra: `<meta name="robots" content="noindex"><link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}"><link rel="stylesheet" href="/review.css"><link rel="stylesheet" href="/brand/launcher.css">`,
   })}
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -706,6 +708,141 @@ ${header({ session, composerOrigin, storyUrl, woodhouseShare })}
   </section>
 </main>
 <script type="module" src="/compare.js?v=${encodeURIComponent(revision)}"></script>
+</body>
+</html>`;
+}
+
+function reviewTime(ms) {
+  if (!Number.isFinite(Number(ms))) return "";
+  const total = Math.max(0, Number(ms));
+  const minutes = Math.floor(total / 60000);
+  const seconds = Math.floor((total % 60000) / 1000);
+  const tenths = Math.floor((total % 1000) / 100);
+  return `${minutes}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
+function reviewFeedbackList(feedback) {
+  if (!feedback.length) return '<p class="small" id="review-feedback-empty">No feedback yet. Comments are bound to this exact saved version.</p>';
+  return `<ol class="review-feedback" aria-label="Feedback on this saved version">${feedback.map((item) => {
+    let region = null;
+    try { region = item.region_json ? JSON.parse(item.region_json) : null; } catch { region = null; }
+    const anchor = item.at_ms !== null && item.at_ms !== undefined
+      ? `<button type="button" class="review-timecode" data-review-seek="${Number(item.at_ms)}" aria-label="Play from ${reviewTime(item.at_ms)}">${reviewTime(item.at_ms)}${item.end_ms !== null && item.end_ms !== undefined ? `–${reviewTime(item.end_ms)}` : ""}</button>`
+      : region
+        ? `<span class="review-point">Point ${Math.round(Number(region.x) * 100)}% across, ${Math.round(Number(region.y) * 100)}% down</span>`
+        : "";
+    return `<li class="review-feedback-item${item.resolved_at ? " resolved" : ""}">
+      <div class="review-feedback-head"><strong>${escapeHtml(item.reviewer_name)}</strong><span class="small">${new Date(item.created_at).toUTCString()}</span>${item.resolved_at ? '<span class="review-tag">Resolved</span>' : ""}</div>
+      ${anchor}
+      <p class="review-feedback-body">${escapeHtml(item.body)}</p>
+    </li>`;
+  }).join("")}</ol>`;
+}
+
+function reviewDecisionCopy(room) {
+  if (room.decision === "approved")
+    return `<p class="review-verdict approved"><strong>Reviewer approved this saved version.</strong> Approval here is feedback only. It does not publish, schedule, spend or change project permissions.</p>`;
+  if (room.decision === "changes_requested")
+    return `<p class="review-verdict changes"><strong>Changes requested.</strong> This decision applies to this saved version only. A new render starts a new review.</p>`;
+  return `<p class="review-verdict waiting"><strong>Awaiting review.</strong> Leave specific feedback or record a decision for this saved version.</p>`;
+}
+
+/** A private review page. It has no Open Graph, canonical or crawler metadata
+ * and names only the pinned version, never the project or its source prompts. */
+export function reviewRoomPage({ room, feedback = [], mediaPath, kind, title, expiresAt }) {
+  const isVideo = kind === "video";
+  const facts = [
+    isVideo ? "film" : "image",
+    room.asset_width && room.asset_height ? `${room.asset_width} × ${room.asset_height}` : null,
+    room.asset_duration_ms ? `${(room.asset_duration_ms / 1000).toFixed(1)}s` : null,
+    room.asset_bytes ? `${(room.asset_bytes / 1024 / 1024).toFixed(1)} MB` : null,
+    room.asset_mime,
+  ].filter(Boolean).join(" · ");
+  const decisionNote = room.decision_note ? `<p class="small" id="review-decision-note">Decision note: ${escapeHtml(room.decision_note)}</p>` : `<p class="small" id="review-decision-note"></p>`;
+  return `${head({
+    title: `${title} — private review — Media Studio`,
+    description: "A private, version-pinned review page from Media Studio.",
+    private: true,
+    extra: `<link rel="stylesheet" href="/review.css">`,
+  })}
+<body class="review-page">
+<a class="skip" href="#review-main">Skip to content</a>
+<header class="site-header review-header">
+  <a class="wordmark" href="/" aria-label="Media Studio home"><img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt=""><span>Media Studio</span><span class="brand-by">Private review</span></a>
+  <p class="review-privacy small">This link shows one saved version. Do not share it publicly.</p>
+</header>
+<main id="review-main" tabindex="-1">
+  <div class="review-intro">
+    <h1>${escapeHtml(room.version_label)}</h1>
+    <p class="small">Private review · ${escapeHtml(facts)} · Link expires ${escapeHtml(new Date(expiresAt).toUTCString())}</p>
+  </div>
+  <section class="review-stage" aria-labelledby="review-media-title">
+    <h2 id="review-media-title" class="sr-only">Saved version under review</h2>
+    ${isVideo
+      ? `<video controls playsinline preload="metadata" data-review-media src="${escapeHtml(mediaPath)}" aria-describedby="review-media-help"></video>`
+      : `<div class="review-image-frame" data-review-image><img data-review-image-target src="${escapeHtml(mediaPath)}" alt="${escapeHtml(room.version_label)}"><span class="review-marker" data-review-marker hidden aria-hidden="true"></span></div>`}
+    <p class="small" id="review-media-help">${isVideo
+      ? "Use the player controls or the keyboard to pause at the moment you mean. “Use current time” attaches that timecode to your comment."
+      : "Select the image to pin a point, or type a position below. The point is saved with your comment."}</p>
+  </section>
+  <section class="review-panel" aria-labelledby="review-feedback-title">
+    <h2 id="review-feedback-title">Feedback on this version</h2>
+    <div id="review-feedback">${reviewFeedbackList(feedback)}</div>
+    <p id="review-feedback-status" role="status" aria-live="polite" class="small"></p>
+    <form class="review-form" data-review-form>
+      <label>Your name <input name="reviewerName" maxlength="60" autocomplete="name" required></label>
+      <label>Comment <textarea name="body" maxlength="2000" rows="5" required></textarea></label>
+      ${isVideo
+        ? `<div class="review-anchor"><label>Start timecode in seconds <input name="atSeconds" type="number" min="0" step="0.1" inputmode="decimal"></label><label>End timecode (optional) <input name="endSeconds" type="number" min="0" step="0.1" inputmode="decimal"></label><button type="button" class="secondary" data-use-current-time>Use current time</button></div>`
+        : `<fieldset class="review-anchor"><legend>Pin this note to a point (optional)</legend><label>Across (%) <input name="regionX" type="number" min="0" max="100" step="1" inputmode="numeric"></label><label>Down (%) <input name="regionY" type="number" min="0" max="100" step="1" inputmode="numeric"></label></fieldset>`}
+      <button type="submit" class="button">Post feedback</button>
+      <p class="small">Feedback is saved against this exact version. It never edits, generates, publishes or charges anything.</p>
+    </form>
+    <noscript><p class="notice">Comments need JavaScript in this browser. The saved version and existing feedback still display without it.</p></noscript>
+  </section>
+  <section class="review-panel" aria-labelledby="review-decision-title">
+    <h2 id="review-decision-title">Decision for this version</h2>
+    <div id="review-decision-banner">${reviewDecisionCopy(room)}</div>
+    ${decisionNote}
+    <p class="small">The creator sees this decision against this exact saved version. A new render never inherits it.</p>
+    <form class="review-form" data-review-decision>
+      <label>Your name <input name="reviewerName" maxlength="60" autocomplete="name" required></label>
+      <label>Decision note (optional) <textarea name="note" maxlength="500" rows="3"></textarea></label>
+      <input type="hidden" name="decision" value="">
+      <div class="row">
+        <button type="button" class="secondary" data-decision-choice="changes_requested">Request changes</button>
+        <button type="button" class="button" data-decision-choice="approved">Approve this version</button>
+      </div>
+      <div class="review-confirm" data-decision-confirm hidden>
+        <p role="status" data-decision-copy></p>
+        <p class="small">Approval is feedback, not permission to publish, schedule, spend or change the project.</p>
+        <div class="row"><button type="submit" class="button">Record decision</button><button type="button" class="quiet" data-decision-cancel>Cancel</button></div>
+      </div>
+    </form>
+  </section>
+  <p class="review-footer small">Private review room · the media bytes remain in the studio's private storage. This page is not a public gallery or a publication.</p>
+</main>
+<script type="module" src="/review.js"></script>
+</body>
+</html>`;
+}
+
+export function reviewRefusalPage({ title = "This review link is not available", message = "Ask the creator for a current private review link.", code = "review_unavailable" }) {
+  return `${head({
+    title: `${title} — Media Studio`,
+    description: "A private review link is not available.",
+    private: true,
+    extra: `<link rel="stylesheet" href="/review.css">`,
+  })}
+<body class="review-page review-refusal">
+<main id="review-main">
+  <div class="review-intro">
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(message)}</p>
+    <p class="small" data-refusal-code="${escapeHtml(code)}">No media or feedback was returned.</p>
+    <p><a class="button secondary" href="/">Media Studio home</a></p>
+  </div>
+</main>
 </body>
 </html>`;
 }
