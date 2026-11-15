@@ -273,13 +273,24 @@ async function claim(env, generationId, from, to) {
 export async function dispatchGeneration(env, generation) {
   const model = getModel(generation.model);
   const request = safeJson(generation.request_json, {});
-  const reference = await referenceFor(env, generation.project_id, request.referenceAssetId);
+  let reference;
+  let inputError;
+  let inputFailed = false;
+  try {
+    reference = await referenceFor(env, generation.project_id, request.referenceAssetId);
+  } catch (error) {
+    inputFailed = true;
+    inputError = error;
+  }
 
   if (!(await claim(env, generation.id, "admitted", "submitting"))) {
     const current = await loadGeneration(env, generation.id);
     if (current.status === "admitted" && safeJson(current.request_json, {}).budgetAdmission !== "atomic-v1") throw new HttpError(409, "This older job's reservation cannot be verified. Do not retry it automatically.", "admission_unverified");
     return current;
   }
+
+  // Only the dispatcher that claimed this admission may release its reservation.
+  if (inputFailed) return failGeneration(env, generation, inputError, { dispatched: false });
 
   if (model.restyle) {
     let sourceUrl;
@@ -295,10 +306,15 @@ export async function dispatchGeneration(env, generation) {
   }
 
   if (model.kind === "image" && model.edit) {
+    let maskReference;
     try {
-      const maskReference = request.maskAssetId
+      maskReference = request.maskAssetId
         ? await referenceFor(env, generation.project_id, request.maskAssetId)
         : null;
+    } catch (error) {
+      return failGeneration(env, generation, error, { dispatched: false });
+    }
+    try {
       const submitted = await submitImageEdit(env, model, request, [
         {
           bytes: reference.bytes,
