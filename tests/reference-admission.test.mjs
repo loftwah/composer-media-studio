@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, jpeg } from './harness.mjs';
+import { withDarkroom } from './support/darkroom-env.mjs';
 import { createGeneration, dispatchGeneration, budgetSnapshot } from '../src/lib/jobs.mjs';
 
 for (const unavailable of ['deleted', 'missing bytes']) {
@@ -30,6 +31,7 @@ for (const unavailable of ['deleted', 'missing bytes']) {
 
 test('a failed reference lookup cannot release a reservation claimed by another dispatcher', async () => {
   const { env, project } = await setup({ allowance: 100000 });
+  withDarkroom(env);
   const key = 'fixture/concurrent.jpg';
   const bytes = jpeg(512, 512);
   await env.MEDIA.put(key, bytes);
@@ -54,8 +56,11 @@ test('a failed reference lookup cannot release a reservation claimed by another 
   // Ensure the first caller is waiting on its reference before starting the second.
   while (lookups === 0) await new Promise(resolve => setImmediate(resolve));
   const second = dispatchGeneration(env, generation);
-  await providerEntered;
-  releaseLookup();
+  try {
+    await Promise.race([providerEntered, second.then(result => assert.fail(`Provider did not start: ${result.error_code}`))]);
+  } finally {
+    releaseLookup();
+  }
   assert.equal((await first).status, 'submitting');
   assert.ok((await budgetSnapshot(env, project.id)).reservedMicro > 0);
   releaseProvider();
