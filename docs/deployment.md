@@ -57,8 +57,9 @@ access first and retries storage erasure from the existing cron.
 `IMAGES` fits Detail references. Cloudflare bills transformations separately
 from model calls and [documents a Free plan allowance](https://developers.cloudflare.com/images/pricing/).
 Durable Object requests/storage and R2 count against their respective service
-limits. Check the target account before enabling more usage. Draft remains
-direct Workers AI; edits, video and audio remain on fal.ai.
+limits. Check the target account before enabling more usage. Draft uses the
+Darkroom multipart adapter for FLUX.2 Klein 9B; edits, video and audio remain on
+fal.ai.
 
 The lockfile pins the three newly published packages. Remove the exact
 temporary release-age exceptions after the date in `pnpm-workspace.yaml`.

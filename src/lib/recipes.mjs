@@ -25,7 +25,7 @@ export const builtinRecipes = [
     description:
       "One object, plainly lit, with believable contact shadow and a clean catalogue frame.",
     kind: "image",
-    model: "studio-draft",
+    model: "studio-craft",
     promptTemplate:
       "Studio product photograph of {product}. Single soft key light from the left, subtle contact shadow, warm grey seamless background, tactile material detail, centred composition, shallow depth of field, no props, no packaging logos, no hands. Keep any requested lettering accurate and legible.",
     controls: [

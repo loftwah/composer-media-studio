@@ -244,6 +244,7 @@ export async function createGeneration(env, project, input) {
         JSON.stringify({
           ...settings,
           budgetAdmission: "atomic-v1",
+          modelEndpoint: model.endpoint,
           referenceAssetId: reference?.asset.id ?? null,
           referenceSha256: reference?.asset.sha256 ?? null,
           maskAssetId: mask?.asset.id ?? null,

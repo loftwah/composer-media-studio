@@ -99,12 +99,15 @@ test("a reference deleted while the job dispatches is refused before Workers AI 
   assert.equal(env.MEDIA.puts.some((key) => key.endsWith("darkroom-output")), false);
 });
 
-test("Studio Draft keeps its direct Workers AI call", async () => {
+test("Studio Draft uses Darkroom's multipart FLUX.2 Klein 9B call", async () => {
   const { env, project } = await studio();
-  const generation = await admit(env, project, { model: "studio-draft", prompt: "A product plate", aspect: "square", clientRequestId: "req_draft" });
-  env.AI.run = async (model) => { env.aiCalls.push({ model }); return { image: Buffer.alloc(300, 1).toString("base64") }; };
-  await dispatchGeneration(env, generation);
-  assert.equal(env.aiCalls[0].model, "@cf/bytedance/stable-diffusion-xl-lightning");
+  const generation = await admit(env, project, { model: "studio-craft", prompt: "A product plate", aspect: "square", clientRequestId: "req_draft" });
+  const saved = await dispatchGeneration(env, generation);
+  assert.equal(saved.status, "saved", saved.error_detail);
+  assert.equal(env.aiCalls[0].model, "@cf/black-forest-labs/flux-2-klein-9b");
+  assert.ok(env.aiCalls[0].input.multipart, "the replacement model travels in the multipart body");
+  const stored = await env.DB.prepare("SELECT request_json FROM generations WHERE id=?1").bind(generation.id).first();
+  assert.equal(JSON.parse(stored.request_json).modelEndpoint, "@cf/black-forest-labs/flux-2-klein-9b");
   assert.equal(env.MEDIA.puts.some((key) => key.endsWith("darkroom-output")), false);
 });
 

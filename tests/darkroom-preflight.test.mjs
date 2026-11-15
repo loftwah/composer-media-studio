@@ -46,5 +46,5 @@ test("a reference inside the catalogue rule needs no Images transform", () => {
   assert.equal(referenceFitsModel(detail, { width: 512, height: 640, format: "png" }), false);
   assert.equal(referenceFitsModel(detail, { width: 410, height: 512, format: "jpeg" }), false);
   assert.equal(referenceFitsModel(detail, null), false);
-  assert.equal(referenceFitsModel({ id: "studio-draft", references: 0 }, { width: 512, height: 512, format: "png" }), false);
+  assert.equal(referenceFitsModel({ id: "studio-cutout", references: 0 }, { width: 512, height: 512, format: "png" }), false);
 });

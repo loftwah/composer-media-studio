@@ -72,7 +72,7 @@ test("saving a new output invokes the opted-in policy without exposing its promp
   const { PNG_1x1 } = await import("./harness.mjs");
   const { env, project } = await setup(); env.FIRST_PARTY_PUBLICATION_PROJECTS = project.id;
   await env.DB.prepare("INSERT INTO publication_policies(project_id,enabled,enabled_at,attested_at) VALUES(?1,1,1,1)").bind(project.id).run();
-  const { generation } = await createGeneration(env,project,{clientRequestId:"auto_example",kind:"image",model:"studio-draft",aspect:"square",prompt:"secret prompt",recipeId:"",controls:{}});
+  const { generation } = await createGeneration(env,project,{clientRequestId:"auto_example",kind:"image",model:"studio-craft",aspect:"square",prompt:"secret prompt",recipeId:"",controls:{}});
   const saved = await saveGeneration(env,generation,PNG_1x1,"png");
   const pub=await env.DB.prepare("SELECT * FROM publications WHERE asset_id=?1").bind(saved.output_asset_id).first();
   assert.ok(pub); assert.equal(pub.listed,1); assert.equal(pub.description,""); assert.doesNotMatch(pub.title,/secret/);

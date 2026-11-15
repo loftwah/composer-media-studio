@@ -17,8 +17,7 @@ test('starting recipes permit lettering without removing other creative constrai
 test('draft model no longer silently suppresses text in its provider request', async () => {
   let payload;
   const env={ AI:{ run:async (_model,input) => { payload=input; return new Response(new Uint8Array(300)).body; } } };
-  await runImage(env,getModel('studio-draft'),{prompt:'A hand-painted sign saying hello',aspect:'square'},[]);
-  assert.doesNotMatch(payload.negative_prompt,/\btext\b/i);
-  assert.match(payload.negative_prompt,/watermark/);
+  await runImage(env,getModel('studio-craft'),{prompt:'A hand-painted sign saying hello',aspect:'square'},[]);
+  assert.equal(payload.negative_prompt, undefined);
   assert.match(payload.prompt,/hand-painted sign/);
 });

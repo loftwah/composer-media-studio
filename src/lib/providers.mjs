@@ -45,17 +45,17 @@ export const models = {
     costMicro: 20_000,
     costBasis: "Cloudflare Workers AI estimate for one Phoenix still; not an invoice.",
   },
-  "studio-draft": {
-    id: "studio-draft",
-    label: "Studio Draft",
+  "studio-craft": {
+    id: "studio-craft",
+    label: "Studio Draft · FLUX.2 Klein 9B",
     provider: PROVIDER_CLOUDFLARE,
-    endpoint: "@cf/bytedance/stable-diffusion-xl-lightning",
+    endpoint: "@cf/black-forest-labs/flux-2-klein-9b",
     kind: "image",
-    description: "Fast photographic draft for product plates and lighting tests.",
+    description: "Fast photographic draft for product plates and lighting tests, on FLUX.2 Klein 9B.",
     aspects: imageAspects,
     references: 0,
-    costMicro: 1_200,
-    costBasis: "Cloudflare Workers AI estimate for one 1024px still; not an invoice.",
+    costMicro: 16_000,
+    costBasis: "Cloudflare Workers AI list price: US$0.015 for the first output megapixel plus US$0.002 per extra megapixel. A 1024 × 1280 still is 1.25 MP, so this estimate rounds up to US$0.016. Not an invoice.",
   },
   "studio-detail": {
     id: "studio-detail",
@@ -252,6 +252,38 @@ export const models = {
   },
 };
 
+/**
+ * Models that existing jobs and saved briefs may still name, but that must not
+ * be offered for new work. The endpoint stays here so an old job keeps its exact
+ * provider attribution even after the live catalogue moves on.
+ */
+export const retiredModels = {
+  "studio-draft": {
+    id: "studio-draft",
+    label: "Studio Draft · SDXL Lightning (retired)",
+    provider: PROVIDER_CLOUDFLARE,
+    endpoint: "@cf/bytedance/stable-diffusion-xl-lightning",
+    kind: "image",
+    retiredAt: "2026-11-20",
+    replacement: "studio-craft",
+    reason:
+      "Cloudflare's planned deprecation date for SDXL Lightning is 20 November 2026. New work uses Studio Draft · FLUX.2 Klein 9B; saved results keep this attribution.",
+  },
+};
+
+export function publicRetiredModels() {
+  return Object.values(retiredModels).map((model) => ({
+    id: model.id,
+    label: model.label,
+    kind: model.kind,
+    endpoint: model.endpoint,
+    provider: "Cloudflare Workers AI",
+    retiredAt: model.retiredAt,
+    replacement: model.replacement,
+    reason: model.reason,
+  }));
+}
+
 /** Chunked base64 so an 8 MiB reference cannot overflow the argument limit. */
 export function toBase64(bytes) {
   let binary = "";
@@ -266,6 +298,7 @@ export function publicModels() {
     id: model.id,
     label: model.label,
     kind: model.kind,
+    endpoint: model.endpoint,
     description: model.description,
     aspects: model.aspects ?? [],
     durations: model.durations ?? null,
@@ -288,8 +321,19 @@ export function publicModels() {
 
 export function getModel(id) {
   const model = models[id];
-  if (!model) throw new HttpError(400, "Choose a supported model");
-  return model;
+  if (model) return model;
+  const retired = retiredModels[id];
+  if (retired) {
+    const error = new HttpError(
+      410,
+      `${retired.label} is not available for new work. ${retired.reason}`,
+      "model_retired",
+    );
+    error.replacement = retired.replacement;
+    error.retiredAt = retired.retiredAt;
+    throw error;
+  }
+  throw new HttpError(400, "Choose a supported model");
 }
 
 export function estimateCost(model, settings = {}) {
