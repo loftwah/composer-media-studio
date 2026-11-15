@@ -12,6 +12,25 @@
 .promo-save-status.run { color: var(--accent); border-color: currentColor; }
 .promo-workbench { display: grid; grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr); gap: clamp(1rem, 2.4vw, 2rem); margin-top: 1.5rem; align-items: start; }
 .promo-rail { display: grid; gap: 1rem; align-content: start; }
+.promo-saved-select { position: relative; min-width: 0; }
+.promo-saved-select select { appearance: none; padding-inline-end: 2.5rem; text-overflow: ellipsis; }
+.promo-saved-select::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 0.95rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  translate: 0 -70%;
+  rotate: 45deg;
+  pointer-events: none;
+}
+@media (forced-colors: active) {
+  .promo-saved-select select { appearance: auto; padding-inline-end: 0.75rem; }
+  .promo-saved-select::after { display: none; }
+}
 .promo-rail-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
 .promo-rail-heading strong { font-size: 1rem; }
 .promo-rail .small { margin: 0; }
