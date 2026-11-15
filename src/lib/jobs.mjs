@@ -273,13 +273,24 @@ async function claim(env, generationId, from, to) {
 export async function dispatchGeneration(env, generation) {
   const model = getModel(generation.model);
   const request = safeJson(generation.request_json, {});
-  const reference = await referenceFor(env, generation.project_id, request.referenceAssetId);
+  let reference;
+  let referenceError;
+  let referenceFailed = false;
+  try {
+    reference = await referenceFor(env, generation.project_id, request.referenceAssetId);
+  } catch (error) {
+    referenceFailed = true;
+    referenceError = error;
+  }
 
   if (!(await claim(env, generation.id, "admitted", "submitting"))) {
     const current = await loadGeneration(env, generation.id);
     if (current.status === "admitted" && safeJson(current.request_json, {}).budgetAdmission !== "atomic-v1") throw new HttpError(409, "This older job's reservation cannot be verified. Do not retry it automatically.", "admission_unverified");
     return current;
   }
+
+  // Only the dispatcher that claimed this admission may release its reservation.
+  if (referenceFailed) return failGeneration(env, generation, referenceError, { dispatched: false });
 
   if (model.restyle) {
     let sourceUrl;
