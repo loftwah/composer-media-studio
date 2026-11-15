@@ -2050,32 +2050,41 @@ async function handlePublic(request, env, url) {
       );
     }
     const jobs = jobCatalogue(models);
-    const requested = url.searchParams.get("job") ?? "";
-    const job = jobs.find((entry) => entry.id === requested) ?? jobs.find((entry) => entry.comparable) ?? jobs[0] ?? null;
-    let entries = [];
-    let excluded = [];
-    let briefNote = null;
-    if (job && job.models.length > 0) {
-      const placeholders = job.models.map((_, index) => `?${index + 2}`).join(",");
-      const rows = await env.DB.prepare(
-        `SELECT g.id, g.model, g.kind, g.request_json, g.cost_estimate_micro, g.cost_allocated_micro, g.provider_charged_micro,
-                g.created_at, g.completed_at, a.id AS asset_id, a.mime, a.bytes, a.width, a.height, a.duration_ms, a.sha256
-         FROM generations g JOIN assets a ON a.id = g.output_asset_id
-         WHERE g.project_id = ?1 AND g.status = 'saved' AND g.deleted_at IS NULL AND a.deleted_at IS NULL
-           AND g.model IN (${placeholders})
-         ORDER BY COALESCE(g.completed_at, g.created_at) DESC LIMIT 60`,
-      )
-        .bind(project.id, ...job.models.map((model) => model.id))
-        .all();
-      const all = latestPerModel(rows.results, job.id).map((entry) => ({
-        ...entry,
-        previewUrl: entry.assetId ? `/api/assets/${encodeURIComponent(entry.assetId)}/file` : null,
+    // One read of the project's saved takes answers every job. The page used to
+    // land on the first comparable job even when this project had no takes for
+    // it, which read as "nothing to compare" while another job held real
+    // evidence. The landing job is now the first one that can show a take.
+    const saved = await env.DB.prepare(
+      `SELECT g.id, g.model, g.kind, g.request_json, g.cost_estimate_micro, g.cost_allocated_micro, g.provider_charged_micro,
+              g.created_at, g.completed_at, a.id AS asset_id, a.mime, a.bytes, a.width, a.height, a.duration_ms, a.sha256
+       FROM generations g JOIN assets a ON a.id = g.output_asset_id
+       WHERE g.project_id = ?1 AND g.status = 'saved' AND g.deleted_at IS NULL AND a.deleted_at IS NULL
+       ORDER BY COALESCE(g.completed_at, g.created_at) DESC LIMIT 240`,
+    )
+      .bind(project.id)
+      .all();
+    const byJob = new Map();
+    for (const entry of jobs) {
+      const allowed = new Set(entry.models.map((model) => model.id));
+      const rows = saved.results.filter((row) => allowed.has(row.model));
+      const all = latestPerModel(rows, entry.id).map((take) => ({
+        ...take,
+        previewUrl: take.assetId ? `/api/assets/${encodeURIComponent(take.assetId)}/file` : null,
       }));
-      const split = likeForLike(all);
-      entries = split.chosen;
-      excluded = split.excluded;
-      briefNote = split.reason;
+      byJob.set(entry.id, likeForLike(all));
     }
+    const requested = url.searchParams.get("job") ?? "";
+    const job =
+      jobs.find((entry) => entry.id === requested) ??
+      jobs.find((entry) => (byJob.get(entry.id)?.chosen.length ?? 0) > 1) ??
+      jobs.find((entry) => (byJob.get(entry.id)?.chosen.length ?? 0) > 0) ??
+      jobs.find((entry) => entry.comparable) ??
+      jobs[0] ??
+      null;
+    const split = job ? byJob.get(job.id) : null;
+    const entries = split?.chosen ?? [];
+    const excluded = split?.excluded ?? [];
+    const briefNote = split?.reason ?? null;
     const review = { job, entries };
     return new Response(
       comparePage({
