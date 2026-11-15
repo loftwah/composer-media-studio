@@ -369,6 +369,28 @@ test('cleanup is opt-in and never deletes referenced originals', async () => {
   assert.equal((await fresh.DB.prepare('SELECT COUNT(*) AS n FROM assets').first()).n, manifest.assets.length);
 });
 
+test('an object staged before a crash is recorded on retry and can be cleaned up', async () => {
+  const { env, project } = await fixture();
+  const { manifest, blobs } = await bundleOf(env, project);
+  const fresh = emptyEnv();
+  const started = await beginPortableImport(fresh, manifest);
+  const only = started.assets[0];
+  const source = manifest.assets.find((asset) => asset.id === only.sourceId);
+  const first = await stagePortableAsset(fresh, started.importId, only.sourceId, blobs.get(source.blobSha256));
+  // The worker can die after the R2 write and before the staging list is saved.
+  // The object is real, but the import no longer remembers it.
+  await fresh.DB.prepare("UPDATE project_bundle_imports SET staged_keys_json='[]' WHERE id=?1").bind(started.importId).run();
+  const retry = await stagePortableAsset(fresh, started.importId, only.sourceId, blobs.get(source.blobSha256));
+  assert.equal(retry.status, 'already_staged');
+  assert.equal(retry.key, first.key);
+  const row = await fresh.DB.prepare('SELECT staged_keys_json FROM project_bundle_imports WHERE id=?1').bind(started.importId).first();
+  assert.deepEqual(JSON.parse(row.staged_keys_json), [first.key]);
+  const cleaned = await cleanupPortableImport(fresh, started.importId, { confirm: true });
+  assert.deepEqual(cleaned.deleted, [first.key]);
+  assert.equal(await fresh.MEDIA.get(first.key), null);
+  assert.equal(cleaned.originalAssetsTouched, 0);
+});
+
 test('read-only inventory reports imports and duplicate content without mutating', async () => {
   const { env, project } = await fixture();
   const { manifest, blobs } = await bundleOf(env, project);

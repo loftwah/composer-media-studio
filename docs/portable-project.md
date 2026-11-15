@@ -215,16 +215,26 @@ does not assume an R2 quota on the owner's behalf.
 
 ## Verification status
 
-The complete path is proven against fictional local fixtures and an in-memory
-D1/R2 stand-in: deterministic export, byte and hash round trip, fresh
-installation restore, editable project/plan/reference reopening, tampered
-manifest/asset refusal, missing media refusal, duplicate-import idempotence,
-dry-run no-write, credential absence and opt-in cleanup.
+The complete path is proven against fictional local fixtures in an in-memory
+D1/R2 stand-in, and on 16 November 2026 against separate local `wrangler dev`
+installations with their own D1 databases and R2 buckets on disk: deterministic
+export, exact-byte and hash round trip for image, video and audio originals, a
+fresh-installation restore of subjects, song plan scenes, selected takes,
+storyboard and publications, a worker restart, an interrupted staging retry, a
+refused incomplete commit, private-by-default publications and rejection of
+traversal, hash, MIME, schema, duplicate, missing-media, unresolved-reference
+and insufficient-storage bundles. The commands, instance identities and hashes
+are in [the restore proof](evidence/2026-11-16-restore-proof/README.md).
+
+That run found and fixed one restart-safety gap: when an upload wrote an R2
+object and the Worker stopped before saving the key as staged, a retry returned
+`already_staged` without recording the key, so an abandoned restore could leave
+an unreferenced object that opt-in cleanup could not find. Staging now records
+the key again on that path, and cleanup removes it.
 
 **Production restore against the real Cloudflare D1/R2 installation is NOT
-VERIFIED in this change.** The implementation was developed and tested without
-production credentials; no production D1 or R2 object was read or written, no
-deployment was performed and no public page was changed. The remaining gate is
-an owner-run export from the real installation followed by a restore into a
-separate fresh D1/R2 installation, with the resulting hashes and editable flows
-recorded in #157.
+VERIFIED.** No production D1 or R2 object was read or written, no deployment was
+performed and no public page was changed. The remaining gate is an owner-run
+export from the real installation followed by a restore into a separate fresh
+D1/R2 installation, with the resulting hashes and editable flows recorded in
+#157.
