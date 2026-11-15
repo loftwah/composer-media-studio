@@ -1,9 +1,11 @@
-// MIT. A paid request that is refused before dispatch says why. The generic
-// preflight message hid an Images billing failure and an unusable reference.
+// MIT. A paid request that is refused before dispatch says why, and a reference
+// that already satisfies the model's catalogue rule does not need Images.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { preflightFailure } from "../src/lib/darkroom.mjs";
+import { preflightFailure, referenceFitsModel } from "../src/lib/darkroom.mjs";
+
+const detail = { id: "studio-detail", references: 1 };
 
 function withName(name, message) {
   const error = new Error(message);
@@ -33,4 +35,16 @@ test("an unknown preflight error stays generic and marks no dispatch", () => {
   assert.equal(mapped.code, "provider_preflight");
   assert.match(mapped.message, /No image request was sent/);
   assert.equal(JSON.stringify(mapped.message).includes("internal detail"), false);
+});
+
+test("a reference inside the catalogue rule needs no Images transform", () => {
+  // Studio Detail's Darkroom model fits references to 512 px PNG.
+  assert.equal(referenceFitsModel(detail, { width: 410, height: 512, format: "png" }), true);
+  assert.equal(referenceFitsModel(detail, { width: 256, height: 256, format: "png" }), true);
+  // Anything larger, or in another encoding, still needs the fitter.
+  assert.equal(referenceFitsModel(detail, { width: 1024, height: 1280, format: "png" }), false);
+  assert.equal(referenceFitsModel(detail, { width: 512, height: 640, format: "png" }), false);
+  assert.equal(referenceFitsModel(detail, { width: 410, height: 512, format: "jpeg" }), false);
+  assert.equal(referenceFitsModel(detail, null), false);
+  assert.equal(referenceFitsModel({ id: "studio-draft", references: 0 }, { width: 512, height: 512, format: "png" }), false);
 });

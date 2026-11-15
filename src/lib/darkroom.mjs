@@ -8,6 +8,7 @@
 // Darkroom request.
 
 import { generateMedia } from "@fungi.computer/darkroom/server";
+import { getMediaModel } from "@fungi.computer/darkroom";
 import {
   createImagesReferenceFitter,
   createR2MediaDestination,
@@ -71,6 +72,23 @@ export function darkroomOriginalKey(generation) {
 
 export function isDarkroomGeneration(generation) {
   return safeJson(generation?.request_json, {})?.darkroomVersion === DARKROOM_VERSION;
+}
+
+/** Whether these bytes already satisfy the model's reference rule.
+ *
+ * Darkroom fits a reference through the Images binding, which is unavailable on
+ * an account still on legacy billing. A reference that is already inside the
+ * catalogue's dimension and encoding needs no transform, so the studio can send
+ * it without that dependency and keep reference-guided work available. */
+export function referenceFitsModel(model, reference) {
+  const catalogue = getMediaModel(darkroomModels.get(model?.id));
+  const limit = catalogue?.input?.referenceDimension;
+  const format = catalogue?.input?.referenceFormat;
+  if (!limit || !format || !reference) return false;
+  const width = Number(reference.width);
+  const height = Number(reference.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) return false;
+  return reference.format === format && Math.max(width, height) <= limit;
 }
 
 function preflightError(status, message, code) {
@@ -174,7 +192,10 @@ export async function recoverDarkroomImage(env, generation) {
 /** Start one paid request. Studio holds the dispatch lease; disable the
  * package's capacity retry and keep the existing provider input defaults. */
 export async function runDarkroomImage(env, generation, model, settings, reference, signal) {
-  requireBindings(env, model.references > 0);
+  const referenceAlreadyFits = model.references > 0 && referenceFitsModel(model, reference);
+  if (model.references > 0 && !reference)
+    throw preflightError(400, "Select a reference image for this model", "reference_unavailable");
+  requireBindings(env, model.references > 0 && !referenceAlreadyFits);
   const { width, height } = aspectDimensions(settings.aspect, reference);
   const path = darkroomOutputKey(generation);
   const request = { prompt: settings.prompt, model: darkroomModels.get(model.id), width, height };
@@ -217,7 +238,19 @@ export async function runDarkroomImage(env, generation, model, settings, referen
   const destination = createR2MediaDestination({
     bucket: env.MEDIA,
     destinationId: DARKROOM_DESTINATION,
-    fit: env.IMAGES ? createImagesReferenceFitter(env.IMAGES) : undefined,
+    // A reference that already meets the model's catalogue rule is sent as it
+    // is. This keeps reference-guided stills working on an account whose Images
+    // binding is unavailable, instead of refusing the whole request.
+    fit: referenceAlreadyFits
+      ? async (bytes) => ({
+          bytes,
+          format: reference.format,
+          width: reference.width,
+          height: reference.height,
+        })
+      : env.IMAGES
+        ? createImagesReferenceFitter(env.IMAGES)
+        : undefined,
     authorize: async (key) => {
       try { await authorize(key); }
       catch (error) { refusal = error; throw error; }

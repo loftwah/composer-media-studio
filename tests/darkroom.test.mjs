@@ -7,7 +7,7 @@ import { authorizeKey, darkroomOutputKey } from "../src/lib/darkroom.mjs";
 import { budgetSnapshot, createGeneration, dispatchGeneration } from "../src/lib/jobs.mjs";
 import worker from "../src/worker.mjs";
 import { createSession } from "../src/lib/auth.mjs";
-import { PNG_1x1, setup } from "./harness.mjs";
+import { PNG_1x1, jpeg, setup } from "./harness.mjs";
 import { withDarkroom } from "./support/darkroom-env.mjs";
 
 const OUTPUT = Uint8Array.from(PNG_1x1);
@@ -25,11 +25,11 @@ async function studio() {
   return { env, project };
 }
 
-async function addStill(env, project, id, key, projectId = project.id) {
-  await env.MEDIA.put(key, PNG_1x1);
+async function addStill(env, project, id, key, projectId = project.id, { bytes = PNG_1x1, mime = "image/png" } = {}) {
+  await env.MEDIA.put(key, bytes);
   await env.DB.prepare(
-    "INSERT INTO assets(id,project_id,kind,r2_key,mime,bytes,width,height,sha256,title,source,created_at,updated_at) VALUES(?1,?2,'image',?3,'image/png',?4,512,512,'hash','Still','upload',1,1)",
-  ).bind(id, projectId, key, PNG_1x1.byteLength).run();
+    "INSERT INTO assets(id,project_id,kind,r2_key,mime,bytes,width,height,sha256,title,source,created_at,updated_at) VALUES(?1,?2,'image',?3,?4,?5,512,512,'hash','Still','upload',1,1)",
+  ).bind(id, projectId, key, mime, bytes.byteLength).run();
 }
 
 async function admit(env, project, input) {
@@ -54,14 +54,16 @@ test("a Studio Print still is generated through Darkroom and saved to R2", async
   assert.deepEqual(env.MEDIA.puts, [asset.r2_key], "only one copy reached R2; no prompt-bearing handoff");
 });
 
-test("a reference is read from R2 through Darkroom for Studio Detail", async () => {
+test("a reference already inside the catalogue rule is sent without the Images binding", async () => {
   const { env, project } = await studio();
   await addStill(env, project, "asset_ref", "projects/prj_test/assets/asset_ref/original.png");
   const generation = await admit(env, project, { model: "studio-detail", prompt: "Vary this", aspect: "square", referenceAssetId: "asset_ref", clientRequestId: "req_detail" });
   const saved = await dispatchGeneration(env, generation);
 
-  assert.equal(saved.status, "saved");
-  assert.equal(env.darkroom.imageReads > 0, true, "the Images binding fitted the reference read from R2");
+  assert.equal(saved.status, "saved", saved.error_detail);
+  // Studio Detail fits references to 512 px PNG. These bytes already are that,
+  // so the request is sent as stored: no Images dependency, same result.
+  assert.equal(env.darkroom.imageReads, 0, "an already-fitting reference needs no transform");
   assert.equal(env.aiCalls[0].model, "@cf/black-forest-labs/flux-2-klein-4b");
   assert.ok(env.aiCalls[0].input.multipart, "the reference travels in the multipart body");
 });
@@ -150,8 +152,10 @@ test("Film and Quick keep their previously qualified provider arguments", async 
 
 test("missing reference-fitting binding releases the reservation before inference", async () => {
   const { env, project } = await studio();
-  const key = "projects/prj_test/assets/asset_ref/original.png";
-  await addStill(env, project, "asset_ref", key);
+  const key = "projects/prj_test/assets/asset_ref/original.jpg";
+  // A 1024 x 1280 still is outside the model's 512 px reference rule, so the
+  // Images fitter is genuinely required and its absence is a preflight refusal.
+  await addStill(env, project, "asset_ref", key, project.id, { bytes: jpeg(1024, 1280), mime: "image/jpeg" });
   delete env.IMAGES;
   const generation = await admit(env, project, { model: "studio-detail", prompt: "Test frame", aspect: "square", referenceAssetId: "asset_ref", clientRequestId: "req_missing_binding" });
   assert.ok((await budgetSnapshot(env, project.id)).reservedMicro > 0);
