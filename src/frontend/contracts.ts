@@ -43,6 +43,7 @@ export interface LibraryProps {
   query: string;
   filter: "all" | "image" | "video" | "audio";
   canImportShare: boolean;
+  canViewStorage: boolean;
   comparing: boolean;
   compareIds: string[];
 }

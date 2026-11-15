@@ -76,6 +76,7 @@ import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
+import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.mjs";
 import { readCapabilityManifest, readCapabilityState, refreshCapabilities } from "./lib/capabilities.mjs";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
 import {
@@ -516,6 +517,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/\/export$/.test(path)) action = "read";
   if (/^\/api\/projects\/[a-z0-9_]+\/portable-export$/.test(path)) action = "read";
   if (/^\/api\/studio\//.test(path)) action = "admin";
+  if (/^\/api\/projects\/[a-z0-9_]+\/storage-report$/.test(path)) action = "admin";
+  if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/assets\/(preflight|reuse)$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/scene-proposal\/preview$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/director$/.test(path)) action = "edit";
 
@@ -782,6 +785,46 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return importWoodhouseAsset(env, project, input.assetId);
     }
 
+    if (rest === "assets/preflight" && method === "POST") {
+      const lookup = await findDuplicateOriginal(env, project, await body(request, 4096));
+      if (!lookup.valid) throw new HttpError(400, lookup.reason, "invalid_fingerprint");
+      return json({
+        readOnly: true,
+        writes: 0,
+        projectId: project.id,
+        match: "sha256+size+mime",
+        filenameUsed: false,
+        fingerprint: lookup.fingerprint,
+        duplicate: lookup.duplicate
+          ? assetView(lookup.duplicate, {
+              duplicate: true,
+              reuse: { assetId: lookup.duplicate.id, href: `/api/projects/${project.id}/assets/reuse` },
+            })
+          : null,
+        note: lookup.duplicate
+          ? "This project already has the same bytes, size and media type. Reusing returns that saved original without copying bytes or changing its lineage."
+          : "No live saved original in this project matches those exact bytes, size and media type.",
+      });
+    }
+
+    if (rest === "assets/reuse" && method === "POST") {
+      const input = await body(request, 4096);
+      const assetId = String(input.assetId ?? "");
+      if (!/^[a-z0-9_]{4,80}$/i.test(assetId)) throw new HttpError(400, "Choose a saved original from this project.", "invalid_asset");
+      const lookup = await findDuplicateOriginal(env, project, input);
+      if (!lookup.valid) throw new HttpError(400, lookup.reason, "invalid_fingerprint");
+      if (!lookup.duplicate || lookup.duplicate.id !== assetId)
+        throw new HttpError(409, "That original no longer matches this project's saved file. Upload the file again or choose the current original.", "duplicate_not_found");
+      return json({ readOnly: true, writes: 0, reused: true, asset: assetView(lookup.duplicate) });
+    }
+
+    const assetUsesMatch = rest && rest.match(/^assets\/([a-z0-9_]+)\/uses$/);
+    if (assetUsesMatch && method === "GET") {
+      const usage = await assetUsageReport(env, project, assetUsesMatch[1]);
+      if (!usage) throw new HttpError(404, "Asset not found", "not_found");
+      return json(usage);
+    }
+
     if (rest === "assets" && method === "POST") {
       const binding = request.headers.get("x-studio-local-import-binding");
       if (binding !== null && (!/^[a-f0-9]{64}$/.test(binding) || !constantTimeEqual(binding, (await sessionBinding(env, session)) ?? ""))) throw new HttpError(409, "Your Studio session changed. Choose a studio again.", "session_changed");
@@ -938,6 +981,13 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           "cache-control": "no-store",
         },
       });
+    }
+
+    if (rest === "storage-report" && method === "GET") {
+      const report = await projectStorageReport(env, project);
+      return json(report, 200, url.searchParams.get("download") === "1"
+        ? { "content-disposition": `attachment; filename="${project.slug}-storage-report.json"` }
+        : {});
     }
 
     if (rest === "export" && method === "GET") {

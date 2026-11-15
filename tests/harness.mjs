@@ -81,6 +81,14 @@ export class FakeBucket {
   async delete(key) {
     this.objects.delete(key);
   }
+  async list({ prefix = "", limit = 1000 } = {}) {
+    const keys = [...this.objects.keys()].filter((key) => key.startsWith(prefix)).sort();
+    return {
+      objects: keys.slice(0, limit).map((key) => ({ key, size: this.objects.get(key).byteLength })),
+      truncated: keys.length > limit,
+      cursor: keys.length > limit ? keys[limit] : undefined,
+    };
+  }
 }
 
 export const PNG_1x1 = Uint8Array.from(
