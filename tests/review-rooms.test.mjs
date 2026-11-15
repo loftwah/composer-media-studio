@@ -5,25 +5,37 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import worker from "../src/worker.mjs";
+import { REVIEW_COMPARE_LIMIT } from "../src/lib/review-rooms.mjs";
 import { createSession } from "../src/lib/auth.mjs";
 import { addAsset, setup } from "./harness.mjs";
 
 const base = "https://studio.test";
 const WRONG_TOKEN = "A".repeat(43);
 
-function call(env, path, { method = "GET", cookie, body, headers = {} } = {}) {
+function call(env, path, { method = "GET", cookie, body, form, headers = {} } = {}) {
+  const payload = form !== undefined ? new URLSearchParams(form).toString() : body !== undefined ? JSON.stringify(body) : undefined;
   return worker.fetch(
     new Request(base + path, {
       method,
       headers: {
         ...(cookie ? { cookie } : {}),
-        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(payload !== undefined
+          ? { "content-type": form !== undefined ? "application/x-www-form-urlencoded" : "application/json" }
+          : {}),
         ...headers,
       },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(payload !== undefined ? { body: payload } : {}),
     }),
     env,
   );
+}
+
+function compareApi(env, left, right) {
+  return call(env, "/api/review/compare", { method: "POST", body: { left, right } });
+}
+
+function comparePage(env, pathToken, compareToken) {
+  return call(env, `/r/${pathToken}/compare`, { method: "POST", form: { compareToken } });
 }
 
 async function owner(env) {
@@ -405,4 +417,222 @@ test("failed token attempts are rate limited without writing the raw token", asy
   assert.equal(last.status, 429);
   const attempts = await env.DB.prepare("SELECT key FROM review_attempts").all();
   assert.equal(attempts.results.some((row) => /B0{10}/.test(row.key)), false);
+});
+
+test("a reviewer compares two authorised links without project or feedback leakage", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const film = await addMedia(env, project, { id: "asset_cmp_film", kind: "video", durationMs: 4000, mime: "video/mp4", sha256: "c".repeat(64) });
+  await env.DB.prepare("UPDATE assets SET bytes=4096,title='Secret film title',caption='PRIVATE FILM CAPTION' WHERE id=?1").bind(film.id).run();
+  await env.MEDIA.put(film.r2_key, new Uint8Array(4096));
+  const still = await addMedia(env, project, { id: "asset_cmp_still", kind: "image", mime: "image/png", sha256: "d".repeat(64) });
+  await env.DB.prepare("UPDATE assets SET bytes=2048,title='Secret still title',caption='PRIVATE STILL CAPTION' WHERE id=?1").bind(still.id).run();
+  await env.MEDIA.put(still.r2_key, new Uint8Array(2048));
+  const filmRoom = await createRoom(env, project, cookie, film, { versionLabel: "Cut A" });
+  const stillRoom = await createRoom(env, project, cookie, still, { versionLabel: "Still B" });
+
+  await call(env, `/api/review/${filmRoom.token}/feedback`, { method: "POST", body: { reviewerName: "Alex", body: "Only belongs to Cut A" } });
+  await call(env, `/api/review/${filmRoom.token}/decision`, {
+    method: "POST",
+    body: { decision: "approved", reviewerName: "Alex", note: "Use this cut" },
+  });
+  await call(env, `/api/review/${stillRoom.token}/decision`, {
+    method: "POST",
+    body: { decision: "changes_requested", reviewerName: "Sam", note: "Tighten the frame" },
+  });
+
+  const response = await compareApi(env, filmRoom.token, `https://studio.test/r/${stillRoom.token}`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.deepEqual(Object.keys(payload.left).sort(), ["decidedAt", "decision", "decisionNote", "mediaPath", "reviewPath", "status", "version"]);
+  assert.deepEqual(Object.keys(payload.left.version).sort(), ["bytes", "durationMs", "height", "kind", "label", "mime", "width"]);
+  assert.equal(payload.left.version.label, "Cut A");
+  assert.equal(payload.left.version.kind, "video");
+  assert.equal(payload.left.version.mime, "video/mp4");
+  assert.equal(payload.left.version.bytes, 4096);
+  assert.equal(payload.left.version.durationMs, 4000);
+  assert.equal(payload.left.status, "open");
+  assert.equal(payload.left.decision, "approved");
+  assert.equal(payload.left.decisionNote, "Use this cut");
+  assert.equal(payload.left.mediaPath, `/r/${filmRoom.token}/media`);
+  assert.equal(payload.left.reviewPath, `/r/${filmRoom.token}`);
+  assert.equal(payload.right.version.label, "Still B");
+  assert.equal(payload.right.version.kind, "image");
+  assert.equal(payload.right.decision, "changes_requested");
+  assert.equal(payload.right.decisionNote, "Tighten the frame");
+  assert.equal(Object.hasOwn(payload.left, "feedback"), false);
+
+  const serialised = JSON.stringify(payload);
+  for (const secret of [
+    project.id,
+    "Test studio",
+    film.id,
+    still.id,
+    "Secret film title",
+    "PRIVATE FILM CAPTION",
+    "Secret still title",
+    "PRIVATE STILL CAPTION",
+    "Only belongs to Cut A",
+    film.sha256,
+  ])
+    assert.equal(serialised.includes(secret), false, `comparison leaked ${secret}`);
+  assert.equal(serialised.includes("projectId"), false);
+  assert.equal(serialised.includes("prompt"), false);
+
+  const page = await comparePage(env, filmRoom.token, `https://studio.test/r/${stillRoom.token}`);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /Two saved versions, side by side/);
+  assert.match(html, /Cut A/);
+  assert.match(html, /Still B/);
+  assert.match(html, new RegExp(`<video controls playsinline preload="metadata" src="/r/${filmRoom.token}/media" aria-label="Film: Cut A"`));
+  assert.match(html, new RegExp(`<img src="/r/${stillRoom.token}/media" alt="Still B — pinned image under review"`));
+  assert.match(html, /Main review page/);
+  assert.match(html, new RegExp(`href="/r/${stillRoom.token}" rel="noreferrer">Make this the main review page`));
+  assert.match(html, /Reviewer approved this saved version/);
+  assert.match(html, /Changes requested/);
+  assert.match(html, /Use this cut/);
+  assert.match(html, /Tighten the frame/);
+  assert.doesNotMatch(html, /Only belongs to Cut A/);
+  assert.doesNotMatch(html, /Secret film title|Secret still title|PRIVATE FILM CAPTION|PRIVATE STILL CAPTION/);
+  assert.doesNotMatch(html, new RegExp(project.id));
+  assert.doesNotMatch(html, /Test studio/);
+  assert.doesNotMatch(html, /og:|canonical|twitter:/);
+  assert.equal(page.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(page.headers.get("cache-control"), "private, no-store");
+  assert.match(page.headers.get("x-robots-tag") ?? "", /noindex/);
+  assert.match(page.headers.get("content-security-policy") ?? "", /form-action 'self'/);
+
+  const reviewPage = await call(env, `/r/${filmRoom.token}`);
+  const reviewHtml = await reviewPage.text();
+  assert.match(reviewHtml, /class="review-layout"/);
+  assert.match(reviewHtml, /class="review-media-column"/);
+  assert.match(reviewHtml, new RegExp(`<form class="review-form" method="post" action="/r/${filmRoom.token}/compare"`));
+  assert.match(reviewHtml, /Second private review link/);
+  assert.match(reviewHtml, /Compare with another version/);
+
+  const filmMedia = await call(env, `/r/${filmRoom.token}/media`, { headers: { range: "bytes=0-9" } });
+  assert.equal(filmMedia.status, 206);
+  assert.equal(filmMedia.headers.get("referrer-policy"), "no-referrer");
+  const stillMedia = await call(env, `/r/${stillRoom.token}/media`, { headers: { range: "bytes=0-9" } });
+  assert.equal(stillMedia.status, 206);
+  assert.equal((await call(env, `/r/${WRONG_TOKEN}/media`, { headers: { range: "bytes=0-9" } })).status, 404);
+  // The saved original stays behind the studio session, not a bare asset URL.
+  assert.equal((await call(env, `/api/assets/${film.id}/file`)).status, 401);
+  assert.equal((await call(env, `/api/review/${filmRoom.token}/media`)).status, 404);
+});
+
+test("comparing a link with itself is refused", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const asset = await addMedia(env, project, { id: "asset_cmp_self", kind: "image" });
+  const room = await createRoom(env, project, cookie, asset);
+
+  const api = await compareApi(env, room.token, room.token);
+  assert.equal(api.status, 400);
+  assert.equal((await api.json()).error.code, "review_compare_same");
+  const page = await comparePage(env, room.token, room.token);
+  assert.equal(page.status, 400);
+  const html = await page.text();
+  assert.match(html, /Choose two different review links/i);
+  assert.doesNotMatch(html, /<video|<img/i);
+});
+
+test("invalid, unknown, expired, revoked and cross-project pairs all refuse generically", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const asset = await addMedia(env, project, { id: "asset_cmp_refuse", kind: "image" });
+  const room = await createRoom(env, project, cookie, asset, { versionLabel: "Open cut" });
+
+  const expiredAsset = await addMedia(env, project, { id: "asset_cmp_expired", kind: "image" });
+  const expiredRoom = await createRoom(env, project, cookie, expiredAsset);
+  await env.DB.prepare("UPDATE review_rooms SET expires_at=?2 WHERE id=?1").bind(expiredRoom.room.id, Date.now() - 1).run();
+
+  const revokedAsset = await addMedia(env, project, { id: "asset_cmp_revoked", kind: "image" });
+  const revokedRoom = await createRoom(env, project, cookie, revokedAsset);
+  assert.equal(
+    (await call(env, `/api/projects/${project.id}/review-rooms/${revokedRoom.room.id}/revoke`, { method: "POST", cookie, body: {} })).status,
+    200,
+  );
+
+  const timestamp = Date.now();
+  await env.DB.prepare(
+    "INSERT INTO projects(id,name,slug,creative_direction,visibility,defaults_json,created_at,updated_at) VALUES('prj_cmp_other','Other studio','other-cmp-studio','','private','{}',?1,?1)",
+  ).bind(timestamp).run();
+  const otherProject = await env.DB.prepare("SELECT * FROM projects WHERE id='prj_cmp_other'").first();
+  const otherAsset = await addMedia(env, otherProject, { id: "asset_cmp_other", kind: "image" });
+  const otherRoom = await createRoom(env, otherProject, cookie, otherAsset, { versionLabel: "Other project cut" });
+
+  const refusals = [
+    await compareApi(env, room.token, "not-a-token"),
+    await compareApi(env, room.token, "Z".repeat(43)),
+    await compareApi(env, room.token, expiredRoom.token),
+    await compareApi(env, room.token, revokedRoom.token),
+    await compareApi(env, room.token, otherRoom.token),
+  ];
+  const bodies = [];
+  for (const response of refusals) {
+    assert.equal(response.status, 404);
+    const body = await response.json();
+    assert.equal(body.error.code, "review_compare_unavailable");
+    bodies.push(body.error.message);
+  }
+  assert.equal(new Set(bodies).size, 1);
+  assert.equal(bodies[0].includes(room.token), false);
+  assert.equal(bodies[0].includes(project.id), false);
+
+  const pageRefusal = await comparePage(env, room.token, otherRoom.token);
+  assert.equal(pageRefusal.status, 404);
+  const pageHtml = await pageRefusal.text();
+  assert.match(pageHtml, /These private review links cannot be compared/);
+  assert.doesNotMatch(pageHtml, /Open cut|Other project cut|<video|<img/i);
+  assert.equal(pageRefusal.headers.get("referrer-policy"), "no-referrer");
+  assert.match(pageRefusal.headers.get("x-robots-tag") ?? "", /noindex/);
+});
+
+test("comparison attempts are rate limited per connection without storing a token", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const first = await addMedia(env, project, { id: "asset_cmp_limit_a", kind: "image" });
+  const second = await addMedia(env, project, { id: "asset_cmp_limit_b", kind: "image" });
+  const firstRoom = await createRoom(env, project, cookie, first);
+  const secondRoom = await createRoom(env, project, cookie, second);
+
+  let last;
+  for (let index = 0; index < REVIEW_COMPARE_LIMIT; index += 1) {
+    last = await compareApi(env, firstRoom.token, secondRoom.token);
+    assert.equal(last.status, 200);
+  }
+  last = await compareApi(env, firstRoom.token, secondRoom.token);
+  assert.equal(last.status, 429);
+  assert.equal((await last.json()).error.code, "review_rate_limited");
+  assert.equal((await comparePage(env, firstRoom.token, secondRoom.token)).status, 429);
+
+  const attempts = await env.DB.prepare("SELECT key FROM review_attempts WHERE key LIKE 'compare:%'").all();
+  assert.equal(attempts.results.length, 1);
+  assert.equal(attempts.results[0].key, "compare:local");
+  assert.equal(attempts.results[0].key.includes(firstRoom.token), false);
+});
+
+test("compare pages escape hostile labels and decision notes", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const film = await addMedia(env, project, { id: "asset_cmp_escape_film", kind: "video", durationMs: 2000 });
+  const still = await addMedia(env, project, { id: "asset_cmp_escape_still", kind: "image" });
+  const filmRoom = await createRoom(env, project, cookie, film, { versionLabel: 'Cut 4 <script>alert("x")</script>' });
+  const stillRoom = await createRoom(env, project, cookie, still, { versionLabel: "Clean still" });
+  await call(env, `/api/review/${filmRoom.token}/decision`, {
+    method: "POST",
+    body: { decision: "changes_requested", reviewerName: "Sam", note: '<img src=x onerror=alert(1)> "quoted"' },
+  });
+
+  const page = await comparePage(env, stillRoom.token, filmRoom.token);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /Cut 4 &lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;/);
+  assert.match(html, /aria-label="Film: Cut 4 &lt;script&gt;/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt; &quot;quoted&quot;/);
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.doesNotMatch(html, /<img src=x onerror/);
+  assert.doesNotMatch(html, /og:|canonical|twitter:/);
 });

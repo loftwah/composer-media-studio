@@ -18,6 +18,8 @@ export const REVIEW_ATTEMPT_LIMIT = 30;
 export const REVIEW_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
 export const REVIEW_FEEDBACK_LIMIT = 60;
 export const REVIEW_FEEDBACK_WINDOW_MS = 60 * 60 * 1000;
+export const REVIEW_COMPARE_LIMIT = 20;
+export const REVIEW_COMPARE_WINDOW_MS = 10 * 60 * 1000;
 
 /** A 256-bit, URL-safe token. Only its hash is written to D1. */
 export function generateReviewToken() {
@@ -123,6 +125,30 @@ export function publicReviewRoomView(row, feedback = []) {
   };
 }
 
+/** Reviewer-facing shape for one side of a comparison. It names only the
+ * pinned version and cannot carry feedback, source lineage, project or asset
+ * identity. `reviewPath` and `mediaPath` are scoped to the token the reviewer
+ * already supplied, so the pair is reachable only through its own links. */
+function reviewerCompareSideView(room, token) {
+  return {
+    version: {
+      label: room.version_label,
+      kind: room.asset_kind,
+      mime: room.asset_mime,
+      bytes: room.asset_bytes,
+      width: room.asset_width,
+      height: room.asset_height,
+      durationMs: room.asset_duration_ms,
+    },
+    status: reviewRoomStatus(room),
+    decision: room.decision,
+    decisionNote: room.decision_note,
+    decidedAt: room.decided_at,
+    reviewPath: `/r/${encodeURIComponent(token)}`,
+    mediaPath: `/r/${encodeURIComponent(token)}/media`,
+  };
+}
+
 async function loadRoomFeedback(env, room) {
   const rows = await env.DB.prepare(
     "SELECT * FROM review_feedback WHERE room_id=?1 AND project_id=?2 ORDER BY created_at ASC LIMIT ?3",
@@ -188,6 +214,51 @@ export async function openReviewRoom(env, token) {
   if (asset.kind !== room.asset_kind || asset.mime !== room.asset_mime)
     throw new HttpError(409, "This review link no longer matches the saved version. Ask the creator for a new link.", "review_version_changed");
   return { room, asset };
+}
+
+/** Accept a bare 43-character token or a pasted private review link. Only the
+ * token is extracted; the link is never fetched, followed or logged. */
+export function reviewTokenFromInput(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (REVIEW_TOKEN_PATTERN.test(raw)) return raw;
+  const match = raw.match(/^(?:https?:\/\/[^/\s]+)?\/?r\/([A-Za-z0-9_-]{43})(?:\/media)?\/?$/);
+  return match ? match[1] : "";
+}
+
+function compareUnavailable() {
+  return new HttpError(
+    404,
+    "These private review links cannot be compared. Ask the creator for current links.",
+    "review_compare_unavailable",
+  );
+}
+
+/** Compare two private links the reviewer already holds. Both links must be
+ * open and name the same project; every rejected case answers with the same
+ * generic 404 so the endpoint is not an oracle for other people's links. Only
+ * reviewer-safe fields are returned, never either room's feedback. */
+export async function compareReviewRoomsForReviewer(env, leftInput, rightInput) {
+  const leftToken = reviewTokenFromInput(leftInput);
+  const rightToken = reviewTokenFromInput(rightInput);
+  if (!leftToken || !rightToken) throw compareUnavailable();
+  if (leftToken === rightToken)
+    throw new HttpError(400, "Choose two different private review links", "review_compare_same");
+  let access;
+  try {
+    access = await Promise.all([openReviewRoom(env, leftToken), openReviewRoom(env, rightToken)]);
+  } catch (error) {
+    if (error instanceof HttpError) throw compareUnavailable();
+    throw error;
+  }
+  const [left, right] = access;
+  if (reviewRoomStatus(left.room) !== "open" || reviewRoomStatus(right.room) !== "open") throw compareUnavailable();
+  // A reviewer may hold links from different studios. Refusing keeps each
+  // project boundary intact and avoids confirming that the two are linked.
+  if (left.room.project_id !== right.room.project_id) throw compareUnavailable();
+  return {
+    left: reviewerCompareSideView(left.room, leftToken),
+    right: reviewerCompareSideView(right.room, rightToken),
+  };
 }
 
 async function pinSource(env, project, asset) {
@@ -536,6 +607,28 @@ export async function assertFeedbackAttemptAllowed(env, room, request) {
   } else if (row.reset_at <= timestamp) {
     await env.DB.prepare("UPDATE review_attempts SET count=1,reset_at=?2 WHERE key=?1")
       .bind(key, timestamp + REVIEW_FEEDBACK_WINDOW_MS)
+      .run();
+  } else {
+    await env.DB.prepare("UPDATE review_attempts SET count=count+1 WHERE key=?1").bind(key).run();
+  }
+}
+
+/** Count every comparison attempt per connection, whether it succeeds or not,
+ * so a reviewer can compare a handful of versions and nobody can brute-force
+ * other tokens through this endpoint. The key never contains a token. */
+export async function assertCompareAttemptAllowed(env, request) {
+  const key = `compare:${clientKey(request)}`;
+  const timestamp = now();
+  const row = await env.DB.prepare("SELECT count,reset_at FROM review_attempts WHERE key=?1").bind(key).first();
+  if (row && row.reset_at > timestamp && Number(row.count) >= REVIEW_COMPARE_LIMIT)
+    throw new HttpError(429, "Too many version comparisons. Wait a few minutes and try again.", "review_rate_limited");
+  if (!row) {
+    await env.DB.prepare("INSERT INTO review_attempts(key,count,reset_at) VALUES(?1,1,?2)")
+      .bind(key, timestamp + REVIEW_COMPARE_WINDOW_MS)
+      .run();
+  } else if (row.reset_at <= timestamp) {
+    await env.DB.prepare("UPDATE review_attempts SET count=1,reset_at=?2 WHERE key=?1")
+      .bind(key, timestamp + REVIEW_COMPARE_WINDOW_MS)
       .run();
   } else {
     await env.DB.prepare("UPDATE review_attempts SET count=count+1 WHERE key=?1").bind(key).run();
