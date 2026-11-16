@@ -8,6 +8,7 @@ Three guarded Studio releases in one session, all from clean pushed `main` throu
 | `0e34ee5f9831` | `e3e9d1ee-b691-44bc-99fd-b56b78d01177` | 28.1 s | Signed, single-use large-file upload handoff for agents (#11) |
 | `30fcd6b3c4be` | `40c89c10-01db-436e-83eb-787f50d05d2a` | 31.8 s | Neutral white-label Director, truthful states, bounded drafts (#15, #67) |
 | `69e120e66b9a` | `15b6a980-1e55-49dc-8f6b-50249ec9a734` | 27.6 s | Gallery facets, honest totals, public cache boundary (#13) |
+| `15360920aaf6` | `8cb6e3ed-3343-4838-8df4-43d819f6fd66` | 27.2 s | Viewer Escape/Close with focus return; malformed-hash handling (#10) |
 
 ## Upload handoff (#11)
 
@@ -70,6 +71,20 @@ Live: `/gallery` reports **16 works**, the project facet lists 9 projects, and
 Not claimed: the owner rollout decision, per-project public/private policy UX, or
 the wider tag/rights facets from the 16 November direction. Nothing was published,
 listed, unlisted or withdrawn.
+
+## Viewer keyboard contract (#10)
+
+Opening an asset from the library moves focus to the labelled **Close the viewer**
+button. Escape closes the viewer, returns the URL to the library and restores focus
+to the exact **Open** control; Tab and Shift+Tab cycle inside the viewer while it is
+open, and the library scroll position is restored. A malformed hash no longer dumps
+the user on home: it keeps the current view, replaces the hash and shows a short
+message. Browser checks: **37/37**; full suite 476/476.
+
+Verified live on the synthetic proof project at `15360920`. The React viewer and
+the no-bundle fallback share the contract. Physical-phone and screen-reader checks
+remain #182, and the viewer is a route rather than an ARIA dialog, so the trap does
+not reclaim mouse/programmatic focus.
 
 ## Evidence
 
