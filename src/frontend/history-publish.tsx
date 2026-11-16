@@ -244,8 +244,9 @@ export function Publish({ publications, origin }: PublishProps) {
             Make public previews faster
           </button>
           <p className="small">
-            Adds a small gallery preview where one is missing. Originals and
-            published pages stay unchanged; running it again only fills gaps.
+            Adds a small gallery preview and a page-size poster preview where one
+            is missing. Originals and published pages stay unchanged; running it
+            again only fills gaps.
           </p>
           <p className="small" data-thumb-progress role="status" aria-live="polite" />
         </div>

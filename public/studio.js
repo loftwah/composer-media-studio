@@ -1137,7 +1137,7 @@ function publishView() {
     <div class="row"><button class="secondary" data-action="publication-policy">First-party publishing settings</button><button class="secondary" data-action="publication-inventory">Review publication inventory</button></div>
     ${publications.length ? `<div class="stack" style="margin-top:0.7rem">
       <button class="secondary" type="button" data-action="backfill-thumbs">Make public previews faster</button>
-      <p class="small" style="margin:0">Adds a small gallery preview where one is missing. Originals and published pages stay unchanged; running it again only fills gaps.</p>
+      <p class="small" style="margin:0">Adds a small gallery preview and a page-size poster preview where one is missing. Originals and published pages stay unchanged; running it again only fills gaps.</p>
       <p class="small" style="margin:0" data-thumb-progress role="status" aria-live="polite"></p>
     </div>` : ""}
     <div class="stack" style="margin-top:0.8rem">
@@ -2306,6 +2306,12 @@ async function submitCreate() {
 
 const DERIVATIVE_MAX_BYTES = 1024 * 1024;
 const DERIVATIVE_TIMEOUT_MS = 15_000;
+// The page-size poster is painted larger than a gallery card. The server
+// refuses a poster preview above this long edge, and a thumb above 800.
+const POSTER_DERIVATIVE_LONG_EDGE = 1024;
+// One backfill pass does a bounded amount of work: a project with many old
+// pages is filled over several presses instead of one long blocking run.
+const POSTER_BACKFILL_LIMIT = 4;
 
 function thumbProgress(message = "") {
   const node = document.querySelector("[data-thumb-progress]");
@@ -2329,8 +2335,8 @@ function mediaEvent(target, name, timeout = DERIVATIVE_TIMEOUT_MS) {
   });
 }
 
-function derivativeCanvas(source, width, height) {
-  const size = derivativeSize(width, height);
+function derivativeCanvas(source, width, height, longEdge) {
+  const size = derivativeSize(width, height, longEdge);
   if (!size) return null;
   const canvas = document.createElement("canvas");
   canvas.width = size.width;
@@ -2356,21 +2362,21 @@ function canvasBlob(canvas, type, quality) {
   });
 }
 
-async function derivativeBlob(canvas) {
+async function derivativeBlob(canvas, quality = 0.72) {
   if (!canvas) return null;
-  let blob = await canvasBlob(canvas, "image/webp", 0.72);
+  let blob = await canvasBlob(canvas, "image/webp", quality);
   if (!blob || blob.type !== "image/webp" || blob.size > DERIVATIVE_MAX_BYTES)
     blob = await canvasBlob(canvas, "image/jpeg", 0.78);
   return blob && blob.size > 0 && blob.size <= DERIVATIVE_MAX_BYTES ? blob : null;
 }
 
-async function imageDerivativeBlob(asset) {
+async function imageDerivativeBlob(asset, { longEdge, quality } = {}) {
   if (typeof createImageBitmap !== "function") return null;
   const response = await fetch(`/api/assets/${encodeURIComponent(asset.id)}/file`, { credentials: "same-origin" });
   if (!response.ok) return null;
   const bitmap = await createImageBitmap(await response.blob());
   try {
-    return await derivativeBlob(derivativeCanvas(bitmap, bitmap.width, bitmap.height));
+    return await derivativeBlob(derivativeCanvas(bitmap, bitmap.width, bitmap.height, longEdge), quality);
   } finally {
     bitmap.close?.();
   }
@@ -2420,6 +2426,59 @@ async function makePublicPreviewFaster(publication, asset) {
   return true;
 }
 
+/**
+ * The page-size preview of the owner's chosen poster, rendered by this browser
+ * from that poster's own bytes. Cloudflare Images is unavailable on some
+ * accounts (9432, legacy billing), so the canvas is the only reliable path.
+ * The poster asset is always an image: a video frame is never substituted here.
+ */
+async function makePosterPreviewFaster(publication, project = state.project) {
+  if (!publication?.id || !publication.posterAssetId || !project) return false;
+  const poster = project.assets.find((item) => item.id === publication.posterAssetId && item.kind === "image");
+  if (!poster) return false;
+  const blob = await imageDerivativeBlob(poster, {
+    longEdge: POSTER_DERIVATIVE_LONG_EDGE,
+    quality: 0.8,
+  });
+  if (!blob) return false;
+  const form = new FormData();
+  const extension = blob.type === "image/webp" ? "webp" : "jpg";
+  form.append("file", new File([blob], `poster.${extension}`, { type: blob.type }));
+  const result = await api(`/api/studio/publications/${encodeURIComponent(publication.id)}/poster-preview`, {
+    method: "POST",
+    body: form,
+    preserveOnUnauthorized: true,
+  });
+  if (!result?.posterPreview) return false;
+  publication.hasPosterPreview = true;
+  return true;
+}
+
+/**
+ * One bounded pass over the pages that have a chosen poster but no preview of
+ * it. A page whose stored preview already names its current poster bytes is
+ * never sent again, so pressing the button twice does not re-render anything.
+ */
+async function makePosterPreviewsFaster(project) {
+  const pending = project.publications.filter((publication) => publicationHasPosterGap(publication, project));
+  const batch = pending.slice(0, POSTER_BACKFILL_LIMIT);
+  let made = 0;
+  let failed = 0;
+  for (const [index, publication] of batch.entries()) {
+    if (state.project !== project) break;
+    thumbProgress(`Making poster preview ${index + 1} of ${batch.length}…`);
+    try {
+      if (!(await makePosterPreviewFaster(publication, project)))
+        throw new Error("This poster could not be previewed here.");
+    } catch {
+      failed += 1;
+      continue;
+    }
+    made += 1;
+  }
+  return { made, failed, total: pending.length, remaining: pending.length - made - failed };
+}
+
 async function makePublicPreviewsFaster() {
   const project = state.project;
   if (!project) return;
@@ -2428,7 +2487,8 @@ async function makePublicPreviewsFaster() {
     const asset = project.assets.find((item) => item.id === publication.assetId);
     return asset && ["image", "video"].includes(asset.kind);
   });
-  if (!pending.length) {
+  const posterGaps = project.publications.some((publication) => publicationHasPosterGap(publication, project));
+  if (!pending.length && !posterGaps) {
     notify("Every image and film page already has a fast preview.");
     return;
   }
@@ -2439,6 +2499,7 @@ async function makePublicPreviewsFaster() {
   }
   let made = 0;
   let failure = null;
+  let posters = null;
   try {
     for (const [index, publication] of pending.entries()) {
       if (state.project !== project) {
@@ -2457,19 +2518,37 @@ async function makePublicPreviewsFaster() {
       made += 1;
       thumbProgress(`Made ${index + 1} of ${pending.length} fast previews.`);
     }
+    // Poster previews are independent of the gallery thumbs: a refused still
+    // here must not stop the other kind. The pass stays bounded either way.
+    if (state.project === project) posters = await makePosterPreviewsFaster(project);
   } finally {
     if (button) {
       button.disabled = false;
       button.removeAttribute("aria-busy");
     }
   }
+  const parts = [];
+  if (pending.length)
+    parts.push(`${made}/${pending.length} gallery preview${pending.length === 1 ? "" : "s"}`);
+  if (posters?.total)
+    parts.push(
+      `${posters.made}/${posters.total} poster preview${posters.total === 1 ? "" : "s"}` +
+        `${posters.remaining ? ` (${posters.remaining} still to make)` : ""}` +
+        `${posters.failed ? ` (${posters.failed} refused)` : ""}`,
+    );
+  const summary = parts.join(", ");
   if (failure) {
-    thumbProgress(`Stopped at ${failure.index + 1} of ${pending.length}: ${failure.error.message} Nothing else changed.`);
+    thumbProgress(`Stopped at ${failure.index + 1} of ${pending.length}: ${failure.error.message}${summary ? ` ${summary}.` : ""}`);
     notify(`Stopped after ${made} fast preview${made === 1 ? "" : "s"}. ${failure.error.message}`, "bad");
     return;
   }
-  thumbProgress(`Made ${made} of ${pending.length} fast previews.`);
-  notify(`Fast previews ready for ${made} published page${made === 1 ? "" : "s"}.`);
+  thumbProgress(`Preview pass finished: ${summary}.`);
+  notify(`Preview pass finished: ${summary}.`);
+}
+
+function publicationHasPosterGap(publication, project = state.project) {
+  if (!publication.posterAssetId || publication.hasPosterPreview) return false;
+  return Boolean(project?.assets.find((item) => item.id === publication.posterAssetId && item.kind === "image"));
 }
 
 async function publishAsset(assetId, title, description) {
@@ -2504,7 +2583,7 @@ async function publishAsset(assetId, title, description) {
   // The page is already live. A browser-captured preview is best effort: losing
   // it never blocks, retracts or delays the publication.
   const target = state.project?.publications?.find((item) => item.id === result.publication.id)
-    ?? { id: result.publication.id, path: result.publication.path, hasThumb: false };
+    ?? { id: result.publication.id, path: result.publication.path, hasThumb: false, posterAssetId: values.posterAssetId || null };
   makePublicPreviewFaster(target, asset)
     .then((ready) => {
       if (ready) {
@@ -2515,6 +2594,18 @@ async function publishAsset(assetId, title, description) {
       notify("Published. The fast preview will be added later.");
     })
     .catch(() => notify("Published. The fast preview will be added later."));
+  // The page-size poster preview comes from the owner's chosen still, never a
+  // video frame, and is best effort in the same way: losing it never blocks,
+  // retracts or delays the publication.
+  if (target.posterAssetId) {
+    makePosterPreviewFaster(target)
+      .then((ready) => {
+        if (!ready) return notify("Published. The poster preview will be added later.");
+        const live = state.project?.publications?.find((item) => item.id === target.id);
+        if (live) live.hasPosterPreview = true;
+      })
+      .catch(() => notify("Published. The poster preview will be added later."));
+  }
 }
 
 async function refreshGeneration(id, manual = false) {

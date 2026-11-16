@@ -16,6 +16,9 @@ import { HttpError, extensionFor, imageSize, sha256Hex, sniffMedia } from "./uti
 
 export const MAX_DERIVATIVE_BYTES = 1024 * 1024;
 export const MAX_DERIVATIVE_EDGE = 800;
+// A page-size poster is painted larger than a gallery card, so it may be a
+// little wider. The thumb bound above stays where it was.
+export const MAX_POSTER_DERIVATIVE_EDGE = 1024;
 const DERIVATIVE_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export function derivativeKey(projectId, publicationId, mime) {
@@ -28,7 +31,7 @@ export function posterDerivativeKey(projectId, publicationId) {
 }
 
 /** Reject anything that is not a small, real JPEG, PNG or WebP still. */
-export function inspectDerivative(bytes) {
+export function inspectDerivative(bytes, { maxEdge = MAX_DERIVATIVE_EDGE } = {}) {
   if (!bytes?.byteLength) throw new HttpError(400, "Choose a preview image to upload", "invalid");
   if (bytes.byteLength > MAX_DERIVATIVE_BYTES)
     throw new HttpError(413, "A fast preview must stay under 1 MiB", "too_large");
@@ -38,10 +41,10 @@ export function inspectDerivative(bytes) {
   const size = imageSize(bytes);
   if (!Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1)
     throw new HttpError(415, "That preview image could not be read", "unsupported_type");
-  if (Math.max(size.width, size.height) > MAX_DERIVATIVE_EDGE)
+  if (Math.max(size.width, size.height) > maxEdge)
     throw new HttpError(
       400,
-      `Fast previews must be ${MAX_DERIVATIVE_EDGE}px or smaller on the long edge`,
+      `Fast previews must be ${maxEdge}px or smaller on the long edge`,
       "invalid_dimensions",
     );
   return { mime: sniffed.mime, width: size.width, height: size.height };
@@ -129,33 +132,18 @@ export async function deletePublicationPosterDerivative(env, publicationId) {
 }
 
 /**
- * Render the page-size WebP of a publication's chosen poster from the stored
- * still itself. `posterAsset` is the live image row the publication names.
- *
- * The render happens before anything is replaced: if Images refuses, the old
- * derivative (or the full-poster fallback) keeps working.
- *
- * @returns {Promise<{path: string, bytes: number, width: number, height: number, sha256: string}>}
+ * Point the publication's one poster row at `rendered`, which already came from
+ * the poster's current bytes. A poster that changed since the last render must
+ * not leave its old artwork addressable, even for the moment between the delete
+ * and the new row.
  */
-export async function storePosterDerivative(env, publication, posterAsset) {
-  if (!posterAsset || posterAsset.kind !== "image" || posterAsset.deleted_at)
-    throw new HttpError(404, "No poster for this page", "not_found");
-  const object = await env.MEDIA.get(posterAsset.r2_key);
-  if (!object) throw new HttpError(410, "The stored poster is unavailable", "unavailable");
-  const source = new Uint8Array(await object.arrayBuffer());
-  const rendered = await renderPreview(env, source, {
-    width: posterAsset.width,
-    height: posterAsset.height,
-  });
-  const sourceSha = posterAsset.sha256 || (await sha256Hex(source));
+async function writePosterDerivative(env, publication, sourceSha, rendered) {
   const key = posterDerivativeKey(publication.project_id, publication.id);
   const previous = await env.DB.prepare(
     "SELECT r2_key,source_sha256 FROM publication_derivatives WHERE publication_id=?1 AND kind='poster'",
   )
     .bind(publication.id)
     .first();
-  // A poster that changed since the last render must not leave its old artwork
-  // addressable, even for the moment between the delete and the new row.
   let hasRow = Boolean(previous);
   if (previous && previous.source_sha256 && previous.source_sha256 !== sourceSha) {
     await deletePublicationPosterDerivative(env, publication.id);
@@ -204,4 +192,55 @@ export async function storePosterDerivative(env, publication, posterAsset) {
     height: rendered.height,
     sha256: rendered.sha256,
   };
+}
+
+/**
+ * Render the page-size WebP of a publication's chosen poster from the stored
+ * still itself. `posterAsset` is the live image row the publication names.
+ *
+ * The render happens before anything is replaced: if Images refuses, the old
+ * derivative (or the full-poster fallback) keeps working.
+ *
+ * @returns {Promise<{path: string, bytes: number, width: number, height: number, sha256: string}>}
+ */
+export async function storePosterDerivative(env, publication, posterAsset) {
+  if (!posterAsset || posterAsset.kind !== "image" || posterAsset.deleted_at)
+    throw new HttpError(404, "No poster for this page", "not_found");
+  const object = await env.MEDIA.get(posterAsset.r2_key);
+  if (!object) throw new HttpError(410, "The stored poster is unavailable", "unavailable");
+  const source = new Uint8Array(await object.arrayBuffer());
+  const rendered = await renderPreview(env, source, {
+    width: posterAsset.width,
+    height: posterAsset.height,
+  });
+  const sourceSha = posterAsset.sha256 || (await sha256Hex(source));
+  return writePosterDerivative(env, publication, sourceSha, rendered);
+}
+
+/**
+ * Accept the page-size still the owner's browser already rendered from the
+ * chosen poster. This exists because the Cloudflare Images binding is not
+ * available on every account (9432 on legacy billing), while a canvas in the
+ * owner's browser always is.
+ *
+ * The row records the poster's own sha256 as `source_sha256`, so the public
+ * route serves it only while the chosen poster is still exactly those bytes.
+ *
+ * @returns {Promise<{path: string, bytes: number, width: number, height: number, sha256: string}>}
+ */
+export async function storePosterUpload(env, publication, posterAsset, bytes) {
+  if (!posterAsset || posterAsset.kind !== "image" || posterAsset.deleted_at)
+    throw new HttpError(404, "No poster for this page", "not_found");
+  const sourceSha = posterAsset.sha256;
+  if (typeof sourceSha !== "string" || !sourceSha)
+    throw new HttpError(409, "The chosen poster has no recorded bytes to preview", "source_unavailable");
+  const inspected = inspectDerivative(bytes, { maxEdge: MAX_POSTER_DERIVATIVE_EDGE });
+  const hash = await sha256Hex(bytes);
+  return writePosterDerivative(env, publication, sourceSha, {
+    bytes,
+    mime: inspected.mime,
+    width: inspected.width,
+    height: inspected.height,
+    sha256: hash,
+  });
 }

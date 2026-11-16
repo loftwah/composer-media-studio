@@ -10,14 +10,23 @@ import { createSession } from "../src/lib/auth.mjs";
 import { addAsset, jpeg, setup } from "./harness.mjs";
 
 const base = "https://studio.test";
+const MAX = 1024 * 1024;
 
-function call(env, path, { method = "GET", cookie, json, headers = {} } = {}) {
+function call(env, path, { method = "GET", cookie, json, form, headers = {} } = {}) {
   const init = { method, headers: { ...(cookie ? { cookie } : {}), ...headers } };
   if (json !== undefined) {
     init.headers["content-type"] = "application/json";
     init.body = JSON.stringify(json);
+  } else if (form !== undefined) {
+    init.body = form;
   }
   return worker.fetch(new Request(base + path, init), env);
+}
+
+function posterForm(bytes, { type = "image/jpeg", name = "poster.jpg" } = {}) {
+  const form = new FormData();
+  form.set("file", new File([bytes], name, { type }));
+  return form;
 }
 
 /** A 32-byte VP8X WebP header for the given size; enough to read it back. */
@@ -353,4 +362,233 @@ test("the derivatives table keeps thumb rows and rejects an unknown kind", async
       .bind(publication.id)
       .run(),
   );
+});
+
+test("an owner upload stores the browser's poster preview against the chosen poster's own hash", async () => {
+  const { env, project } = await setup();
+  // No Images binding: on this account the owner's canvas is the only path.
+  const cookie = await owner(env);
+  const video = await addAsset(env, project, { id: "asset_video", kind: "video", durationMs: 3000 });
+  const poster = await posterAsset(env, project, { id: "asset_poster", sha: "a".repeat(64) });
+  const publication = await publishFilm(env, { cookie, assetId: video.id, posterId: poster.id });
+  const slug = publication.path.split("/")[2];
+  const key = `projects/${project.id}/derivatives/${publication.id}/poster.webp`;
+  assert.equal((await call(env, `/p/${slug}/poster-preview`)).status, 404);
+
+  const bytes = jpeg(1024, 768);
+  const uploaded = await call(env, `/api/studio/publications/${publication.id}/poster-preview`, {
+    method: "POST",
+    cookie,
+    form: posterForm(bytes),
+  });
+  assert.equal(uploaded.status, 200);
+  const body = await uploaded.json();
+  assert.equal(body.posterPreview.path, `/p/${slug}/poster-preview`);
+  assert.equal(body.posterPreview.bytes, bytes.byteLength);
+  assert.equal(body.posterPreview.width, 1024);
+  assert.equal(body.posterPreview.height, 768);
+
+  const row = await env.DB.prepare(
+    "SELECT * FROM publication_derivatives WHERE publication_id=?1 AND kind='poster'",
+  )
+    .bind(publication.id)
+    .first();
+  assert.equal(row.r2_key, key);
+  assert.equal(row.mime, "image/jpeg");
+  assert.equal(row.width, 1024);
+  assert.equal(row.height, 768);
+  assert.equal(row.bytes, bytes.byteLength);
+  assert.equal(row.source_sha256, poster.sha256);
+  assert.match(row.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(env.MEDIA.meta.get(key).customMetadata.source, poster.sha256);
+  assert.equal(env.MEDIA.meta.get(key).httpMetadata.contentType, "image/jpeg");
+  assert.deepEqual(env.MEDIA.objects.get(key), bytes);
+
+  const served = await call(env, `/p/${slug}/poster-preview`);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get("content-type"), "image/jpeg");
+  assert.equal(served.headers.get("etag"), `"${row.sha256.slice(0, 32)}"`);
+  assert.deepEqual(new Uint8Array(await served.arrayBuffer()), bytes);
+
+  // The film page paints the upload; the share image and full poster stay the
+  // owner's original artwork.
+  const html = await (await call(env, `/p/${slug}`)).text();
+  assert.match(html, new RegExp(`poster="/p/${slug}/poster-preview"`));
+  assert.match(html, new RegExp(`property="og:image" content="https://studio\\.test/p/${slug}/poster"`));
+  const full = await call(env, `/p/${slug}/poster`);
+  assert.deepEqual(new Uint8Array(await full.arrayBuffer()), jpeg(1600, 1200));
+
+  const projectState = await (await call(env, `/api/projects/${project.id}`, { cookie })).json();
+  assert.equal(projectState.publications.find((item) => item.id === publication.id).hasPosterPreview, true);
+
+  // A later upload replaces the same row and key rather than accumulating.
+  const replacement = jpeg(768, 1024);
+  const replaced = await call(env, `/api/studio/publications/${publication.id}/poster-preview`, {
+    method: "POST",
+    cookie,
+    form: posterForm(replacement),
+  });
+  assert.equal(replaced.status, 200);
+  const reRow = await env.DB.prepare(
+    "SELECT * FROM publication_derivatives WHERE publication_id=?1 AND kind='poster'",
+  )
+    .bind(publication.id)
+    .first();
+  assert.equal(reRow.r2_key, key);
+  assert.equal(reRow.width, 768);
+  assert.equal(reRow.height, 1024);
+  assert.equal(reRow.bytes, replacement.byteLength);
+  assert.equal(reRow.source_sha256, poster.sha256);
+  assert.deepEqual(env.MEDIA.objects.get(key), replacement);
+  assert.equal(
+    (await env.DB.prepare("SELECT COUNT(*) AS n FROM publication_derivatives WHERE publication_id=?1").bind(publication.id).first()).n,
+    1,
+  );
+
+  // Sending the same capture twice changes nothing.
+  const again = await call(env, `/api/studio/publications/${publication.id}/poster-preview`, {
+    method: "POST",
+    cookie,
+    form: posterForm(replacement),
+  });
+  assert.equal(again.status, 200);
+  const settled = await env.DB.prepare(
+    "SELECT * FROM publication_derivatives WHERE publication_id=?1 AND kind='poster'",
+  )
+    .bind(publication.id)
+    .first();
+  assert.equal(settled.sha256, reRow.sha256);
+  assert.equal(settled.created_at >= reRow.created_at, true);
+});
+
+test("a poster preview upload refuses non-images, over-edge stills and oversized bytes, and leaves the thumb bound alone", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const video = await addAsset(env, project, { id: "asset_video", kind: "video", durationMs: 3000 });
+  const poster = await posterAsset(env, project, { id: "asset_poster" });
+  const publication = await publishFilm(env, { cookie, assetId: video.id, posterId: poster.id });
+  const path = `/api/studio/publications/${publication.id}/poster-preview`;
+  const upload = (bytes, options) =>
+    call(env, path, { method: "POST", cookie, form: posterForm(bytes, options) });
+  const rows = () =>
+    env.DB.prepare("SELECT COUNT(*) AS n FROM publication_derivatives").first().then((row) => row.n);
+
+  assert.equal((await upload(new TextEncoder().encode("not an image"), { type: "image/jpeg" })).status, 415);
+  assert.equal((await upload(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]))).status, 415);
+  const over = await upload(jpeg(1025, 400));
+  assert.equal(over.status, 400);
+  assert.equal((await over.json()).error.code, "invalid_dimensions");
+  assert.equal(await rows(), 0);
+
+  // 1024 on the long edge is the poster bound, even when the page is a film.
+  assert.equal((await upload(jpeg(1024, 1024))).status, 200);
+
+  const oversize = new Uint8Array(MAX + 1);
+  oversize.set([0xff, 0xd8, 0xff], 0);
+  const tooLarge = await upload(oversize);
+  assert.equal(tooLarge.status, 413);
+  assert.equal((await tooLarge.json()).error.code, "too_large");
+
+  // The gallery thumb still stops at 800, so the poster bound did not loosen it.
+  const thumb = (bytes) =>
+    call(env, `/api/publications/${publication.id}/derivative`, {
+      method: "POST",
+      cookie,
+      form: posterForm(bytes, { name: "thumb.jpg" }),
+    });
+  assert.equal((await thumb(jpeg(801, 400))).status, 400);
+  assert.equal((await thumb(jpeg(800, 400))).status, 200);
+  assert.equal(await rows(), 2);
+});
+
+test("a poster preview belongs to one publication and only the owner session can write it", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const video = await addAsset(env, project, { id: "asset_video", kind: "video", durationMs: 3000 });
+  const one = await posterAsset(env, project, { id: "asset_poster_one", sha: "1".repeat(64) });
+  const two = await posterAsset(env, project, { id: "asset_poster_two", sha: "2".repeat(64) });
+  const first = await publishFilm(env, { cookie, assetId: video.id, posterId: one.id, title: "First" });
+  const second = await publishFilm(env, { cookie, assetId: video.id, posterId: two.id, title: "Second" });
+  const firstSlug = first.path.split("/")[2];
+  const secondSlug = second.path.split("/")[2];
+
+  // Uploading bytes for one page records that page's own poster hash and never
+  // creates a row for its sibling.
+  const uploaded = await call(env, `/api/studio/publications/${first.id}/poster-preview`, {
+    method: "POST",
+    cookie,
+    form: posterForm(jpeg(512, 512)),
+  });
+  assert.equal(uploaded.status, 200);
+  assert.equal(
+    (await env.DB.prepare("SELECT source_sha256 FROM publication_derivatives WHERE publication_id=?1 AND kind='poster'").bind(first.id).first())
+      .source_sha256,
+    one.sha256,
+  );
+  assert.equal(
+    await env.DB.prepare("SELECT publication_id FROM publication_derivatives WHERE publication_id=?1").bind(second.id).first(),
+    null,
+  );
+  assert.equal((await call(env, `/p/${secondSlug}/poster-preview`)).status, 404);
+  assert.equal((await call(env, `/p/${firstSlug}/poster-preview`)).status, 200);
+
+  // A bridged session, even with publish rights, is refused by the owner route.
+  for (const session of [
+    { mode: "bridge", workspace: "ws-personal", project: project.id, actions: ["read", "edit", "publish", "admin"] },
+    { mode: "bridge", actor: "member", workspace: "ws-personal", project: "prj_other", actions: ["read", "publish"] },
+  ]) {
+    const bridge = "studio_session=" + (await createSession(env, session));
+    assert.equal(
+      (await call(env, `/api/studio/publications/${first.id}/poster-preview`, {
+        method: "POST",
+        cookie: bridge,
+        form: posterForm(jpeg(512, 512)),
+      })).status,
+      403,
+    );
+  }
+  assert.equal(
+    (await call(env, `/api/studio/publications/${first.id}/poster-preview`, {
+      method: "POST",
+      form: posterForm(jpeg(512, 512)),
+    })).status,
+    401,
+  );
+
+  // A withdrawn page accepts no new capture.
+  await env.DB.prepare("UPDATE publications SET revoked_at=?2 WHERE id=?1").bind(second.id, Date.now()).run();
+  assert.equal(
+    (await call(env, `/api/studio/publications/${second.id}/poster-preview`, {
+      method: "POST",
+      cookie,
+      form: posterForm(jpeg(512, 512)),
+    })).status,
+    404,
+  );
+});
+
+test("withdrawing a page removes its uploaded poster preview row and bytes", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const video = await addAsset(env, project, { id: "asset_video", kind: "video", durationMs: 3000 });
+  const poster = await posterAsset(env, project, { id: "asset_poster" });
+  const publication = await publishFilm(env, { cookie, assetId: video.id, posterId: poster.id });
+  const slug = publication.path.split("/")[2];
+  const key = `projects/${project.id}/derivatives/${publication.id}/poster.webp`;
+  assert.equal(
+    (await call(env, `/api/studio/publications/${publication.id}/poster-preview`, {
+      method: "POST",
+      cookie,
+      form: posterForm(jpeg(900, 600)),
+    })).status,
+    200,
+  );
+  assert.ok(env.MEDIA.objects.has(key));
+  assert.equal((await call(env, `/p/${slug}/poster-preview`)).status, 200);
+
+  assert.equal((await call(env, `/api/publications/${publication.id}`, { method: "DELETE", cookie })).status, 200);
+  assert.equal(await env.DB.prepare("SELECT publication_id FROM publication_derivatives").first(), null);
+  assert.equal(env.MEDIA.objects.has(key), false);
+  assert.equal((await call(env, `/p/${slug}/poster-preview`)).status, 404);
+  assert.equal((await call(env, `/p/${slug}`)).status, 404);
 });

@@ -77,7 +77,7 @@ import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as comp
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
-import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative } from "./lib/publication-derivatives.mjs";
+import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.mjs";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview } from "./lib/asset-previews.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.mjs";
@@ -642,7 +642,10 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     const posterPreviewMatch = path.match(/^\/api\/studio\/publications\/([a-z0-9_]+)\/poster-preview$/);
     if (posterPreviewMatch && method === "POST") {
       // Rebuild the page-size poster from the publication's own chosen still.
-      // No upload: the bytes always come from the stored poster asset.
+      // With a multipart body the owner's browser supplies the still it already
+      // rendered from that poster; without one the Worker tries the Images
+      // binding and reports its own refusal. Neither path accepts a still for a
+      // different asset or a video frame.
       const publication = await env.DB.prepare(
         `SELECT p.id,p.project_id,p.slug,p.poster_asset_id,p.revoked_at,a.deleted_at AS asset_deleted
          FROM publications p JOIN assets a ON a.id=p.asset_id
@@ -663,6 +666,18 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         .bind(publication.poster_asset_id, publication.project_id)
         .first();
       if (!poster) throw new HttpError(404, "This page has no chosen poster", "not_found");
+      const type = request.headers.get("content-type") ?? "";
+      if (type.includes("multipart/form-data")) {
+        const form = await request.formData();
+        const file = form.get("file");
+        if (!(file instanceof File)) throw new HttpError(400, "Choose a poster preview image to upload");
+        if (file.size === 0) throw new HttpError(400, "That poster preview file is empty");
+        if (file.size > MAX_DERIVATIVE_BYTES)
+          throw new HttpError(413, "A fast preview must stay under 1 MiB", "too_large");
+        return json({
+          posterPreview: await storePosterUpload(env, publication, poster, new Uint8Array(await file.arrayBuffer())),
+        });
+      }
       return json({ posterPreview: await storePosterDerivative(env, publication, poster) });
     }
     const assetPreviewMatch = path.match(/^\/api\/studio\/assets\/([a-z0-9_]+)\/preview$/);
@@ -777,7 +792,14 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         .bind(project.id)
         .all();
       const publications = await env.DB.prepare(
-        "SELECT p.*,(d.publication_id IS NOT NULL) AS has_thumb FROM publications p LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='thumb' WHERE p.project_id=?1 AND p.revoked_at IS NULL ORDER BY p.created_at DESC",
+        `SELECT p.*,(d.publication_id IS NOT NULL) AS has_thumb,
+                (pd.publication_id IS NOT NULL AND pd.source_sha256=poster.sha256) AS has_poster_preview
+         FROM publications p
+         LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='thumb'
+         LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id
+           AND poster.kind='image' AND poster.deleted_at IS NULL
+         LEFT JOIN publication_derivatives pd ON pd.publication_id=p.id AND pd.kind='poster'
+         WHERE p.project_id=?1 AND p.revoked_at IS NULL ORDER BY p.created_at DESC`,
       )
         .bind(project.id)
         .all();
@@ -853,6 +875,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           listed: Boolean(publication.listed),
           hidden: Boolean(publication.hidden),
           hasThumb: Boolean(publication.has_thumb),
+          hasPosterPreview: Boolean(publication.has_poster_preview),
           review:
             publication.review_room_id && publication.review_decision === "approved"
               ? {
@@ -2432,12 +2455,13 @@ async function servePosterPreview(request, env, publication) {
  * Fill missing or stale posters and asset previews a bounded page at a time.
  * Each row is independent, so one refusal never blocks the rest, and a repeated
  * call skips rows whose source hash already matches.
+ *
+ * There is deliberately no scheduled caller. Building a rendition needs the
+ * Cloudflare Images binding, and on this installation's account the binding
+ * answers 9432 (legacy billing), so a cron pass could never converge and would
+ * log a refusal every minute. The owner-session route stays, and the browser
+ * backfill in `public/studio.js` builds poster previews with canvas instead.
  */
-// The scheduled sweep belongs to the installation itself: it builds previews
-// for this installation's own stored rows and no caller can reach it, because
-// the HTTP route still requires an owner session.
-const INSTALLATION = Object.freeze({ mode: "owner", installationOwner: true });
-
 async function backfillPreviews(env, session, kind, limit) {
   let processed = 0;
   let failed = 0;
@@ -2667,15 +2691,5 @@ export default {
     // Read-only capability freshness: real work at most once a day. The every-
     // minute trigger already exists; a failed check keeps the last good copy.
     ctx.waitUntil(refreshCapabilities(env).catch((error) => console.error("Capability refresh unavailable", error?.message ?? error)));
-    // Work published before previews existed must stop paying multi-megabyte
-    // originals as soon as the code ships. Four a minute converges and then
-    // costs two indexed reads. Posters first: they are the public first paint.
-    ctx.waitUntil(
-      (async () => {
-        const posters = await backfillPreviews(env, INSTALLATION, "posters", 4);
-        if (posters.remaining > 0) return;
-        await backfillPreviews(env, INSTALLATION, "assets", 4);
-      })().catch((error) => console.error("Preview backfill unavailable", error?.message ?? error)),
-    );
   },
 };
