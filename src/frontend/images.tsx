@@ -51,6 +51,7 @@ import {
   formatHsl,
   formatRgb,
   mapBoundsThroughTransform,
+  paletteToAse,
   paletteToCss,
   paletteToGpl,
   pickImagePixel,
@@ -282,6 +283,14 @@ async function sha256Hex(bytes: BufferSource): Promise<string> {
 
 function blobFromBytes(bytes: Uint8Array, type: string): Blob {
   return new Blob([bytes as unknown as BlobPart], { type });
+}
+
+// Small binary palettes (.ase) can be offered as a base64 data URI, so the
+// download needs no object-URL lifecycle and stays entirely in this tab.
+function bytesToDataUri(bytes: Uint8Array, type: string): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `data:${type};base64,${btoa(binary)}`;
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
@@ -1988,6 +1997,13 @@ function Images() {
                     download="studio-palette.css"
                   >
                     Download palette (.css)
+                  </a>
+                  <a
+                    className="button secondary"
+                    href={bytesToDataUri(paletteToAse(visiblePalette.result.colors), "application/octet-stream")}
+                    download="studio-palette.ase"
+                  >
+                    Download palette (.ase)
                   </a>
                 </>
               )}

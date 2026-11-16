@@ -49,6 +49,7 @@ export function formatRgb(rgb: Partial<Rgb>): string;
 export function formatHsl(hsl: Partial<Hsl>): string;
 export function paletteToGpl(colors: PaletteColour[]): string;
 export function paletteToCss(colors: PaletteColour[]): string;
+export function paletteToAse(colors: PaletteColour[]): Uint8Array;
 export function extractPalette(
   pixels: Uint8Array | Uint8ClampedArray,
   options?: {
