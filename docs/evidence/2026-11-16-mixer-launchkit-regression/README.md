@@ -10,7 +10,8 @@ fixture, not against production data; the distinction is recorded below.
 
 | Item | Value |
 | --- | --- |
-| Studio live revision | `5241e411ed48c33215e1efbb040f7ee963b13ff2`, `/build.json` `builtAt` 2026-11-16T04:24:54.407Z |
+| Studio live revision at start | `5241e411ed48c33215e1efbb040f7ee963b13ff2`, `/build.json` `builtAt` 2026-11-16T04:24:54.407Z |
+| Studio live revision at finish | `5313d8fb4044efbdf860de36fb36be00a7acbb06`, `builtAt` 2026-11-16T05:22:13.930Z |
 | Launch Kit live build | `c470eef73a0413ce28e9416d7a3bff5bbcaf16b2` (`https://composer-launch-kit.loftwah.workers.dev/build.json`) |
 | Branch | `codex/batch-20-tools-regression` from `main` `5241e41` |
 | Chrome | Google Chrome `157.0.8103.52`, headless, 1440×900 and 390×844 |
@@ -18,6 +19,15 @@ fixture, not against production data; the distinction is recorded below.
 | Media inspection | `ffmpeg`/`ffprobe` `9.0.2` plus a local WAV RMS/Goertzel reader |
 | Node | `v26.13.1` |
 | Local fixture | `tests/browser/fixture.mjs` + `tests/browser/harness.mjs`, `wrangler dev --local`, isolated `--persist-to` under the run's temp root |
+
+Production moved while the run was in progress. `5241e41..5313d8f` changes only
+`src/lib/auth.mjs`, `src/worker.mjs` (the project-access message for a
+project-scoped agent) and `tests/auth.test.mjs`; it does not touch the local
+tools, the mixer, Launch Kit or the generation UI. Every main measurement below
+was taken on `5241e41`; a fresh smoke run on `5313d8f` reproduced the audio trim
+(**3.000000 s**, 288,044 bytes), the muted 9:16 clip (**360×640**, 1.000000 s,
+2,177 bytes), a generated Launch Kit card (**1200×630**) and the signed-out 401
+at both widths. The raw-parser defect is still present on `5313d8f`.
 
 ## Fixtures
 
@@ -117,7 +127,7 @@ request.
 ## 6. Defect found and fixed
 
 **Unreadable media showed the library's raw parser text instead of the tool's
-refusal.** Reproduced on the live build (`5241e41`):
+refusal.** Reproduced on the live build (`5241e41`, and again on `5313d8f`):
 
 1. `/tools/audio-trim` → choose a text file renamed `not-media.wav` → status
    read `Input has an unsupported or unrecognizable format.` (the tool's own
@@ -166,6 +176,11 @@ The new mixer scheduling test was proven to fail when the gain schedule is
 broken (temporarily changed `Math.pow(10, gainDb/20)` to `1`, test failed, file
 restored). The new probe test includes the exact raw message from the live
 defect.
+
+Current-build smoke on `5313d8f` at 1440 and 390: audio trim and muted clip
+exports decode to the same durations and bytes as above, the Launch Kit card
+renders at 1200×630, the signed-out generation/state requests answer 401 JSON,
+and the unreadable-file message is still the old raw text.
 
 ## 8. Remaining limits
 
