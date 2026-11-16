@@ -78,10 +78,17 @@ export async function renderPreview(env, bytes, { maxEdge = MAX_PREVIEW_EDGE, qu
       .output({ format: "image/webp", quality });
   } catch (cause) {
     // Cloudflare answers 9432 on an account with legacy billing; the surface
-    // should say what is wrong rather than repeat a binding failure.
+    // should say what is wrong rather than repeat a binding failure. Keep one
+    // bounded line in the log so a released failure can be diagnosed without
+    // guessing which binding stage refused.
+    console.warn(
+      "preview rendition failed",
+      cause?.code ?? "-",
+      String(cause?.message ?? cause).slice(0, 160),
+    );
     throw new HttpError(
       503,
-      cause?.code === 9432
+      String(cause?.code) === "9432"
         ? "Cloudflare Images is not available on this account because it is on legacy billing (error 9432)."
         : "The preview could not be rendered from this still.",
       "preview_unavailable",
