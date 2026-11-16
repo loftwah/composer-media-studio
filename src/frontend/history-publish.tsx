@@ -115,7 +115,7 @@ function JobCard({
             <button
               type="button"
               className="secondary"
-              data-action="open-asset"
+              data-action="open-asset-link"
               data-id={asset.id}
             >
               Open result

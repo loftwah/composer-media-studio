@@ -192,15 +192,15 @@ function AssetVideo({ asset, reentryUrl }: { asset: MediaAssetV1; reentryUrl: st
 
 function AssetViewer({ projectId, asset, still, launchKitUrl, reentryUrl }: ViewerProps) {
   const back = `#/p/${encodeURIComponent(projectId)}/library`;
-  if (!asset) return <div className="asset-viewer" data-viewer="true"><p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a> <button type="button" className="quiet" data-action="close-viewer" aria-label="Close the viewer">Close</button></p></div>;
+  if (!asset) return <div className="asset-viewer" data-viewer="true" role="dialog" aria-modal="true" aria-labelledby="viewer-missing-title"><h1 id="viewer-missing-title" className="asset-viewer-title">Asset unavailable</h1><p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a> <button type="button" className="quiet" data-action="close-viewer" aria-label="Close the viewer">Close</button></p></div>;
   const isVideo = asset.kind === "video", isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
   const shareProvenance = shareImportProvenance(asset.caption);
-  return <div className="asset-viewer" data-viewer="true">
+  return <div className="asset-viewer" data-viewer="true" role="dialog" aria-modal="true" aria-labelledby="viewer-title">
     <p className="row"><a className="button secondary" data-viewer-back href={back}>← Back to library</a><button type="button" className="button secondary" data-action="close-viewer" aria-label="Close the viewer">Close</button></p>
     <div className="viewer">
       <div className="stage">{isVideo ? <AssetVideo key={asset.id} asset={asset} reentryUrl={reentryUrl}/> : isAudio ? <div className="audio-stage"><canvas width="840" height="200" data-waveform={asset.file} aria-hidden="true"/><audio src={asset.file} controls preload="metadata"/></div> : <img src={asset.file} alt={asset.title}/>}</div>
-      <aside className="card stack"><div><p className="eyebrow">{asset.kind} · {asset.source}</p><h1 className="asset-viewer-title">{asset.title}</h1></div>
+      <aside className="card stack"><div><p className="eyebrow">{asset.kind} · {asset.source}</p><h1 id="viewer-title" className="asset-viewer-title">{asset.title}</h1></div>
         {shareProvenance ? <p>Imported from Woodhouse Share.</p> : localRender ? <p>MP4 rendered on this device from a saved storyboard{asset.caption?.includes('; owner-confirmed captions') ? ', with saved captions' : ''}.</p> : asset.caption && <p>{asset.caption}</p>}
         <dl className="kv"><dt>Size</dt><dd>{bytesLabel(asset.bytes)}</dd>{Boolean(asset.width) && <><dt>Frame</dt><dd>{asset.width} × {asset.height}</dd></>}{Boolean(asset.durationMs) && <><dt>Duration</dt><dd>{(asset.durationMs! / 1000).toFixed(1)}s</dd></>}{isAudio && Boolean(asset.sampleRate) && <><dt>Audio</dt><dd>{asset.sampleRate} Hz · {asset.channels ?? "—"} channel{asset.channels === 1 ? "" : "s"}</dd></>}<dt>Type</dt><dd>{asset.mime}</dd><dt>Added</dt><dd>{dateLabel(asset.createdAt)}</dd></dl>
         {asset.hasLocalRenderReceipt && <PrivateRenderReceipt key={asset.id} assetId={asset.id} reentryUrl={reentryUrl}/>}

@@ -6,6 +6,7 @@ import { shotRange } from "./shot-trims.js";
 import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.js";
 import { prepareVoiceDraft, restoreCreateDraft, switchCreateProject, createEventBelongsToProject, hasCreateDraftChanges, shouldWarnCreateDrafts } from "./voice-handoff.js";
 import { derivativeSize } from "./derivative-size.js";
+import { PROJECT_TABS, nextProjectTab, parseStudioHash } from "./studio-route.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -15,7 +16,12 @@ let creativeHome = null;
 let homeMounted = false;
 let mediaMounted = false;
 let bootReady = false;
-let libraryReturn = null;
+// The route that opened the viewer. It carries the tab, the control and the
+// scroll offset so Close can return to a History result or an Assemble still,
+// not only to the library grid.
+let viewerReturn = null;
+let pendingProjectTabFocus = null;
+let viewerFocusFallback = null;
 let mixPreviewUrl = null;
 let mixPreviewVersion = 0;
 function clearMixPreview() {
@@ -188,31 +194,37 @@ function statusChip(status) {
 }
 
 function parseHash() {
-  const hash = location.hash.replace(/^#\/?/, "").replace(/\/+$/, "");
-  if (!hash) return { view: "home" };
-  const parts = hash.split("/");
-  const [segment, id, tab] = parts;
-  if (segment === "p" && id && parts.length <= 3) return { view: "project", projectId: id, tab: tab || "library" };
-  if (segment === "a" && id && tab && parts.length === 3) return { view: "asset", projectId: id, assetId: tab };
-  // A non-empty hash that names no screen is not the project browser. Callers
-  // keep the page the user already has and say why instead of silently routing
-  // them home; an empty hash is still the studio home.
-  return { view: "invalid", hash };
+  return parseStudioHash(location.hash);
 }
 
-// The viewer is a route, not a modal. Escape and Close leave the same way the
-// Back control does: one coherent library -> viewer history pair stays intact.
+// The viewer is a route, not a page replacement for a modal task. It is still
+// marked as a modal dialog while open: the header and skip link become inert,
+// Tab stays inside, and Escape/Close leave one coherent history pair intact.
 let viewerClosing = false;
+
+function viewerOriginMatches() {
+  return viewerReturn?.projectId === state.projectId && viewerReturn.assetId === state.assetId;
+}
+
 function closeViewer() {
   if (state.view !== "asset" || viewerClosing) return;
-  const openedFromLibrary = libraryReturn?.projectId === state.projectId && libraryReturn.assetId === state.assetId;
-  if (openedFromLibrary) {
+  if (viewerOriginMatches()) {
     viewerClosing = true;
     history.back();
     setTimeout(() => { viewerClosing = false; }, 1200);
     return;
   }
+  // A deep link or reload has no same-document origin to go back to. Open the
+  // library as the stable destination and move focus somewhere usable there.
+  viewerFocusFallback = "library";
   location.hash = `#/p/${encodeURIComponent(state.projectId)}/library`;
+}
+
+function focusViewerFallback() {
+  if (state.view !== "project" || !viewerFocusFallback) return;
+  const target = viewerFocusFallback === "library" ? document.querySelector("#search") : null;
+  viewerFocusFallback = null;
+  (target ?? document.getElementById(`project-tab-${state.tab}`) ?? app.querySelector("button, a[href], input"))?.focus({ preventScroll: true });
 }
 
 let viewerFocusKey = null;
@@ -226,6 +238,80 @@ function focusViewerOnOpen() {
   const root = app.querySelector("[data-viewer]");
   const target = root?.querySelector('[data-action="close-viewer"]') ?? root?.querySelector("[data-viewer-back]");
   target?.focus({ preventScroll: true });
+}
+
+// The route is rendered in #app; the site header and skip link sit outside it.
+// Mark those background surfaces inert for assistive technology and pointer
+// input without replacing the hash router or hiding the live toast region.
+function syncViewerRouteChrome() {
+  const open = state.view === "asset" && Boolean(app.querySelector("[data-viewer]"));
+  for (const element of [document.querySelector(".skip"), document.querySelector(".site-header")]) {
+    if (!element) continue;
+    if (open) {
+      element.setAttribute("inert", "");
+      element.setAttribute("aria-hidden", "true");
+    } else {
+      element.removeAttribute("inert");
+      element.removeAttribute("aria-hidden");
+    }
+  }
+  document.body.classList.toggle("viewer-route", open);
+}
+
+function originCandidates(action, assetId) {
+  return [...app.querySelectorAll(`[data-action="${action}"]`)].filter((element) => element.dataset.id === assetId);
+}
+
+// Remember the tab, exact control and scroll offset that opened the viewer.
+// A History result and a Create result can both name the same asset, so the
+// ordinal index distinguishes their identical controls.
+function recordViewerOrigin(element, assetId, action) {
+  if (state.view !== "project" || !state.projectId) return;
+  const candidates = originCandidates(action, assetId);
+  viewerReturn = {
+    projectId: state.projectId,
+    assetId,
+    tab: state.tab,
+    action,
+    index: Math.max(0, candidates.indexOf(element)),
+    via: element?.classList.contains("thumb") ? "thumb" : action === "open-asset-link" ? "link" : "open",
+    scrollY: window.scrollY,
+  };
+}
+
+// Restore the originating tab's control and scroll position after Close or
+// Escape. React mounts synchronously here; the second attempt covers a tab
+// whose content paints on the next frame.
+function restoreViewerOrigin() {
+  const previous = viewerReturn;
+  if (!previous || state.view !== "project" || state.projectId !== previous.projectId || state.tab !== previous.tab) return false;
+  viewerReturn = null;
+  const restore = (final = false) => {
+    if (state.view !== "project" || state.projectId !== previous.projectId || state.tab !== previous.tab) return true;
+    const candidates = originCandidates(previous.action, previous.assetId);
+    let item = candidates[previous.index] ?? null;
+    if (previous.via === "thumb") item = candidates.find((element) => element.classList.contains("thumb")) ?? item;
+    item ??= candidates[0];
+    if (!item && !final) return false;
+    if (!item) {
+      // The tab rebuilt without the original control (for example a job row
+      // whose result was withdrawn). Keep the tab and scroll, but put focus on
+      // a stable control there rather than leaving it on the document body.
+      const fallback = document.querySelector("#search") ?? document.getElementById(`project-tab-${state.tab}`);
+      fallback?.focus({ preventScroll: true });
+      window.scrollTo(0, previous.scrollY);
+      return true;
+    }
+    item.focus({ preventScroll: true });
+    // Programmatic focus can skip the browser's focus-visible heuristic.
+    // Show the same ring explicitly until the control loses focus.
+    item.classList.add("viewer-return-focus");
+    item.addEventListener("blur", () => item.classList.remove("viewer-return-focus"), { once: true });
+    window.scrollTo(0, previous.scrollY);
+    return true;
+  };
+  requestAnimationFrame(() => { if (!restore()) setTimeout(() => restore(true), 180); });
+  return true;
 }
 
 function stableHash() {
@@ -244,6 +330,27 @@ function rejectMalformedHash() {
   try { history.replaceState(history.state, "", stableHash()); } catch { /* Keep the current page and the message. */ }
   notify("That Studio link wasn't recognised, so this page stayed open.", "bad");
 }
+
+// An unknown project section is still a usable project. Library is selected,
+// the hash is replaced and the message names what happened instead of showing
+// an unexplained empty panel.
+function rejectUnknownTab() {
+  try { history.replaceState(history.state, "", stableHash()); } catch { /* Keep the current page and the message. */ }
+  notify("That studio section doesn't exist, so Library is open.", "bad");
+}
+
+function activateProjectTab(tab) {
+  if (!PROJECT_TABS.includes(tab) || state.view !== "project" || !state.projectId) return;
+  pendingProjectTabFocus = tab;
+  if (state.tab === tab) {
+    document.getElementById(`project-tab-${tab}`)?.focus();
+    pendingProjectTabFocus = null;
+    return;
+  }
+  state.tab = tab;
+  location.hash = `#/p/${encodeURIComponent(state.projectId)}/${tab}`;
+}
+
 
 // The open viewer keeps Tab inside its own route. This covers the React viewer
 // and the no-bundle fallback with one rule instead of duplicating a trap.
@@ -287,6 +394,19 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+// Horizontal project tabs follow the ARIA tabs pattern: only the selected tab
+// is in the Tab order, and Left/Right/Home/End move selection and focus.
+app.addEventListener("keydown", (event) => {
+  if (state.view !== "project" || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+  const tab = event.target.closest?.('[role="tab"][data-action="tab"]');
+  if (!tab) return;
+  const next = nextProjectTab(tab.dataset.tab, event.key);
+  if (!next) return;
+  event.preventDefault();
+  activateProjectTab(next);
+});
+
+
 async function boot() {
   const session = await api("/api/session");
   if (!session.signedIn) {
@@ -309,10 +429,11 @@ async function boot() {
   state.showcase = data.showcase ?? [];
   const route = parseHash();
   const invalidRoute = route.view === "invalid";
+  const unknownTab = route.unknownTab ?? null;
   if (!invalidRoute) {
     state.view = route.view;
     state.projectId = route.projectId ?? null;
-    state.tab = route.tab ?? "library";
+    state.tab = PROJECT_TABS.includes(route.tab) ? route.tab : "library";
     if (state.view === "project" || state.view === "asset") {
       if (state.view === "asset") state.assetId = route.assetId;
       await loadProject(state.projectId);
@@ -326,6 +447,7 @@ async function boot() {
   // Boot lands on the stable studio home with an explanation, not a silent
   // redirect that makes the bad link look like it worked.
   if (invalidRoute) rejectMalformedHash();
+  else if (unknownTab) rejectUnknownTab();
 }
 
 async function loadProject(id) {
@@ -444,7 +566,7 @@ function render() {
     } else app.innerHTML = homeView();
   } else if (state.view === "asset") {
     if (homeMounted) { creativeHome.unmountHome(); homeMounted = false; }
-    if (!state.project || state.project.id !== state.projectId) { app.innerHTML = '<p class="notice">Loading…</p>'; return; }
+    if (!state.project || state.project.id !== state.projectId) { app.innerHTML = '<p class="notice">Loading…</p>'; syncViewerRouteChrome(); return; }
     if (creativeHome) {
       app.innerHTML = '<div id="creative-media"></div>';
       const asset = state.project?.assets.find((item) => item.id === state.assetId) ?? null;
@@ -454,6 +576,7 @@ function render() {
       });
       mediaMounted = true;
     } else app.innerHTML = assetView();
+    syncViewerRouteChrome();
     focusViewerOnOpen();
   } else {
     if (homeMounted) { creativeHome.unmountHome(); homeMounted = false; }
@@ -485,24 +608,18 @@ function render() {
     attachDropzone();
     if (state.tab === "library") restoreShareImportDraft();
     if (state.tab === "create") attachMask();
-    if (state.tab === "library" && libraryReturn?.projectId === state.projectId) {
-      const previous = libraryReturn;
-      libraryReturn = null;
-      requestAnimationFrame(() => {
-        if (state.view !== "project" || state.tab !== "library" || state.projectId !== previous.projectId) return;
-        const candidates = [...app.querySelectorAll('[data-action="open-asset"]')].filter((button) => button.dataset.id === previous.assetId);
-        const item = candidates.find((button) => (button.classList.contains("thumb") ? "thumb" : "open") === previous.via) ?? candidates[0];
-        item?.focus({ preventScroll: true });
-        if (item) {
-          // Programmatic focus can skip the browser's focus-visible heuristic.
-          // Show the same ring explicitly until the card loses focus.
-          item.classList.add("viewer-return-focus");
-          item.addEventListener("blur", () => item.classList.remove("viewer-return-focus"), { once: true });
-        }
-        window.scrollTo(0, previous.scrollY);
-      });
+    if (restoreViewerOrigin()) {
+      // The originating control takes focus; no tab-level focus fallback is
+      // needed on this render.
+    } else if (pendingProjectTabFocus) {
+      const tab = pendingProjectTabFocus;
+      pendingProjectTabFocus = null;
+      requestAnimationFrame(() => document.getElementById(`project-tab-${tab}`)?.focus());
+    } else {
+      focusViewerFallback();
     }
   }
+  syncViewerRouteChrome();
   drawWaveforms();
 }
 
@@ -723,12 +840,12 @@ function projectView() {
       </div>
     </div>
     ${budgetStrip(project.budget)}
-    <nav class="tabs" aria-label="Studio sections">
-      ${["library", "create", "assemble", "history", "publish", "review", "settings"]
-        .map((tab) => `<button role="tab" aria-selected="${state.tab === tab}" data-action="tab" data-tab="${tab}">${tab[0].toUpperCase() + tab.slice(1)}${tab === "history" && project.generations.some(isPending) ? " ·" : ""}</button>`)
+    <nav class="tabs" role="tablist" aria-label="Studio sections" data-project-tabs>
+      ${PROJECT_TABS
+        .map((tab) => `<button type="button" role="tab" id="project-tab-${tab}" data-action="tab" data-tab="${tab}" aria-selected="${state.tab === tab}" aria-controls="project-panel" tabindex="${state.tab === tab ? 0 : -1}">${tab[0].toUpperCase() + tab.slice(1)}${tab === "history" && project.generations.some(isPending) ? " ·" : ""}</button>`)
         .join("")}
     </nav>
-    <section role="tabpanel" aria-label="${esc(state.tab)}">
+    <section class="project-panel" id="project-panel" role="tabpanel" aria-labelledby="project-tab-${state.tab}" tabindex="0">
       ${state.tab === "library" ? (creativeHome ? '<div id="creative-media"></div>' : libraryView()) : ""}
       ${state.tab === "create" ? `${createDraftRecovery()}<div data-create-project="${esc(project.id)}">${creativeHome ? '<div id="creative-media"></div>' : createView()}</div>` : ""}
       ${state.tab === "assemble" ? (creativeHome ? '<div id="creative-media"></div>' : composeView()) : ""}
@@ -1223,7 +1340,7 @@ function jobCard(generation) {
     <p class="small">${esc(generation.aspect ?? "")} ${generation.durationSeconds ? `· ${generation.durationSeconds}s` : ""} ${generation.error ? `· ${esc(generation.error.message)}` : ""}</p>
     ${asset ? `<div class="result">${["audio", "video"].includes(asset.kind) && asset.durationMs != null ? `<p class="small">Saved file: ${(asset.durationMs / 1000).toFixed(2)}s</p>` : ""}${asset.kind === "video" ? `<video src="${esc(asset.file)}" controls playsinline preload="none" aria-label="Play ${esc(asset.title)}"></video>` : asset.kind === "audio" ? `<audio src="${esc(asset.file)}" controls preload="none" aria-label="Play ${esc(asset.title)}" style="width:100%"></audio>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}" loading="lazy">`}</div>` : ""}
     <div class="row">
-      ${asset ? `<button class="secondary" data-action="open-asset" data-id="${esc(asset.id)}">Open result</button>${generation.model !== "kling-o1-restyle" && !generation.modelRetired ? `<button class="secondary" data-action="reuse-job" data-id="${esc(generation.id)}">Reuse settings</button>` : ""}` : ""}
+      ${asset ? `<button class="secondary" data-action="open-asset-link" data-id="${esc(asset.id)}">Open result</button>${generation.model !== "kling-o1-restyle" && !generation.modelRetired ? `<button class="secondary" data-action="reuse-job" data-id="${esc(generation.id)}">Reuse settings</button>` : ""}` : ""}
       ${pending && generation.kind === "video" ? `<button class="secondary" data-action="refresh-job" data-id="${esc(generation.id)}">Refresh</button>` : ""}
       ${canCancel ? `<button class="secondary" data-action="cancel-job" data-id="${esc(generation.id)}">Cancel</button>` : ""}
       ${canRetrySave ? `<button data-action="save-retry" data-id="${esc(generation.id)}">Retry saving</button>` : ""}
@@ -1297,7 +1414,7 @@ function settingsView() {
 
 function assetView() {
   const asset = state.project?.assets.find((item) => item.id === state.assetId);
-  if (!asset) return `<div class="asset-viewer" data-viewer><p class="notice">That asset is no longer in the library. <a data-viewer-back href="#/p/${esc(state.projectId)}/library">Back to the library</a>.</p></div>`;
+  if (!asset) return `<div class="asset-viewer" data-viewer role="dialog" aria-modal="true" aria-labelledby="viewer-missing-title"><h1 id="viewer-missing-title">Asset unavailable</h1><p class="notice">That asset is no longer in the library. <a data-viewer-back href="#/p/${esc(state.projectId)}/library">Back to the library</a> <button type="button" class="quiet" data-action="close-viewer" aria-label="Close the viewer">Close</button></p></div>`;
   const isVideo = asset.kind === "video";
   const isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
@@ -1325,12 +1442,12 @@ function assetView() {
           : "This file type cannot be imported into Launch Kit or used as a variation reference. Upload a JPEG, PNG or WebP still."
       }${isVideo ? ` <button class="quiet" data-action="choose-still">Choose a still</button>` : ""}</p>`;
   return `
-    <div class="asset-viewer" data-viewer>
+    <div class="asset-viewer" data-viewer role="dialog" aria-modal="true" aria-labelledby="viewer-title">
     <p class="row"><a class="button secondary" data-viewer-back href="#/p/${esc(state.projectId)}/library">← Back to library</a><button class="button secondary" type="button" data-action="close-viewer" aria-label="Close the viewer">Close</button></p>
     <div class="viewer">
       <div class="stage">${isVideo ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video>` : isAudio ? `<div class="audio-stage"><canvas width="840" height="200" data-waveform="${esc(asset.file)}" aria-hidden="true"></canvas><audio src="${esc(asset.file)}" controls preload="metadata"></audio></div>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}">`}</div>
       <aside class="card stack">
-        <div><p class="eyebrow">${esc(asset.kind)} · ${esc(asset.source)}</p><h1 style="font-size:1.7rem">${esc(asset.title)}</h1></div>
+        <div><p class="eyebrow">${esc(asset.kind)} · ${esc(asset.source)}</p><h1 id="viewer-title" style="font-size:1.7rem">${esc(asset.title)}</h1></div>
         ${shareProvenance ? `<p>Imported from Woodhouse Share.</p>` : localRender ? `<p>MP4 rendered on this device from a saved storyboard${asset.caption.includes("; owner-confirmed captions") ? ", with saved captions" : ""}.</p>` : asset.caption ? `<p>${esc(asset.caption)}</p>` : ""}
         <dl class="kv">
           <dt>Size</dt><dd>${bytesLabel(asset.bytes)}</dd>
@@ -1480,8 +1597,7 @@ async function handleAction(action, element, keyboard = false) {
       location.hash = `#/p/${id}/library`;
       return;
     case "tab":
-      state.tab = element.dataset.tab;
-      location.hash = `#/p/${state.projectId}/${state.tab}`;
+      activateProjectTab(element.dataset.tab);
       return;
     case "compare-mode": {
       const comparison = comparisons.get(state.projectId) ?? { active: false, ids: [] };
@@ -1704,9 +1820,7 @@ async function handleAction(action, element, keyboard = false) {
       await submitCreate();
       return;
     case "open-asset":
-      if (state.view === "project" && state.tab === "library") {
-        libraryReturn = { projectId: state.projectId, assetId: id, scrollY: window.scrollY, via: element.classList.contains("thumb") ? "thumb" : "open" };
-      }
+      recordViewerOrigin(element, id, "open-asset");
       location.hash = `#/a/${state.projectId}/${id}`;
       return;
     case "close-viewer":
@@ -2343,6 +2457,7 @@ async function handleAction(action, element, keyboard = false) {
       return;
     }
     case "open-asset-link":
+      recordViewerOrigin(element, id, "open-asset-link");
       location.hash = `#/a/${state.projectId}/${id}`;
       return;
     default:
@@ -3455,11 +3570,15 @@ window.addEventListener("hashchange", async () => {
     rejectMalformedHash();
     return;
   }
+  const unknownTab = route.unknownTab ?? null;
   state.view = route.view;
   state.projectId = route.projectId ?? null;
-  state.tab = route.tab ?? "library";
+  state.tab = PROJECT_TABS.includes(route.tab) ? route.tab : "library";
   if (route.view === "asset") state.assetId = route.assetId;
   else viewerFocusKey = null;
+  // Keep a return record only for the tab that is actually returning; a
+  // manual navigation elsewhere must not inherit someone else's scroll/focus.
+  if (route.view !== "asset" && viewerReturn && (route.view !== "project" || viewerReturn.projectId !== state.projectId || viewerReturn.tab !== state.tab)) viewerReturn = null;
   if (route.view === "home") {
     const data = await api("/api/state");
     state.projects = data.projects;
@@ -3489,6 +3608,7 @@ window.addEventListener("hashchange", async () => {
     if (state.projectId !== route.projectId || state.view !== "project" || state.tab !== "history") return;
   }
   render();
+  if (unknownTab) rejectUnknownTab();
 });
 
 boot().catch((error) => {
