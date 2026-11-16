@@ -637,8 +637,6 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   }
 
   if (path.startsWith("/api/studio/")) {
-    if (session.mode !== "owner")
-      throw new HttpError(403, "Portable project restore and inventory are installation-owner actions. Use the standalone owner session.", "owner_required");
     const posterPreviewMatch = path.match(/^\/api\/studio\/publications\/([a-z0-9_]+)\/poster-preview$/);
     if (posterPreviewMatch && method === "POST") {
       // Rebuild the page-size poster from the publication's own chosen still.
@@ -710,6 +708,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
         },
       });
     }
+    // Restore and installation-wide inventory belong to the standalone owner.
+    // The two preview routes above are project-scoped, so a bridged owner keeps
+    // their own library previews and their own poster previews.
+    if (session.mode !== "owner")
+      throw new HttpError(403, "Portable project restore and inventory are installation-owner actions. Use the standalone owner session.", "owner_required");
     if (path === "/api/studio/previews/backfill" && method === "POST") {
       const input = await body(request, 4096);
       if (input.kind !== "posters" && input.kind !== "assets")

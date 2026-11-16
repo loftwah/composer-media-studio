@@ -8,6 +8,7 @@ import { test } from "node:test";
 import worker from "../src/worker.mjs";
 import { createSession } from "../src/lib/auth.mjs";
 import { addAsset, jpeg, setup } from "./harness.mjs";
+import { storeAssetPreview } from "../src/lib/asset-previews.mjs";
 
 const base = "https://studio.test";
 const MAX = 1024 * 1024;
@@ -219,14 +220,31 @@ test("a replaced poster is never served from the old derivative, and the owner c
     (await call(env, `/api/studio/publications/${publication.id}/poster-preview`, { method: "POST" })).status,
     401,
   );
-  const bridge = "studio_session=" + (await createSession(env, {
+  // The real owner experience is the Composer bridge. A bridge session that
+  // holds this project may rebuild its own poster preview; a bridge claimed on
+  // another project may not.
+  const ownBridge = "studio_session=" + (await createSession(env, {
     mode: "bridge",
     workspace: "ws-personal",
     project: project.id,
     actions: ["read", "edit", "publish", "admin"],
   }));
   assert.equal(
-    (await call(env, `/api/studio/publications/${publication.id}/poster-preview`, { method: "POST", cookie: bridge })).status,
+    (await call(env, `/api/studio/publications/${publication.id}/poster-preview`, {
+      method: "POST",
+      cookie: ownBridge,
+      form: posterForm(jpeg(512, 512)),
+    })).status,
+    200,
+  );
+  const otherBridge = "studio_session=" + (await createSession(env, {
+    mode: "bridge",
+    workspace: "ws-personal",
+    project: "prj_other",
+    actions: ["read", "edit", "publish", "admin"],
+  }));
+  assert.equal(
+    (await call(env, `/api/studio/publications/${publication.id}/poster-preview`, { method: "POST", cookie: otherBridge })).status,
     403,
   );
   const rebuilt = await call(env, `/api/studio/publications/${publication.id}/poster-preview`, {
@@ -532,9 +550,23 @@ test("a poster preview belongs to one publication and only the owner session can
   assert.equal((await call(env, `/p/${secondSlug}/poster-preview`)).status, 404);
   assert.equal((await call(env, `/p/${firstSlug}/poster-preview`)).status, 200);
 
-  // A bridged session, even with publish rights, is refused by the owner route.
+  // A project-scoped bridge may write its own page's preview; a bridge claimed
+  // on another project, or a session without a grant, may not.
+  const ownBridge = "studio_session=" + (await createSession(env, {
+    mode: "bridge",
+    workspace: "ws-personal",
+    project: project.id,
+    actions: ["read", "edit", "publish", "admin"],
+  }));
+  assert.equal(
+    (await call(env, `/api/studio/publications/${first.id}/poster-preview`, {
+      method: "POST",
+      cookie: ownBridge,
+      form: posterForm(jpeg(512, 512)),
+    })).status,
+    200,
+  );
   for (const session of [
-    { mode: "bridge", workspace: "ws-personal", project: project.id, actions: ["read", "edit", "publish", "admin"] },
     { mode: "bridge", actor: "member", workspace: "ws-personal", project: "prj_other", actions: ["read", "publish"] },
   ]) {
     const bridge = "studio_session=" + (await createSession(env, session));
@@ -591,4 +623,56 @@ test("withdrawing a page removes its uploaded poster preview row and bytes", asy
   assert.equal(env.MEDIA.objects.has(key), false);
   assert.equal((await call(env, `/p/${slug}/poster-preview`)).status, 404);
   assert.equal((await call(env, `/p/${slug}`)).status, 404);
+});
+
+test("a bridged owner keeps their own previews and still cannot run installation-wide work", async () => {
+  const { env, project } = await setup();
+  env.IMAGES = fakeImages({ output: webp(1024, 768) });
+  const ownerCookie = await owner(env);
+  const video = await addAsset(env, project, { id: "asset_bridge_video", kind: "video", durationMs: 4000 });
+  const poster = await posterAsset(env, project, { id: "asset_bridge_poster", sha: "9".repeat(64) });
+  const publication = await publishFilm(env, { cookie: ownerCookie, assetId: video.id, posterId: poster.id, title: "Bridged film" });
+
+  // The real owner experience is the Composer bridge, not the standalone passphrase.
+  const bridge = "studio_session=" + (await createSession(env, { mode: "bridge", actor: "dean", workspace: "ws_bridge", actions: ["read", "edit", "publish", "admin"] }));
+
+  const form = new FormData();
+  form.set("file", new File([webp(1024, 768)], "poster.webp", { type: "image/webp" }));
+  const uploaded = await worker.fetch(
+    new Request(base + `/api/studio/publications/${publication.id}/poster-preview`, {
+      method: "POST",
+      headers: { cookie: bridge },
+      body: form,
+    }),
+    env,
+  );
+  assert.equal(uploaded.status, 200);
+  const body = await uploaded.json();
+  assert.equal(body.posterPreview.width, 1024);
+  const storedRow = await env.DB.prepare(
+    "SELECT source_sha256,mime FROM publication_derivatives WHERE publication_id=?1 AND kind='poster'",
+  )
+    .bind(publication.id)
+    .first();
+  assert.equal(storedRow.source_sha256, poster.sha256);
+  assert.equal(storedRow.mime, "image/webp");
+
+  // The private library preview is project-scoped too: a bridge owner must see
+  // their own small still instead of falling back to the original.
+  const posterRow = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(poster.id).first();
+  await storeAssetPreview(env, posterRow);
+  const preview = await worker.fetch(
+    new Request(base + `/api/studio/assets/${poster.id}/preview`, { headers: { cookie: bridge } }),
+    env,
+  );
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers.get("cache-control"), "private, max-age=0, no-store");
+
+  // Installation-wide work stays standalone-owner only.
+  const backfill = await call(env, "/api/studio/previews/backfill", {
+    method: "POST",
+    cookie: bridge,
+    json: { kind: "posters", limit: 5 },
+  });
+  assert.equal(backfill.status, 403);
 });
