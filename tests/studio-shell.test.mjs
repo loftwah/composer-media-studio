@@ -14,6 +14,25 @@ test('the local app launcher uses only a configured safe Composer origin', () =>
   assert.doesNotMatch(shell({revision:'a1', composerOrigin:'javascript:alert(1)'}), /data-open-apps/);
 });
 
+test('the shell publishes only an explicit, escaped Director name', () => {
+  const named = shell({ revision: 'a1', directorName: 'Nova' });
+  assert.match(named, /<meta name="studio-director-name" content="Nova">/);
+  const neutral = shell({ revision: 'a1', directorName: null });
+  assert.doesNotMatch(neutral, /studio-director-name/);
+  // The worker environment can set the public display name without a rebuild.
+  const previous = process.env.DIRECTOR_NAME;
+  try {
+    process.env.DIRECTOR_NAME = 'Nova <studio>';
+    assert.match(shell({ revision: 'a1' }), /content="Nova &lt;studio&gt;"/);
+    // The browser module owns the neutral default; the shell only transports.
+    process.env.DIRECTOR_NAME = '   ';
+    assert.doesNotMatch(shell({ revision: 'a1' }), /studio-director-name/);
+  } finally {
+    if (previous === undefined) delete process.env.DIRECTOR_NAME;
+    else process.env.DIRECTOR_NAME = previous;
+  }
+});
+
 test('the launcher trigger always ships with the dialog it controls', () => {
   const html = shell({revision:'a1', composerOrigin:'https://composer.example/', session:{mode:'owner', actorName:'owner'}});
   // The trigger is the dialog's control, and both live in the same shell.

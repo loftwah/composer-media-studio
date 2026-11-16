@@ -7,6 +7,25 @@ const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width=
 
 const styles = "/studio.css";
 
+// Optional installation identity for the Director. This is public display copy,
+// never a secret. An unset or blank value keeps the neutral "Creative Director";
+// the Worker shell publishes it for the browser without changing any prompt.
+function normalizeDirectorName(value) {
+  if (typeof value !== "string") return null;
+  const plain = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const name = Array.from(plain).slice(0, 40).join("").trim();
+  if (!name || ["undefined", "null", "false", "none"].includes(name.toLowerCase())) return null;
+  return name;
+}
+
+function directorNameFromEnv() {
+  try {
+    return typeof process !== "undefined" ? normalizeDirectorName(process.env?.DIRECTOR_NAME) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Only explicit web addresses become links; all authored text remains escaped.
 function linkPublicDescription(value) {
   const text = String(value);
@@ -149,12 +168,16 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
 </header>${launcherHome ? '<script src="/brand/launcher.js" defer></script>' : ""}`;
 }
 
-export function shell({ revision, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
+export function shell({ revision, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, directorName = directorNameFromEnv() }) {
+  const configuredDirectorName = normalizeDirectorName(directorName);
+  const directorMeta = configuredDirectorName
+    ? `<meta name="studio-director-name" content="${escapeHtml(configuredDirectorName)}">`
+    : "";
   return `${head({
     title: "Media Studio — make, assemble and keep images, video and sound",
     description:
       "An independent studio for uploads, image generation, reference variations, masked fills, background removal, upscaling, image-to-video, generated music, narration and effects, bounded multi-track assembly, saved compositions and deliberate publishing.",
-    extra: `<meta name="robots" content="noindex"><link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}"><link rel="stylesheet" href="/review.css"><link rel="stylesheet" href="/brand/launcher.css">`,
+    extra: `${directorMeta}<meta name="robots" content="noindex"><link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}"><link rel="stylesheet" href="/review.css"><link rel="stylesheet" href="/brand/launcher.css">`,
   })}
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -437,6 +460,7 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
     <li>Set <code>OWNER_PASSPHRASE</code> (at least 16 characters) and <code>SESSION_SECRET</code> (at least 32 characters) as Wrangler secrets.</li>
     <li>Optional video, sound, edits and assembly: set <code>FAL_KEY</code> as a Wrangler secret. Without it, image work and the library still function and the studio says those routes need a key.</li>
     <li>Optional App Composer entry: set <code>BRIDGE_SECRET</code> to the same value as Composer's <code>MEDIA_STUDIO_BRIDGE_SECRET</code>, and set <code>PUBLIC_ORIGIN</code>, <code>COMPOSER_ORIGIN</code> and <code>PUBLIC_STORY_URL</code>.</li>
+    <li>Optional studio identity: set <code>DIRECTOR_NAME</code> to publish a name beside the Creative Director, or leave it unset for the neutral label. It is display copy only and does not change what the Director may propose.</li>
     <li>Deploy with a clean pushed <code>main</code>. The guarded deploy runs the focused checks first.</li>
   </ol>
   <p class="small">No App Composer account, licence callback or hosted service is required after deployment.</p>
