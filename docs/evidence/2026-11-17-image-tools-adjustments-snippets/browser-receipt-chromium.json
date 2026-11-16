@@ -1,0 +1,230 @@
+{
+  "startedAt": "2026-11-16T13:28:39.463Z",
+  "origin": "local static server (built frontend, no worker)",
+  "checks": [
+    {
+      "check": "sample decodes at 1400 × 900",
+      "ok": true,
+      "detail": "SOURCE 1400 × 900 px DISPLAYED 1400 × 900 px TYPE image/png BYTES 1.10 MiB ALPHA CHANNEL yes SHA-256 b59e2d9cc0d6…"
+    },
+    {
+      "check": "resize produces a real 320-px PNG with measured bytes",
+      "ok": true,
+      "detail": {
+        "width": 320,
+        "height": 206,
+        "bytes": 82896,
+        "type": "image/png"
+      }
+    },
+    {
+      "check": "the original stays 1400 × 900 while the result is 320 × 206",
+      "ok": true,
+      "detail": {
+        "before": "Before · 1400 × 900 · 1.10 MiB",
+        "after": "After · 320 × 206 · 81 KiB · image/png"
+      }
+    },
+    {
+      "check": "download name carries the real size and extension",
+      "ok": true,
+      "detail": "studio-image-sample-320x206.png"
+    },
+    {
+      "check": "the Mono preset is a real greyscale export",
+      "ok": true,
+      "detail": [
+        [
+          50,
+          50,
+          50,
+          255
+        ],
+        [
+          157,
+          157,
+          157,
+          255
+        ],
+        [
+          118,
+          118,
+          118,
+          255
+        ]
+      ]
+    },
+    {
+      "check": "preset selection is reflected in the visible control",
+      "ok": true,
+      "detail": "mono"
+    },
+    {
+      "check": "the caption states the real adjustment numbers",
+      "ok": true,
+      "detail": "exposure +4, contrast +14, saturation -100, long edge 320px, PNG, canvas re-encode"
+    },
+    {
+      "check": "the export keeps a single opaque alpha value",
+      "ok": true,
+      "detail": [
+        255
+      ]
+    },
+    {
+      "check": "the page reports how many pixels changed",
+      "ok": true,
+      "detail": "Adjustments changed 65,920 pixels in the exported result. Fully transparent pixels kept their colour and every alpha value is unchanged."
+    },
+    {
+      "check": "the data URI decodes back to the exported pixels",
+      "ok": true,
+      "detail": "data:image/png;base64,iVBORw0K"
+    },
+    {
+      "check": "the embedded bytes and dimensions match the download",
+      "ok": true,
+      "detail": {
+        "bytes": 52497,
+        "downloadBytes": 52497,
+        "width": 320,
+        "height": 206,
+        "characters": 70018
+      }
+    },
+    {
+      "check": "the snippet states its real character count",
+      "ok": true,
+      "detail": "69,996 base64 characters · 70,018 data-URI characters · 51 KiB of real output"
+    },
+    {
+      "check": "top crop keeps the red half",
+      "ok": true,
+      "detail": {
+        "size": [
+          100,
+          100
+        ],
+        "pixel": [
+          255,
+          0,
+          0,
+          255
+        ]
+      }
+    },
+    {
+      "check": "bottom crop keeps the transparent half and its alpha",
+      "ok": true,
+      "detail": {
+        "size": [
+          100,
+          100
+        ],
+        "transparent": 10000,
+        "total": 10000,
+        "caption": "bottom crop 1:1 square, long edge 100px, PNG, canvas re-encode"
+      }
+    },
+    {
+      "check": "JPEG export is a real .jpg at the planned size",
+      "ok": true,
+      "detail": {
+        "type": "image/jpeg",
+        "size": [
+          100,
+          200
+        ],
+        "downloadName": "halves-100x200.jpg"
+      }
+    },
+    {
+      "check": "the JPEG matte keeps its exact colour behind transparency and is not warmed by the filter",
+      "ok": true,
+      "detail": [
+        0,
+        255,
+        1,
+        255
+      ]
+    },
+    {
+      "check": "the warm preset is stated in the JPEG caption",
+      "ok": true,
+      "detail": "exposure +4, contrast +6, saturation +10, temperature +32, long edge 200px, JPEG q90, canvas re-encode"
+    },
+    {
+      "check": "WebP export keeps the transparent half as alpha",
+      "ok": true,
+      "detail": {
+        "type": "image/webp",
+        "size": [
+          100,
+          200
+        ],
+        "bytes": 712,
+        "transparent": 10000,
+        "expected": 10000,
+        "downloadName": "halves-100x200.webp"
+      }
+    },
+    {
+      "check": "390 px has no horizontal overflow or controls outside the viewport",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390,
+        "controlsOutside": []
+      }
+    },
+    {
+      "check": "no request leaves the local origin",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "no local action writes to an API",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "no page errors",
+      "ok": true,
+      "detail": []
+    }
+  ],
+  "failures": [],
+  "requests": [
+    "GET http://127.0.0.1:59492/check.html",
+    "GET http://127.0.0.1:59492/creative/home.css",
+    "GET http://127.0.0.1:59492/images.js",
+    "GET http://127.0.0.1:59492/creative/home.js",
+    "GET http://127.0.0.1:59492/creative/jsx-runtime-B_EJQQY8.js",
+    "GET http://127.0.0.1:59492/creative/local-framing-DFz89Zt7.js",
+    "GET http://127.0.0.1:59492/creative/rolldown-runtime-CYdcPHCu.js",
+    "GET http://127.0.0.1:59492/creative/images-Csu-ONB3.js",
+    "GET http://127.0.0.1:59492/creative/audio-trim-BkfoZr4g.js",
+    "GET blob:http://127.0.0.1:59492/199d8b84-31b7-45e2-81d8-26ea0431bfe2",
+    "GET blob:http://127.0.0.1:59492/2e37f9e2-86dc-4feb-a510-47c8b9412961",
+    "GET blob:http://127.0.0.1:59492/2e37f9e2-86dc-4feb-a510-47c8b9412961",
+    "GET blob:http://127.0.0.1:59492/1f232605-5f1b-47e5-8fa0-6c5c664f3f96",
+    "GET blob:http://127.0.0.1:59492/1f232605-5f1b-47e5-8fa0-6c5c664f3f96",
+    "GET blob:http://127.0.0.1:59492/1f232605-5f1b-47e5-8fa0-6c5c664f3f96",
+    "GET blob:http://127.0.0.1:59492/c868c40f-9722-4de3-89f9-84184b82b23c",
+    "GET blob:http://127.0.0.1:59492/f04337ba-3615-4eac-953e-fdf9347afb63",
+    "GET blob:http://127.0.0.1:59492/f04337ba-3615-4eac-953e-fdf9347afb63",
+    "GET blob:http://127.0.0.1:59492/c0b80f12-f4af-4e18-8291-901efe8f23d8",
+    "GET blob:http://127.0.0.1:59492/c0b80f12-f4af-4e18-8291-901efe8f23d8",
+    "GET blob:http://127.0.0.1:59492/f745092e-f2ec-4dd2-9790-a3aca45ba44d",
+    "GET blob:http://127.0.0.1:59492/f745092e-f2ec-4dd2-9790-a3aca45ba44d",
+    "GET blob:http://127.0.0.1:59492/71bd755c-9202-43d5-ac8d-e61bd48b1638",
+    "GET blob:http://127.0.0.1:59492/71bd755c-9202-43d5-ac8d-e61bd48b1638"
+  ],
+  "pageErrors": [],
+  "browser": {
+    "name": "chromium",
+    "version": "158.0.8127.18"
+  },
+  "finishedAt": "2026-11-16T13:28:48.273Z",
+  "passed": true
+}

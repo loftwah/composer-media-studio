@@ -29,6 +29,38 @@ export const CROP_ASPECT_LABELS = Object.freeze({
   photo: "3:2 photo",
 });
 
+/** Where the aspect crop is taken from, so a face or subject is not cut off. */
+export const CROP_ANCHOR_LABELS = Object.freeze({
+  centre: "Centre",
+  top: "Top",
+  bottom: "Bottom",
+  left: "Left",
+  right: "Right",
+  topLeft: "Top left",
+  topRight: "Top right",
+  bottomLeft: "Bottom left",
+  bottomRight: "Bottom right",
+});
+
+const CROP_ANCHOR_WORDS = Object.freeze({
+  centre: "centre",
+  top: "top",
+  bottom: "bottom",
+  left: "left",
+  right: "right",
+  topLeft: "top-left",
+  topRight: "top-right",
+  bottomLeft: "bottom-left",
+  bottomRight: "bottom-right",
+});
+
+export function isCropAnchor(value) {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(CROP_ANCHOR_LABELS, value)
+  );
+}
+
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
@@ -41,11 +73,12 @@ export function rotatedDimensions(width, height, rotate = 0) {
 }
 
 /**
- * The largest centred rectangle with the requested aspect ratio.
+ * The largest rectangle with the requested aspect ratio, positioned by anchor.
  * Rounded dimensions are clamped to the source and never leave a zero side.
  */
-export function centredCrop(width, height, aspect = null) {
+export function anchoredCrop(width, height, aspect = null, anchor = "centre") {
   if (!positiveInteger(width) || !positiveInteger(height)) return null;
+  if (!isCropAnchor(anchor)) return null;
   if (aspect === null || aspect === undefined) return { x: 0, y: 0, width, height };
   if (!Number.isFinite(aspect) || aspect <= 0) return null;
   let cropWidth = width;
@@ -55,17 +88,27 @@ export function centredCrop(width, height, aspect = null) {
   } else {
     cropHeight = Math.min(height, Math.max(1, Math.round(width / aspect)));
   }
+  const word = anchor.toLowerCase();
+  const horizontal = word.includes("left") ? "left" : word.includes("right") ? "right" : "centre";
+  const vertical = word.includes("top") ? "top" : word.includes("bottom") ? "bottom" : "centre";
+  const freeX = width - cropWidth;
+  const freeY = height - cropHeight;
   return {
-    x: Math.floor((width - cropWidth) / 2),
-    y: Math.floor((height - cropHeight) / 2),
+    x: horizontal === "left" ? 0 : horizontal === "right" ? freeX : Math.floor(freeX / 2),
+    y: vertical === "top" ? 0 : vertical === "bottom" ? freeY : Math.floor(freeY / 2),
     width: cropWidth,
     height: cropHeight,
   };
 }
 
-function centredCropWithin(rect, aspect = null) {
+/** The centred rectangle, kept as the documented default behaviour. */
+export function centredCrop(width, height, aspect = null) {
+  return anchoredCrop(width, height, aspect, "centre");
+}
+
+function cropWithin(rect, aspect = null, anchor = "centre") {
   if (aspect === null || aspect === undefined) return { ...rect };
-  const inner = centredCrop(rect.width, rect.height, aspect);
+  const inner = anchoredCrop(rect.width, rect.height, aspect, anchor);
   if (!inner) return null;
   return {
     x: rect.x + inner.x,
@@ -103,8 +146,9 @@ function scaleToLongEdge(cropWidth, cropHeight, longEdge) {
  *   { mode: "long-edge", longEdge }
  *   { mode: "exact", width, height }
  * `cropAspect` is a positive aspect ratio, or null for no crop.
+ * `cropAnchor` positions that crop when it is smaller than the source.
  * `cropRect` is an optional exact region in rotated space (used by trim);
- * the centre crop, when requested, is then taken inside that region.
+ * the aspect crop, when requested, is then taken inside that region.
  */
 export function planImageTransform({
   sourceWidth,
@@ -113,6 +157,7 @@ export function planImageTransform({
   flipH = false,
   flipV = false,
   cropAspect = null,
+  cropAnchor = "centre",
   cropRect = null,
   resize = { mode: "long-edge", longEdge: 2048 },
   maxPixels = MAX_DECODED_PIXELS,
@@ -124,6 +169,8 @@ export function planImageTransform({
     return { ok: false, error: "Rotation must be a quarter turn between 0 and 3." };
   if (typeof flipH !== "boolean" || typeof flipV !== "boolean")
     return { ok: false, error: "Flip settings are invalid." };
+  if (!isCropAnchor(cropAnchor))
+    return { ok: false, error: "Choose a crop anchor from the list." };
   const rotated = rotatedDimensions(sourceWidth, sourceHeight, rotate);
   if (!rotated) return { ok: false, error: "The rotated dimensions are not usable." };
   if (cropRect !== null) {
@@ -138,8 +185,8 @@ export function planImageTransform({
       return { ok: false, error: "The trim rectangle does not fit inside the image." };
   }
   const crop = cropRect
-    ? centredCropWithin(cropRect, cropAspect)
-    : centredCrop(rotated.width, rotated.height, cropAspect);
+    ? cropWithin(cropRect, cropAspect, cropAnchor)
+    : anchoredCrop(rotated.width, rotated.height, cropAspect, cropAnchor);
   if (!crop)
     return { ok: false, error: "The crop aspect or source dimensions are invalid." };
   if (
@@ -328,15 +375,23 @@ export function imageSmoothingFor(resample = "smooth") {
     : { enabled: true, quality: "high" };
 }
 
+function cropAspectLabel(cropAspect) {
+  if (typeof cropAspect === "string") return CROP_ASPECT_LABELS[cropAspect] ?? "aspect";
+  const match = Object.entries(CROP_ASPECTS).find(([, value]) => value === cropAspect);
+  return match ? CROP_ASPECT_LABELS[match[0]] : "aspect";
+}
+
 /** A deterministic caption fragment for an explicit Studio import. */
 export function describeTransform({
   rotate = 0,
   flipH = false,
   flipV = false,
   cropAspect = null,
+  cropAnchor = "centre",
   trimmed = false,
   resize = null,
   resample = "smooth",
+  adjustments = "",
   format = "png",
   quality = null,
   metadata = "re-encoded",
@@ -345,9 +400,13 @@ export function describeTransform({
   if (rotate) parts.push(`rotate ${rotate * 90}°`);
   if (flipH) parts.push("flip horizontal");
   if (flipV) parts.push("flip vertical");
-  if (cropAspect) parts.push(`centre crop ${CROP_ASPECT_LABELS[cropAspect] ?? "aspect"}`);
+  if (cropAspect)
+    parts.push(
+      `${CROP_ANCHOR_WORDS[cropAnchor] ?? "centre"} crop ${cropAspectLabel(cropAspect)}`,
+    );
   if (trimmed) parts.push("trim transparent edges");
   if (resample === "nearest") parts.push("nearest-neighbour");
+  if (adjustments) parts.push(adjustments);
   if (resize?.mode === "long-edge") parts.push(`long edge ${resize.longEdge}px`);
   if (resize?.mode === "exact") parts.push(`exact ${resize.width}×${resize.height}px`);
   parts.push(`${String(format).toUpperCase()}${quality !== null && format !== "png" ? ` q${Math.round(quality * 100)}` : ""}`);

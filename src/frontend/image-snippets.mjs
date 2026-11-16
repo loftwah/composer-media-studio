@@ -1,0 +1,153 @@
+// MIT. Pure embed-code builders for the signed-out image workbench.
+// The snippets wrap the exact exported bytes in a data URI. They are not a
+// privacy feature: anyone holding the text holds the image.
+
+export const MAX_SNIPPET_BYTES = 2 * 1024 * 1024;
+export const SNIPPET_WARN_BYTES = 128 * 1024;
+
+export const SNIPPET_KINDS = Object.freeze(["base64", "dataUri", "css", "html", "markdown"]);
+
+export const SNIPPET_LABELS = Object.freeze({
+  base64: "Base64",
+  dataUri: "Data URI",
+  css: "CSS",
+  html: "HTML",
+  markdown: "Markdown",
+});
+
+const SNIPPET_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+const BASE64_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+const HTML_ESCAPES = Object.freeze({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+});
+
+/** The whole `<img>`/Markdown text is attribute-escaped, not sanitised HTML. */
+export function escapeSnippetText(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => HTML_ESCAPES[character]);
+}
+
+function escapeMarkdownAlt(value) {
+  return String(value ?? "").replace(/[\\[\]]/g, (character) => `\\${character}`);
+}
+
+function safeClassName(filename) {
+  const stem = String(filename ?? "")
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return stem ? `image-${stem}` : "image";
+}
+
+function formatSnippetBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+}
+
+/** Standard base64 with padding, built without Buffer or a Node-only path. */
+export function bytesToBase64(bytes) {
+  if (!bytes || typeof bytes.length !== "number") return "";
+  const chunks = [];
+  let chunk = "";
+  const length = bytes.length;
+  for (let index = 0; index < length; index += 3) {
+    const first = bytes[index];
+    const hasSecond = index + 1 < length;
+    const hasThird = index + 2 < length;
+    const second = hasSecond ? bytes[index + 1] : 0;
+    const third = hasThird ? bytes[index + 2] : 0;
+    const triple = (first << 16) | (second << 8) | third;
+    chunk +=
+      BASE64_ALPHABET[(triple >> 18) & 63] +
+      BASE64_ALPHABET[(triple >> 12) & 63] +
+      (hasSecond ? BASE64_ALPHABET[(triple >> 6) & 63] : "=") +
+      (hasThird ? BASE64_ALPHABET[triple & 63] : "=");
+    if (chunk.length >= 0x8000) {
+      chunks.push(chunk);
+      chunk = "";
+    }
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks.join("");
+}
+
+/** Decode base64 for verification; returns null for malformed input. */
+export function base64ToBytes(text) {
+  const value = String(text ?? "").replace(/\s+/g, "");
+  if (!value) return new Uint8Array(0);
+  if (value.length % 4 !== 0) return null;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const bytes = new Uint8Array((value.length / 4) * 3 - padding);
+  let offset = 0;
+  for (let index = 0; index < value.length; index += 4) {
+    let triple = 0;
+    for (let step = 0; step < 4; step += 1) {
+      const character = value[index + step];
+      const digit = character === "=" ? 0 : BASE64_ALPHABET.indexOf(character);
+      if (digit < 0) return null;
+      triple = (triple << 6) | digit;
+    }
+    if (offset < bytes.length) bytes[offset++] = (triple >> 16) & 0xff;
+    if (offset < bytes.length) bytes[offset++] = (triple >> 8) & 0xff;
+    if (offset < bytes.length) bytes[offset++] = triple & 0xff;
+  }
+  return bytes;
+}
+
+/**
+ * Build every snippet from one measured export. `bytes` must be the actual
+ * encoded file, so the data URI and the download are the same pixels and the
+ * same container.
+ */
+export function buildImageSnippets({ bytes, mime, filename = "image", width = 0, height = 0 } = {}) {
+  if (!bytes || typeof bytes.length !== "number" || bytes.length < 1)
+    return { ok: false, error: "There are no encoded bytes to embed." };
+  if (mime === "image/jpg") mime = "image/jpeg";
+  if (!SNIPPET_MIMES.has(mime))
+    return { ok: false, error: "Embed code is available for PNG, JPEG and WebP results only." };
+  if (bytes.length > MAX_SNIPPET_BYTES)
+    return {
+      ok: false,
+      error: `This result is ${formatSnippetBytes(bytes.length)}. Embed code is limited to ${formatSnippetBytes(MAX_SNIPPET_BYTES)}; download the file or lower the output size instead.`,
+    };
+
+  const base64 = bytesToBase64(bytes);
+  const dataUri = `data:${mime};base64,${base64}`;
+  const alt = String(filename || "image");
+  const safeAlt = escapeSnippetText(alt);
+  const markdownAlt = escapeMarkdownAlt(alt);
+  const className = safeClassName(filename);
+  const dimensionComment = width > 0 && height > 0 ? `${width} × ${height}` : "unknown size";
+  const sizeComment = `${dimensionComment} ${mime.replace("image/", "").toUpperCase()} · ${formatSnippetBytes(bytes.length)}`;
+
+  const css = `/* ${sizeComment} */\n.${className} {\n  display: block;\n  width: 100%;\n  height: auto;\n  aspect-ratio: ${width > 0 && height > 0 ? `${width} / ${height}` : "auto"};\n  background: url("${dataUri}") center / contain no-repeat;\n}\n`;
+  const html =
+    width > 0 && height > 0
+      ? `<img src="${dataUri}" width="${width}" height="${height}" alt="${safeAlt}">`
+      : `<img src="${dataUri}" alt="${safeAlt}">`;
+  const markdown = `![${markdownAlt}](${dataUri})`;
+
+  const warning =
+    bytes.length >= SNIPPET_WARN_BYTES
+      ? `This result is ${formatSnippetBytes(bytes.length)}; the base64 text is ${formatSnippetBytes(base64.length)} and editors or chat tools may truncate or reject it. Lower the output size if a snippet is pasted somewhere with a limit.`
+      : null;
+
+  return {
+    ok: true,
+    mime,
+    bytes: bytes.length,
+    base64Length: base64.length,
+    dataUriLength: dataUri.length,
+    snippets: { base64, dataUri, css, html, markdown },
+    warning,
+  };
+}
