@@ -55,7 +55,6 @@ try {
   check('the saved plan reopens at its server revision and identity', openingHeading.includes(`Revision ${opening.revision}`) && openingHeading.includes(opening.revisionDigest.slice(0, 12)), openingHeading);
 
   // 1. Saved-evidence shot diagnosis.
-  await page.locator('summary', { hasText: 'Review a scene proposal' }).click();
   await page.locator('summary', { hasText: 'Why is this shot wrong' }).click();
   const doctor = page.locator('details').filter({ hasText: 'Why is this shot wrong' }).last();
   await doctor.getByLabel('Scene 1').check();
@@ -75,8 +74,8 @@ try {
       { sceneId: opening.scenes[1].id, direction: 'Declined: this direction must never be saved.' },
     ],
   };
-  const review = page.locator('details').filter({ hasText: 'Review a scene proposal' }).last();
-  await review.getByLabel('Proposal JSON').fill(JSON.stringify(proposal));
+  const review = page.locator('[data-director="agent"]');
+  await review.getByLabel("3. Paste the agent's typed proposal").fill(JSON.stringify(proposal));
   await review.getByRole('button', { name: 'Preview proposal' }).click();
   await review.locator('.scene-direction-preview').waitFor({ timeout: 20_000 });
   const include = review.locator('.scene-direction-preview').getByLabel(/Include this change/);
@@ -112,9 +111,7 @@ try {
   } finally { await client.close(); }
 
   // 4. A stale revision shows what happened and what to do.
-  if (!(await review.getByLabel('Proposal JSON').isVisible().catch(() => false)))
-    await page.locator('summary', { hasText: 'Review a scene proposal' }).last().click();
-  await review.getByLabel('Proposal JSON').fill(JSON.stringify({ ...proposal, expectedRevision: opening.revision }));
+  await review.getByLabel("3. Paste the agent's typed proposal").fill(JSON.stringify({ ...proposal, expectedRevision: opening.revision }));
   await review.getByRole('button', { name: 'Preview proposal' }).click();
   const stale = review.locator('[role="alert"]').last();
   await page.getByText(new RegExp(`The plan changed to revision ${saved.revision}`)).waitFor({ timeout: 20_000 });
@@ -180,9 +177,6 @@ try {
   await page.getByRole('button', { name: 'Save scene plan' }).click();
   await page.getByText('Scene plan saved.').waitFor({ timeout: 20_000 });
   const afterClear = planOf(await api(context, `/api/projects/${fixture.projectId}/song-plans`));
-  const outerReview = page.locator('details').filter({ hasText: 'Review a scene proposal' }).last();
-  if (!(await outerReview.getByText('Why is this shot wrong').first().isVisible().catch(() => false)))
-    await page.locator('summary', { hasText: 'Review a scene proposal' }).last().click();
   await page.locator('summary', { hasText: 'Why is this shot wrong' }).last().click();
   const doctor2 = page.locator('details').filter({ hasText: 'Why is this shot wrong' }).last();
   await doctor2.getByLabel('Scene 3').check();
