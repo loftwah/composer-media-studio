@@ -1,0 +1,108 @@
+/* Studio Director and connected-agent proposals.
+   The Director is the primary path and gets the one raised surface on this
+   stretch of the plan; the agent pipeline and the manual direction editor stay
+   flat so the three jobs read as different things. Elevation is a border, never
+   a border plus a wide shadow. */
+
+.director-panel {
+  display: grid;
+  gap: 1rem;
+  margin: 0 0 1.75rem;
+  max-width: 64rem;
+  padding: clamp(1rem, 2.4vw, 1.35rem);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.director-head { display: grid; gap: .45rem; }
+.director-head h4 { margin: 0; font-family: var(--display); font-size: 1.15rem; letter-spacing: -.01em; }
+.director-lede { margin: 0; max-width: 68ch; }
+.director-read { margin: 0; max-width: 72ch; font-size: .82rem; color: var(--muted); overflow-wrap: anywhere; }
+.director-read code { font-size: .95em; }
+
+.song-plans .director-scenes {
+  display: grid;
+  gap: .55rem;
+  margin: 0;
+  padding: .7rem .9rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.director-scenes legend { padding: 0 .35rem; font-size: .82rem; font-weight: 600; color: var(--ink-soft); }
+.director-scene-list { display: flex; flex-wrap: wrap; gap: .4rem 1.1rem; }
+.director-scene-list .song-check { font-size: .9rem; }
+
+.director-ask { display: grid; gap: .55rem; }
+.director-ask-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: .9rem; }
+.director-ask-row button { min-height: 46px; white-space: nowrap; }
+.director-ask .small { margin: 0; max-width: 72ch; }
+.director-hint { color: var(--accent); font-weight: 600; }
+.director-ask [role="alert"], .director-step [role="alert"], .director-review [role="alert"] { margin: 0; max-width: 72ch; color: var(--danger); font-weight: 600; }
+
+.director-status { margin: 0; font-size: .88rem; color: var(--ink-soft); }
+
+.director-agent {
+  display: grid;
+  gap: .8rem;
+  max-width: 64rem;
+  margin: 0 0 1.75rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--border);
+}
+.director-agent h4 { margin: 0; font-family: var(--display); font-size: 1.02rem; }
+.director-agent > p { margin: 0; max-width: 72ch; }
+.director-agent-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.director-step { display: grid; gap: .5rem; align-content: start; min-width: 0; }
+.director-step > button { justify-self: start; }
+.director-step p { margin: 0; max-width: 40ch; }
+.director-step-title { font-size: .86rem; font-weight: 600; color: var(--ink-soft); }
+.director-step textarea { min-height: 5.5rem; }
+
+.director-review {
+  display: grid;
+  gap: .8rem;
+  max-width: 64rem;
+  margin: 0 0 1.75rem;
+  padding: clamp(.9rem, 2vw, 1.15rem);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.director-review-head h4 { margin: 0 0 .3rem; font-family: var(--display); font-size: 1.02rem; }
+.director-review-head p { margin: 0; overflow-wrap: anywhere; }
+.director-review > p { margin: 0; max-width: 68ch; }
+.director-changes { margin: 0; padding: 0; list-style: none; display: grid; gap: .9rem; }
+.director-changes li { display: grid; gap: .35rem; padding-top: .9rem; border-top: 1px solid var(--border); }
+.director-changes li:first-child { padding-top: 0; border-top: 0; }
+.director-changes dl { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .3rem .75rem; margin: .2rem 0 0; }
+.director-changes dt { color: var(--muted); font-size: .82rem; }
+.director-changes dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.director-changes .row { justify-content: flex-start; }
+
+.director-receipt {
+  margin: 0 0 1.75rem;
+  max-width: 64rem;
+  padding: .8rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ok) 8%, var(--surface));
+  max-width: 72ch;
+}
+.director-receipt strong { color: var(--ok); }
+
+@media (max-width: 980px) {
+  .director-agent-steps { grid-template-columns: 1fr; gap: .9rem; }
+  .director-step p { max-width: 68ch; }
+}
+@media (max-width: 640px) {
+  .director-ask-row { grid-template-columns: 1fr; align-items: stretch; }
+  .director-ask-row button { justify-self: start; }
+  .director-changes dl { grid-template-columns: 1fr; gap: .1rem; }
+  .director-changes dt { margin-top: .35rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .director-panel, .director-agent, .director-review, .director-receipt { transition: none; }
+}
