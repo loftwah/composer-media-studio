@@ -14,3 +14,9 @@
 .trim-result { display:grid; gap:1rem; border-top:1px solid var(--line); padding-top:1.5rem; }
 
 .trim-result .button, .trim-result .button:hover { color:var(--paper); text-decoration:none; }
+
+.local-import { border:1px solid var(--line); border-radius:var(--radius); padding:.8rem 1rem; background:var(--surface); }
+.local-import summary { cursor:pointer; font-weight:700; }
+.local-import[open] summary { margin-bottom:.6rem; }
+.local-import .trim-file { max-width:none; }
+.local-import .trim-note { margin:.4rem 0 .7rem; }

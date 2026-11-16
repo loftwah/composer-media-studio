@@ -1,0 +1,213 @@
+{
+  "base": "http://127.0.0.1:8791",
+  "chrome": "Chrome/157.0.8103.52",
+  "initial": {
+    "title": "Image tools — Media Studio",
+    "h1": "Image workbench",
+    "login": false,
+    "signedOutText": true,
+    "scripts": [
+      "http://127.0.0.1:8791/theme.js",
+      "http://127.0.0.1:8791/images.js?v=dev"
+    ]
+  },
+  "sample": {
+    "ui": {
+      "plan": "Planned result: 300 × 300 px.",
+      "caption": [
+        "Before · 1400 × 900 · 1.00 MiB",
+        "After · 300 × 300 · 91 KiB · image/png"
+      ],
+      "natural": [
+        300,
+        300
+      ],
+      "status": "1 image processed. Nothing was uploaded."
+    },
+    "download": {
+      "href": "blob:http://127.0.0.1:8791/0af06fcf-a2ce-46ef-adb7-3ea56b635b47",
+      "bytes": 92908,
+      "saved": "browser-sample-300x300.png",
+      "sha256": "a473eb8525bb4ae26a200ae31eba500ed9e2b5dd8577903021daa59ef1e4578e",
+      "type": "image/png"
+    }
+  },
+  "publicImage": {
+    "ui": {
+      "plan": "Planned result: 300 × 300 px.",
+      "caption": [
+        "Before · 411 × 720 · 48 KiB",
+        "After · 300 × 300 · 29 KiB · image/webp"
+      ],
+      "natural": [
+        300,
+        300
+      ],
+      "sourceFacts": [
+        "Source411 × 720 px",
+        "Displayed411 × 720 px",
+        "Typeimage/webp",
+        "Bytes48 KiB",
+        "Alpha channelno",
+        "SHA-2560d7993aed6bb…"
+      ]
+    },
+    "download": {
+      "href": "blob:http://127.0.0.1:8791/97e65501-53a5-4467-97b8-4e5f4f26a90b",
+      "bytes": 30200,
+      "saved": "browser-public-300x300.webp",
+      "sha256": "f5ce23c9d425d8a4fe4a92409af84f71e0720a5710e2b0e0bcf5cdb79a3f82a6",
+      "type": "image/webp"
+    }
+  },
+  "exifOriented": {
+    "ui": {
+      "plan": "Planned result: 150 × 200 px.",
+      "caption": [
+        "Before · 600 × 800 · 16 KiB",
+        "After · 150 × 200 · 3.7 KiB · image/jpeg"
+      ],
+      "natural": [
+        150,
+        200
+      ],
+      "facts": [
+        "Source800 × 600 px",
+        "Displayed600 × 800 px",
+        "Typeimage/jpeg",
+        "Bytes16 KiB",
+        "Alpha channelno",
+        "SHA-256ecc4bb97670c…",
+        "CameraEvidence Camera Co Browser 1",
+        "Orientationrotate 90° clockwise",
+        "GPSpresent",
+        "EXIF4 tags",
+        "ICC colour profilenone",
+        "XMP87 B",
+        "Text / comments1 block",
+        "Othernone"
+      ]
+    },
+    "download": {
+      "href": "blob:http://127.0.0.1:8791/f99d75ec-f2af-4e40-86ea-1938e13d65ff",
+      "bytes": 3746,
+      "saved": "browser-exif-150x200.jpg",
+      "sha256": "6b70cc03a97f473bd6791a8cccddf7ee4293eaf8f59c1bbddcf6284123016549",
+      "type": "image/jpeg"
+    }
+  },
+  "metadataStrip": {
+    "ui": {
+      "text": "Metadata-only copy ready · 16 KiB → 16 KiB · pixels byte-identical · orientation tag retained.\n\nPixels unchanged: verified\nDimensions and orientation match: verified\nDeclared metadata removed: verified\n\nVerified copy: no GPS · 1 EXIF tag · no XMP · no text/comment.\n\nRemoved: EXIF (privacy tags), XMP, Comment.\n\nDownload verified copy",
+      "checks": [
+        {
+          "text": "Pixels unchanged: verified",
+          "ok": true
+        },
+        {
+          "text": "Dimensions and orientation match: verified",
+          "ok": true
+        },
+        {
+          "text": "Declared metadata removed: verified",
+          "ok": true
+        }
+      ],
+      "download": true,
+      "metadataFacts": [
+        "CameraEvidence Camera Co Browser 1",
+        "Orientationrotate 90° clockwise",
+        "GPSpresent",
+        "EXIF4 tags",
+        "ICC colour profilenone",
+        "XMP87 B",
+        "Text / comments1 block",
+        "Othernone"
+      ]
+    },
+    "download": {
+      "href": "blob:http://127.0.0.1:8791/e4dc745c-6f7c-48b2-9ecb-d7606e457222",
+      "bytes": 15887,
+      "saved": "browser-metadata-stripped.jpg",
+      "sha256": "91bfcfe6037e7feaf83cf016468afe60e20e53e62dd1b3dbc486dd3be4c722fb",
+      "type": "image/jpeg"
+    }
+  },
+  "rotatedFlipped": {
+    "ui": {
+      "plan": "Planned result: 100 × 200 px.",
+      "caption": [
+        "Before · 400 × 200 · 504 B",
+        "After · 100 × 200 · 1.1 KiB · image/png"
+      ],
+      "natural": [
+        100,
+        200
+      ]
+    },
+    "download": {
+      "href": "blob:http://127.0.0.1:8791/e0a6e9e6-e349-4eb9-b9bd-41f9ca479c85",
+      "bytes": 1085,
+      "saved": "browser-rotated-flipped-100x200.png",
+      "sha256": "3b5a9af4670d45b913c71301cd0b2db8f975c426eb8de696d7b77c008e06c173",
+      "type": "image/png"
+    }
+  },
+  "batch": {
+    "ui": {
+      "statuses": [
+        "1400 × 900 · 1.00 MiB · done · 200 × 129 · 6.2 KiB",
+        "411 × 720 · 48 KiB · done · 114 × 200 · 13 KiB",
+        "600 × 800 · 16 KiB · done · 150 × 200 · 1.8 KiB"
+      ],
+      "status": "3 images processed. Nothing was uploaded."
+    },
+    "zip": {
+      "href": "blob:http://127.0.0.1:8791/1d00e472-5351-423c-bca4-af0f0192cfcb",
+      "bytes": 21676,
+      "saved": "browser-batch.zip",
+      "sha256": "4832294e8c6949d7f096438ff895e5f45fce7f1155d2030cb74ea029b209187e",
+      "type": "application/zip"
+    }
+  },
+  "phone": {
+    "innerWidth": 390,
+    "scrollWidth": 390,
+    "overflow": false,
+    "dropVisible": true
+  },
+  "desktop": {
+    "innerWidth": 1440,
+    "scrollWidth": 1440,
+    "overflow": false
+  },
+  "network": {
+    "requests": 21,
+    "external": [],
+    "apiWrites": [],
+    "urls": [
+      "http://127.0.0.1:8791/tools/images",
+      "http://127.0.0.1:8791/brand/space-grotesk.woff2",
+      "http://127.0.0.1:8791/studio.css",
+      "http://127.0.0.1:8791/theme.js",
+      "http://127.0.0.1:8791/creative/home.css?v=dev",
+      "http://127.0.0.1:8791/images.js?v=dev",
+      "http://127.0.0.1:8791/creative/home.js?v=dev",
+      "http://127.0.0.1:8791/creative/jsx-runtime-B_EJQQY8.js",
+      "http://127.0.0.1:8791/creative/local-framing-DFz89Zt7.js",
+      "http://127.0.0.1:8791/creative/rolldown-runtime-CYdcPHCu.js",
+      "http://127.0.0.1:8791/creative/images-vOVCiynb.js",
+      "http://127.0.0.1:8791/creative/audio-trim-BkfoZr4g.js",
+      "blob:http://127.0.0.1:8791/f9cdb01b-ca27-41f5-bd47-662e8f0cc726",
+      "blob:http://127.0.0.1:8791/0af06fcf-a2ce-46ef-adb7-3ea56b635b47",
+      "blob:http://127.0.0.1:8791/3cbf6e89-b429-44fd-87c3-e4d69dd2ce5e",
+      "blob:http://127.0.0.1:8791/97e65501-53a5-4467-97b8-4e5f4f26a90b",
+      "blob:http://127.0.0.1:8791/91d13e93-61ed-4e96-a528-0495ddf4afb0",
+      "blob:http://127.0.0.1:8791/f99d75ec-f2af-4e40-86ea-1938e13d65ff",
+      "blob:http://127.0.0.1:8791/da615626-6cd1-4ef5-9ab9-14276fc3951c",
+      "blob:http://127.0.0.1:8791/5e41ee6a-f07e-42e9-98e1-5f14b7cfa62b",
+      "blob:http://127.0.0.1:8791/e0a6e9e6-e349-4eb9-b9bd-41f9ca479c85"
+    ]
+  },
+  "pageErrors": []
+}

@@ -2,10 +2,22 @@ import { useRef, useState } from "react";
 
 type Project = { id: string; name: string };
 type ImportState = "idle" | "checking" | "ready" | "signed-out" | "denied" | "uploading" | "saved" | "uncertain";
+type LocalImportFormat = "mp4" | "wav" | "png" | "jpeg" | "webp";
+
+const IMPORT_MEDIA: Record<LocalImportFormat, { label: string; mime: string; limit: number }> = {
+  mp4: { label: "MP4", mime: "video/mp4", limit: 64 },
+  wav: { label: "WAV", mime: "audio/wav", limit: 32 },
+  png: { label: "PNG", mime: "image/png", limit: 32 },
+  jpeg: { label: "JPEG", mime: "image/jpeg", limit: 32 },
+  webp: { label: "WebP", mime: "image/webp", limit: 32 },
+};
 
 /** This control only sends file bytes after an explicit project choice and upload click. */
-export function LocalImport({ blob, filename, operation, onBusyChange, format = "mp4" }: { blob: Blob; filename: string; operation: string; onBusyChange: (busy: boolean) => void; format?: "mp4" | "wav" }) {
-  const media = format === "wav" ? { label: "WAV", mime: "audio/wav", limit: 32 } : { label: "MP4", mime: "video/mp4", limit: 64 };
+export function LocalImport({ blob, filename, operation, onBusyChange, format = "mp4", caption = "" }: { blob: Blob; filename: string; operation: string; onBusyChange: (busy: boolean) => void; format?: LocalImportFormat; caption?: string }) {
+  const media = IMPORT_MEDIA[format];
+  const mediaKind = format === "wav" ? "audio" : format === "mp4" ? "video" : "image";
+  const defaultCaption = `Edited on this device with Media Studio ${operation}. Source files were not uploaded by this tool.`;
+  const importCaption = `${caption ? `${caption} ` : ""}${defaultCaption}`.slice(0, 400);
   const [state,setState] = useState<ImportState>("idle");
   const [projects,setProjects] = useState<Project[]>([]), [project,setProject] = useState("");
   const [message,setMessage] = useState(""), [asset,setAsset] = useState("");
@@ -45,7 +57,7 @@ export function LocalImport({ blob, filename, operation, onBusyChange, format = 
       if (!blob.size || blob.size > media.limit * 1024 * 1024) { setState("ready"); setMessage(`Studio accepts ${media.label} files up to ${media.limit} MiB. Save this result locally or make a smaller clip.`); return; }
       const form = new FormData(); form.set("file", new File([blob],filename,{type:media.mime}));
       form.set("title", filename.replace(/\.[^.]+$/, "").slice(0,100));
-      form.set("caption", `Edited on this device with Media Studio ${operation}. Source files were not uploaded by this tool.`);
+      form.set("caption", importCaption);
       attempted.current = true;
       const response = await fetch(`/api/projects/${encodeURIComponent(project)}/assets`, {method:"POST",credentials:"same-origin",headers:{"x-studio-local-import-binding":identity.current},body:form});
       const data = await response.json().catch(()=>({}));
@@ -57,12 +69,12 @@ export function LocalImport({ blob, filename, operation, onBusyChange, format = 
     } finally { lock.current = false; onBusyChange(false); }
   }
   return <details className="local-import"><summary>Import to Studio</summary>
-    <p className="trim-note">Optional: sign in and choose a studio, then explicitly upload this finished {media.label}. Your source files stay on this device. Opening this section does not upload anything.</p>
+    <p className="trim-note">Optional: sign in and choose a studio, then explicitly upload this finished {media.label}. Your source files stay on this device. The imported file becomes a new private library asset; nothing is published. Opening this section does not upload anything.</p>
     {(state === "idle" || state === "signed-out" || state === "denied") && <><button type="button" className="secondary" onClick={()=>void checkAccess()}>Check sign-in and studios</button>{(state === "signed-out" || state === "denied") && <p>Open <a href="/studio" target="_blank" rel="noopener noreferrer">Studio sign-in in a new tab</a>, then return here and check again. Keep this page open to retain your result.</p>}</>}
     {state === "checking" && <p>Checking Studio access…</p>}
     {(state === "ready" || state === "uploading") && <><label className="trim-file">Destination studio<select value={project} disabled={state === "uploading"} onChange={e=>setProject(e.target.value)}><option value="">Choose a studio</option>{projects.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><button type="button" className="secondary" disabled={!project || state === "uploading"} onClick={()=>void upload()}>{state === "uploading" ? "Uploading…" : `Upload ${media.label} to selected studio`}</button></>}
     {message && <p role="status" aria-live="polite">{message}</p>}
     {state === "uncertain" && project && <p><a href={`/#/p/${encodeURIComponent(project)}/library`} target="_blank" rel="noopener noreferrer">Check the selected library</a></p>}
-    {state === "saved" && <p><a href={`/#/a/${encodeURIComponent(project)}/${encodeURIComponent(asset)}`} target="_blank" rel="noopener noreferrer">Open imported {format === "wav" ? "audio" : "video"} in Studio</a></p>}
+    {state === "saved" && <p><a href={`/#/a/${encodeURIComponent(project)}/${encodeURIComponent(asset)}`} target="_blank" rel="noopener noreferrer">Open imported {mediaKind} in Studio</a></p>}
   </details>;
 }

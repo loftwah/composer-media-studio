@@ -207,6 +207,9 @@ function Home({
               Browse Share artwork
             </a>
           )}
+          <a className="button secondary" href="/tools/images">
+            Edit images locally
+          </a>
           <a className="button secondary" href="/tools/audio-trim">
             Trim audio locally
           </a>
@@ -252,7 +255,15 @@ export {
   unmountMedia,
 } from "./library";
 
-export { mountAudioTrim } from "./audio-trim";
+export async function mountAudioTrim(container: HTMLElement) {
+  const { mountAudioTrim: mount } = await import("./audio-trim");
+  mount(container);
+}
+
+export async function mountImages(container: HTMLElement) {
+  const { mountImages: mount } = await import("./images");
+  mount(container);
+}
 
 export async function mountVideoClip(container: HTMLElement) {
   const { mountVideoClip: mount } = await import("./video-clip");
