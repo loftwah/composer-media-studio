@@ -82,7 +82,8 @@ test("a library preview is owner-only, never public and only served once it exis
   // it is not refused: before a preview exists it simply has nothing to serve.
   assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie: bridge })).status, 404);
   assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie })).status, 404);
-  assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie, method: "POST" })).status, 405);
+  // POST is the owner upload path, so a bare POST is refused as a bad media type.
+  assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie, method: "POST" })).status, 415);
 
   // The public surface has no route that resolves these bytes.
   assert.equal((await call(env, `/assets/${asset.id}/preview`)).status, 404);
@@ -259,4 +260,45 @@ test("deleting an asset removes its preview row and bytes in the same erasure st
   assert.equal(env.MEDIA.objects.has(key), false);
   assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie })).status, 404);
   assert.equal((await call(env, `/api/studio/assets/asset_missing/preview`, { cookie })).status, 404);
+});
+
+test("the owner's browser can upload a library preview for its own asset", async () => {
+  const { env, project } = await setup();
+  const cookie = await owner(env);
+  const asset = await imageAsset(env, project, { id: "asset_upload", sha: "u".repeat(64) });
+
+  const form = new FormData();
+  form.set("file", new File([webp(1024, 768)], "preview.webp", { type: "image/webp" }));
+  const uploaded = await worker.fetch(
+    new Request(base + `/api/studio/assets/${asset.id}/preview`, { method: "POST", headers: { cookie }, body: form }),
+    env,
+  );
+  assert.equal(uploaded.status, 200);
+  const body = await uploaded.json();
+  assert.equal(body.preview.assetId, asset.id);
+
+  const row = await env.DB.prepare("SELECT * FROM asset_previews WHERE asset_id=?1").bind(asset.id).first();
+  assert.equal(row.source_sha256, asset.sha256);
+  assert.equal(row.mime, "image/webp");
+  assert.equal(row.r2_key, `projects/${project.id}/asset-previews/${asset.id}.webp`);
+
+  // The stored preview is what the private route then serves.
+  const served = await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie });
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get("cache-control"), "private, max-age=0, no-store");
+
+  // A video has no still preview, and a missing session cannot write one.
+  const video = await addAsset(env, project, { id: "asset_video_only", kind: "video" });
+  const videoForm = new FormData();
+  videoForm.set("file", new File([webp(320, 240)], "preview.webp", { type: "image/webp" }));
+  assert.equal(
+    (await worker.fetch(new Request(base + `/api/studio/assets/${video.id}/preview`, { method: "POST", headers: { cookie }, body: videoForm }), env)).status,
+    404,
+  );
+  const anon = new FormData();
+  anon.set("file", new File([webp(320, 240)], "preview.webp", { type: "image/webp" }));
+  assert.equal(
+    (await worker.fetch(new Request(base + `/api/studio/assets/${asset.id}/preview`, { method: "POST", body: anon }), env)).status,
+    401,
+  );
 });

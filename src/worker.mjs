@@ -78,7 +78,7 @@ import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.mjs";
-import { deleteAssetPreviews, readAssetPreview, storeAssetPreview } from "./lib/asset-previews.mjs";
+import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.mjs";
 import { readCapabilityManifest, readCapabilityState, refreshCapabilities } from "./lib/capabilities.mjs";
@@ -680,11 +680,9 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     }
     const assetPreviewMatch = path.match(/^\/api\/studio\/assets\/([a-z0-9_]+)\/preview$/);
     if (assetPreviewMatch) {
-      if (method !== "GET" && method !== "HEAD")
-        throw new HttpError(405, "Method not allowed", "method_not_allowed");
       // Private library preview: never public, never referenced by a page.
       const asset = await env.DB.prepare(
-        "SELECT id,project_id,kind,sha256,deleted_at FROM assets WHERE id=?1",
+        "SELECT * FROM assets WHERE id=?1",
       )
         .bind(assetPreviewMatch[1])
         .first();
@@ -692,6 +690,23 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       await assertProjectAccess(env, session, asset.project_id);
       if (asset.deleted_at || asset.kind !== "image")
         throw new HttpError(404, "No preview for this asset", "not_found");
+      if (method === "POST") {
+        // The owner's browser may supply the still it rendered from this same
+        // asset, because a legacy-billing Images binding refuses the server
+        // rendition. It is validated exactly like an uploaded still.
+        const type = request.headers.get("content-type") ?? "";
+        if (!type.includes("multipart/form-data"))
+          throw new HttpError(415, "Upload the preview as form data", "unsupported_media_type");
+        const form = await request.formData();
+        const file = form.get("file");
+        if (!(file instanceof File)) throw new HttpError(400, "Choose a preview image to upload");
+        if (file.size === 0) throw new HttpError(400, "That preview file is empty");
+        if (file.size > MAX_DERIVATIVE_BYTES)
+          throw new HttpError(413, "A fast preview must stay under 1 MiB", "too_large");
+        return json({ preview: await storeAssetPreviewUpload(env, asset, new Uint8Array(await file.arrayBuffer())) });
+      }
+      if (method !== "GET" && method !== "HEAD")
+        throw new HttpError(405, "Method not allowed", "method_not_allowed");
       const preview = await readAssetPreview(env, asset.id);
       if (!preview || preview.source_sha256 !== asset.sha256)
         throw new HttpError(404, "No preview for this asset", "not_found");

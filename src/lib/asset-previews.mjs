@@ -8,7 +8,8 @@
 // or a published page. Reading one requires an owner session, and deleting the
 // asset deletes its preview in the same erasure step.
 
-import { HttpError } from "./util.mjs";
+import { HttpError, sha256Hex } from "./util.mjs";
+import { inspectDerivative } from "./publication-derivatives.mjs";
 import { renderPreview } from "./preview-rendition.mjs";
 
 /** Only a stored still can be previewed; a film's frame needs a different job. */
@@ -48,6 +49,22 @@ export async function storeAssetPreview(env, asset) {
   if (!object) throw new HttpError(410, "The stored bytes are unavailable", "unavailable");
   const source = new Uint8Array(await object.arrayBuffer());
   const rendered = await renderPreview(env, source, { width: asset.width, height: asset.height });
+  await writeAssetPreview(env, asset, rendered, current);
+  return {
+    assetId: asset.id,
+    bytes: rendered.bytes.byteLength,
+    width: rendered.width,
+    height: rendered.height,
+    sha256: rendered.sha256,
+    unchanged: false,
+  };
+}
+
+/**
+ * Store the bytes first, then point D1 at them. Shared by the server rendition
+ * and by the owner's browser upload, so one row shape serves both.
+ */
+async function writeAssetPreview(env, asset, rendered, current) {
   const key = assetPreviewKey(asset.project_id, asset.id);
   await env.MEDIA.put(key, rendered.bytes, {
     httpMetadata: { contentType: rendered.mime },
@@ -85,6 +102,34 @@ export async function storeAssetPreview(env, asset) {
     if (!current) await env.MEDIA.delete(key).catch(() => {});
     throw error;
   }
+}
+
+/**
+ * Store a preview the owner's browser already rendered from the same asset.
+ *
+ * This exists because a Cloudflare Images binding on legacy billing refuses the
+ * server rendition; the browser path is the same artwork, scaled down once, and
+ * is validated exactly like an uploaded still.
+ */
+export async function storeAssetPreviewUpload(env, asset, bytes) {
+  if (!asset?.id) throw new HttpError(400, "Choose an asset to preview", "invalid");
+  if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
+  if (asset.kind !== PREVIEWABLE_KIND)
+    throw new HttpError(415, "Only a stored still can have a library preview", "unsupported_type");
+  const inspected = inspectDerivative(bytes, { maxEdge: 1024 });
+  const current = await env.DB.prepare(
+    "SELECT asset_id,bytes,width,height,sha256,source_sha256 FROM asset_previews WHERE asset_id=?1",
+  )
+    .bind(asset.id)
+    .first();
+  const rendered = {
+    bytes,
+    mime: inspected.mime,
+    width: inspected.width,
+    height: inspected.height,
+    sha256: await sha256Hex(bytes),
+  };
+  await writeAssetPreview(env, asset, rendered, current);
   return {
     assetId: asset.id,
     bytes: rendered.bytes.byteLength,
