@@ -187,6 +187,15 @@ export function projectAccessible(session, project) {
   return true;
 }
 
+/** The 403 copy for a project this session may not open. An agent connection is
+ * granted exactly one project, so send the agent to that project instead of
+ * telling the owner to reopen Studio from a different workspace. */
+export function projectAccessDeniedMessage(session, projectId) {
+  if (session?.mode === "agent" && session.project)
+    return `This agent connection is granted to ${session.project} only. Ask for that project, or have the owner grant this connection ${projectId}. Nothing was changed.`;
+  return "This project belongs to another workspace or to a different studio link. Reopen Media Studio from the workspace that owns it.";
+}
+
 async function grantCacheKey(env, session) {
   if (!env.SESSION_SECRET) return null;
   return sign(

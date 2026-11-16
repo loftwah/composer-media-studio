@@ -219,3 +219,17 @@ test("a current grant with no generate action stops the privileged check", async
     globalThis.fetch = original;
   }
 });
+
+test('a project-scoped agent connection is told which project it was granted', async () => {
+  const { projectAccessDeniedMessage } = await import('../src/lib/auth.mjs');
+  const agent = { mode: 'agent', workspace: 'workspace', project: 'prj_granted' };
+  const message = projectAccessDeniedMessage(agent, 'prj_other');
+  assert.match(message, /prj_granted only/);
+  assert.match(message, /prj_other/);
+  assert.match(message, /Nothing was changed/);
+  assert.doesNotMatch(message, /Reopen Media Studio/);
+  // A bridged Composer session keeps the workspace guidance: that owner really
+  // does have to reopen Studio from the workspace that owns the project.
+  const bridge = { mode: 'bridge', workspace: 'workspace', project: 'prj_granted' };
+  assert.match(projectAccessDeniedMessage(bridge, 'prj_other'), /Reopen Media Studio/);
+});

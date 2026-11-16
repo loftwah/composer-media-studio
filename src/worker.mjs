@@ -10,6 +10,7 @@ import {
   clearCookie,
   createSession,
   projectAccessible,
+  projectAccessDeniedMessage,
   readBridgeToken,
   readSession,
   recordLoginFailure,
@@ -352,12 +353,11 @@ async function assertProjectAccess(env, session, projectId) {
     .bind(projectId)
     .first();
   if (!project) throw new HttpError(404, "Project not found", "not_found");
+  // An agent connection is granted exactly one project. Say so, instead of
+  // blaming the workspace: an agent that asks for a second project reads the
+  // workspace message as "the owner must reopen Studio", which is the wrong fix.
   if (!projectAccessible(session, project))
-    throw new HttpError(
-      403,
-      "This project belongs to another workspace or to a different studio link. Reopen Media Studio from the workspace that owns it.",
-      "forbidden",
-    );
+    throw new HttpError(403, projectAccessDeniedMessage(session, projectId), "forbidden");
 }
 
 async function projectSummary(env, project) {
