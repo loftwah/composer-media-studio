@@ -1,5 +1,6 @@
 import { ALL_FORMATS, BlobSource, Input } from "mediabunny";
 import { localAudioFits, trimWavFits, MAX_LOCAL_AUDIO_SECONDS, MAX_LOCAL_PCM_BYTES, MAX_TRIM_SECONDS, DEFAULT_TRIM_SECONDS } from "./local-audio-limits.mjs";
+import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -52,7 +53,7 @@ function AudioTrim() {
       const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(next) });
       let info: { seconds: number; channels: number; sourceRate: number };
       try {
-        const track = await input.getPrimaryAudioTrack();
+        const track = await probeMediaTrack(() => input.getPrimaryAudioTrack(), "audio");
         if (!track || !await track.canDecode()) throw new Error("This browser cannot decode that audio file.");
         const channels = await track.getNumberOfChannels(), sourceRate = await track.getSampleRate();
         const first = await track.getFirstTimestamp(), end = await track.computeDuration();

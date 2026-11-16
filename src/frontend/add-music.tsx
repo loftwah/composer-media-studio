@@ -1,4 +1,5 @@
 import { localAudioFits, MAX_LOCAL_AUDIO_SECONDS, MAX_LOCAL_PCM_BYTES } from "./local-audio-limits.mjs";
+import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import { encodeWav } from "../../public/wav.js";
 import { localMixRange } from "./local-mix-range";
@@ -37,7 +38,7 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(videoFile) });
   let output: Output | undefined;
   try {
-    const track = await input.getPrimaryVideoTrack(); check(signal);
+    const track = await probeMediaTrack(() => input.getPrimaryVideoTrack(), "video"); check(signal);
     if (!track || !await track.canDecode()) throw new Error("This browser cannot decode that video.");
     const first = await track.getFirstTimestamp();
     const end = await track.computeDuration();
@@ -53,7 +54,7 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
     const musicInput = new Input({ formats: ALL_FORMATS, source: new BlobSource(musicFile) });
     let musicInfo: { channels: number; rate: number; seconds: number };
     try {
-      const musicTrack = await musicInput.getPrimaryAudioTrack(); check(signal);
+      const musicTrack = await probeMediaTrack(() => musicInput.getPrimaryAudioTrack(), "audio"); check(signal);
       if (!musicTrack || !await musicTrack.canDecode()) throw new Error("This browser cannot decode that audio file.");
       const musicChannels = await musicTrack.getNumberOfChannels(), musicRate = await musicTrack.getSampleRate();
       const musicStart = await musicTrack.getFirstTimestamp(), musicEnd = await musicTrack.computeDuration();
@@ -82,7 +83,7 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
     source.start(0, offset);
     if (originalGain > 0) {
       progress("Reading the original soundtrack on this device…");
-      const original = await input.getPrimaryAudioTrack(); check(signal);
+      const original = await probeMediaTrack(() => input.getPrimaryAudioTrack(), "audio"); check(signal);
       if (original) {
         if (!await original.canDecode()) throw new Error("This browser cannot decode the original soundtrack. Set original sound to 0% or try another browser.");
         const channels = await original.getNumberOfChannels(), rate = await original.getSampleRate();
