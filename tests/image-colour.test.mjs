@@ -8,6 +8,7 @@ import {
   formatRgb,
   hexToRgb,
   mapBoundsThroughTransform,
+  paletteToCss,
   paletteToGpl,
   pickImagePixel,
   rgbToHex,
@@ -124,6 +125,24 @@ test("GPL palette exports extracted RGB channels and HEX names", () => {
     height: 1,
   });
   assert.equal(paletteToGpl(colors), "GIMP Palette\nName: Studio palette\nColumns: 8\n#\n255   0   0\t#ff0000\n");
+});
+
+test("CSS palette exports the exact swatches as valid :root custom properties", () => {
+  const rgb = [[255, 0, 0], [0, 0, 255], [255, 0, 0]];
+  const { colors } = extractPalette(
+    makePixels(3, 1, (x) => [...rgb[x], 255]),
+    { width: 3, height: 1 },
+  );
+  const css = paletteToCss(colors);
+  assert.equal(
+    css,
+    "/* Studio palette - extracted swatches */\n:root {\n  --swatch-1: #ff0000;\n  --swatch-2: #0000ff;\n}\n",
+  );
+  // Every exact swatch HEX is a custom-property value, in palette order, with
+  // no invented or dropped colour.
+  const values = [...css.matchAll(/--swatch-\d+:\s*(#[0-9a-f]{6});/g)].map((match) => match[1]);
+  assert.deepEqual(values, colors.map((colour) => colour.hex));
+  assert.equal(values.length, colors.length);
 });
 
 test("alpha bounds find transparent padding without silently cropping opaque images", () => {

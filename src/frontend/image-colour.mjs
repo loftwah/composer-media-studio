@@ -106,6 +106,17 @@ export function paletteToGpl(colors) {
   return `${lines.join("\n")}\n`;
 }
 
+// The same swatches as :root custom properties for an owned app. Values are the
+// exact extracted HEX strings, in palette order; no filename or image metadata.
+export function paletteToCss(colors) {
+  const lines = ["/* Studio palette - extracted swatches */", ":root {"];
+  colors.forEach(({ hex }, index) => {
+    lines.push(`  --swatch-${index + 1}: ${hex};`);
+  });
+  lines.push("}");
+  return `${lines.join("\n")}\n`;
+}
+
 const PALETTE_BIN_SHIFT = 3;
 
 /**
