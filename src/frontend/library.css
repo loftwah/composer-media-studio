@@ -62,11 +62,6 @@
 @media (prefers-reduced-motion:reduce) { .storage-health > summary::before { transition:none; } }
 @media (max-width:600px) { .compare-grid { grid-template-columns:1fr; } .compare-frame img { height:260px; } .compare-empty { min-height:110px; } }
 
-/* A film card shows a kind/length placeholder, never the clip body. */
-.video-card { display:grid; place-items:center; gap:.45rem; width:100%; height:100%; padding:.8rem; box-sizing:border-box; background:var(--paper-deep); }
-.video-card .play-mark { width:0; height:0; border-left:16px solid color-mix(in srgb, var(--ink) 60%, transparent); border-top:10px solid transparent; border-bottom:10px solid transparent; }
-.video-card .video-time { font:600 .72rem/1 ui-monospace, monospace; letter-spacing:.06em; color:var(--ink-soft); }
-
 /* Bounded owner action for assets saved before asset previews existed. */
 .library-preview-build { margin:0 0 1rem; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
 .library-preview-build > summary { padding:.7rem 1rem; cursor:pointer; font-size:.9rem; font-weight:700; }

@@ -293,6 +293,10 @@ dialog h2 { margin: 0; }
 .audio-card canvas, .audio-stage canvas { width: 100%; height: 100%; display: block; }
 .audio-card canvas { height: 64px; }
 .audio-time { font: 600 0.72rem/1 ui-monospace, monospace; letter-spacing: 0.06em; color: var(--ink-soft); }
+/* A film card shows a kind/length placeholder; the clip body stays in the viewer. */
+.video-card { display: grid; place-items: center; gap: 0.45rem; width: 100%; height: 100%; padding: 0.8rem; box-sizing: border-box; background: var(--paper-deep); }
+.video-card .play-mark { width: 0; height: 0; border-left: 16px solid color-mix(in srgb, var(--ink) 60%, transparent); border-top: 10px solid transparent; border-bottom: 10px solid transparent; }
+.video-card .video-time { font: 600 0.72rem/1 ui-monospace, monospace; letter-spacing: 0.06em; color: var(--ink-soft); }
 .audio-stage { display: grid; gap: 0.9rem; width: 100%; }
 .audio-stage canvas { height: 132px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.6rem; box-sizing: border-box; }
 .audio-stage audio { width: 100%; }
