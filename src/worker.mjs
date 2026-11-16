@@ -2433,6 +2433,11 @@ async function servePosterPreview(request, env, publication) {
  * Each row is independent, so one refusal never blocks the rest, and a repeated
  * call skips rows whose source hash already matches.
  */
+// The scheduled sweep belongs to the installation itself: it builds previews
+// for this installation's own stored rows and no caller can reach it, because
+// the HTTP route still requires an owner session.
+const INSTALLATION = Object.freeze({ mode: "owner", installationOwner: true });
+
 async function backfillPreviews(env, session, kind, limit) {
   let processed = 0;
   let failed = 0;
@@ -2662,5 +2667,15 @@ export default {
     // Read-only capability freshness: real work at most once a day. The every-
     // minute trigger already exists; a failed check keeps the last good copy.
     ctx.waitUntil(refreshCapabilities(env).catch((error) => console.error("Capability refresh unavailable", error?.message ?? error)));
+    // Work published before previews existed must stop paying multi-megabyte
+    // originals as soon as the code ships. Four a minute converges and then
+    // costs two indexed reads. Posters first: they are the public first paint.
+    ctx.waitUntil(
+      (async () => {
+        const posters = await backfillPreviews(env, INSTALLATION, "posters", 4);
+        if (posters.remaining > 0) return;
+        await backfillPreviews(env, INSTALLATION, "assets", 4);
+      })().catch((error) => console.error("Preview backfill unavailable", error?.message ?? error)),
+    );
   },
 };
