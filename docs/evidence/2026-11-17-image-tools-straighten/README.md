@@ -2,8 +2,8 @@
 
 Issue: [#183](https://github.com/loftwah/composer-media-studio/issues/183).
 This is the next browser-local slice of `/tools/images`, based on `main` at
-`8e4b9cc`. Nothing is uploaded, fetched from another origin, published or sent
-to a provider.
+`8e4b9cc` and released as `fe9f4dc`. Nothing is uploaded, published or sent to a
+provider.
 
 ## What changed
 
@@ -37,7 +37,7 @@ URL, the render decodes a fresh bitmap, and reset never re-encodes the source.
 
 | Item | Value |
 | --- | --- |
-| Base | `8e4b9cc` (`main`, clean and pushed) |
+| Base | `8e4b9cc` (`main`, clean and pushed); released `fe9f4dc` |
 | Build | `pnpm build:frontend` (Vite) |
 | Server | local static server over `public/`; no wrangler, D1 or session |
 | Harness | `tests/browser/images.mjs` (`PLAYWRIGHT_MODULE`) |
@@ -78,18 +78,44 @@ All 28 checks passed in all three engines.
 | [sample-keep-desktop.png](sample-keep-desktop.png) | The generated sample (1400 × 900) with a 4:5 top crop and −4°: `682 × 852 px of 1400 × 900` |
 | [sample-keep-phone.png](sample-keep-phone.png) | The same state at 390 px |
 | [sample-keep-dark.png](sample-keep-dark.png) | The overlay under the Studio dark theme (`data-theme="dark"`) |
+| [live-keep-desktop.png](live-keep-desktop.png) | The released page at `media.loftwah.com`, 10° on the stripe |
+| [live-straighten-control-phone.png](live-straighten-control-phone.png) | The released control at 390 px |
 
 The straighten fieldset and the kept-area figure were also inspected in dark
 theme and with a visible focus ring. The phone screenshots were captured
 headlessly at 390 × 844; no horizontal overflow was measured.
+
+## Live release
+
+`pnpm deploy` passed its own `pnpm check` and frontend build, uploaded, and read
+back the exact source identity: revision `fe9f4dc2b5bfbfb13b6d8728db3f513238344fd4`
+at `2026-11-16T14:29:01.184Z` (28.2 s). `GET https://media.loftwah.com/build.json`
+reports the same revision.
+
+A headless Chromium pass then loaded the live `/tools/images` page, dropped the
+same synthetic stripe, set 10°, downloaded `stripe-300x300.png` through the real
+download link, and measured 8,711 bytes, 300 × 300, a 42.0 px centroid tilt
+against `tan(10°) × 0.8 × height = 42.32`, and zero pixels below alpha 255.
+**Reset controls** restored `0` and `2048` while the earlier download stayed
+available and the stale-result notice appeared. At 390 px,
+`scrollWidth === innerWidth === 390` with no control outside the viewport, and
+there were no page errors.
+
+Two live-only observations, both pre-existing and outside this slice:
+
+- Cloudflare injects an inline bot-detection script that the site's own
+  `script-src` policy blocks, so one CSP console error appears. The page itself
+  raises no error and its module script runs.
+- The live page loads Cloudflare's Insights beacon and uses `blob:` URLs for its
+  previews. No user image, session or transform setting is sent anywhere; there
+  were no API writes. The local harness records zero off-origin requests because
+  the static evidence server has no Cloudflare layer.
 
 ## Not verified here
 
 - A physical phone, real touch dragging or Safari on iOS.
 - Dark-theme contrast with an automated ratio checker; the values were read
   visually in the Studio dark theme, not measured per element.
-- A deployed production revision in this folder; the release receipt and live
-  `/build.json` revision are recorded in the delivery report for this slice.
 - Freeform crop handles, horizon detection, lens correction, GIF, PDF,
   background removal, redaction, sprite sheets and HTML-to-image remain
   deferred or delegated in [the coverage matrix](../../image-tools-coverage.md).
