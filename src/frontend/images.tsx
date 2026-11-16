@@ -51,6 +51,7 @@ import {
   formatHsl,
   formatRgb,
   mapBoundsThroughTransform,
+  paletteToGpl,
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
@@ -1971,6 +1972,15 @@ function Images() {
               >
                 {paletteBusy ? "Reading colours…" : "Extract palette"}
               </button>
+              {!running && !paletteBusy && visiblePalette && visiblePalette.result.colors.length > 0 && (
+                <a
+                  className="button secondary"
+                  href={`data:text/plain;charset=utf-8,${encodeURIComponent(paletteToGpl(visiblePalette.result.colors))}`}
+                  download="studio-palette.gpl"
+                >
+                  Download palette (.gpl)
+                </a>
+              )}
             </div>
             <p className="trim-note" role="status" aria-live="polite">
               {paletteMessage ||
