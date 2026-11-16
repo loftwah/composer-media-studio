@@ -1,4 +1,5 @@
 import { ClipPoster } from "./clip-poster";
+import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -64,7 +65,8 @@ function VideoClip() {
     cancelRequested.current = false; setBusy(true); setResult(""); setResultBlob(null); setMessage("Checking this browser’s video and audio codecs…");
     const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(file) });
     try {
-      const video = await input.getPrimaryVideoTrack(); const audio = await input.getPrimaryAudioTrack();
+      const video = await probeMediaTrack(() => input.getPrimaryVideoTrack(), "video");
+      const audio = await probeMediaTrack(() => input.getPrimaryAudioTrack(), "audio");
       if (!video || !await video.canDecode()) throw new Error("This browser cannot decode that video. Try another browser or source file.");
       const w = await video.getCodedWidth(), h = await video.getCodedHeight();
       if (!w || !h || w > 4096 || h > 4096 || w*h > 8294400) throw new Error("Choose a video at or below 4K resolution.");
