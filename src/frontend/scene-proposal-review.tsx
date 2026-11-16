@@ -197,7 +197,7 @@ export function SceneProposalReview({ projectId, plan, images, changed, canEdit,
       {applyError && <p role="alert">{applyError}</p>}
     </section>}
 
-    {receipt && <p className="director-receipt" data-director="applied"><strong>Applied to this draft — not saved.</strong> {receipt.kept} of {receipt.total} reviewed {receipt.total === 1 ? 'change is' : 'changes are'} in the draft now. Save the scene plan to keep {receipt.kept === 1 ? 'it' : 'them'}.</p>}
+    {receipt && <p className="director-receipt" data-director="applied"><strong>Applied to this draft — not saved.</strong> {receipt.kept} of {receipt.total} reviewed {receipt.total === 1 ? 'change is' : 'changes are'} in the draft now. Save the scene plan to keep {receipt.total === 1 ? 'it' : 'them'}.</p>}
 
     <ShotDoctor projectId={projectId} plan={plan} />
   </>;
