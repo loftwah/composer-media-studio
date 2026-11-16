@@ -13,6 +13,18 @@ The add command may immediately start an OAuth flow requesting every advertised 
 
 For read-only access explicitly request `studio.read`. When you need more, request only the additional scopes you intend to grant, for example `codex mcp login media-studio --scopes studio.read,studio.edit,studio.generate`. The browser lists the requested actions before consent. `studio.publish` is separate.
 
+OpenCode V2 is also supported. Its remote MCP client requests the scope the server names when an unauthenticated request is rejected; on this Studio that default is `studio.read`. To edit, set the scope on the server entry in `opencode.jsonc` before signing in:
+
+```jsonc
+"media-studio": {
+  "type": "remote",
+  "url": "https://your-studio.example/mcp",
+  "oauth": { "scope": "studio.read studio.edit" }
+}
+```
+
+Then run `opencode mcp logout media-studio` and `opencode mcp auth media-studio`; the browser consent page lists the requested actions. Omit `studio.edit` when the agent only needs to inspect. Tested with OpenCode `2.2.7` against the deployed Studio: the client completed OAuth/PKCE, listed and read a saved song plan, and a separate read-only agent run returned the same project revision and scene direction without changing anything. OpenCode exposes the server's tools through Code Mode; grant only the scopes you intend to use.
+
 The OAuth 2.1 authorization-code flow requires PKCE S256, a registered loopback HTTP callback, and the exact MCP resource URL. Only public clients are supported. The token and authorization code are random, stored as hashes, and bound to a client, project, resource and issuer. Codes are single-use. Studio checks the current Composer grant on each bridged-token request, including reads; a standalone owner connection uses its own Studio authority. Responses use no-store; credentials do not appear in the connection list. Agent credentials are separate from browser cookies, owner passphrases and provider keys. Registration rate limiting stores a keyed IP digest, not the address; the existing scheduler prunes expired rate limits, codes and tokens, and removes client registrations after 90 days of inactivity once no live code or token remains.
 
 A workspace-wide Composer session can choose one Studio project for a connection; the resulting token is still restricted to that project. A project-scoped session can choose only its own project. Older workspace-wide sessions need to reopen Studio from Composer before starting a connection so their project scope can be verified. Studio rechecks the current Composer grant when consent is given, when a code is exchanged and when the token is used.
