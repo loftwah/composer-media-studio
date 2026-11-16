@@ -46,6 +46,7 @@ certificate is accepted only inside these scripts.
 | `launcher.mjs` | The Apps trigger and its dialog ship together, open by keyboard/mouse, list Studio-local destinations only, close on Escape/Close and return focus; an orphan trigger is removed. |
 | `director.mjs` | One real Workers AI reply becomes a typed proposal; nothing is saved until review, apply and save; reload and the project API show the same revision. Needs a logged-in wrangler account for the remote `AI` binding, and makes one bounded text call per run. |
 | `shot-doctor.mjs` | Saved-evidence shot diagnosis, a typed proposal with one change declined and one approved, the same revision identity in the workbench and a real scoped MCP client over the local HTTPS endpoint, a stale-revision message, a no-take state, and a locally assembled two-shot MP4 that plays. No model or paid provider. |
+| `viewer.mjs` | The in-project asset viewer: focus enters the viewer and Tab stays inside, Escape and Close return focus to the exact card and restore library scroll, Back and browser Back/Forward keep working, and malformed deep links preserve a stable page with a short message. |
 | `film.mjs` (see `output/` receipts) | A 30–60 s local film from saved takes, a mixed source track and captions, plus a one-take replacement and decoded output checks. It reads the owner's existing production R2 objects read-only before uploading them into the isolated fixture; it does not write to production. |
 
 The film harness is intentionally not committed with production project IDs.

@@ -16,7 +16,6 @@ let homeMounted = false;
 let mediaMounted = false;
 let bootReady = false;
 let libraryReturn = null;
-let pendingViewerFocus = null;
 let mixPreviewUrl = null;
 let mixPreviewVersion = 0;
 function clearMixPreview() {
@@ -189,13 +188,104 @@ function statusChip(status) {
 }
 
 function parseHash() {
-  const hash = location.hash.replace(/^#\/?/, "");
+  const hash = location.hash.replace(/^#\/?/, "").replace(/\/+$/, "");
   if (!hash) return { view: "home" };
-  const [segment, id, tab] = hash.split("/");
-  if (segment === "p" && id) return { view: "project", projectId: id, tab: tab || "library" };
-  if (segment === "a" && id && tab) return { view: "asset", projectId: id, assetId: tab };
-  return { view: "home" };
+  const parts = hash.split("/");
+  const [segment, id, tab] = parts;
+  if (segment === "p" && id && parts.length <= 3) return { view: "project", projectId: id, tab: tab || "library" };
+  if (segment === "a" && id && tab && parts.length === 3) return { view: "asset", projectId: id, assetId: tab };
+  // A non-empty hash that names no screen is not the project browser. Callers
+  // keep the page the user already has and say why instead of silently routing
+  // them home; an empty hash is still the studio home.
+  return { view: "invalid", hash };
 }
+
+// The viewer is a route, not a modal. Escape and Close leave the same way the
+// Back control does: one coherent library -> viewer history pair stays intact.
+let viewerClosing = false;
+function closeViewer() {
+  if (state.view !== "asset" || viewerClosing) return;
+  const openedFromLibrary = libraryReturn?.projectId === state.projectId && libraryReturn.assetId === state.assetId;
+  if (openedFromLibrary) {
+    viewerClosing = true;
+    history.back();
+    setTimeout(() => { viewerClosing = false; }, 1200);
+    return;
+  }
+  location.hash = `#/p/${encodeURIComponent(state.projectId)}/library`;
+}
+
+let viewerFocusKey = null;
+function focusViewerOnOpen() {
+  const key = `${state.projectId ?? ""}/${state.assetId ?? ""}`;
+  if (viewerFocusKey === key) return;
+  viewerFocusKey = key;
+  // The library may have been scrolled far down. Start the viewer at its
+  // controls so the focused Close is visible, not above the viewport.
+  window.scrollTo(0, 0);
+  const root = app.querySelector("[data-viewer]");
+  const target = root?.querySelector('[data-action="close-viewer"]') ?? root?.querySelector("[data-viewer-back]");
+  target?.focus({ preventScroll: true });
+}
+
+function stableHash() {
+  if (state.view === "asset" && state.projectId && state.assetId) {
+    return `#/a/${encodeURIComponent(state.projectId)}/${encodeURIComponent(state.assetId)}`;
+  }
+  if (state.view === "project" && state.projectId) {
+    return `#/p/${encodeURIComponent(state.projectId)}/${encodeURIComponent(state.tab || "library")}`;
+  }
+  return "#/";
+}
+
+// Replace the malformed hash with the route that is actually on screen so a
+// reload or a copied URL no longer repeats the mistake.
+function rejectMalformedHash() {
+  try { history.replaceState(history.state, "", stableHash()); } catch { /* Keep the current page and the message. */ }
+  notify("That Studio link wasn't recognised, so this page stayed open.", "bad");
+}
+
+// The open viewer keeps Tab inside its own route. This covers the React viewer
+// and the no-bundle fallback with one rule instead of duplicating a trap.
+const viewerFocusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls], audio[controls], summary, [tabindex]:not([tabindex="-1"])';
+function viewerFocusables(root) {
+  return [...root.querySelectorAll(viewerFocusableSelector)].filter((element) => element.getClientRects().length > 0);
+}
+
+document.addEventListener("keydown", (event) => {
+  if (state.view !== "asset" || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+  // A native dialog owns Escape and Tab while it is open.
+  if (document.querySelector("dialog[open]")) return;
+  if (event.key === "Escape") {
+    // A fullscreen film also owns Escape.
+    if (document.fullscreenElement) return;
+    event.preventDefault();
+    closeViewer();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const root = app.querySelector("[data-viewer]");
+  if (!root) return;
+  const focusables = viewerFocusables(root);
+  if (focusables.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables.at(-1);
+  if (!root.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
 
 async function boot() {
   const session = await api("/api/session");
@@ -218,18 +308,24 @@ async function boot() {
   state.woodhouseShare = data.woodhouseShare === true;
   state.showcase = data.showcase ?? [];
   const route = parseHash();
-  state.view = route.view;
-  state.projectId = route.projectId ?? null;
-  state.tab = route.tab ?? "library";
-  if (state.view === "project" || state.view === "asset") {
-    if (state.view === "asset") state.assetId = route.assetId;
-    await loadProject(state.projectId);
+  const invalidRoute = route.view === "invalid";
+  if (!invalidRoute) {
+    state.view = route.view;
+    state.projectId = route.projectId ?? null;
+    state.tab = route.tab ?? "library";
+    if (state.view === "project" || state.view === "asset") {
+      if (state.view === "asset") state.assetId = route.assetId;
+      await loadProject(state.projectId);
+    }
+    if (state.view === "project" && state.tab === "review") await loadReviewRooms(state.projectId).catch((error) => { state.reviewRooms = []; notify(error.message, "bad"); });
+    if (state.view === "home") await creativeModuleReady;
   }
-  if (state.view === "project" && state.tab === "review") await loadReviewRooms(state.projectId).catch((error) => { state.reviewRooms = []; notify(error.message, "bad"); });
-  if (state.view === "home") await creativeModuleReady;
   bootReady = true;
   render();
   startPolling();
+  // Boot lands on the stable studio home with an explanation, not a silent
+  // redirect that makes the bad link look like it worked.
+  if (invalidRoute) rejectMalformedHash();
 }
 
 async function loadProject(id) {
@@ -358,6 +454,7 @@ function render() {
       });
       mediaMounted = true;
     } else app.innerHTML = assetView();
+    focusViewerOnOpen();
   } else {
     if (homeMounted) { creativeHome.unmountHome(); homeMounted = false; }
     app.innerHTML = projectView();
@@ -393,8 +490,15 @@ function render() {
       libraryReturn = null;
       requestAnimationFrame(() => {
         if (state.view !== "project" || state.tab !== "library" || state.projectId !== previous.projectId) return;
-        const item = [...app.querySelectorAll('[data-action="open-asset"]')].find((button) => button.dataset.id === previous.assetId);
+        const candidates = [...app.querySelectorAll('[data-action="open-asset"]')].filter((button) => button.dataset.id === previous.assetId);
+        const item = candidates.find((button) => (button.classList.contains("thumb") ? "thumb" : "open") === previous.via) ?? candidates[0];
         item?.focus({ preventScroll: true });
+        if (item) {
+          // Programmatic focus can skip the browser's focus-visible heuristic.
+          // Show the same ring explicitly until the card loses focus.
+          item.classList.add("viewer-return-focus");
+          item.addEventListener("blur", () => item.classList.remove("viewer-return-focus"), { once: true });
+        }
         window.scrollTo(0, previous.scrollY);
       });
     }
@@ -1193,7 +1297,7 @@ function settingsView() {
 
 function assetView() {
   const asset = state.project?.assets.find((item) => item.id === state.assetId);
-  if (!asset) return `<p class="notice">That asset is no longer in the library. <a data-viewer-back href="#/p/${esc(state.projectId)}/library">Back to the library</a>.</p>`;
+  if (!asset) return `<div class="asset-viewer" data-viewer><p class="notice">That asset is no longer in the library. <a data-viewer-back href="#/p/${esc(state.projectId)}/library">Back to the library</a>.</p></div>`;
   const isVideo = asset.kind === "video";
   const isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
@@ -1221,7 +1325,8 @@ function assetView() {
           : "This file type cannot be imported into Launch Kit or used as a variation reference. Upload a JPEG, PNG or WebP still."
       }${isVideo ? ` <button class="quiet" data-action="choose-still">Choose a still</button>` : ""}</p>`;
   return `
-    <p><a class="button secondary" data-viewer-back href="#/p/${esc(state.projectId)}/library">← Back to library</a></p>
+    <div class="asset-viewer" data-viewer>
+    <p class="row"><a class="button secondary" data-viewer-back href="#/p/${esc(state.projectId)}/library">← Back to library</a><button class="button secondary" type="button" data-action="close-viewer" aria-label="Close the viewer">Close</button></p>
     <div class="viewer">
       <div class="stage">${isVideo ? `<video src="${esc(asset.file)}" controls playsinline preload="metadata"></video>` : isAudio ? `<div class="audio-stage"><canvas width="840" height="200" data-waveform="${esc(asset.file)}" aria-hidden="true"></canvas><audio src="${esc(asset.file)}" controls preload="metadata"></audio></div>` : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}">`}</div>
       <aside class="card stack">
@@ -1255,6 +1360,7 @@ function assetView() {
         ${isVideo && still ? `<p class="small" style="margin:0">A variation uses “${esc(still.title)}”, the still, not this clip.</p>` : ""}
         <button class="quiet" data-action="delete-asset" data-id="${esc(asset.id)}">Delete from library</button>
       </aside>
+    </div>
     </div>`;
 }
 
@@ -1599,11 +1705,12 @@ async function handleAction(action, element, keyboard = false) {
       return;
     case "open-asset":
       if (state.view === "project" && state.tab === "library") {
-        libraryReturn = { projectId: state.projectId, assetId: id, scrollY: window.scrollY };
+        libraryReturn = { projectId: state.projectId, assetId: id, scrollY: window.scrollY, via: element.classList.contains("thumb") ? "thumb" : "open" };
       }
-      pendingViewerFocus = keyboard && document.activeElement === element
-        ? { projectId: state.projectId, assetId: id } : null;
       location.hash = `#/a/${state.projectId}/${id}`;
+      return;
+    case "close-viewer":
+      closeViewer();
       return;
     case "refresh-job":
       await refreshGeneration(id, true);
@@ -3342,11 +3449,17 @@ document.querySelector("#signout").addEventListener("click", async () => {
 });
 
 window.addEventListener("hashchange", async () => {
+  viewerClosing = false;
   const route = parseHash();
+  if (route.view === "invalid") {
+    rejectMalformedHash();
+    return;
+  }
   state.view = route.view;
   state.projectId = route.projectId ?? null;
   state.tab = route.tab ?? "library";
   if (route.view === "asset") state.assetId = route.assetId;
+  else viewerFocusKey = null;
   if (route.view === "home") {
     const data = await api("/api/state");
     state.projects = data.projects;
@@ -3376,14 +3489,6 @@ window.addEventListener("hashchange", async () => {
     if (state.projectId !== route.projectId || state.view !== "project" || state.tab !== "history") return;
   }
   render();
-  if (route.view === "asset" && pendingViewerFocus?.projectId === route.projectId && pendingViewerFocus.assetId === route.assetId) {
-    pendingViewerFocus = null;
-    const back = app.querySelector("[data-viewer-back]");
-    if (back) {
-      const rect = back.getBoundingClientRect();
-      back.focus({ preventScroll: rect.top >= 0 && rect.bottom <= window.innerHeight });
-    }
-  } else pendingViewerFocus = null;
 });
 
 boot().catch((error) => {
