@@ -5,14 +5,32 @@ import {
   defaultLongEdge,
   describeTransform,
   extensionForImageMime,
+  imageSmoothingFor,
   mimeForExport,
   planImageTransform,
   rotatedDimensions,
+  searchTargetQuality,
+  targetSizeProblem,
   type CropAspectKey,
   type ImageCrop,
   type ResizePlan,
   type TransformPlan,
 } from "./image-ops.mjs";
+import {
+  MAX_PALETTE_COLOURS,
+  PALETTE_WORKING_EDGE,
+  alphaBounds,
+  extractPalette,
+  formatHsl,
+  formatRgb,
+  mapBoundsThroughTransform,
+  pickImagePixel,
+  rgbToHex,
+  rgbToHsl,
+  type ImageBounds,
+  type PaletteResult,
+  type Rgb,
+} from "./image-colour.mjs";
 import {
   MAX_BATCH_IMAGES,
   MAX_IMAGE_INPUT_BYTES,
@@ -37,6 +55,7 @@ import "./images.css";
 
 type ExportFormat = "png" | "jpeg" | "webp";
 type ResizeMode = "long-edge" | "exact";
+type ResampleMode = "smooth" | "nearest";
 type ItemStatus = "ready" | "working" | "done" | "error" | "cancelled";
 
 type Settings = {
@@ -48,8 +67,10 @@ type Settings = {
   rotate: 0 | 1 | 2 | 3;
   flipH: boolean;
   flipV: boolean;
+  resample: ResampleMode;
   format: ExportFormat;
   quality: number;
+  targetKiB: number | null;
   matte: string;
 };
 
@@ -68,7 +89,26 @@ type RenderedImage = {
   settings: Settings;
   sourceWidth: number;
   sourceHeight: number;
+  trimmed: boolean;
+  target: { requestedBytes: number; met: boolean } | null;
 };
+
+type TrimState = {
+  itemId: string;
+  rotate: number;
+  flipH: boolean;
+  flipV: boolean;
+  rect: ImageBounds;
+};
+
+type PaletteState = {
+  itemId: string;
+  result: Extract<PaletteResult, { ok: true }>;
+  workingWidth: number;
+  workingHeight: number;
+};
+
+type PickedColour = { x: number; y: number; hex: string; rgb: Rgb; alpha: number };
 
 type StrippedImage = {
   blob: Blob;
@@ -106,8 +146,10 @@ const DEFAULT_SETTINGS: Settings = {
   rotate: 0,
   flipH: false,
   flipV: false,
+  resample: "smooth",
   format: "png",
   quality: 0.9,
+  targetKiB: null,
   matte: "#ffffff",
 };
 
@@ -149,8 +191,14 @@ function safeStem(name: string): string {
   );
 }
 
-function settingsKey(settings: Settings): string {
-  return JSON.stringify(settings);
+function settingsKey(settings: Settings, cropRect: ImageBounds | null = null): string {
+  return JSON.stringify({ settings, cropRect });
+}
+
+function targetBytesFor(settings: Settings): number | null {
+  if (settings.format === "png" || settings.targetKiB === null) return null;
+  if (!Number.isFinite(settings.targetKiB) || settings.targetKiB <= 0) return null;
+  return Math.round(settings.targetKiB * 1024);
 }
 
 function resizeFor(settings: Settings): ResizePlan {
@@ -159,7 +207,11 @@ function resizeFor(settings: Settings): ResizePlan {
   return { mode: "long-edge", longEdge: settings.longEdge };
 }
 
-function makePlan(source: ImageMetadataSummary, settings: Settings): TransformPlan {
+function makePlan(
+  source: ImageMetadataSummary,
+  settings: Settings,
+  cropRect: ImageBounds | null = null,
+): TransformPlan {
   return planImageTransform({
     sourceWidth: source.orientedWidth,
     sourceHeight: source.orientedHeight,
@@ -167,6 +219,7 @@ function makePlan(source: ImageMetadataSummary, settings: Settings): TransformPl
     flipH: settings.flipH,
     flipV: settings.flipV,
     cropAspect: CROP_ASPECTS[settings.cropAspect],
+    cropRect,
     resize: resizeFor(settings),
   });
 }
@@ -283,8 +336,16 @@ function drawUserTransform(
   return canvas;
 }
 
-async function renderImage(item: WorkItem, settings: Settings, signal: AbortSignal): Promise<RenderedImage> {
+async function renderImage(
+  item: WorkItem,
+  settings: Settings,
+  signal: AbortSignal,
+  cropRect: ImageBounds | null = null,
+): Promise<RenderedImage> {
   if (signal.aborted) throw abortError();
+  const requestedTarget = targetBytesFor(settings);
+  const targetProblem = targetSizeProblem(settings.format, requestedTarget);
+  if (targetProblem) throw new Error(targetProblem);
   let bitmap: ImageBitmap | null = null;
   let oriented: HTMLCanvasElement | null = null;
   let transformed: HTMLCanvasElement | null = null;
@@ -329,6 +390,7 @@ async function renderImage(item: WorkItem, settings: Settings, signal: AbortSign
         orientation,
       },
       settings,
+      cropRect,
     );
     if (!plan.ok) throw new Error(plan.error);
     let stage = oriented;
@@ -341,6 +403,7 @@ async function renderImage(item: WorkItem, settings: Settings, signal: AbortSign
         sourceWidth: stage.width,
         sourceHeight: stage.height,
         cropAspect: CROP_ASPECTS[settings.cropAspect],
+        cropRect,
         resize: resizeFor(settings),
       });
       if (!actual.ok) throw new Error(actual.error);
@@ -373,8 +436,9 @@ async function renderImage(item: WorkItem, settings: Settings, signal: AbortSign
     output.height = plan.outputHeight;
     const context = output.getContext("2d");
     if (!context) throw new Error("This browser could not create a drawing surface.");
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
+    const smoothing = imageSmoothingFor(settings.resample);
+    context.imageSmoothingEnabled = smoothing.enabled;
+    context.imageSmoothingQuality = smoothing.quality;
     if (settings.format === "jpeg") {
       context.fillStyle = settings.matte;
       context.fillRect(0, 0, output.width, output.height);
@@ -392,11 +456,31 @@ async function renderImage(item: WorkItem, settings: Settings, signal: AbortSign
     );
     if (signal.aborted) throw abortError();
     const mime = mimeForExport(settings.format);
-    const blob = await canvasToBlob(
-      output,
-      mime,
-      settings.format === "png" ? undefined : settings.quality,
-    );
+    let blob: Blob;
+    let qualityUsed = settings.quality;
+    let target: RenderedImage["target"] = null;
+    if (requestedTarget !== null) {
+      const search = await searchTargetQuality({
+        targetBytes: requestedTarget,
+        encode: async (quality) => {
+          if (signal.aborted) throw abortError();
+          const encoded = await canvasToBlob(output as HTMLCanvasElement, mime, quality);
+          if (signal.aborted) throw abortError();
+          return encoded;
+        },
+      });
+      if (signal.aborted) throw abortError();
+      if (!search.ok) throw new Error(search.error);
+      blob = search.blob;
+      qualityUsed = search.quality;
+      target = { requestedBytes: requestedTarget, met: search.met };
+    } else {
+      blob = await canvasToBlob(
+        output,
+        mime,
+        settings.format === "png" ? undefined : settings.quality,
+      );
+    }
     if (signal.aborted) throw abortError();
     if (blob.type !== mime)
       throw new Error(
@@ -405,11 +489,18 @@ async function renderImage(item: WorkItem, settings: Settings, signal: AbortSign
     if (!blob.size) throw new Error("The result was empty.");
     if (blob.size > MAX_IMAGE_OUTPUT_BYTES)
       throw new Error(`The result is larger than ${MAX_IMAGE_OUTPUT_BYTES / 1024 / 1024} MiB. Try a smaller size or less quality.`);
+    if (
+      target &&
+      ((target.met && blob.size > target.requestedBytes) ||
+        (!target.met && blob.size <= target.requestedBytes))
+    )
+      throw new Error("The target result did not verify against its measured bytes.");
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const sniffed = sniffLocalImage(bytes);
     if (!sniffed.supported || sniffed.mime !== mime)
       throw new Error("The browser wrote a file that did not verify as the chosen image format.");
     const digest = await sha256Hex(bytes);
+    const actualSettings = { ...settings, quality: qualityUsed };
     return {
       blob,
       url: "",
@@ -419,10 +510,12 @@ async function renderImage(item: WorkItem, settings: Settings, signal: AbortSign
       mime,
       sha256: digest,
       plan,
-      settingsKey: settingsKey(settings),
-      settings: { ...settings },
+      settingsKey: settingsKey(settings, cropRect),
+      settings: actualSettings,
       sourceWidth: oriented.width,
       sourceHeight: oriented.height,
+      trimmed: Boolean(cropRect),
+      target,
     };
   } finally {
     bitmap?.close();
@@ -503,6 +596,15 @@ function Images() {
   const [stripBusy, setStripBusy] = useState(false);
   const [removeIcc, setRemoveIcc] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [trim, setTrim] = useState<TrimState | null>(null);
+  const [trimBusy, setTrimBusy] = useState(false);
+  const [trimMessage, setTrimMessage] = useState("");
+  const [palette, setPalette] = useState<PaletteState | null>(null);
+  const [paletteBusy, setPaletteBusy] = useState(false);
+  const [paletteMessage, setPaletteMessage] = useState("");
+  const [picked, setPicked] = useState<PickedColour | null>(null);
+  const [pickMessage, setPickMessage] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
   const batchController = useRef<AbortController | null>(null);
@@ -511,11 +613,29 @@ function Images() {
   const addFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
   const addingRef = useRef(false);
   const runningRef = useRef(false);
+  const eyedropperRef = useRef<HTMLImageElement | null>(null);
+  const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
-  const plan = selected ? makePlan(selected.source, settings) : null;
-  const currentSettingsKey = settingsKey(settings);
+  const activeTrim =
+    selected &&
+    trim &&
+    trim.itemId === selected.id &&
+    trim.rotate === settings.rotate &&
+    trim.flipH === settings.flipH &&
+    trim.flipV === settings.flipV
+      ? trim.rect
+      : null;
+  const plan = selected ? makePlan(selected.source, settings, activeTrim) : null;
+  const currentSettingsKey = settingsKey(settings, activeTrim);
   const freshResult = selected?.result?.settingsKey === currentSettingsKey;
+  const requestedTargetBytes =
+    settings.targetKiB === null ? null : Math.round(settings.targetKiB * 1024);
+  const targetProblem =
+    requestedTargetBytes === null
+      ? null
+      : targetSizeProblem(settings.format, requestedTargetBytes);
+  const visiblePalette = palette && selected && palette.itemId === selected.id ? palette : null;
   const doneItems = items.filter((item) => item.result);
   const importBlob = selected?.result?.blob ?? selected?.stripped?.blob ?? null;
   const importFormat: "png" | "jpeg" | "webp" | null = selected?.result
@@ -544,7 +664,9 @@ function Images() {
             flipH: selected.result.settings.flipH,
             flipV: selected.result.settings.flipV,
             cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
+            trimmed: selected.result.trimmed,
             resize: resizeFor(selected.result.settings),
+            resample: selected.result.settings.resample,
             format: selected.result.settings.format,
             quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
             metadata: "canvas re-encode",
@@ -582,8 +704,17 @@ function Images() {
       batchController.current?.abort();
       for (const url of urls.current) URL.revokeObjectURL(url);
       urls.current.clear();
+      if (pickCanvasRef.current) {
+        pickCanvasRef.current.width = 0;
+        pickCanvasRef.current.height = 0;
+      }
     };
   }, []);
+
+  useEffect(() => {
+    setPicked(null);
+    setPickMessage("");
+  }, [selected?.result?.url]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -713,6 +844,13 @@ function Images() {
     if (selectedId === item.id) {
       const next = items.find((candidate) => candidate.id !== item.id);
       setSelectedId(next?.id ?? "");
+      setTrim(null);
+      setTrimMessage("");
+      setPalette(null);
+      setPaletteMessage("");
+      setPicked(null);
+      setPickMessage("");
+      setCopyMessage("");
     }
   }
 
@@ -727,6 +865,13 @@ function Images() {
     setItems([]);
     setSelectedId("");
     setSettings(DEFAULT_SETTINGS);
+    setTrim(null);
+    setTrimMessage("");
+    setPalette(null);
+    setPaletteMessage("");
+    setPicked(null);
+    setPickMessage("");
+    setCopyMessage("");
     setMessage("Cleared. Nothing remains in this tab.");
     setRejections([]);
     setBatch({ total: 0, completed: 0, current: "" });
@@ -739,6 +884,7 @@ function Images() {
     if (!list.length || runningRef.current) return;
     runningRef.current = true;
     const snapshot = { ...settings };
+    const trimSnapshot = trim;
     const controller = new AbortController();
     batchController.current = controller;
     setRunning(true);
@@ -760,7 +906,15 @@ function Images() {
         ),
       );
       try {
-        const rendered = await renderImage(item, snapshot, controller.signal);
+        const cropRect =
+          trimSnapshot &&
+          trimSnapshot.itemId === item.id &&
+          trimSnapshot.rotate === snapshot.rotate &&
+          trimSnapshot.flipH === snapshot.flipH &&
+          trimSnapshot.flipV === snapshot.flipV
+            ? trimSnapshot.rect
+            : null;
+        const rendered = await renderImage(item, snapshot, controller.signal, cropRect);
         if (controller.signal.aborted) {
           cancelled = true;
           setItems((previous) =>
@@ -901,7 +1055,217 @@ function Images() {
   }
 
   function setNextFormat(format: ExportFormat): void {
-    setSettings((previous) => ({ ...previous, format }));
+    setSettings((previous) => ({
+      ...previous,
+      format,
+      targetKiB: format === "png" ? null : previous.targetKiB,
+    }));
+  }
+
+  function selectItem(id: string): void {
+    setSelectedId(id);
+    setTrim(null);
+    setTrimMessage("");
+    setPalette(null);
+    setPaletteMessage("");
+    setPicked(null);
+    setPickMessage("");
+    setCopyMessage("");
+  }
+
+  function changeRotation(next: Settings["rotate"]): void {
+    setTrim(null);
+    setTrimMessage("");
+    setSettings((previous) => ({ ...previous, rotate: next }));
+  }
+
+  function changeFlip(axis: "flipH" | "flipV", value: boolean): void {
+    setTrim(null);
+    setTrimMessage("");
+    setSettings((previous) =>
+      axis === "flipH"
+        ? { ...previous, flipH: value }
+        : { ...previous, flipV: value },
+    );
+  }
+
+  function clearTrim(): void {
+    setTrim(null);
+    setTrimMessage("Trim cleared. The full image is used again.");
+  }
+
+  async function copyValue(label: string, value: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyMessage(`Copied ${label}: ${value}`);
+    } catch {
+      setCopyMessage(`Could not copy automatically. Select the ${label} value and copy it.`);
+    }
+  }
+
+  async function extractSelectedPalette(): Promise<void> {
+    if (!selected || paletteBusy || running) return;
+    const item = selected;
+    setPaletteBusy(true);
+    setPaletteMessage("Reading pixels on this device…");
+    let bitmap: ImageBitmap | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    try {
+      bitmap = await createImageBitmap(item.file);
+      const scale = Math.min(
+        1,
+        PALETTE_WORKING_EDGE / Math.max(bitmap.width, bitmap.height),
+      );
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("This browser could not read the image pixels.");
+      context.drawImage(bitmap, 0, 0, width, height);
+      const data = context.getImageData(0, 0, width, height).data;
+      const result = extractPalette(data, {
+        width,
+        height,
+        maxColors: MAX_PALETTE_COLOURS,
+      });
+      if (!result.ok) throw new Error(result.error);
+      setPalette({ itemId: item.id, result, workingWidth: width, workingHeight: height });
+      setPaletteMessage(
+        result.colors.length
+          ? `${result.colors.length} colour${result.colors.length === 1 ? "" : "s"} from a ${width} × ${height} working copy. Fully transparent pixels are ignored.`
+          : "Every sampled pixel is fully transparent. There is no colour to report.",
+      );
+    } catch (error) {
+      setPalette(null);
+      setPaletteMessage(
+        error instanceof Error ? error.message : "Could not read a colour palette.",
+      );
+    } finally {
+      bitmap?.close();
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      setPaletteBusy(false);
+    }
+  }
+
+  async function checkTrim(): Promise<void> {
+    if (!selected || trimBusy || running) return;
+    const item = selected;
+    const snapshot = { ...settings };
+    setTrimBusy(true);
+    setTrimMessage("Reading every alpha value on this device…");
+    let bitmap: ImageBitmap | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    try {
+      bitmap = await createImageBitmap(item.file);
+      if (
+        bitmap.width !== item.source.orientedWidth ||
+        bitmap.height !== item.source.orientedHeight
+      )
+        throw new Error("The decoded image size did not match its header, so trim was not applied.");
+      canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("This browser could not read the image pixels.");
+      context.drawImage(bitmap, 0, 0);
+      const data = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      const found = alphaBounds(data, { width: bitmap.width, height: bitmap.height });
+      if (!found.ok) throw new Error(found.error);
+      if (found.empty) {
+        setTrim(null);
+        setTrimMessage("Every pixel is fully transparent. There is no visible area to trim to.");
+        return;
+      }
+      if (found.isFull) {
+        setTrim(null);
+        setTrimMessage(
+          item.source.alpha
+            ? "No fully transparent padding touches the edges. Nothing to trim."
+            : "This image has no alpha channel, so there is no transparent padding to trim.",
+        );
+        return;
+      }
+      if (!found.bounds)
+        throw new Error("The alpha bounds could not be read from the decoded pixels.");
+      const mapped = mapBoundsThroughTransform(found.bounds, {
+        width: bitmap.width,
+        height: bitmap.height,
+        rotate: snapshot.rotate,
+        flipH: snapshot.flipH,
+        flipV: snapshot.flipV,
+      });
+      if (!mapped.ok) throw new Error(mapped.error);
+      setTrim({
+        itemId: item.id,
+        rotate: snapshot.rotate,
+        flipH: snapshot.flipH,
+        flipV: snapshot.flipV,
+        rect: mapped.bounds,
+      });
+      setTrimMessage(
+        `Trim to ${mapped.bounds.width} × ${mapped.bounds.height} px. This image only, until the rotation, flips or image change.`,
+      );
+    } catch (error) {
+      setTrim(null);
+      setTrimMessage(
+        error instanceof Error ? error.message : "Could not read the alpha channel.",
+      );
+    } finally {
+      bitmap?.close();
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      setTrimBusy(false);
+    }
+  }
+
+  function samplePixel(x: number, y: number): void {
+    const image = eyedropperRef.current;
+    if (!image || !image.complete || !image.naturalWidth || !image.naturalHeight) {
+      setPickMessage("The result preview is not ready yet. Make the image or wait for it to load.");
+      return;
+    }
+    if (x < 0 || y < 0 || x >= image.naturalWidth || y >= image.naturalHeight) return;
+    try {
+      let canvas = pickCanvasRef.current;
+      if (!canvas) {
+        canvas = document.createElement("canvas");
+        canvas.width = 1;
+        canvas.height = 1;
+        pickCanvasRef.current = canvas;
+      }
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("no drawing surface");
+      context.clearRect(0, 0, 1, 1);
+      context.drawImage(image, x, y, 1, 1, 0, 0, 1, 1);
+      const data = context.getImageData(0, 0, 1, 1).data;
+      const rgb = { r: data[0], g: data[1], b: data[2] };
+      const hex = rgbToHex(rgb);
+      setPicked({ x, y, hex, rgb, alpha: data[3] });
+      setPickMessage(`Pixel ${x}, ${y}: ${hex}.`);
+    } catch {
+      setPickMessage("Could not read that pixel. The preview may still be loading.");
+    }
+  }
+
+  function pickAtClient(clientX: number, clientY: number): void {
+    const image = eyedropperRef.current;
+    if (!image) return;
+    const rect = image.getBoundingClientRect();
+    const point = pickImagePixel({
+      clientX,
+      clientY,
+      rect,
+      imageWidth: image.naturalWidth,
+      imageHeight: image.naturalHeight,
+    });
+    if (point) samplePixel(point.x, point.y);
   }
 
   return (
@@ -1028,33 +1392,77 @@ function Images() {
                 {Object.entries(CROP_ASPECT_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
               </select>
             </label>
+            <label>Resampling
+              <select value={settings.resample} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, resample: event.target.value as ResampleMode }))}>
+                <option value="smooth">Smooth · photos</option>
+                <option value="nearest">Nearest-neighbour · pixel art</option>
+              </select>
+            </label>
             <div className="image-control-actions">
               <button type="button" className="secondary" disabled={running || !selected} onClick={() => setSettings((previous) => ({ ...previous, resizeMode: "exact", exactWidth: selected.source.orientedWidth, exactHeight: selected.source.orientedHeight }))}>Use displayed size</button>
               <button type="button" className="secondary" disabled={running} onClick={() => setSettings((previous) => ({ ...previous, resizeMode: "long-edge", longEdge: defaultLongEdge(selected.source.orientedWidth, selected.source.orientedHeight) }))}>Use 2048 max</button>
+              <button type="button" className="secondary" disabled={running || trimBusy || !selected} onClick={() => void checkTrim()}>
+                {trimBusy ? "Reading alpha…" : "Trim transparent edges"}
+              </button>
+              {activeTrim && (
+                <button type="button" className="quiet" disabled={running} onClick={clearTrim}>
+                  Use full image
+                </button>
+              )}
             </div>
+            <p className="trim-note" role="status" aria-live="polite">
+              {trimMessage || (selected.source.alpha ? "Trim removes fully transparent padding; near-transparent edge pixels are kept." : "This image declares no alpha channel, so transparent padding is unlikely. Trim will check the decoded pixels before changing the plan.")}
+            </p>
           </fieldset>
 
           <fieldset className="image-controls">
             <legend>Rotate and flip</legend>
             <div className="image-control-actions">
-              <button type="button" className="secondary" disabled={running} onClick={() => setSettings((previous) => ({ ...previous, rotate: ((previous.rotate + 3) % 4) as Settings["rotate"] }))}>Rotate left</button>
-              <button type="button" className="secondary" disabled={running} onClick={() => setSettings((previous) => ({ ...previous, rotate: ((previous.rotate + 1) % 4) as Settings["rotate"] }))}>Rotate right</button>
-              <button type="button" className="secondary" disabled={running} onClick={() => setSettings((previous) => ({ ...previous, rotate: 0 }))}>Reset rotation</button>
+              <button type="button" className="secondary" disabled={running} onClick={() => changeRotation(((settings.rotate + 3) % 4) as Settings["rotate"])}>Rotate left</button>
+              <button type="button" className="secondary" disabled={running} onClick={() => changeRotation(((settings.rotate + 1) % 4) as Settings["rotate"])}>Rotate right</button>
+              <button type="button" className="secondary" disabled={running} onClick={() => changeRotation(0)}>Reset rotation</button>
             </div>
-            <label className="image-check"><input type="checkbox" checked={settings.flipH} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, flipH: event.target.checked }))} /> Flip horizontal</label>
-            <label className="image-check"><input type="checkbox" checked={settings.flipV} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, flipV: event.target.checked }))} /> Flip vertical</label>
+            <label className="image-check"><input type="checkbox" checked={settings.flipH} disabled={running} onChange={(event) => changeFlip("flipH", event.target.checked)} /> Flip horizontal</label>
+            <label className="image-check"><input type="checkbox" checked={settings.flipV} disabled={running} onChange={(event) => changeFlip("flipV", event.target.checked)} /> Flip vertical</label>
           </fieldset>
 
           <fieldset className="image-controls">
-            <legend>Export</legend>
+            <legend>Output</legend>
             <label>Format
               <select value={settings.format} disabled={running} onChange={(event) => setNextFormat(event.target.value as ExportFormat)}>
                 {FORMATS.map((format) => <option value={format.value} key={format.value}>{format.label}</option>)}
               </select>
             </label>
             <label>Quality {settings.format === "png" ? "(PNG is lossless)" : `${Math.round(settings.quality * 100)}%`}
-              <input type="range" min="0.5" max="1" step="0.01" value={settings.quality} disabled={running || settings.format === "png"} onChange={(event) => setSettings((previous) => ({ ...previous, quality: Number(event.target.value) }))} />
+              <input type="range" min="0.5" max="1" step="0.01" value={settings.quality} disabled={running || settings.format === "png" || settings.targetKiB !== null} onChange={(event) => setSettings((previous) => ({ ...previous, quality: Number(event.target.value) }))} />
             </label>
+            <label>Target size (KiB, optional)
+              <input
+                type="number"
+                min="1"
+                max={MAX_IMAGE_OUTPUT_BYTES / 1024}
+                step="1"
+                placeholder="No target"
+                value={settings.targetKiB ?? ""}
+                disabled={running || settings.format === "png"}
+                aria-describedby="image-target-note"
+                onChange={(event) =>
+                  setSettings((previous) => ({
+                    ...previous,
+                    targetKiB: event.target.value === "" ? null : Number(event.target.value),
+                  }))
+                }
+              />
+            </label>
+            {settings.format === "png" ? (
+              <p className="trim-note" id="image-target-note">
+                PNG is lossless, so a byte target is not achievable here. Lower the output width and height, or choose JPEG or WebP.
+              </p>
+            ) : (
+              <p className="trim-note" id="image-target-note">
+                The quality slider applies when no target is set. A target instead runs a bounded, deterministic search and reports the real encoded bytes; if the smallest result still exceeds it, the result says so instead of claiming success.
+              </p>
+            )}
             {settings.format === "jpeg" && (
               <label>Matte colour for transparency
                 <input type="color" value={settings.matte} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, matte: event.target.value }))} />
@@ -1064,11 +1472,12 @@ function Images() {
 
           <p className={`image-plan${plan && !plan.ok ? " is-error" : ""}`}>
             {plan?.ok
-              ? `Planned result: ${plan.outputWidth} × ${plan.outputHeight} px${plan.aspectDistorted ? " · exact dimensions change the aspect" : ""}${plan.upscaled ? " · enlarged by resampling; no detail is invented" : ""}.`
+              ? `Planned result: ${plan.outputWidth} × ${plan.outputHeight} px${activeTrim ? ` · trimmed from ${plan.rotatedWidth} × ${plan.rotatedHeight} px` : ""}${plan.aspectDistorted ? " · exact dimensions change the aspect" : ""}${plan.upscaled ? " · enlarged by resampling; no detail is invented" : ""}.`
               : plan?.error ?? "Choose a usable size."}
           </p>
+          {targetProblem && <p className="image-plan is-error" role="alert">{targetProblem}</p>}
           <div className="image-control-actions">
-            <button type="button" disabled={running || adding || !plan?.ok} onClick={() => void runItems([selected])}>
+            <button type="button" disabled={running || adding || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems([selected])}>
               {selected.status === "working" ? "Processing…" : "Make this image"}
             </button>
             {selected.status === "error" && (
@@ -1095,6 +1504,30 @@ function Images() {
               <p>
                 <strong>Your result</strong> · SHA-256 <code title={selected.result.sha256}>{shortHash(selected.result.sha256)}</code> · original unchanged.
               </p>
+              <p className="trim-note">
+                {describeTransform({
+                  rotate: selected.result.settings.rotate,
+                  flipH: selected.result.settings.flipH,
+                  flipV: selected.result.settings.flipV,
+                  cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
+                  trimmed: selected.result.trimmed,
+                  resize: resizeFor(selected.result.settings),
+                  resample: selected.result.settings.resample,
+                  format: selected.result.settings.format,
+                  quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
+                  metadata: "canvas re-encode",
+                })}
+              </p>
+              {selected.result.target && (
+                <p className={selected.result.target.met ? "notice calm" : "notice warn"} role="status">
+                  Target {formatBytes(selected.result.target.requestedBytes)}:{" "}
+                  {selected.result.target.met ? "met" : "not met"} — actual result{" "}
+                  {formatBytes(selected.result.bytes)}
+                  {selected.result.target.met
+                    ? "."
+                    : `, ${formatBytes(selected.result.bytes - selected.result.target.requestedBytes)} over. Lower the output size or choose a different format.`}
+                </p>
+              )}
               {!freshResult && <p className="notice calm">The settings changed since this result. Make the image again to match the current controls; the existing download is still valid for the earlier settings.</p>}
               <a
                 className="button"
@@ -1106,6 +1539,176 @@ function Images() {
             </div>
           )}
           {selected.error && <p className="notice warn" role="alert">{selected.error}</p>}
+        </section>
+      )}
+
+      {selected && (
+        <section className="trim-work image-colour" aria-labelledby="image-colour-heading">
+          <div className="image-section-head">
+            <h2 id="image-colour-heading">Colour</h2>
+            <span>palette and exact pixels</span>
+          </div>
+          <p className="trim-note" role="status" aria-live="polite">{copyMessage}</p>
+
+          <div className="image-colour-block">
+            <h3>Palette</h3>
+            <p className="trim-note">
+              Up to {MAX_PALETTE_COLOURS} dominant colours from the source image.
+              Fully transparent pixels are ignored, near-duplicates are merged, and
+              coverage is the share of sampled pixels with any alpha.
+            </p>
+            <div className="image-control-actions">
+              <button
+                type="button"
+                className="secondary"
+                disabled={running || paletteBusy || !selected}
+                onClick={() => void extractSelectedPalette()}
+              >
+                {paletteBusy ? "Reading colours…" : "Extract palette"}
+              </button>
+            </div>
+            <p className="trim-note" role="status" aria-live="polite">
+              {paletteMessage ||
+                "No palette yet. Extraction runs on this device and does not change the original File."}
+            </p>
+            {visiblePalette && visiblePalette.result.colors.length > 0 && (
+              <>
+                <p className="trim-note">
+                  {visiblePalette.result.colors.length} colour
+                  {visiblePalette.result.colors.length === 1 ? "" : "s"} ·{" "}
+                  {visiblePalette.result.coveredPercent}% of visible sampled pixels ·{" "}
+                  {visiblePalette.workingWidth} × {visiblePalette.workingHeight} working copy
+                  {visiblePalette.result.complete ? "" : " (sampled)"}.
+                </p>
+                <ul className="image-palette">
+                  {visiblePalette.result.colors.map((colour) => (
+                    <li key={`${colour.hex}:${colour.rgb.g}:${colour.rgb.b}`} className="image-palette-row">
+                      <button
+                        type="button"
+                        className="image-swatch"
+                        style={{ backgroundColor: colour.hex }}
+                        aria-label={`Copy HEX ${colour.hex}, ${colour.coverage}% of visible sampled pixels`}
+                        title={`Copy ${colour.hex}`}
+                        onClick={() => void copyValue("HEX", colour.hex)}
+                      />
+                      <div className="image-palette-values">
+                        <span><strong>{colour.hex}</strong> · {colour.coverage}%{colour.alpha < 255 ? ` · alpha ${Math.round(colour.alpha / 2.55)}%` : ""}</span>
+                        <span>{formatRgb(colour.rgb)}</span>
+                        <span>{formatHsl(colour.hsl)}</span>
+                        <div className="image-copy-actions">
+                          <button type="button" className="quiet image-copy" aria-label={`Copy HEX ${colour.hex}`} onClick={() => void copyValue("HEX", colour.hex)}>Copy HEX</button>
+                          <button type="button" className="quiet image-copy" aria-label={`Copy RGB ${formatRgb(colour.rgb)}`} onClick={() => void copyValue("RGB", formatRgb(colour.rgb))}>Copy RGB</button>
+                          <button type="button" className="quiet image-copy" aria-label={`Copy HSL ${formatHsl(colour.hsl)}`} onClick={() => void copyValue("HSL", formatHsl(colour.hsl))}>Copy HSL</button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+
+          <div className="image-colour-block">
+            <h3>Eyedropper</h3>
+            {selected.result ? (
+              <>
+                <p className="trim-note" id="image-eyedropper-help">
+                  Click the result preview or move the pointer over it to read the exact
+                  intrinsic pixel. With the preview focused, arrow keys move one pixel,
+                  Shift and an arrow moves ten, and Enter samples again. Copying uses the
+                  buttons; it does not require another canvas click.
+                </p>
+                <figure className="image-eyedropper">
+                  <div className="image-eyedropper-stage">
+                    <img
+                      ref={eyedropperRef}
+                      src={selected.result.url}
+                      alt={`Colour sample preview for ${selected.file.name}`}
+                      tabIndex={0}
+                      width={selected.result.width}
+                      height={selected.result.height}
+                      aria-describedby="image-eyedropper-help"
+                      onPointerMove={(event) => {
+                        if (event.pointerType === "mouse")
+                          pickAtClient(event.clientX, event.clientY);
+                      }}
+                      onClick={(event) => pickAtClient(event.clientX, event.clientY)}
+                      onKeyDown={(event) => {
+                        const image = event.currentTarget;
+                        if (!image.naturalWidth || !image.naturalHeight) {
+                          setPickMessage("The result preview is not ready yet.");
+                          return;
+                        }
+                        const start = picked ?? {
+                          x: Math.floor(image.naturalWidth / 2),
+                          y: Math.floor(image.naturalHeight / 2),
+                        };
+                        const step = event.shiftKey ? 10 : 1;
+                        let x = start.x;
+                        let y = start.y;
+                        if (event.key === "ArrowLeft") x = Math.max(0, x - step);
+                        else if (event.key === "ArrowRight")
+                          x = Math.min(image.naturalWidth - 1, x + step);
+                        else if (event.key === "ArrowUp") y = Math.max(0, y - step);
+                        else if (event.key === "ArrowDown")
+                          y = Math.min(image.naturalHeight - 1, y + step);
+                        else if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          samplePixel(start.x, start.y);
+                          return;
+                        } else return;
+                        event.preventDefault();
+                        samplePixel(x, y);
+                      }}
+                    />
+                    {picked && (
+                      <span
+                        className="image-pick-marker"
+                        aria-hidden="true"
+                        style={{
+                          left: `${((picked.x + 0.5) / selected.result!.width) * 100}%`,
+                          top: `${((picked.y + 0.5) / selected.result!.height) * 100}%`,
+                        }}
+                      />
+                    )}
+                  </div>
+                  <figcaption>
+                    Result preview · {selected.result.width} × {selected.result.height} px.
+                    The sample reads the encoded result, not a scaled screen copy.
+                  </figcaption>
+                </figure>
+                {picked ? (
+                  <div className="image-pick-readout">
+                    <span
+                      className="image-swatch"
+                      style={{ backgroundColor: picked.hex }}
+                      aria-hidden="true"
+                    />
+                    <div className="image-palette-values">
+                      <span><strong>{picked.hex}</strong> · pixel {picked.x}, {picked.y}{picked.alpha < 255 ? ` · alpha ${Math.round(picked.alpha / 2.55)}%` : ""}</span>
+                      <span>{formatRgb(picked.rgb)}</span>
+                      <span>{formatHsl(rgbToHsl(picked.rgb))}</span>
+                      <div className="image-copy-actions">
+                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled HEX ${picked.hex}`} onClick={() => void copyValue("HEX", picked.hex)}>Copy HEX</button>
+                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled RGB ${formatRgb(picked.rgb)}`} onClick={() => void copyValue("RGB", formatRgb(picked.rgb))}>Copy RGB</button>
+                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled HSL ${formatHsl(rgbToHsl(picked.rgb))}`} onClick={() => void copyValue("HSL", formatHsl(rgbToHsl(picked.rgb)))}>Copy HSL</button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="trim-note">No pixel sampled yet. Click the preview or focus it and use the arrow keys.</p>
+                )}
+                <p className="trim-note" role="status" aria-live="polite">
+                  {pickMessage || "The sample coordinate maps through the displayed size to the intrinsic pixel."}
+                </p>
+              </>
+            ) : (
+              <p className="trim-note">
+                Make this image to enable the eyedropper. It samples the actual encoded
+                result and maps the displayed CSS coordinates to intrinsic pixels.
+              </p>
+            )}
+          </div>
         </section>
       )}
 
@@ -1202,7 +1805,7 @@ function Images() {
           <span>{items.length} image{items.length === 1 ? "" : "s"} · sequential</span>
         </div>
         <div className="image-control-actions">
-          <button type="button" disabled={running || adding || !items.length || !plan?.ok} onClick={() => void runItems(items)}>
+          <button type="button" disabled={running || adding || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items)}>
             Process all {items.length || ""} with these settings
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
@@ -1227,7 +1830,7 @@ function Images() {
           <ul className="image-list">
             {items.map((item) => (
               <li className={item.id === selectedId ? "is-selected" : ""} key={item.id}>
-                <button type="button" className="image-list-select" onClick={() => setSelectedId(item.id)} aria-pressed={item.id === selectedId}>
+                <button type="button" className="image-list-select" onClick={() => selectItem(item.id)} aria-pressed={item.id === selectedId}>
                   <span className="image-list-name">{item.file.name}</span>
                   <span className="image-list-meta">
                     {item.source.orientedWidth} × {item.source.orientedHeight} · {formatBytes(item.file.size)} · {item.status}
