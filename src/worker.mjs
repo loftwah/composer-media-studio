@@ -77,7 +77,8 @@ import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as comp
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
-import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative } from "./lib/publication-derivatives.mjs";
+import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative } from "./lib/publication-derivatives.mjs";
+import { deleteAssetPreviews, readAssetPreview, storeAssetPreview } from "./lib/asset-previews.mjs";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.mjs";
 import { readCapabilityManifest, readCapabilityState, refreshCapabilities } from "./lib/capabilities.mjs";
@@ -147,6 +148,8 @@ function assertSameOrigin(request, env) {
 
 async function eraseAsset(env, asset) {
   try {
+    // A private library preview must not outlive the asset it stands in for.
+    await deleteAssetPreviews(env, [asset.id]);
     const generation = asset.generation_id ? await loadGeneration(env, asset.generation_id) : null;
     if (!generation || !isDarkroomGeneration(generation) || asset.r2_key !== darkroomOriginalKey(generation))
       await env.MEDIA.delete(asset.r2_key);
@@ -636,6 +639,71 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (path.startsWith("/api/studio/")) {
     if (session.mode !== "owner")
       throw new HttpError(403, "Portable project restore and inventory are installation-owner actions. Use the standalone owner session.", "owner_required");
+    const posterPreviewMatch = path.match(/^\/api\/studio\/publications\/([a-z0-9_]+)\/poster-preview$/);
+    if (posterPreviewMatch && method === "POST") {
+      // Rebuild the page-size poster from the publication's own chosen still.
+      // No upload: the bytes always come from the stored poster asset.
+      const publication = await env.DB.prepare(
+        `SELECT p.id,p.project_id,p.slug,p.poster_asset_id,p.revoked_at,a.deleted_at AS asset_deleted
+         FROM publications p JOIN assets a ON a.id=p.asset_id
+         WHERE p.id=?1`,
+      )
+        .bind(posterPreviewMatch[1])
+        .first();
+      if (!publication || publication.revoked_at)
+        throw new HttpError(404, "Publication not found", "not_found");
+      await assertProjectAccess(env, session, publication.project_id);
+      if (publication.asset_deleted)
+        throw new HttpError(404, "The published media is no longer available", "not_found");
+      if (!publication.poster_asset_id)
+        throw new HttpError(404, "This page has no chosen poster", "not_found");
+      const poster = await env.DB.prepare(
+        "SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND kind='image' AND deleted_at IS NULL",
+      )
+        .bind(publication.poster_asset_id, publication.project_id)
+        .first();
+      if (!poster) throw new HttpError(404, "This page has no chosen poster", "not_found");
+      return json({ posterPreview: await storePosterDerivative(env, publication, poster) });
+    }
+    const assetPreviewMatch = path.match(/^\/api\/studio\/assets\/([a-z0-9_]+)\/preview$/);
+    if (assetPreviewMatch) {
+      if (method !== "GET" && method !== "HEAD")
+        throw new HttpError(405, "Method not allowed", "method_not_allowed");
+      // Private library preview: never public, never referenced by a page.
+      const asset = await env.DB.prepare(
+        "SELECT id,project_id,kind,sha256,deleted_at FROM assets WHERE id=?1",
+      )
+        .bind(assetPreviewMatch[1])
+        .first();
+      if (!asset) throw new HttpError(404, "No preview for this asset", "not_found");
+      await assertProjectAccess(env, session, asset.project_id);
+      if (asset.deleted_at || asset.kind !== "image")
+        throw new HttpError(404, "No preview for this asset", "not_found");
+      const preview = await readAssetPreview(env, asset.id);
+      if (!preview || preview.source_sha256 !== asset.sha256)
+        throw new HttpError(404, "No preview for this asset", "not_found");
+      const previewEtag = `"${preview.sha256.slice(0, 32)}"`;
+      return new Response(method === "HEAD" ? null : preview.object.body, {
+        headers: {
+          "content-type": preview.mime,
+          "content-length": String(preview.bytes),
+          etag: previewEtag,
+          "cache-control": "private, max-age=0, no-store",
+          "x-content-type-options": "nosniff",
+          "content-security-policy": "default-src 'none'; sandbox",
+          "referrer-policy": "no-referrer",
+        },
+      });
+    }
+    if (path === "/api/studio/previews/backfill" && method === "POST") {
+      const input = await body(request, 4096);
+      if (input.kind !== "posters" && input.kind !== "assets")
+        throw new HttpError(400, "Send kind as posters or assets", "invalid");
+      const requested = input.limit === undefined ? 10 : input.limit;
+      if (!Number.isInteger(requested) || requested < 1 || requested > 20)
+        throw new HttpError(400, "Send a limit from 1 to 20", "invalid");
+      return json(await backfillPreviews(env, session, input.kind, requested));
+    }
     const limit = Number(env.STUDIO_PORTABLE_STORAGE_LIMIT_BYTES) || null;
     if (path === "/api/studio/imports" && method === "GET") {
       const projectId = url.searchParams.get("projectId");
@@ -698,6 +766,10 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       const assets = await env.DB.prepare("SELECT * FROM assets WHERE project_id=?1 AND deleted_at IS NULL ORDER BY created_at DESC")
         .bind(project.id)
         .all();
+      const previewRows = await env.DB.prepare("SELECT asset_id,source_sha256 FROM asset_previews WHERE project_id=?1")
+        .bind(project.id)
+        .all();
+      const previewSource = new Map(previewRows.results.map((row) => [row.asset_id, row.source_sha256]));
       const generations = await env.DB.prepare("SELECT * FROM generations WHERE project_id=?1 ORDER BY created_at DESC LIMIT 40")
         .bind(project.id)
         .all();
@@ -755,7 +827,11 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return json({
         project: await projectSummary(env, project),
         assets: assetRows.map((asset) =>
-          assetView(asset, { reuseStillId: reuseById.get(asset.id)?.id ?? null, hasLocalRenderReceipt: receiptAssetIds.has(asset.id) }),
+          assetView(asset, {
+            reuseStillId: reuseById.get(asset.id)?.id ?? null,
+            hasLocalRenderReceipt: receiptAssetIds.has(asset.id),
+            hasPreview: previewSource.get(asset.id) === asset.sha256,
+          }),
         ),
         compositions: compositions.results.map((composition) => ({
           id: composition.id,
@@ -1257,6 +1333,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       const title = text(input.title ?? asset.title, 100, "Public title");
       const description = text(input.description ?? "", 300, "Public description", { required: false });
       let posterAssetId = null;
+      let posterAsset = null;
       if (asset.kind === "video" && input.posterAssetId) {
         const poster = await env.DB.prepare(
           "SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND kind='image' AND deleted_at IS NULL",
@@ -1265,6 +1342,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           .first();
         if (poster) await checkPublicImage(env, poster);
         posterAssetId = poster?.id ?? null;
+        posterAsset = poster ?? null;
       }
       // If this exact saved version was approved in a private review, record
       // that decision on the publication. It is provenance, not permission:
@@ -1298,6 +1376,20 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
           approval?.asset_sha256 ?? null,
         )
         .run();
+      if (posterAsset) {
+        // A page's first paint should not be the full poster. This is additive:
+        // when Images is unavailable the page keeps its existing full-poster
+        // fallback, so publishing must not fail with it.
+        try {
+          await storePosterDerivative(
+            env,
+            { id: publicationId, project_id: asset.project_id, slug: publicSlug },
+            posterAsset,
+          );
+        } catch (error) {
+          console.warn("Could not build a poster preview", publicationId, error?.code ?? error?.message);
+        }
+      }
       return json({ publication: { id: publicationId, path: `/p/${publicSlug}`, title, description } }, 201);
     }
   }
@@ -1834,7 +1926,7 @@ async function handlePublic(request, env, url) {
     }
   }
 
-  const publicationMatch = path.match(/^\/p\/([A-Za-z0-9_-]+)(\/poster|\/download|\/media|\/thumb)?$/);
+  const publicationMatch = path.match(/^\/p\/([A-Za-z0-9_-]+)(\/poster-preview|\/poster|\/download|\/media|\/thumb)?$/);
   if (publicationMatch) {
     const [, publicSlug, extra] = publicationMatch;
     const publication = await env.DB.prepare(
@@ -1850,6 +1942,7 @@ async function handlePublic(request, env, url) {
     if (extra === "/download") return servePublished(request, env, publication.asset_id, true);
     if (extra === "/media") return servePublished(request, env, publication.asset_id, false);
     if (extra === "/thumb") return servePublicationThumb(request, env, publication);
+    if (extra === "/poster-preview") return servePosterPreview(request, env, publication);
     if (extra === "/poster") {
       if (!publication.poster_asset_id) throw new HttpError(404, "No poster for this page", "not_found");
       return servePublished(request, env, publication.poster_asset_id, false);
@@ -1860,12 +1953,23 @@ async function handlePublic(request, env, url) {
     let posterAsset = null;
     if (publication.poster_asset_id) {
       posterAsset = await env.DB.prepare(
-        "SELECT id,kind,mime,width,height,deleted_at FROM assets WHERE id=?1",
+        "SELECT id,kind,mime,width,height,sha256,deleted_at FROM assets WHERE id=?1",
       )
         .bind(publication.poster_asset_id)
         .first();
     }
     const usablePoster = posterAsset && !posterAsset.deleted_at && posterAsset.kind === "image" ? posterAsset : null;
+    // The page-size derivative only stands in for first paint when it was rendered
+    // from the poster the page currently names.
+    const posterPreview = usablePoster
+      ? await env.DB.prepare(
+          "SELECT width,height,source_sha256 FROM publication_derivatives WHERE publication_id=?1 AND kind='poster'",
+        )
+          .bind(publication.id)
+          .first()
+      : null;
+    const usablePosterPreview =
+      posterPreview && posterPreview.source_sha256 === usablePoster.sha256 ? posterPreview : null;
     // A published film with no chosen poster still has a stored preview from the
     // gallery pipeline. Use it for the video poster and the share image so a
     // shared link keeps its thumbnail instead of falling back to text-only.
@@ -1881,6 +1985,18 @@ async function handlePublic(request, env, url) {
         ? `/p/${publication.slug}/download`
         : usablePoster
           ? `/p/${publication.slug}/poster`
+          : preview
+            ? `/p/${publication.slug}/thumb`
+            : null;
+    // The share image above stays the full poster. Only the first paint of the
+    // film element earns a smaller still.
+    const videoPoster =
+      publication.asset_kind !== "video"
+        ? null
+        : usablePoster
+          ? usablePosterPreview
+            ? `/p/${publication.slug}/poster-preview`
+            : `/p/${publication.slug}/poster`
           : preview
             ? `/p/${publication.slug}/thumb`
             : null;
@@ -1918,6 +2034,7 @@ async function handlePublic(request, env, url) {
       media: `/p/${publication.slug}/media`,
       download: `/p/${publication.slug}/download`,
       poster,
+      videoPoster,
       posterMime: usablePoster?.mime ?? preview?.mime ?? null,
       posterWidth: usablePoster?.width ?? preview?.width ?? null,
       posterHeight: usablePoster?.height ?? preview?.height ?? null,
@@ -2000,11 +2117,23 @@ async function handlePublic(request, env, url) {
       view = assetId ? { asset: await shareAsset(assetId), query: url.searchParams.get("q") ?? "", project: url.searchParams.get("project") ?? "", after: url.searchParams.get("after") ?? "" } : await sharePage(url.searchParams);
       if (!assetId && !url.searchParams.get("q") && !url.searchParams.get("project") && !url.searchParams.get("after")) {
         const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 24);
-        const films = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,a.width,a.height,a.duration_ms
+        const films = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,a.width,a.height,a.duration_ms,
+          d.publication_id AS poster_preview_id,d.width AS poster_preview_width,d.height AS poster_preview_height,
+          t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height
           FROM publications p JOIN assets a ON a.id=p.asset_id
           LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
+          LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster' AND d.source_sha256=poster.sha256
+          LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
           WHERE p.slug=?1 AND p.revoked_at IS NULL AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
-        view.films = films.filter(Boolean);
+        view.films = films.filter(Boolean).map((film) => {
+          const { poster_preview_id, poster_preview_width, poster_preview_height, thumb_id, thumb_width, thumb_height, ...rest } = film;
+          return {
+            ...rest,
+            has_poster_preview: poster_preview_id ? 1 : 0,
+            preview_w: poster_preview_width ?? thumb_width ?? null,
+            preview_h: poster_preview_height ?? thumb_height ?? null,
+          };
+        });
       }
     } catch (error) {
       status = error instanceof HttpError ? error.status : 503;
@@ -2258,6 +2387,134 @@ async function servePublicationThumb(request, env, publication) {
       "cross-origin-resource-policy": "cross-origin",
     },
   });
+}
+
+async function servePosterPreview(request, env, publication) {
+  if (request.method !== "GET" && request.method !== "HEAD")
+    throw new HttpError(405, "Method not allowed", "method_not_allowed");
+  // The chosen poster must still be a live image and the derivative must have
+  // been rendered from exactly those bytes. There is deliberately no fallback to
+  // the full poster on this path: it exists only to make first paint small.
+  const derivative = await env.DB.prepare(
+    `SELECT d.r2_key,d.mime,d.bytes,d.sha256
+     FROM publication_derivatives d
+     JOIN publications p ON p.id=d.publication_id
+     JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id
+       AND poster.kind='image' AND poster.deleted_at IS NULL
+     WHERE d.publication_id=?1 AND d.kind='poster' AND d.source_sha256=poster.sha256`,
+  )
+    .bind(publication.id)
+    .first();
+  if (!derivative) throw new HttpError(404, "No poster preview for this page", "not_found");
+  const etag = `"${derivative.sha256.slice(0, 32)}"`;
+  if (matchesEtag(request.headers.get("if-none-match"), etag))
+    return new Response(null, {
+      status: 304,
+      headers: { etag, "cache-control": "public, max-age=60" },
+    });
+  const object = await env.MEDIA.get(derivative.r2_key);
+  if (!object) throw new HttpError(404, "No poster preview for this page", "not_found");
+  return new Response(request.method === "HEAD" ? null : object.body, {
+    headers: {
+      "content-type": derivative.mime,
+      "content-length": String(derivative.bytes),
+      etag,
+      // A withdrawal must stop resolving quickly, so never cache for long.
+      "cache-control": "public, max-age=60",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+      "cross-origin-resource-policy": "cross-origin",
+    },
+  });
+}
+
+/**
+ * Fill missing or stale posters and asset previews a bounded page at a time.
+ * Each row is independent, so one refusal never blocks the rest, and a repeated
+ * call skips rows whose source hash already matches.
+ */
+async function backfillPreviews(env, session, kind, limit) {
+  let processed = 0;
+  let failed = 0;
+  if (kind === "posters") {
+    const rows = await env.DB.prepare(
+      `SELECT p.id,p.project_id,p.slug,pr.workspace_id AS project_workspace_id,
+              poster.id AS poster_id,poster.r2_key,poster.kind,poster.mime,poster.width,poster.height,
+              poster.sha256,poster.deleted_at
+       FROM publications p
+       JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id
+         AND poster.kind='image' AND poster.deleted_at IS NULL
+       JOIN projects pr ON pr.id=p.project_id
+       LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster'
+       WHERE p.revoked_at IS NULL
+         AND (d.publication_id IS NULL OR d.source_sha256 IS NULL OR d.source_sha256<>poster.sha256)
+       ORDER BY p.created_at ASC,p.id ASC LIMIT ?1`,
+    )
+      .bind(limit)
+      .all();
+    for (const row of rows.results) {
+      if (!projectAccessible(session, { id: row.project_id, workspace_id: row.project_workspace_id })) continue;
+      try {
+        await storePosterDerivative(
+          env,
+          { id: row.id, project_id: row.project_id, slug: row.slug },
+          {
+            id: row.poster_id,
+            kind: row.kind,
+            r2_key: row.r2_key,
+            mime: row.mime,
+            width: row.width,
+            height: row.height,
+            sha256: row.sha256,
+            deleted_at: row.deleted_at,
+          },
+        );
+        processed += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn("Could not backfill a poster preview", row.id, error?.code ?? error?.message);
+      }
+    }
+  } else {
+    const rows = await env.DB.prepare(
+      `SELECT a.id,a.project_id,a.kind,a.r2_key,a.width,a.height,a.sha256,a.deleted_at,
+              pr.workspace_id AS project_workspace_id
+       FROM assets a
+       JOIN projects pr ON pr.id=a.project_id
+       LEFT JOIN asset_previews v ON v.asset_id=a.id
+       WHERE a.deleted_at IS NULL AND a.kind='image'
+         AND (v.asset_id IS NULL OR v.source_sha256<>a.sha256)
+       ORDER BY a.created_at ASC,a.id ASC LIMIT ?1`,
+    )
+      .bind(limit)
+      .all();
+    for (const row of rows.results) {
+      if (!projectAccessible(session, { id: row.project_id, workspace_id: row.project_workspace_id })) continue;
+      try {
+        await storeAssetPreview(env, row);
+        processed += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn("Could not backfill an asset preview", row.id, error?.code ?? error?.message);
+      }
+    }
+  }
+  const remaining = kind === "posters"
+    ? (await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM publications p
+         JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id
+           AND poster.kind='image' AND poster.deleted_at IS NULL
+         LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster'
+         WHERE p.revoked_at IS NULL
+           AND (d.publication_id IS NULL OR d.source_sha256 IS NULL OR d.source_sha256<>poster.sha256)`,
+      ).first()).n
+    : (await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM assets a
+         LEFT JOIN asset_previews v ON v.asset_id=a.id
+         WHERE a.deleted_at IS NULL AND a.kind='image'
+           AND (v.asset_id IS NULL OR v.source_sha256<>a.sha256)`,
+      ).first()).n;
+  return { kind, processed, remaining: Number(remaining) || 0, failed };
 }
 
 // Keep the same dispatch promise alive if the browser leaves while awaiting the
