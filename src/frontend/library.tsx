@@ -192,12 +192,12 @@ function AssetVideo({ asset, reentryUrl }: { asset: MediaAssetV1; reentryUrl: st
 
 function AssetViewer({ projectId, asset, still, launchKitUrl, reentryUrl }: ViewerProps) {
   const back = `#/p/${encodeURIComponent(projectId)}/library`;
-  if (!asset) return <p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a>.</p>;
+  if (!asset) return <div className="asset-viewer" data-viewer="true"><p className="notice">That asset is no longer in the library. <a data-viewer-back href={back}>Back to the library</a> <button type="button" className="quiet" data-action="close-viewer" aria-label="Close the viewer">Close</button></p></div>;
   const isVideo = asset.kind === "video", isAudio = asset.kind === "audio";
   const localRender = isLocalRenderProvenance(asset.caption);
   const shareProvenance = shareImportProvenance(asset.caption);
-  return <div className="asset-viewer">
-    <p><a className="button secondary" data-viewer-back href={back}>← Back to library</a></p>
+  return <div className="asset-viewer" data-viewer="true">
+    <p className="row"><a className="button secondary" data-viewer-back href={back}>← Back to library</a><button type="button" className="button secondary" data-action="close-viewer" aria-label="Close the viewer">Close</button></p>
     <div className="viewer">
       <div className="stage">{isVideo ? <AssetVideo key={asset.id} asset={asset} reentryUrl={reentryUrl}/> : isAudio ? <div className="audio-stage"><canvas width="840" height="200" data-waveform={asset.file} aria-hidden="true"/><audio src={asset.file} controls preload="metadata"/></div> : <img src={asset.file} alt={asset.title}/>}</div>
       <aside className="card stack"><div><p className="eyebrow">{asset.kind} · {asset.source}</p><h1 className="asset-viewer-title">{asset.title}</h1></div>

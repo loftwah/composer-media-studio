@@ -235,6 +235,10 @@ dialog h2 { margin: 0; }
 .notice.warn { border-color: var(--danger); background: #f6ded7; }
 
 .viewer { display: grid; align-items: start; gap: 1rem; grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.8fr); }
+/* A viewer close returns focus to the exact card control. Keep the ring
+   visible even though the focus move was programmatic, not a fresh Tab. The
+   card clips outside outlines, so draw this one inside the control. */
+.viewer-return-focus:focus { outline: 3px solid var(--accent-bright); outline-offset: -4px; }
 @media (max-width: 900px) { .viewer { grid-template-columns: 1fr; } }
 .viewer .stage { min-width: 0; background: #1d201c; border-radius: var(--radius); display: grid; place-items: center; min-height: 200px; overflow: hidden; }
 .viewer .stage img, .viewer .stage video { max-width: 100%; max-height: 68vh; width: auto; height: auto; object-fit: contain; display: block; }
