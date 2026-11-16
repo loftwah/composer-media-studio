@@ -117,6 +117,49 @@ export function paletteToCss(colors) {
   return `${lines.join("\n")}\n`;
 }
 
+// Adobe Swatch Exchange (.ase) bytes for the exact same swatches. A standard
+// ASEF 1.0 header, one colour block per swatch with an "RGB " model and 0-1
+// float channels, UTF-16BE HEX names and the normal colour type. The file
+// contains only swatch names and values.
+export function paletteToAse(colors) {
+  const blocks = colors.map(({ rgb, hex }) => {
+    const name = `${hex}\0`; // ASE names are null-terminated UTF-16BE
+    const nameBytes = name.length * 2;
+    // name length field + name + "RGB " + three floats + colour type
+    const blockLength = 2 + nameBytes + 4 + 12 + 2;
+    const block = new Uint8Array(6 + blockLength); // + block signature and length
+    const view = new DataView(block.buffer);
+    view.setUint16(0, 0x0001, false); // colour entry block
+    view.setUint32(2, blockLength, false);
+    view.setUint16(6, name.length, false); // name length in UTF-16 code units
+    for (let index = 0; index < name.length; index += 1)
+      view.setUint16(8 + index * 2, name.charCodeAt(index), false);
+    let offset = 8 + nameBytes;
+    block.set([0x52, 0x47, 0x42, 0x20], offset); // "RGB "
+    offset += 4;
+    for (const channel of [rgb.r, rgb.g, rgb.b]) {
+      view.setFloat32(offset, channel / 255, false);
+      offset += 4;
+    }
+    view.setUint16(offset, 2, false); // colour type: normal
+    return block;
+  });
+
+  const totalBytes = 12 + blocks.reduce((sum, block) => sum + block.length, 0);
+  const bytes = new Uint8Array(totalBytes);
+  const header = new DataView(bytes.buffer);
+  bytes.set([0x41, 0x53, 0x45, 0x46], 0); // "ASEF"
+  header.setUint16(4, 1, false); // major version
+  header.setUint16(6, 0, false); // minor version
+  header.setUint32(8, colors.length, false);
+  let offset = 12;
+  for (const block of blocks) {
+    bytes.set(block, offset);
+    offset += block.length;
+  }
+  return bytes;
+}
+
 const PALETTE_BIN_SHIFT = 3;
 
 /**

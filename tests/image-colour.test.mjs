@@ -8,6 +8,7 @@ import {
   formatRgb,
   hexToRgb,
   mapBoundsThroughTransform,
+  paletteToAse,
   paletteToCss,
   paletteToGpl,
   pickImagePixel,
@@ -143,6 +144,55 @@ test("CSS palette exports the exact swatches as valid :root custom properties", 
   const values = [...css.matchAll(/--swatch-\d+:\s*(#[0-9a-f]{6});/g)].map((match) => match[1]);
   assert.deepEqual(values, colors.map((colour) => colour.hex));
   assert.equal(values.length, colors.length);
+});
+
+test("ASE palette writes a valid ASEF 1.0 header and one normal RGB block per exact swatch", () => {
+  const source = [[255, 0, 0], [0, 0, 255], [51, 102, 153]];
+  const { colors } = extractPalette(
+    makePixels(source.length, 1, (x) => [...source[x], 255]),
+    { width: source.length, height: 1 },
+  );
+  assert.equal(colors.length, 3);
+  const bytes = paletteToAse(colors);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  // Standard header: "ASEF", version 1.0, one block per swatch.
+  assert.equal(String.fromCharCode(...bytes.subarray(0, 4)), "ASEF");
+  assert.equal(view.getUint16(4), 1, "major version");
+  assert.equal(view.getUint16(6), 0, "minor version");
+  assert.equal(view.getUint32(8), colors.length);
+
+  let offset = 12;
+  for (const colour of colors) {
+    assert.equal(view.getUint16(offset), 0x0001, "colour entry block signature");
+    const blockLength = view.getUint32(offset + 2);
+    const nameLen = view.getUint16(offset + 6);
+    assert.equal(nameLen, colour.hex.length + 1, "name length includes null terminator");
+    let name = "";
+    for (let index = 0; index < nameLen; index += 1)
+      name += String.fromCharCode(view.getUint16(offset + 8 + index * 2));
+    assert.equal(name, `${colour.hex}\0`, "UTF-16BE HEX name");
+
+    const modelAt = offset + 8 + nameLen * 2;
+    assert.equal(String.fromCharCode(...bytes.subarray(modelAt, modelAt + 4)), "RGB ");
+    const floatsAt = modelAt + 4;
+    [colour.rgb.r, colour.rgb.g, colour.rgb.b].forEach((channel, index) => {
+      assert.ok(Math.abs(view.getFloat32(floatsAt + index * 4) - channel / 255) < 1e-6);
+    });
+    assert.equal(view.getUint16(floatsAt + 12), 2, "normal colour type");
+    assert.equal(blockLength, 2 + nameLen * 2 + 4 + 12 + 2, "block length excludes signature and length");
+    offset += 6 + blockLength;
+  }
+  assert.equal(offset, bytes.length, "no trailing bytes");
+  assert.deepEqual(
+    colors.map((colour) => colour.hex).sort(),
+    ["#0000ff", "#336699", "#ff0000"],
+    "the file is built from the exact extracted swatches",
+  );
+
+  const empty = paletteToAse([]);
+  assert.equal(empty.length, 12, "an empty palette is just the header");
+  assert.equal(new DataView(empty.buffer).getUint32(8), 0);
 });
 
 test("alpha bounds find transparent padding without silently cropping opaque images", () => {
