@@ -22,6 +22,9 @@ never deploy, publish or spend on a media provider.
   Delete it after the run; it is not evidence.
 - `STUDIO_BROWSER_OUT` (optional) keeps screenshots and JSON receipts under an
   ignored `output/` directory.
+- `images.mjs` needs no wrangler fixture or session: it serves the built
+  `public/` directory from a local HTTP server and drives the signed-out image
+  page directly.
 
 ## Fixture
 
@@ -47,6 +50,7 @@ certificate is accepted only inside these scripts.
 | `director.mjs` | One real Workers AI reply becomes a typed proposal; nothing is saved until review, apply and save; reload and the project API show the same revision. Needs a logged-in wrangler account for the remote `AI` binding, and makes one bounded text call per run. |
 | `shot-doctor.mjs` | Saved-evidence shot diagnosis, a typed proposal with one change declined and one approved, the same revision identity in the workbench and a real scoped MCP client over the local HTTPS endpoint, a stale-revision message, a no-take state, and a locally assembled two-shot MP4 that plays. No model or paid provider. |
 | `viewer.mjs` | The project tabs (tablist, roving tabindex, Arrow/Home/End), the in-project asset viewer as a labelled modal with an inert background: focus enters the viewer and Tab stays inside, Escape and Close return focus to the exact card and restore library scroll, a History result returns to History, Back and browser Back/Forward keep working, unknown tabs land on a usable Library, and both the React and no-bundle fallback viewers (including a missing asset) expose Close. |
+| `images.mjs` | The signed-out image workbench from a plain static server in Chromium, Firefox and WebKit (`STUDIO_BROWSER`): a real sample decodes at 1400 × 900, a 320-px resize is a measured 320 × 206 PNG, the Mono preset is a real greyscale export with unchanged alpha and a stated pixel count, the data URI decodes back to exactly the downloaded bytes, the top and bottom crop positions keep the red or transparent half, 390 px has no overflow, and no request leaves the local origin. No wrangler fixture, session or provider. |
 | `film.mjs` (see `output/` receipts) | A 30–60 s local film from saved takes, a mixed source track and captions, plus a one-take replacement and decoded output checks. It reads the owner's existing production R2 objects read-only before uploading them into the isolated fixture; it does not write to production. |
 
 The film harness is intentionally not committed with production project IDs.

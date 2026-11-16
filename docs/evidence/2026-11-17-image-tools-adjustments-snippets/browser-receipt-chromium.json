@@ -1,0 +1,184 @@
+{
+  "startedAt": "2026-11-16T13:25:28.833Z",
+  "origin": "local static server (built frontend, no worker)",
+  "checks": [
+    {
+      "check": "sample decodes at 1400 × 900",
+      "ok": true,
+      "detail": "SOURCE 1400 × 900 px DISPLAYED 1400 × 900 px TYPE image/png BYTES 1.10 MiB ALPHA CHANNEL yes SHA-256 b59e2d9cc0d6…"
+    },
+    {
+      "check": "resize produces a real 320-px PNG with measured bytes",
+      "ok": true,
+      "detail": {
+        "width": 320,
+        "height": 206,
+        "bytes": 82896,
+        "type": "image/png"
+      }
+    },
+    {
+      "check": "the original stays 1400 × 900 while the result is 320 × 206",
+      "ok": true,
+      "detail": {
+        "before": "Before · 1400 × 900 · 1.10 MiB",
+        "after": "After · 320 × 206 · 81 KiB · image/png"
+      }
+    },
+    {
+      "check": "download name carries the real size and extension",
+      "ok": true,
+      "detail": "studio-image-sample-320x206.png"
+    },
+    {
+      "check": "the Mono preset is a real greyscale export",
+      "ok": true,
+      "detail": [
+        [
+          50,
+          50,
+          50,
+          255
+        ],
+        [
+          157,
+          157,
+          157,
+          255
+        ],
+        [
+          118,
+          118,
+          118,
+          255
+        ]
+      ]
+    },
+    {
+      "check": "preset selection is reflected in the visible control",
+      "ok": true,
+      "detail": "mono"
+    },
+    {
+      "check": "the caption states the real adjustment numbers",
+      "ok": true,
+      "detail": "exposure +4, contrast +14, saturation -100, long edge 320px, PNG, canvas re-encode"
+    },
+    {
+      "check": "the export keeps a single opaque alpha value",
+      "ok": true,
+      "detail": [
+        255
+      ]
+    },
+    {
+      "check": "the page reports how many pixels changed",
+      "ok": true,
+      "detail": "Adjustments changed 65,920 pixels in the exported result. Fully transparent pixels kept their colour and every alpha value is unchanged."
+    },
+    {
+      "check": "the data URI decodes back to the exported pixels",
+      "ok": true,
+      "detail": "data:image/png;base64,iVBORw0K"
+    },
+    {
+      "check": "the embedded bytes and dimensions match the download",
+      "ok": true,
+      "detail": {
+        "bytes": 52497,
+        "downloadBytes": 52497,
+        "width": 320,
+        "height": 206,
+        "characters": 70018
+      }
+    },
+    {
+      "check": "the snippet states its real character count",
+      "ok": true,
+      "detail": "69,996 base64 characters · 70,018 data-URI characters · 51 KiB of real output"
+    },
+    {
+      "check": "top crop keeps the red half",
+      "ok": true,
+      "detail": {
+        "size": [
+          100,
+          100
+        ],
+        "pixel": [
+          255,
+          0,
+          0,
+          255
+        ]
+      }
+    },
+    {
+      "check": "bottom crop keeps the transparent half and its alpha",
+      "ok": true,
+      "detail": {
+        "size": [
+          100,
+          100
+        ],
+        "transparent": 10000,
+        "total": 10000,
+        "caption": "bottom crop 1:1 square, long edge 100px, PNG, canvas re-encode"
+      }
+    },
+    {
+      "check": "390 px has no horizontal overflow or controls outside the viewport",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390,
+        "controlsOutside": []
+      }
+    },
+    {
+      "check": "no request leaves the local origin",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "no local action writes to an API",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "no page errors",
+      "ok": true,
+      "detail": []
+    }
+  ],
+  "failures": [],
+  "requests": [
+    "GET http://127.0.0.1:59085/check.html",
+    "GET http://127.0.0.1:59085/creative/home.css",
+    "GET http://127.0.0.1:59085/images.js",
+    "GET http://127.0.0.1:59085/creative/home.js",
+    "GET http://127.0.0.1:59085/creative/jsx-runtime-B_EJQQY8.js",
+    "GET http://127.0.0.1:59085/creative/local-framing-DFz89Zt7.js",
+    "GET http://127.0.0.1:59085/creative/rolldown-runtime-CYdcPHCu.js",
+    "GET http://127.0.0.1:59085/creative/images-CePhKGan.js",
+    "GET http://127.0.0.1:59085/creative/audio-trim-BkfoZr4g.js",
+    "GET blob:http://127.0.0.1:59085/4ac207ee-4639-4adf-8cb0-381cd9f93a7b",
+    "GET blob:http://127.0.0.1:59085/ca4c1c25-ee7c-4db9-8270-de4963041830",
+    "GET blob:http://127.0.0.1:59085/ca4c1c25-ee7c-4db9-8270-de4963041830",
+    "GET blob:http://127.0.0.1:59085/c032a9a9-7b9a-4e64-9f4e-a9f4a8fbdfab",
+    "GET blob:http://127.0.0.1:59085/c032a9a9-7b9a-4e64-9f4e-a9f4a8fbdfab",
+    "GET blob:http://127.0.0.1:59085/c032a9a9-7b9a-4e64-9f4e-a9f4a8fbdfab",
+    "GET blob:http://127.0.0.1:59085/0f89bc2d-5aac-407f-8492-faa6c9b80d55",
+    "GET blob:http://127.0.0.1:59085/a7551907-af0a-46fa-ac3d-e496fe1271b0",
+    "GET blob:http://127.0.0.1:59085/a7551907-af0a-46fa-ac3d-e496fe1271b0",
+    "GET blob:http://127.0.0.1:59085/0963fe09-c693-4c9b-825a-0827bf11c8de",
+    "GET blob:http://127.0.0.1:59085/0963fe09-c693-4c9b-825a-0827bf11c8de"
+  ],
+  "pageErrors": [],
+  "browser": {
+    "name": "chromium",
+    "version": "158.0.8127.18"
+  },
+  "finishedAt": "2026-11-16T13:25:37.715Z",
+  "passed": true
+}

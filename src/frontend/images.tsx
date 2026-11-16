@@ -1,5 +1,6 @@
 import {
   DEFAULT_RESIZE_LONG_EDGE,
+  CROP_ANCHOR_LABELS,
   CROP_ASPECTS,
   CROP_ASPECT_LABELS,
   defaultLongEdge,
@@ -11,11 +12,35 @@ import {
   rotatedDimensions,
   searchTargetQuality,
   targetSizeProblem,
+  type CropAnchorKey,
   type CropAspectKey,
   type ImageCrop,
   type ResizePlan,
   type TransformPlan,
 } from "./image-ops.mjs";
+import {
+  ADJUSTMENT_KEYS,
+  ADJUSTMENT_LABELS,
+  ADJUSTMENT_PRESETS,
+  ADJUSTMENT_RANGE,
+  DEFAULT_ADJUSTMENTS,
+  adjustPixels,
+  adjustmentsAreNeutral,
+  describeAdjustments,
+  normaliseAdjustments,
+  presetAdjustments,
+  presetIdFor,
+  type AdjustmentKey,
+  type Adjustments,
+} from "./image-adjust.mjs";
+import {
+  MAX_SNIPPET_BYTES,
+  SNIPPET_KINDS,
+  SNIPPET_LABELS,
+  buildImageSnippets,
+  type SnippetKind,
+  type SnippetResult,
+} from "./image-snippets.mjs";
 import {
   MAX_PALETTE_COLOURS,
   PALETTE_WORKING_EDGE,
@@ -64,10 +89,12 @@ type Settings = {
   exactWidth: number;
   exactHeight: number;
   cropAspect: CropAspectKey;
+  cropAnchor: CropAnchorKey;
   rotate: 0 | 1 | 2 | 3;
   flipH: boolean;
   flipV: boolean;
   resample: ResampleMode;
+  adjust: Adjustments;
   format: ExportFormat;
   quality: number;
   targetKiB: number | null;
@@ -90,6 +117,7 @@ type RenderedImage = {
   sourceWidth: number;
   sourceHeight: number;
   trimmed: boolean;
+  adjustChanged: number;
   target: { requestedBytes: number; met: boolean } | null;
 };
 
@@ -109,6 +137,11 @@ type PaletteState = {
 };
 
 type PickedColour = { x: number; y: number; hex: string; rgb: Rgb; alpha: number };
+
+type SnippetState = {
+  key: string;
+  data: Extract<SnippetResult, { ok: true }>;
+};
 
 type StrippedImage = {
   blob: Blob;
@@ -143,10 +176,12 @@ const DEFAULT_SETTINGS: Settings = {
   exactWidth: 1600,
   exactHeight: 1200,
   cropAspect: "original",
+  cropAnchor: "centre",
   rotate: 0,
   flipH: false,
   flipV: false,
   resample: "smooth",
+  adjust: { ...DEFAULT_ADJUSTMENTS },
   format: "png",
   quality: 0.9,
   targetKiB: null,
@@ -219,6 +254,7 @@ function makePlan(
     flipH: settings.flipH,
     flipV: settings.flipV,
     cropAspect: CROP_ASPECTS[settings.cropAspect],
+    cropAnchor: settings.cropAnchor,
     cropRect,
     resize: resizeFor(settings),
   });
@@ -350,6 +386,7 @@ async function renderImage(
   let oriented: HTMLCanvasElement | null = null;
   let transformed: HTMLCanvasElement | null = null;
   let output: HTMLCanvasElement | null = null;
+  let flattened: HTMLCanvasElement | null = null;
   try {
     let explicitNone = false;
     try {
@@ -403,6 +440,7 @@ async function renderImage(
         sourceWidth: stage.width,
         sourceHeight: stage.height,
         cropAspect: CROP_ASPECTS[settings.cropAspect],
+        cropAnchor: settings.cropAnchor,
         cropRect,
         resize: resizeFor(settings),
       });
@@ -434,15 +472,13 @@ async function renderImage(
     output = document.createElement("canvas");
     output.width = plan.outputWidth;
     output.height = plan.outputHeight;
-    const context = output.getContext("2d");
+    const adjustments = normaliseAdjustments(settings.adjust);
+    const needsAdjust = !adjustmentsAreNeutral(adjustments);
+    const context = output.getContext("2d", { willReadFrequently: needsAdjust });
     if (!context) throw new Error("This browser could not create a drawing surface.");
     const smoothing = imageSmoothingFor(settings.resample);
     context.imageSmoothingEnabled = smoothing.enabled;
     context.imageSmoothingQuality = smoothing.quality;
-    if (settings.format === "jpeg") {
-      context.fillStyle = settings.matte;
-      context.fillRect(0, 0, output.width, output.height);
-    }
     context.drawImage(
       stage,
       crop.x,
@@ -455,6 +491,33 @@ async function renderImage(
       plan.outputHeight,
     );
     if (signal.aborted) throw abortError();
+    let adjustChanged = 0;
+    if (needsAdjust) {
+      const pixels = context.getImageData(0, 0, output.width, output.height);
+      const adjusted = adjustPixels(pixels.data, {
+        width: output.width,
+        height: output.height,
+        adjustments,
+      });
+      if (!adjusted.ok) throw new Error(adjusted.error);
+      context.putImageData(pixels, 0, 0);
+      adjustChanged = adjusted.changed;
+      if (signal.aborted) throw abortError();
+    }
+    // The matte is composited after the adjustments so a chosen JPEG background
+    // keeps its exact colour instead of being exposed or saturated with the photo.
+    let encodeSource = output;
+    if (settings.format === "jpeg") {
+      flattened = document.createElement("canvas");
+      flattened.width = output.width;
+      flattened.height = output.height;
+      const flattenContext = flattened.getContext("2d");
+      if (!flattenContext) throw new Error("This browser could not create a drawing surface.");
+      flattenContext.fillStyle = settings.matte;
+      flattenContext.fillRect(0, 0, flattened.width, flattened.height);
+      flattenContext.drawImage(output, 0, 0);
+      encodeSource = flattened;
+    }
     const mime = mimeForExport(settings.format);
     let blob: Blob;
     let qualityUsed = settings.quality;
@@ -464,7 +527,7 @@ async function renderImage(
         targetBytes: requestedTarget,
         encode: async (quality) => {
           if (signal.aborted) throw abortError();
-          const encoded = await canvasToBlob(output as HTMLCanvasElement, mime, quality);
+          const encoded = await canvasToBlob(encodeSource, mime, quality);
           if (signal.aborted) throw abortError();
           return encoded;
         },
@@ -476,7 +539,7 @@ async function renderImage(
       target = { requestedBytes: requestedTarget, met: search.met };
     } else {
       blob = await canvasToBlob(
-        output,
+        encodeSource,
         mime,
         settings.format === "png" ? undefined : settings.quality,
       );
@@ -515,6 +578,7 @@ async function renderImage(
       sourceWidth: oriented.width,
       sourceHeight: oriented.height,
       trimmed: Boolean(cropRect),
+      adjustChanged,
       target,
     };
   } finally {
@@ -526,6 +590,10 @@ async function renderImage(
     if (transformed) {
       transformed.width = 0;
       transformed.height = 0;
+    }
+    if (flattened) {
+      flattened.width = 0;
+      flattened.height = 0;
     }
     if (output) {
       output.width = 0;
@@ -605,6 +673,11 @@ function Images() {
   const [picked, setPicked] = useState<PickedColour | null>(null);
   const [pickMessage, setPickMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [snippets, setSnippets] = useState<SnippetState | null>(null);
+  const [snippetKind, setSnippetKind] = useState<SnippetKind>("dataUri");
+  const [snippetBusy, setSnippetBusy] = useState(false);
+  const [snippetMessage, setSnippetMessage] = useState("");
+  const [snippetUrl, setSnippetUrl] = useState<{ kind: SnippetKind; url: string } | null>(null);
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
   const batchController = useRef<AbortController | null>(null);
@@ -615,6 +688,7 @@ function Images() {
   const runningRef = useRef(false);
   const eyedropperRef = useRef<HTMLImageElement | null>(null);
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dragIdRef = useRef("");
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const activeTrim =
@@ -636,6 +710,9 @@ function Images() {
       ? null
       : targetSizeProblem(settings.format, requestedTargetBytes);
   const visiblePalette = palette && selected && palette.itemId === selected.id ? palette : null;
+  const visibleSnippets =
+    snippets && selected?.result?.sha256 === snippets.key ? snippets.data : null;
+  const snippetText = visibleSnippets ? visibleSnippets.snippets[snippetKind] : "";
   const doneItems = items.filter((item) => item.result);
   const importBlob = selected?.result?.blob ?? selected?.stripped?.blob ?? null;
   const importFormat: "png" | "jpeg" | "webp" | null = selected?.result
@@ -664,9 +741,11 @@ function Images() {
             flipH: selected.result.settings.flipH,
             flipV: selected.result.settings.flipV,
             cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
+            cropAnchor: selected.result.settings.cropAnchor,
             trimmed: selected.result.trimmed,
             resize: resizeFor(selected.result.settings),
             resample: selected.result.settings.resample,
+            adjustments: describeAdjustments(selected.result.settings.adjust),
             format: selected.result.settings.format,
             quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
             metadata: "canvas re-encode",
@@ -712,8 +791,19 @@ function Images() {
   }, []);
 
   useEffect(() => {
+    if (!snippetText) {
+      setSnippetUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([snippetText], { type: "text/plain" }));
+    setSnippetUrl({ kind: snippetKind, url });
+    return () => URL.revokeObjectURL(url);
+  }, [snippetText, snippetKind]);
+
+  useEffect(() => {
     setPicked(null);
     setPickMessage("");
+    setSnippetMessage("");
   }, [selected?.result?.url]);
 
   useEffect(() => {
@@ -1094,13 +1184,97 @@ function Images() {
     setTrimMessage("Trim cleared. The full image is used again.");
   }
 
-  async function copyValue(label: string, value: string): Promise<void> {
+  async function copyValue(
+    label: string,
+    value: string,
+    { echo = value.length <= 120 }: { echo?: boolean } = {},
+  ): Promise<void> {
     try {
       await navigator.clipboard.writeText(value);
-      setCopyMessage(`Copied ${label}: ${value}`);
+      setCopyMessage(
+        echo
+          ? `Copied ${label}: ${value}`
+          : `Copied ${label} (${value.length.toLocaleString()} characters).`,
+      );
     } catch {
       setCopyMessage(`Could not copy automatically. Select the ${label} value and copy it.`);
     }
+  }
+
+  async function buildSnippets(): Promise<void> {
+    if (!selected?.result || snippetBusy) return;
+    const item = selected;
+    const result = item.result;
+    if (!result) return;
+    setSnippetBusy(true);
+    setSnippetMessage("Reading the encoded result on this device…");
+    try {
+      const bytes = new Uint8Array(await result.blob.arrayBuffer());
+      const built = buildImageSnippets({
+        bytes,
+        mime: result.mime,
+        filename: `${safeStem(item.file.name)}-${result.width}x${result.height}.${extensionForImageMime(result.mime)}`,
+        width: result.width,
+        height: result.height,
+      });
+      if (!built.ok) throw new Error(built.error);
+      setSnippets({ key: result.sha256, data: built });
+      setSnippetMessage(
+        `Embed code is ready from ${formatBytes(built.bytes)} of real output. Nothing left this tab.`,
+      );
+    } catch (error) {
+      setSnippets(null);
+      setSnippetMessage(
+        error instanceof Error ? error.message : "Could not build embed code.",
+      );
+    } finally {
+      setSnippetBusy(false);
+    }
+  }
+
+  function setAdjustment(key: AdjustmentKey, value: number): void {
+    setSettings((previous) => ({
+      ...previous,
+      adjust: normaliseAdjustments({ ...previous.adjust, [key]: value }),
+    }));
+  }
+
+  function applyAdjustmentPreset(id: string): void {
+    setSettings((previous) => ({ ...previous, adjust: presetAdjustments(id) }));
+  }
+
+  function moveItem(id: string, offset: number): void {
+    if (running) return;
+    clearZip();
+    setItems((previous) => {
+      const index = previous.findIndex((candidate) => candidate.id === id);
+      const target = index + offset;
+      if (index < 0 || target < 0 || target >= previous.length) return previous;
+      const next = [...previous];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+    setMessage(
+      `${offset < 0 ? "Moved up" : "Moved down"}. The ZIP follows this list order.`,
+    );
+  }
+
+  function dropItem(id: string): void {
+    const source = dragIdRef.current;
+    dragIdRef.current = "";
+    if (!source || source === id || running) return;
+    clearZip();
+    setItems((previous) => {
+      const from = previous.findIndex((candidate) => candidate.id === source);
+      const to = previous.findIndex((candidate) => candidate.id === id);
+      if (from < 0 || to < 0) return previous;
+      const next = [...previous];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    setMessage("Reordered. The ZIP follows this list order.");
   }
 
   async function extractSelectedPalette(): Promise<void> {
@@ -1387,9 +1561,14 @@ function Images() {
                 </label>
               </>
             )}
-            <label>Centre crop
+            <label>Crop aspect
               <select value={settings.cropAspect} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, cropAspect: event.target.value as CropAspectKey }))}>
                 {Object.entries(CROP_ASPECT_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+              </select>
+            </label>
+            <label>Crop position
+              <select value={settings.cropAnchor} disabled={running || settings.cropAspect === "original"} onChange={(event) => setSettings((previous) => ({ ...previous, cropAnchor: event.target.value as CropAnchorKey }))}>
+                {Object.entries(CROP_ANCHOR_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
               </select>
             </label>
             <label>Resampling
@@ -1413,6 +1592,10 @@ function Images() {
             <p className="trim-note" role="status" aria-live="polite">
               {trimMessage || (selected.source.alpha ? "Trim removes fully transparent padding; near-transparent edge pixels are kept." : "This image declares no alpha channel, so transparent padding is unlikely. Trim will check the decoded pixels before changing the plan.")}
             </p>
+            <p className="trim-note">
+              Crop position applies when the aspect is not Original. It decides which
+              part of the picture is kept instead of always cutting from the centre.
+            </p>
           </fieldset>
 
           <fieldset className="image-controls">
@@ -1424,6 +1607,46 @@ function Images() {
             </div>
             <label className="image-check"><input type="checkbox" checked={settings.flipH} disabled={running} onChange={(event) => changeFlip("flipH", event.target.checked)} /> Flip horizontal</label>
             <label className="image-check"><input type="checkbox" checked={settings.flipV} disabled={running} onChange={(event) => changeFlip("flipV", event.target.checked)} /> Flip vertical</label>
+          </fieldset>
+
+          <fieldset className="image-controls">
+            <legend>Light and colour</legend>
+            <label>Preset
+              <select value={presetIdFor(settings.adjust)} disabled={running} onChange={(event) => applyAdjustmentPreset(event.target.value)}>
+                {ADJUSTMENT_PRESETS.map((preset) => <option value={preset.id} key={preset.id}>{preset.label}</option>)}
+                <option value="custom" disabled>Custom settings</option>
+              </select>
+            </label>
+            {ADJUSTMENT_KEYS.map((key) => (
+              <label key={key}>
+                {ADJUSTMENT_LABELS[key]} {settings.adjust[key] > 0 ? `+${settings.adjust[key]}` : settings.adjust[key]}
+                <input
+                  type="range"
+                  min={-ADJUSTMENT_RANGE}
+                  max={ADJUSTMENT_RANGE}
+                  step="1"
+                  value={settings.adjust[key]}
+                  disabled={running}
+                  onChange={(event) => setAdjustment(key, Number(event.target.value))}
+                />
+              </label>
+            ))}
+            <div className="image-control-actions">
+              <button
+                type="button"
+                className="secondary"
+                disabled={running || adjustmentsAreNeutral(settings.adjust)}
+                onClick={() => setSettings((previous) => ({ ...previous, adjust: { ...DEFAULT_ADJUSTMENTS } }))}
+              >
+                Reset adjustments
+              </button>
+            </div>
+            <p className="trim-note">
+              Presets are just named values for these four controls, so the result
+              caption states the real numbers. Adjustments are applied to the exported
+              pixels after resize and crop; the alpha channel is never changed and the
+              original File stays untouched.
+            </p>
           </fieldset>
 
           <fieldset className="image-controls">
@@ -1510,14 +1733,23 @@ function Images() {
                   flipH: selected.result.settings.flipH,
                   flipV: selected.result.settings.flipV,
                   cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
+                  cropAnchor: selected.result.settings.cropAnchor,
                   trimmed: selected.result.trimmed,
                   resize: resizeFor(selected.result.settings),
                   resample: selected.result.settings.resample,
+                  adjustments: describeAdjustments(selected.result.settings.adjust),
                   format: selected.result.settings.format,
                   quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
                   metadata: "canvas re-encode",
                 })}
               </p>
+              {selected.result.adjustChanged > 0 && (
+                <p className="trim-note">
+                  Adjustments changed {selected.result.adjustChanged.toLocaleString()} pixel
+                  {selected.result.adjustChanged === 1 ? "" : "s"} in the exported result.
+                  Fully transparent pixels kept their colour and every alpha value is unchanged.
+                </p>
+              )}
               {selected.result.target && (
                 <p className={selected.result.target.met ? "notice calm" : "notice warn"} role="status">
                   Target {formatBytes(selected.result.target.requestedBytes)}:{" "}
@@ -1712,6 +1944,84 @@ function Images() {
         </section>
       )}
 
+      {selected?.result && (
+        <section className="trim-work image-embed" aria-labelledby="image-embed-heading">
+          <div className="image-section-head">
+            <h2 id="image-embed-heading">Embed code</h2>
+            <span>data URI from this result</span>
+          </div>
+          <p className="trim-note" id="image-embed-note">
+            A data URI carries the exact exported bytes. It is not encryption, redaction
+            or a private link: anyone who receives the text has the image. Base64 is
+            about a third larger than the file, and embed code stops at{" "}
+            {formatBytes(MAX_SNIPPET_BYTES)} so a paste cannot hide a huge payload.
+          </p>
+          <div className="image-control-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={snippetBusy || running}
+              aria-describedby="image-embed-note"
+              onClick={() => void buildSnippets()}
+            >
+              {snippetBusy ? "Building embed code…" : visibleSnippets ? "Rebuild embed code" : "Build embed code"}
+            </button>
+            {visibleSnippets && snippetUrl?.kind === snippetKind && (
+              <a
+                className="button secondary"
+                href={snippetUrl.url}
+                download={`${safeStem(selected.file.name)}-${selected.result!.width}x${selected.result!.height}-${snippetKind}.txt`}
+              >
+                Download {SNIPPET_LABELS[snippetKind]}
+              </a>
+            )}
+          </div>
+          <p className="trim-note" role="status" aria-live="polite">{snippetMessage}</p>
+          {visibleSnippets && (
+            <div className="image-snippet">
+              <div className="image-snippet-actions">
+                {SNIPPET_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    className={kind === snippetKind ? "secondary image-copy" : "quiet image-copy"}
+                    aria-pressed={kind === snippetKind}
+                    onClick={() => setSnippetKind(kind)}
+                  >
+                    {SNIPPET_LABELS[kind]}
+                  </button>
+                ))}
+              </div>
+              <p className="trim-note">
+                {visibleSnippets.base64Length.toLocaleString()} base64 characters ·{" "}
+                {visibleSnippets.dataUriLength.toLocaleString()} data-URI characters ·{" "}
+                {formatBytes(visibleSnippets.bytes)} of real output
+              </p>
+              {visibleSnippets.warning && <p className="notice warn">{visibleSnippets.warning}</p>}
+              <label>
+                {SNIPPET_LABELS[snippetKind]} text
+                <textarea
+                  readOnly
+                  rows={6}
+                  spellCheck={false}
+                  value={snippetText}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+              </label>
+              <div className="image-copy-actions">
+                <button
+                  type="button"
+                  className="quiet image-copy"
+                  onClick={() => void copyValue(SNIPPET_LABELS[snippetKind], snippetText)}
+                >
+                  Copy {SNIPPET_LABELS[snippetKind]}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {selected && (
         <section className="trim-work image-metadata" aria-labelledby="image-metadata-heading">
           <div className="image-section-head">
@@ -1828,8 +2138,22 @@ function Images() {
         )}
         {items.length > 0 && (
           <ul className="image-list">
-            {items.map((item) => (
-              <li className={item.id === selectedId ? "is-selected" : ""} key={item.id}>
+            {items.map((item, index) => (
+              <li
+                className={item.id === selectedId ? "is-selected" : ""}
+                key={item.id}
+                draggable={!running}
+                onDragStart={() => {
+                  dragIdRef.current = item.id;
+                }}
+                onDragOver={(event) => {
+                  if (dragIdRef.current) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  dropItem(item.id);
+                }}
+              >
                 <button type="button" className="image-list-select" onClick={() => selectItem(item.id)} aria-pressed={item.id === selectedId}>
                   <span className="image-list-name">{item.file.name}</span>
                   <span className="image-list-meta">
@@ -1839,6 +2163,24 @@ function Images() {
                   {item.error && <span className="image-list-error">{item.error}</span>}
                 </button>
                 <div className="image-list-actions">
+                  <button
+                    type="button"
+                    className="quiet"
+                    disabled={running || index === 0}
+                    aria-label={`Move ${item.file.name} up in the ZIP order`}
+                    onClick={() => moveItem(item.id, -1)}
+                  >
+                    Move up
+                  </button>
+                  <button
+                    type="button"
+                    className="quiet"
+                    disabled={running || index === items.length - 1}
+                    aria-label={`Move ${item.file.name} down in the ZIP order`}
+                    onClick={() => moveItem(item.id, 1)}
+                  >
+                    Move down
+                  </button>
                   {item.result && (
                     <a className="button secondary" href={item.result.url} download={`${safeStem(item.file.name)}-${item.result.width}x${item.result.height}.${extensionForImageMime(item.result.mime)}`}>Download</a>
                   )}
@@ -1852,9 +2194,11 @@ function Images() {
           </ul>
         )}
         <p className="trim-note">
-          Each image is decoded and encoded one at a time. Cancelling stops after the
-          current encode; already completed downloads stay in the list. ZIP export uses
-          a small store-only writer in this page, not a server archive.
+          Drag a row or use Move up and Move down to change the order. Each image is
+          decoded and encoded one at a time; the ZIP follows this list order. Cancelling
+          stops after the current encode, and already completed downloads stay in the
+          list. ZIP export uses a small store-only writer in this page, not a server
+          archive.
         </p>
       </section>
     </main>

@@ -12,6 +12,21 @@ export const CROP_ASPECTS: Readonly<Record<CropAspectKey, number | null>>;
 export const CROP_ASPECT_LABELS: Readonly<Record<CropAspectKey, string>>;
 export const DEFAULT_RESIZE_LONG_EDGE: number;
 
+export type CropAnchorKey =
+  | "centre"
+  | "top"
+  | "bottom"
+  | "left"
+  | "right"
+  | "topLeft"
+  | "topRight"
+  | "bottomLeft"
+  | "bottomRight";
+
+export const CROP_ANCHOR_LABELS: Readonly<Record<CropAnchorKey, string>>;
+
+export function isCropAnchor(value: unknown): value is CropAnchorKey;
+
 export type ResizePlan =
   | { mode: "long-edge"; longEdge: number }
   | { mode: "exact"; width: number; height: number };
@@ -48,6 +63,12 @@ export function centredCrop(
   height: number,
   aspect?: number | null,
 ): ImageCrop | null;
+export function anchoredCrop(
+  width: number,
+  height: number,
+  aspect?: number | null,
+  anchor?: CropAnchorKey,
+): ImageCrop | null;
 export function planImageTransform(input?: {
   sourceWidth?: number;
   sourceHeight?: number;
@@ -55,6 +76,7 @@ export function planImageTransform(input?: {
   flipH?: boolean;
   flipV?: boolean;
   cropAspect?: number | null;
+  cropAnchor?: CropAnchorKey;
   cropRect?: ImageCrop | null;
   resize?: ResizePlan;
   maxPixels?: number;
@@ -65,10 +87,12 @@ export function describeTransform(input?: {
   rotate?: number;
   flipH?: boolean;
   flipV?: boolean;
-  cropAspect?: number | null;
+  cropAspect?: CropAspectKey | number | null;
+  cropAnchor?: CropAnchorKey;
   trimmed?: boolean;
   resize?: ResizePlan | null;
   resample?: "smooth" | "nearest";
+  adjustments?: string;
   format?: string;
   quality?: number | null;
   metadata?: string;

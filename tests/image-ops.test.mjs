@@ -2,12 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CROP_ANCHOR_LABELS,
   CROP_ASPECTS,
+  anchoredCrop,
   centredCrop,
   defaultLongEdge,
   describeTransform,
   extensionForImageMime,
   imageSmoothingFor,
+  isCropAnchor,
   mimeForExport,
   planImageTransform,
   rotatedDimensions,
@@ -31,8 +34,57 @@ test("centred crop keeps the largest safe rectangle for an aspect", () => {
   assert.deepEqual(centredCrop(1000, 1000, CROP_ASPECTS.tall), { x: 218, y: 0, width: 563, height: 1000 });
 });
 
-test("a long-edge plan produces the exact rounded edge", () => {
-  const landscape = planImageTransform({
+test("crop anchors choose the kept edge or corner instead of the centre", () => {
+  // 900 × 1600, square crop: the free space is vertical only.
+  assert.deepEqual(anchoredCrop(900, 1600, 1, "centre"), { x: 0, y: 350, width: 900, height: 900 });
+  assert.deepEqual(anchoredCrop(900, 1600, 1, "top"), { x: 0, y: 0, width: 900, height: 900 });
+  assert.deepEqual(anchoredCrop(900, 1600, 1, "bottom"), { x: 0, y: 700, width: 900, height: 900 });
+  assert.deepEqual(anchoredCrop(900, 1600, 1, "topRight"), { x: 0, y: 0, width: 900, height: 900 });
+
+  // 1600 × 900, square crop: the free space is horizontal only.
+  assert.deepEqual(anchoredCrop(1600, 900, 1, "left"), { x: 0, y: 0, width: 900, height: 900 });
+  assert.deepEqual(anchoredCrop(1600, 900, 1, "right"), { x: 700, y: 0, width: 900, height: 900 });
+
+  assert.equal(anchoredCrop(1600, 900, null, "topLeft").x, 0);
+  assert.equal(isCropAnchor("topLeft"), true);
+  assert.equal(isCropAnchor("middle"), false);
+  assert.equal(anchoredCrop(1600, 900, 1, "middle"), null);
+  assert.equal(Object.keys(CROP_ANCHOR_LABELS).length, 9);
+});
+
+test("the planner applies the anchor before the resize", () => {
+  const plan = planImageTransform({
+    sourceWidth: 1600,
+    sourceHeight: 900,
+    cropAspect: 1,
+    cropAnchor: "right",
+    resize: { mode: "long-edge", longEdge: 450 },
+  });
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.crop, { x: 700, y: 0, width: 900, height: 900 });
+  assert.deepEqual([plan.outputWidth, plan.outputHeight], [450, 450]);
+  assert.equal(
+    describeTransform({ cropAspect: "square", cropAnchor: "topLeft", format: "png" }),
+    "top-left crop 1:1 square, PNG, re-encoded",
+  );
+  assert.equal(
+    describeTransform({ cropAspect: CROP_ASPECTS.wide, format: "png" }),
+    "centre crop 16:9 wide, PNG, re-encoded",
+    "a numeric aspect still names the real preset instead of the word aspect",
+  );
+  assert.match(
+    planImageTransform({
+      sourceWidth: 1600,
+      sourceHeight: 900,
+      cropAspect: 1,
+      cropAnchor: "middle",
+      resize: { mode: "long-edge", longEdge: 450 },
+    }).error,
+    /crop anchor/,
+  );
+});
+
+test("a long-edge plan produces the exact rounded edge", () => {  const landscape = planImageTransform({
     sourceWidth: 4000,
     sourceHeight: 3000,
     resize: { mode: "long-edge", longEdge: 2048 },

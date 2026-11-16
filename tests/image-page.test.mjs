@@ -65,3 +65,41 @@ test("the new colour and trim modules stay browser-local and dependency-free", (
   assert.doesNotMatch(colour, /from "react"|fetch\(|XMLHttpRequest|import\(/);
   assert.doesNotMatch(colour, /https?:\/\//);
 });
+
+test("the workbench ships local photo adjustments with real pixel values", () => {
+  assert.match(workbench, /<legend>Light and colour<\/legend>/);
+  assert.match(workbench, /ADJUSTMENT_PRESETS\.map/);
+  assert.match(workbench, /presetIdFor\(settings\.adjust\)/);
+  assert.match(workbench, /setAdjustment\(key, Number\(event\.target\.value\)\)/);
+  assert.match(workbench, /adjustPixels\(pixels\.data, \{/);
+  assert.match(workbench, /adjustmentsAreNeutral\(settings\.adjust\)/);
+  assert.match(workbench, /Reset adjustments/);
+  assert.match(workbench, /alpha channel is never changed/);
+  assert.match(workbench, /Adjustments changed \{selected\.result\.adjustChanged\.toLocaleString\(\)\}/);
+  assert.match(workbench, /adjustments: describeAdjustments\(selected\.result\.settings\.adjust\)/);
+});
+
+test("crop position and embed code are wired as honest controls", () => {
+  assert.match(workbench, /<label>Crop position/);
+  assert.match(workbench, /Object\.entries\(CROP_ANCHOR_LABELS\)\.map/);
+  assert.match(workbench, /cropAnchor: settings\.cropAnchor/);
+  assert.match(workbench, /disabled=\{running \|\| settings\.cropAspect === "original"\}/);
+  assert.match(workbench, /<h2 id="image-embed-heading">Embed code<\/h2>/);
+  assert.match(workbench, /buildImageSnippets\(\{/);
+  assert.match(workbench, /It is not encryption, redaction/);
+  assert.match(workbench, /embed code stops at/);
+  assert.match(workbench, /SNIPPET_KINDS\.map/);
+  assert.match(workbench, /Copy \{SNIPPET_LABELS\[snippetKind\]\}/);
+  assert.match(workbench, /Move up/);
+  assert.match(workbench, /Move down/);
+  assert.match(workbench, /draggable=\{!running\}/);
+});
+
+test("the adjustment and snippet modules stay local and dependency-free", () => {
+  for (const file of ["image-adjust.mjs", "image-snippets.mjs"]) {
+    const source = readFileSync(new URL(`../src/frontend/${file}`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /from "react"|fetch\(|XMLHttpRequest|import\(/, file);
+    assert.doesNotMatch(source, /https?:\/\//, file);
+    assert.doesNotMatch(source, /from "[^"]+"/, `${file} imports no module`);
+  }
+});
