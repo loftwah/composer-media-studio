@@ -1,14 +1,18 @@
 // Typed, project-scoped scene proposals. Preview is stateless and does not imply human approval.
 import { HttpError, sha256Hex, text } from './util.mjs';
-import { updateSongPlan, viewSongPlan } from './song-plans.mjs';
+import { songPlanRevisionDigest, updateSongPlan, viewSongPlan } from './song-plans.mjs';
 
 const invalid = message => { throw new HttpError(400, message, 'invalid_proposal'); };
-const conflict = () => { throw new HttpError(409, 'The plan or proposed references changed. Preview the edit again.', 'proposal_conflict'); };
+const conflict = revision => {
+  throw new HttpError(409, revision
+    ? `The plan changed to revision ${revision}. Reload it, then preview the edit again. Nothing was applied.`
+    : 'The plan or proposed references changed. Preview the edit again. Nothing was applied.', 'proposal_conflict');
+};
 export async function previewSceneProposal(env, project, planId, input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['expectedRevision','changes'].includes(key)) || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1 || !Array.isArray(input.changes) || input.changes.length < 1 || input.changes.length > 6) invalid('Provide a saved revision and one to six scene changes.');
   const row=await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId,project.id).first();
   if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
-  if (row.revision !== input.expectedRevision) conflict();
+  if (row.revision !== input.expectedRevision) conflict(row.revision);
   const plan=viewSongPlan(row), requested=new Map();
   for (const change of input.changes) {
     if (!change || typeof change !== 'object' || Array.isArray(change) || Object.keys(change).some(key => !['sceneId','direction','referenceAssetId'].includes(key)) || typeof change.sceneId !== 'string' || requested.has(change.sceneId) || (!Object.hasOwn(change,'direction') && !Object.hasOwn(change,'referenceAssetId'))) invalid('Each scene needs one unique direction or reference change.');
@@ -30,17 +34,28 @@ export async function previewSceneProposal(env, project, planId, input) {
   if (!changes.length) invalid('The proposal does not change any scenes.');
   const proposal={version:1,projectId:project.id,planId:plan.id,expectedRevision:plan.revision,changes};
   const reviewDigest=await sha256Hex(new TextEncoder().encode(JSON.stringify(proposal)));
-  return {proposal,reviewDigest};
+  // The saved revision identity, so a reviewer can confirm every surface read
+  // the same bytes and not only the same revision number.
+  const revisionDigest=await songPlanRevisionDigest(row);
+  return {proposal,reviewDigest,revision:{id:plan.id,revision:plan.revision,updatedAt:plan.updatedAt,digest:revisionDigest}};
 }
 export async function applySceneProposal(env, project, planId, input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key=>!['expectedRevision','changes','reviewDigest','approved'].includes(key)) || input.approved !== true || typeof input.reviewDigest !== 'string' || !/^[a-f0-9]{64}$/.test(input.reviewDigest)) invalid('Explicitly accept the previewed proposal.');
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key=>!['expectedRevision','changes','reviewDigest','approved','acceptSceneIds'].includes(key)) || input.approved !== true || typeof input.reviewDigest !== 'string' || !/^[a-f0-9]{64}$/.test(input.reviewDigest)) invalid('Explicitly accept the previewed proposal.');
+  if (input.acceptSceneIds !== undefined && (!Array.isArray(input.acceptSceneIds) || input.acceptSceneIds.length < 1 || input.acceptSceneIds.length > 6 || new Set(input.acceptSceneIds).size !== input.acceptSceneIds.length || input.acceptSceneIds.some(item => typeof item !== 'string'))) invalid('Accept one to six reviewed scenes, once each.');
   const {proposal,reviewDigest}=await previewSceneProposal(env,project,planId,{expectedRevision:input.expectedRevision,changes:input.changes});
+  // The digest always covers the whole previewed proposal. Accepting a subset
+  // proves the reviewer saw every change; only the named changes are written.
   if (reviewDigest !== input.reviewDigest) conflict();
+  const wanted=input.acceptSceneIds ? new Set(input.acceptSceneIds) : null;
+  if (wanted && [...wanted].some(sceneId => !proposal.changes.some(change => change.sceneId === sceneId))) invalid('An accepted scene is not part of the reviewed proposal.');
+  const accepted=wanted ? proposal.changes.filter(change => wanted.has(change.sceneId)) : proposal.changes;
+  const acceptedSceneIds=new Set(accepted.map(change => change.sceneId));
+  const declinedSceneIds=proposal.changes.filter(change => !acceptedSceneIds.has(change.sceneId)).map(change => change.sceneId);
   const row=await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId,project.id).first();
-  if (!row || row.revision !== proposal.expectedRevision) conflict();
-  const plan=viewSongPlan(row), byScene=new Map(proposal.changes.map(change=>[change.sceneId,change.after]));
+  if (!row || row.revision !== proposal.expectedRevision) conflict(row?.revision);
+  const plan=viewSongPlan(row), byScene=new Map(accepted.map(change=>[change.sceneId,change.after]));
   const scenes=plan.scenes.map(scene=>byScene.has(scene.id)?{...scene,...byScene.get(scene.id)}:scene);
-  const references=proposal.changes.map(change=>change.reference).filter(Boolean);
+  const references=accepted.map(change=>change.reference).filter(Boolean);
   const saved=await updateSongPlan(env,project,planId,{...plan,expectedRevision:proposal.expectedRevision,scenes},{reviewedReferences:references});
-  return {plan:saved,appliedDigest:reviewDigest};
+  return {plan:saved,appliedDigest:reviewDigest,acceptedSceneIds:[...acceptedSceneIds],declinedSceneIds};
 }

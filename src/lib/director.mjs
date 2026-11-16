@@ -2,8 +2,9 @@
 // scene-direction proposal. It never applies, saves, generates media or spends.
 // Workers AI is an existing installation entitlement, not a paid per-request
 // provider route; every call is a single bounded request with no retries.
-import { HttpError, text } from './util.mjs';
+import { HttpError, money, safeJson, text } from './util.mjs';
 import { previewSceneProposal } from './scene-proposals.mjs';
+import { songPlanRevisionDigest, viewSongPlan } from './song-plans.mjs';
 
 export const DIRECTOR_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const MAX_REQUEST = 1200;
@@ -97,7 +98,7 @@ export async function proposeSceneDirection(env, project, planId, input, { ai = 
   }
   const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first();
   if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
-  if (row.revision !== input.expectedRevision) throw new HttpError(409, 'This plan changed. Reload it before asking the Director.', 'revision_conflict');
+  if (row.revision !== input.expectedRevision) throw new HttpError(409, `This plan changed to revision ${row.revision}. Reload it before asking the Director. Nothing was asked or changed.`, 'revision_conflict');
   const plan = { id: row.id, revision: row.revision, ...JSON.parse(row.spec_json) };
   const indexById = new Map((plan.scenes ?? []).map((scene, index) => [scene.id, index]));
   if (input.sceneIds.some(id => !indexById.has(id))) throw new HttpError(400, 'A chosen scene is not in this plan.', 'invalid_director_request');
@@ -146,4 +147,285 @@ export async function proposeSceneDirection(env, project, planId, input, { ai = 
   // values and review digest. It writes nothing.
   const preview = await previewSceneProposal(env, project, planId, { expectedRevision: input.expectedRevision, changes: parsed.changes });
   return { ...preview, director: { model: DIRECTOR_MODEL, usage, selectedSceneIds: input.sceneIds, applied: false } };
+}
+
+// ---------------------------------------------------------------------------
+// Shot diagnosis: answer "which selected shot fails, why, and what would a
+// rerun cost?" from saved records only. No model call, no provider call, no
+// new job and no spend. Every sentence comes from a stored row.
+// ---------------------------------------------------------------------------
+
+const short = (value, max = 120) => {
+  const plain = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
+};
+const seconds = ms => `${(ms / 1000).toFixed(1)} s`;
+const hashLabel = sha => (typeof sha === 'string' && sha ? `${sha.slice(0, 12)}…` : 'none');
+
+const finding = (code, summary, nextStep, extra = {}) => ({ code, summary, nextStep, requiresRerun: code !== 'ok', ...extra });
+
+/** Explain one generation status in the terms a creator needs. */
+export function jobState(generation) {
+  if (!generation) return null;
+  const status = generation.status;
+  if (status === 'unknown') {
+    return generation.provider_request_id
+      ? { code: 'job_unanswered', summary: 'The provider never answered. Studio kept the reservation and will not resubmit the job automatically.', nextStep: 'Reconcile this job. If it still shows unknown, do not retry the same request; check the provider dashboard first and start a new request only when you accept the charge.' }
+      : { code: 'job_unconfirmed', summary: 'The request was never confirmed by the provider, so no result exists.', nextStep: 'Reconcile this job. With no provider request id there is nothing to wait for; start a new request when ready.' };
+  }
+  if (status === 'failed') {
+    const detail = generation.error_detail ? ` The provider or Studio reported: ${short(generation.error_detail, 180)}.` : '';
+    return { code: 'job_failed', summary: `The saved job failed (${generation.error_code ?? 'provider_error'}).${detail}`, nextStep: 'Fix the recorded problem, then rerun. Nothing is retried automatically and no refund is assumed.' };
+  }
+  if (['submitting', 'submitted', 'running'].includes(status)) {
+    return { code: 'job_waiting', summary: 'The provider has accepted this job and has not returned a saved result yet.', nextStep: 'Check the same job later. Do not submit a second request for this shot while it is active.' };
+  }
+  if (['provider_complete', 'saving'].includes(status)) {
+    return { code: 'job_unsaved', summary: 'The provider finished, but Studio has not saved the result as a take yet.', nextStep: 'Retry Save on this job. The result is retained, so saving it does not make another provider request.' };
+  }
+  if (status === 'cancel_requested') return { code: 'job_cancelling', summary: 'A cancellation was requested and is not confirmed yet.', nextStep: 'Reconcile this job before starting another. A stream or cancel request does not prove the provider job stopped.' };
+  if (status === 'cancelled') return { code: 'job_cancelled', summary: 'This job was cancelled.', nextStep: 'Start a new request when you want a result. The cancelled job is kept as history.' };
+  return null;
+}
+
+function recordedRerun(generation, { modelLabel } = {}) {
+  if (!generation) {
+    return {
+      required: true,
+      generationId: null,
+      model: null,
+      modelLabel: null,
+      settings: null,
+      estimateMicro: null,
+      estimateLabel: null,
+      basis: 'No saved job is linked to this shot, so Studio has no recorded settings or price for a rerun.',
+    };
+  }
+  const request = safeJson(generation.request_json, {});
+  const estimateMicro = Number.isSafeInteger(generation.cost_estimate_micro) ? generation.cost_estimate_micro : null;
+  return {
+    required: true,
+    generationId: generation.id,
+    model: generation.model,
+    modelLabel: modelLabel ?? generation.model,
+    settings: {
+      prompt: typeof request.prompt === 'string' ? short(request.prompt, 300) : null,
+      aspect: request.aspect ?? null,
+      durationSeconds: request.durationSeconds ?? null,
+      referenceAssetId: request.referenceAssetId ?? null,
+      referenceSha256: request.referenceSha256 ?? null,
+    },
+    estimateMicro,
+    estimateLabel: estimateMicro === null ? null : money(estimateMicro),
+    basis: estimateMicro === null
+      ? 'The saved job has no recorded estimate, so a rerun would be priced at admission.'
+      : 'Recorded admission estimate for the saved job settings.',
+  };
+}
+
+async function assetRow(env, project, assetId) {
+  if (!assetId) return null;
+  return env.DB.prepare('SELECT * FROM assets WHERE id=?1 AND project_id=?2').bind(assetId, project.id).first();
+}
+
+async function receiptFor(env, project, asset) {
+  if (!asset) return null;
+  if (asset.generation_id) {
+    const direct = await env.DB.prepare('SELECT * FROM generations WHERE id=?1 AND project_id=?2').bind(asset.generation_id, project.id).first();
+    if (direct) return direct;
+  }
+  return env.DB.prepare('SELECT * FROM generations WHERE output_asset_id=?1 AND project_id=?2 ORDER BY created_at DESC LIMIT 1').bind(asset.id, project.id).first();
+}
+
+function describeAsset(asset) {
+  if (!asset) return null;
+  return {
+    id: asset.id,
+    title: asset.title || 'Untitled',
+    sha256: asset.sha256,
+    shaLabel: hashLabel(asset.sha256),
+    durationMs: Number.isFinite(asset.duration_ms) ? asset.duration_ms : null,
+    mime: asset.mime,
+    available: !asset.deleted_at,
+  };
+}
+
+function receiptView(generation) {
+  if (!generation) return null;
+  const request = safeJson(generation.request_json, {});
+  return {
+    id: generation.id,
+    status: generation.status,
+    model: generation.model,
+    provider: generation.provider,
+    providerRequestId: generation.provider_request_id ?? null,
+    recipeId: generation.recipe_id,
+    errorCode: generation.error_code ?? null,
+    errorDetail: generation.error_detail ? short(generation.error_detail, 200) : null,
+    costEstimateMicro: generation.cost_estimate_micro,
+    costAllocatedMicro: generation.cost_allocated_micro ?? null,
+    submittedAt: generation.submitted_at ?? null,
+    completedAt: generation.completed_at ?? null,
+    settings: {
+      prompt: typeof request.prompt === 'string' ? short(request.prompt, 200) : null,
+      aspect: request.aspect ?? null,
+      durationSeconds: request.durationSeconds ?? null,
+      referenceAssetId: request.referenceAssetId ?? null,
+      referenceSha256: request.referenceSha256 ?? null,
+    },
+  };
+}
+
+function diagnoseScene({ scene, songMatches, songAvailable, take, reference, receipt }) {
+  const takeDuration = take && Number.isFinite(take.durationMs) ? take.durationMs : null;
+  const sceneMs = scene.endMs - scene.startMs;
+  const direction = String(scene.direction ?? '').trim();
+  const rerun = () => recordedRerun(receipt);
+  const evidence = {
+    timing: `${scene.startMs}–${scene.endMs} ms (${seconds(sceneMs)})`,
+    direction: direction || null,
+    reference: reference ? { ...reference, role: 'saved still' } : null,
+    take: take ? { ...take, coversSceneMs: takeDuration !== null && takeDuration + 1 >= sceneMs } : null,
+    receipt: receiptView(receipt),
+  };
+
+  if (!take) {
+    return { code: 'no_take', evidence, finding: finding('no_take', 'This shot has no saved take. It has not been generated, so there is no result to repair.', 'Write the direction, choose a still if needed, then generate a take deliberately. Studio cannot price it until a job is admitted.', { rerun: rerun() }) };
+  }
+  if (!take.available) {
+    return { code: 'take_missing', evidence, finding: finding('take_missing', 'The selected take was deleted from this project, so the scene points at a clip that no longer exists.', 'Choose another saved take, or rerun this shot. The deleted take cannot be restored from this plan.', { rerun: rerun() }) };
+  }
+  if (!songAvailable) {
+    return { code: 'song_missing', evidence, finding: finding('song_missing', 'The song this plan was built on is no longer available in the project.', 'Re-import the original song or build a new plan. Times and takes cannot be trusted against a different audio file.', { rerun: rerun() }) };
+  }
+  if (!songMatches) {
+    return { code: 'song_changed', evidence, finding: finding('song_changed', 'The saved song no longer matches the fingerprint this plan was built on, so every scene timing is unreliable.', 'Restore the original song or rebuild the plan timing. Do not rerun shots against a different audio file.', { rerun: rerun() }) };
+  }
+  const state = jobState(receipt);
+  if (state && state.code !== 'job_cancelled') {
+    return { code: state.code, evidence, finding: finding(state.code, state.summary, state.nextStep, { rerun: rerun() }) };
+  }
+  if (!takeDuration || !String(take.mime ?? '').startsWith('video/')) {
+    return { code: 'take_unplayable', evidence, finding: finding('take_unplayable', 'The selected take has no measured duration or is not a playable video file.', 'Replace the take before rendering. A clip without measured duration cannot be assembled reliably.', { rerun: rerun() }) };
+  }
+  if (takeDuration + 1 < sceneMs) {
+    const longer = { ...rerun(), note: 'A take long enough for this scene may cost more than the recorded estimate.' };
+    return { code: 'take_too_short', evidence, finding: finding('take_too_short', `The take is ${seconds(takeDuration)} but the scene needs ${seconds(sceneMs)}, so the shot cannot cover its slot.`, 'Rerun a take at least as long as the scene, or shorten the scene and keep this take.', { rerun: longer }) };
+  }
+  if (!reference) {
+    return { code: 'reference_missing', evidence, finding: finding('reference_missing', 'The scene points at a reference still that is no longer in this project.', 'Choose a saved still or clear the reference before rerunning. The take itself is still saved.', { rerun: rerun() }) };
+  }
+  if (!reference.available) {
+    return { code: 'reference_missing', evidence, finding: finding('reference_missing', 'The reference still for this shot was deleted from the project.', 'Choose another saved still or clear the reference before rerunning.', { rerun: rerun() }) };
+  }
+  const recorded = receipt ? safeJson(receipt.request_json, {}) : {};
+  if (recorded.referenceAssetId && recorded.referenceAssetId !== scene.referenceAssetId) {
+    return { code: 'reference_changed', evidence, finding: finding('reference_changed', 'This take was generated from a different still than the scene now uses, so it no longer matches the saved plan.', 'Rerun the shot with the current still, or restore the still this take was made from.', { rerun: rerun() }) };
+  }
+  if (recorded.referenceSha256 && reference.sha256 && recorded.referenceSha256 !== reference.sha256) {
+    return { code: 'reference_changed', evidence, finding: finding('reference_changed', 'The still at this scene keeps its ID but its bytes changed since the take was generated, so the take no longer matches the recorded source.', 'Rerun the shot against the current still, or restore the original file.', { rerun: rerun() }) };
+  }
+  if (recorded.prompt && direction && short(recorded.prompt, 1200) !== direction) {
+    return { code: 'direction_changed', evidence, finding: finding('direction_changed', 'The saved direction is not the direction this take was generated with, so the take no longer matches the plan.', 'Rerun the shot with the current direction, or restore the earlier direction and keep this take.', { rerun: rerun() }) };
+  }
+  if (!direction) {
+    return { code: 'no_direction', evidence, finding: finding('no_direction', 'The take is saved, but the scene has no direction, so the plan does not say what this shot should be.', 'Write the direction, or keep the take as an unplanned reference.', { rerun: rerun() }) };
+  }
+  return { code: 'ok', evidence, finding: finding('ok', 'The saved take matches the recorded settings, reference and the plan’s song fingerprint.', 'Nothing to rerun. Generate a new take only if you want a different result.', { rerun: { required: false } }) };
+}
+
+export async function diagnoseShots(env, project, planId, input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['expectedRevision', 'sceneIds'].includes(key))) {
+    throw new HttpError(400, 'Provide the saved revision and one to six scenes to inspect.', 'invalid_diagnosis_request');
+  }
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) throw new HttpError(400, 'Provide the saved revision you are looking at.', 'invalid_diagnosis_request');
+  if (!Array.isArray(input.sceneIds) || input.sceneIds.length < 1 || input.sceneIds.length > 6 || new Set(input.sceneIds).size !== input.sceneIds.length || input.sceneIds.some(id => typeof id !== 'string')) {
+    throw new HttpError(400, 'Choose one to six distinct scenes to inspect.', 'invalid_diagnosis_request');
+  }
+  const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first();
+  if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
+  if (row.revision !== input.expectedRevision) throw new HttpError(409, `This plan changed to revision ${row.revision}. Reload it before inspecting a shot. Nothing was changed.`, 'revision_conflict');
+  const plan = viewSongPlan(row);
+  const indexById = new Map((plan.scenes ?? []).map((scene, index) => [scene.id, index]));
+  if (input.sceneIds.some(id => !indexById.has(id))) throw new HttpError(400, 'A chosen scene is not in this plan.', 'invalid_diagnosis_request');
+
+  const song = await assetRow(env, project, plan.songAssetId);
+  const songAvailable = Boolean(song && !song.deleted_at);
+  const songMatches = Boolean(songAvailable && song.sha256 && song.sha256 === plan.songSha256);
+
+  const shots = [];
+  for (const sceneId of input.sceneIds) {
+    const scene = plan.scenes[indexById.get(sceneId)];
+    const take = await assetRow(env, project, scene.selectedTakeId);
+    const reference = await assetRow(env, project, scene.referenceAssetId);
+    const receipt = await receiptFor(env, project, take);
+    const result = diagnoseScene({
+      scene,
+      position: indexById.get(sceneId) + 1,
+      songMatches,
+      songAvailable,
+      take: describeAsset(take),
+      reference: describeAsset(reference),
+      receipt,
+    });
+    shots.push({ sceneId, position: indexById.get(sceneId) + 1, startMs: scene.startMs, endMs: scene.endMs, ...result.finding, evidence: result.evidence });
+  }
+
+  // Jobs the provider has not answered or Studio has not saved. They are
+  // separate from the selected shots because a plan scene only stores a take,
+  // not the job that never produced one.
+  const waitingRows = await env.DB.prepare(
+    `SELECT * FROM generations WHERE project_id=?1 AND output_asset_id IS NULL
+       AND status IN ('submitting','submitted','running','provider_complete','saving','unknown','cancel_requested')
+     ORDER BY updated_at DESC LIMIT 5`,
+  ).bind(project.id).all();
+  const waitingJobs = waitingRows.results.map(generation => {
+    const state = jobState(generation);
+    return {
+      id: generation.id,
+      model: generation.model,
+      status: generation.status,
+      submittedAt: generation.submitted_at ?? null,
+      updatedAt: generation.updated_at,
+      costEstimateMicro: generation.cost_estimate_micro,
+      code: state?.code ?? 'job_unknown_state',
+      summary: state?.summary ?? 'This job has no saved result and no recognised terminal state.',
+      nextStep: state?.nextStep ?? 'Reconcile this job before starting another request for the same work.',
+    };
+  });
+
+  const failing = shots.filter(shot => shot.requiresRerun);
+  const priced = failing.map(shot => shot.rerun).filter(rerun => Number.isSafeInteger(rerun?.estimateMicro));
+  const rerunMicro = priced.length ? priced.reduce((total, rerun) => total + rerun.estimateMicro, 0) : null;
+  const costLine = !failing.length
+    ? 'No rerun is needed, so there is nothing to charge.'
+    : rerunMicro !== null
+      ? `A rerun with the recorded settings would cost ${money(rerunMicro)} at the saved estimate${priced.length === failing.length ? '' : ` for ${priced.length} of ${failing.length} shots`}.`
+      : 'Studio has no recorded price for the failing shots, so a rerun would have to be priced when admitted.';
+  const described = `${shots.length} selected shot${shots.length === 1 ? '' : 's'}`;
+  const answer = !failing.length
+    ? `None of the ${described} ${shots.length === 1 ? 'has' : 'have'} a recorded fault. ${costLine}`
+    : `${failing.length} of the ${described} ${failing.length === 1 ? 'needs' : 'need'} a rerun: ${failing.map(shot => `Scene ${shot.position} — ${shot.summary}`).join(' ')} ${costLine}`;
+
+  return {
+    plan: { id: plan.id, revision: plan.revision, updatedAt: plan.updatedAt, revisionDigest: await songPlanRevisionDigest(row) },
+    song: {
+      assetId: plan.songAssetId,
+      title: song?.title ?? null,
+      savedSha256: plan.songSha256,
+      currentSha256: song?.sha256 ?? null,
+      available: songAvailable,
+      matches: songMatches,
+    },
+    shots,
+    waitingJobs,
+    answer,
+    cost: {
+      rerunMicro,
+      rerunLabel: rerunMicro === null ? null : money(rerunMicro),
+      basis: rerunMicro === null ? 'No saved job estimate is linked to the failing shots.' : 'Recorded admission estimates from the saved jobs.',
+      shotCount: failing.length,
+    },
+    nothingSubmitted: true,
+  };
 }

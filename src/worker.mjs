@@ -40,7 +40,7 @@ import {
 } from "./lib/jobs.mjs";
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { previewSceneProposal, applySceneProposal } from "./lib/scene-proposals.mjs";
-import { proposeSceneDirection } from "./lib/director.mjs";
+import { proposeSceneDirection, diagnoseShots } from "./lib/director.mjs";
 import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
@@ -568,6 +568,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/^\/api\/projects\/[a-z0-9_]+\/storage-report$/.test(path)) action = "admin";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/assets\/(preflight|reuse)$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/scene-proposal\/preview$/.test(path)) action = "read";
+  if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/shot-diagnosis$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/director$/.test(path)) action = "edit";
 
   const session = scopedAgent ?? await requireSession(env, request, action);
@@ -1086,7 +1087,9 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     if (rest === "song-plans" && method === "POST") return json({ plan: await createSongPlan(env, project, await body(request)) }, 201);
     const sceneProposal = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/scene-proposal\/(preview|apply)$/);
     const directorProposal = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/director$/);
+    const shotDiagnosis = rest && rest.match(/^song-plans\/([a-z0-9_]+)\/shot-diagnosis$/);
     if (directorProposal && method === "POST") return json(await proposeSceneDirection(env, project, directorProposal[1], await body(request, 8192)));
+    if (shotDiagnosis && method === "POST") return json(await diagnoseShots(env, project, shotDiagnosis[1], await body(request, 8192)));
     if (sceneProposal && method === "POST") {
       const input=await body(request,16384);
       return json(sceneProposal[2] === "preview" ? await previewSceneProposal(env,project,sceneProposal[1],input) : await applySceneProposal(env,project,sceneProposal[1],input));
@@ -2644,7 +2647,7 @@ export default {
           return protect(json({ error: 'Origin is not allowed' }, 403));
         if (url.pathname === '/mcp') {
           const session = await authorizeMcp(request, env);
-          if (!session) return protect(json({ error: 'Authentication required' }, 401, { 'www-authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="studio.read"` }));
+          if (!session) return protect(json({ error: 'Authentication required. This agent connection is no longer active or has expired; reconnect from Studio Agent connections and grant access again. Nothing was changed.' }, 401, { 'www-authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="studio.read"` }));
           const quoteGeneration = async ({ projectId, body, maxCostMicro }) => {
             const current = await authorizeMcp(request, env);
             const refuse = (message) => { const error = new Error(message); error.publicMessage = message; throw error; };
@@ -2661,7 +2664,7 @@ export default {
           };
           const handler = createStudioMcpHandler(async ({ method, path, body, binaryRange, spend }) => {
             const current = await authorizeMcp(request, env);
-            if (!current) return { status: 403, body: { error: { code: 'forbidden', message: 'The agent connection is no longer active.' } } };
+            if (!current) return { status: 403, body: { error: { code: 'forbidden', message: 'The agent connection is no longer active. Reconnect from Studio Agent connections and grant access again; a revoked connection cannot be reused.' } } };
             const generationPath = /^\/api\/projects\/([a-z0-9_]+)\/generations$/.exec(path);
             if (generationPath && method === 'POST') {
               if (!spend || !Number.isSafeInteger(spend.quotedCostMicro)) return { status: 403, body: { error: { code: 'spend_authority_required', message: 'This request has no approved spending authority.' } } };
@@ -2669,7 +2672,7 @@ export default {
               if (quote.costMicro !== spend.quotedCostMicro) return { status: 409, body: { error: { code: 'estimate_changed', message: 'The estimate changed. Request a new confirmation.' } } };
               const fingerprint = await sha256Hex(new TextEncoder().encode(JSON.stringify({ projectId: generationPath[1], body })));
               if (!await reserveMcpSpend(env, current.agentTokenId, body.clientRequestId, fingerprint, quote.costMicro)) return { status: 403, body: { error: { code: 'connection_spend_exhausted', message: 'The connection spending limit is exhausted or this request ID was already used for different work.' } } };
-              if (!await authorizeMcp(request, env)) return { status: 403, body: { error: { code: 'forbidden', message: 'The agent connection is no longer active.' } } };
+              if (!await authorizeMcp(request, env)) return { status: 403, body: { error: { code: 'forbidden', message: 'The agent connection is no longer active during this request. Nothing was submitted. Reconnect from Studio Agent connections and grant access again.' } } };
               // The existing job table scopes idempotency to the whole project.
               // Namespace MCP IDs by token to prevent a client from causing an
               // unrelated admitted job to dispatch under its own cheaper quote.

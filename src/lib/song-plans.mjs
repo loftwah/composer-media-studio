@@ -1,5 +1,5 @@
 // MIT. Durable, project-scoped editorial planning; no provider calls or spend.
-import { HttpError, id, now, safeJson, text } from './util.mjs';
+import { HttpError, id, now, safeJson, sha256Hex, text } from './util.mjs';
 import { readSongPlanPack } from './song-plan-pack.mjs';
 
 const fail = (message) => { throw new HttpError(400, message, 'invalid_song_plan'); };
@@ -14,6 +14,18 @@ async function asset(env, project, assetId, kind) {
 }
 export function viewSongPlan(row) {
   return { id: row.id, projectId: row.project_id, songAssetId: row.song_asset_id, songSha256: row.song_sha256, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, ...safeJson(row.spec_json, {}) };
+}
+/** A revision identity that binds the integer revision to the exact saved
+ * spec, so the workbench, the Director and MCP can prove they read the same
+ * bytes rather than merely the same revision number. */
+export async function songPlanRevisionDigest(row, spec = safeJson(row.spec_json, {})) {
+  const identity = JSON.stringify({ format: 'media-studio.song-plan-revision/v1', planId: row.id, revision: row.revision, spec });
+  return sha256Hex(new TextEncoder().encode(identity));
+}
+/** The async view carries the revision digest; `viewSongPlan` stays sync for
+ * callers that only need the saved fields. */
+export async function songPlanView(row) {
+  return { ...viewSongPlan(row), revisionDigest: await songPlanRevisionDigest(row) };
 }
 async function validateSpec(env, project, song, input, previousScenes = [], newOrigins = []) {
   const startMs = integer(input.startMs, 'Start');
@@ -71,7 +83,7 @@ export async function createSongPlan(env, project, input) {
   const spec = await validateSpec(env, project, song, { ...input, scenes });
   const timestamp = now(), planId = id('plan');
   await env.DB.prepare('INSERT INTO song_plans(id,project_id,song_asset_id,song_sha256,spec_json,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,1,?6,?6)').bind(planId, project.id, song.id, song.sha256, JSON.stringify(spec), timestamp).run();
-  return viewSongPlan({ id: planId, project_id: project.id, song_asset_id: song.id, song_sha256: song.sha256, spec_json: JSON.stringify(spec), revision: 1, created_at: timestamp, updated_at: timestamp });
+  return songPlanView({ id: planId, project_id: project.id, song_asset_id: song.id, song_sha256: song.sha256, spec_json: JSON.stringify(spec), revision: 1, created_at: timestamp, updated_at: timestamp });
 }
 // A new private plan is inserted only if the explicitly selected matching song is still live.
 export async function importSongPlan(env, project, input) {
@@ -88,17 +100,17 @@ export async function importSongPlan(env, project, input) {
   const saved=await env.DB.prepare(`INSERT INTO song_plans(id,project_id,song_asset_id,song_sha256,spec_json,revision,created_at,updated_at)
     SELECT ?1,?2,?3,?4,?5,1,?6,?6 WHERE EXISTS (SELECT 1 FROM assets WHERE id=?3 AND project_id=?2 AND kind='audio' AND deleted_at IS NULL AND sha256=?4 AND duration_ms=?7) RETURNING *`).bind(planId,project.id,song.id,song.sha256,JSON.stringify(spec),stamp,song.duration_ms).first();
   if(!saved) throw new HttpError(409,'The selected song changed. Review the import again.','song_changed');
-  return viewSongPlan(saved);
+  return songPlanView(saved);
 }
 export async function listSongPlans(env, project) {
   const rows = await env.DB.prepare('SELECT * FROM song_plans WHERE project_id=?1 ORDER BY updated_at DESC').bind(project.id).all();
-  return rows.results.map(viewSongPlan);
+  return Promise.all(rows.results.map(songPlanView));
 }
 export async function updateSongPlan(env, project, planId, input, { reviewedReferences = null } = {}) {
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) fail('Provide the revision you last read');
   const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first();
   if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
-  if (row.revision !== input.expectedRevision) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
+  if (row.revision !== input.expectedRevision) throw new HttpError(409, `This plan changed to revision ${row.revision}. Reload it before applying your edit. Nothing was saved.`, 'revision_conflict');
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
   const previousSpec = safeJson(row.spec_json, {}), newOrigins = [];
@@ -117,8 +129,8 @@ export async function updateSongPlan(env, project, planId, input, { reviewedRefe
     args.push(origin.subjectId,origin.revision);
   }
   const updated = await env.DB.prepare(sql+' RETURNING *').bind(...args).first();
-  if (!updated) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
-  return viewSongPlan(updated);
+  if (!updated) throw new HttpError(409, 'This plan changed while you were saving. Reload it and apply your edit again. Nothing was overwritten.', 'revision_conflict');
+  return songPlanView(updated);
 }
 
 // Caption timing is in source-song milliseconds. Export shifts it to the
@@ -147,14 +159,14 @@ async function planRow(env, project, planId) {
 export async function updateSongCaptions(env, project, planId, input) {
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) fail('Provide the revision you last read');
   const row = await planRow(env, project, planId);
-  if (row.revision !== input.expectedRevision) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
+  if (row.revision !== input.expectedRevision) throw new HttpError(409, `This plan changed to revision ${row.revision}. Reload it before applying your edit. Nothing was saved.`, 'revision_conflict');
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
   const spec = safeJson(row.spec_json, {});
   spec.captions = validateCaptions({ source: 'owner_supplied', rightsConfirmed: input.rightsConfirmed, cues: input.cues }, spec.startMs, spec.endMs);
   const updated = await env.DB.prepare('UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5 RETURNING *').bind(JSON.stringify(spec), now(), planId, project.id, input.expectedRevision).first();
-  if (!updated) throw new HttpError(409, 'This plan changed. Reload it before applying your edit.', 'revision_conflict');
-  return viewSongPlan(updated);
+  if (!updated) throw new HttpError(409, 'This plan changed while you were saving. Reload it and apply your edit again. Nothing was overwritten.', 'revision_conflict');
+  return songPlanView(updated);
 }
 // WebVTT parses character references; SRT readers such as FFmpeg show them
 // literally. Keep ordinary ampersands in SRT while still neutralising markup.

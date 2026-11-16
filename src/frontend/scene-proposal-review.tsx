@@ -1,16 +1,17 @@
 import { directorHandoff, currentDirectorHandoff } from './director-handoff.mjs';
+import { ShotDoctor } from './shot-doctor';
 import { useEffect, useRef, useState } from 'react';
 
 type Change = { sceneId:string; before:{direction:string;referenceAssetId:string|null}; after:{direction:string;referenceAssetId:string|null} };
-type Review = { proposal:{projectId:string;planId:string;expectedRevision:number;changes:Change[]}; reviewDigest:string };
+type Review = { proposal:{projectId:string;planId:string;expectedRevision:number;changes:Change[]}; reviewDigest:string; revision?:{id:string;revision:number;updatedAt:number;digest:string} };
 type SavedPlan = {id:string;revision:number;scenes:{id:string;direction:string;referenceAssetId:string|null}[]};
 const drafts = new Map<string,string>();
 const intentDrafts = new Map<string,string>();
 
 /** Review a typed agent proposal against the actual saved plan. No model is called. */
-export function SceneProposalReview({ projectId, plan, images, changed, canEdit, onApply }: { projectId:string;plan:SavedPlan;images:{id:string;title:string}[];changed:boolean;canEdit:boolean;onApply:(review:Review)=>boolean }) {
+export function SceneProposalReview({ projectId, plan, images, changed, canEdit, onApply }: { projectId:string;plan:SavedPlan;images:{id:string;title:string}[];changed:boolean;canEdit:boolean;onApply:(review:Review,acceptSceneIds:string[])=>boolean }) {
   const referenceName = (id:string|null) => id ? (images.find(image => image.id===id)?.title || `Unavailable reference (${id})`) : 'none';
-  const key=`${projectId}:${plan.id}`, [source,setSource]=useState(()=>drafts.get(key) ?? ''), [review,setReview]=useState<Review|null>(null), [error,setError]=useState(''), [busy,setBusy]=useState(false);
+  const key=`${projectId}:${plan.id}`, [source,setSource]=useState(()=>drafts.get(key) ?? ''), [review,setReview]=useState<Review|null>(null), [error,setError]=useState(''), [busy,setBusy]=useState(false), [declined,setDeclined]=useState<string[]>([]);
   const [intent,setIntent]=useState(()=>intentDrafts.get(key) ?? '');
   const [selected,setSelected]=useState<string[]>([]);
   const [handoff,setHandoff]=useState<{text:string; fingerprint:string}|null>(null);
@@ -40,13 +41,15 @@ export function SceneProposalReview({ projectId, plan, images, changed, canEdit,
       const response=await fetch(`/api/projects/${encodeURIComponent(projectId)}/song-plans/${encodeURIComponent(plan.id)}/scene-proposal/preview`,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify(input),signal:task.signal});
       const data=await response.json();if(!response.ok)throw new Error(data.error?.message || 'Could not preview the proposal.');
       if(oldDigest && oldDigest!==data.reviewDigest)throw new Error('The proposal or its references changed. Ask for a fresh preview.');
-      setReview(data);
+      setReview(data); setDeclined([]);
     } catch(error) {if(!task.signal.aborted)setError(error instanceof Error?error.message:'Could not preview the proposal.');}
     finally {if(controller.current===task){controller.current=null;setBusy(false);}}
   }
   function apply() {
-    if (!review || changed || review.proposal.expectedRevision!==plan.revision || !onApply(review)) {setError('The plan or draft changed. Review again after saving or discarding your edits.');return;}
-    drafts.delete(key);setSource('');setReview(null);setError('');
+    const accept=review ? review.proposal.changes.filter(change=>!declined.includes(change.sceneId)).map(change=>change.sceneId) : [];
+    if (!accept.length) {setError('Include at least one reviewed change to apply. Declining every change leaves the plan as it is.');return;}
+    if (!review || changed || review.proposal.expectedRevision!==plan.revision || !onApply(review, accept)) {setError('The plan or draft changed. Review again after saving or discarding your edits.');return;}
+    drafts.delete(key);setSource('');setReview(null);setDeclined([]);setError('');
   }
   async function askDirector() {
     if (askBusy || changed || !ask.trim() || !selected.length) return;
@@ -56,7 +59,7 @@ export function SceneProposalReview({ projectId, plan, images, changed, canEdit,
       const data=await response.json().catch(()=>({}));
       if(!response.ok) throw new Error(data.error?.message || `The Studio Director could not answer (${response.status}).`);
       if(data.proposal?.expectedRevision!==plan.revision) throw new Error('The plan changed while the Director was thinking. Reload before applying anything.');
-      setReview(data); setAsk('');
+      setReview(data); setDeclined([]); setAsk('');
       setAskInfo(`${data.director?.model || 'The Studio Director'} proposed ${data.proposal.changes.length} direction change${data.proposal.changes.length===1?'':'s'}. Nothing has been applied, generated or charged.`);
     } catch(error) { if(!changed) setAskError(error instanceof Error?error.message:'The Studio Director could not answer.'); }
     finally { setAskBusy(false); }
@@ -66,6 +69,7 @@ export function SceneProposalReview({ projectId, plan, images, changed, canEdit,
     {changed && <p className="small">Save or discard existing scene-plan edits before previewing a proposal.</p>}
     <button type="button" className="secondary" disabled={busy || changed || !source.trim()} onClick={()=>void preview()}>Preview proposal</button>
     {error && <p role="alert">{error}</p>}
-    {review && <div className="scene-direction-preview"><p>Review these changes. Timing, selected takes and captions stay unchanged.</p><ol>{review.proposal.changes.map(change=><li key={change.sceneId}><strong>Scene {plan.scenes.findIndex(scene=>scene.id===change.sceneId)+1}</strong><dl><dt>Before</dt><dd>{change.before.direction || 'No direction'} · reference {referenceName(change.before.referenceAssetId)}</dd><dt>After</dt><dd>{change.after.direction || 'No direction'} · reference {referenceName(change.after.referenceAssetId)}</dd></dl></li>)}</ol><button type="button" disabled={!canEdit || changed || review.proposal.expectedRevision!==plan.revision} onClick={apply}>Apply to draft</button></div>}
+    {review && <div className="scene-direction-preview"><p>Review these changes. Timing, selected takes and captions stay unchanged. Untick a change to decline it; only ticked changes reach your draft.</p>{review.revision && <p className="small">Read plan revision {review.revision.revision} · revision identity <code>{review.revision.digest.slice(0,12)}</code></p>}<ol>{review.proposal.changes.map(change=>{const refused=declined.includes(change.sceneId);return <li key={change.sceneId}><label className="song-check"><input type="checkbox" checked={!refused} onChange={event=>{const include=event.currentTarget.checked;setDeclined(current=>include?current.filter(id=>id!==change.sceneId):[...current,change.sceneId]);setError('');}} /> Include this change {refused && <span className="small">(declined)</span>}</label><strong>Scene {plan.scenes.findIndex(scene=>scene.id===change.sceneId)+1}</strong><dl><dt>Before</dt><dd>{change.before.direction || 'No direction'} · reference {referenceName(change.before.referenceAssetId)}</dd><dt>After</dt><dd>{change.after.direction || 'No direction'} · reference {referenceName(change.after.referenceAssetId)}</dd></dl></li>;})}</ol><button type="button" disabled={!canEdit || changed || review.proposal.expectedRevision!==plan.revision || declined.length===review.proposal.changes.length} onClick={apply}>Apply {review.proposal.changes.length-declined.length} of {review.proposal.changes.length} change{review.proposal.changes.length===1?'':'s'} to draft</button></div>}
+    <ShotDoctor projectId={projectId} plan={plan} />
   </details>;
 }
