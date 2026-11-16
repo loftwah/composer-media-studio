@@ -495,8 +495,16 @@ function showcaseFilm(film) {
   const slug = encodeURIComponent(film.slug);
   const title = escapeHtml(film.title);
   const duration = Number(film.duration_ms) > 0 ? `${(film.duration_ms / 1000).toFixed(0)} sec` : "Video";
+  // The chosen poster is the owner's artwork. Its derived preview is that same
+  // picture scaled down, so it may stand in; a video frame may not. Until the
+  // poster preview exists, the full poster stays exactly as it was.
+  const posterPreview = Boolean(film.poster_asset_id) && Boolean(Number(film.has_poster_preview));
+  const poster = posterPreview ? `/p/${slug}/poster-preview` : `/p/${slug}/poster`;
+  const size = posterPreview && Number.isSafeInteger(film.preview_w) && film.preview_w > 0 && Number.isSafeInteger(film.preview_h) && film.preview_h > 0
+    ? ` width="${film.preview_w}" height="${film.preview_h}"`
+    : "";
   const preview = film.poster_asset_id
-    ? `<video controls playsinline preload="none" poster="/p/${slug}/poster" aria-label="${title}"><source src="/p/${slug}/media" type="${escapeHtml(film.mime)}"><a href="/p/${slug}">Open ${title}</a></video>`
+    ? `<video controls playsinline preload="none" poster="${poster}"${size} aria-label="${title}"><source src="/p/${slug}/media" type="${escapeHtml(film.mime)}"><a href="/p/${slug}">Open ${title}</a></video>`
     : `<a class="film-placeholder" href="/p/${slug}" aria-label="Open ${title}"><span class="film-placeholder-kind">${escapeHtml(duration)} · Published film</span><strong>${title}</strong><span class="film-placeholder-action"><span class="film-play-icon" aria-hidden="true"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M7 4.5v11l8-5.5z" fill="currentColor"/></svg></span>Open film</span><span class="film-placeholder-note">No preview still provided</span></a>`;
   return `<figure>${preview}<figcaption><strong>${title}</strong><p>${escapeHtml(film.description || "")}</p><a href="/p/${slug}">Open the published piece</a></figcaption></figure>`;
 }

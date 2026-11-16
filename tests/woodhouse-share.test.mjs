@@ -54,6 +54,37 @@ test("artwork links retain the current search and page when returning to the cat
   assert.match(woodhouseGallery({ asset }), /href="\/portfolio#artwork-first-print"/);
 });
 
+test("portfolio film cards use the poster-derived preview and keep the full poster as the fallback", () => {
+  const base = { description: "A saved clip.", mime: "video/mp4", duration_ms: 4200 };
+  const html = woodhouseGallery({
+    films: [
+      { ...base, slug: "chosen-poster", title: "Chosen <poster>", poster_asset_id: "poster_one", has_poster_preview: 1, preview_w: 720, preview_h: 960 },
+      { ...base, slug: "unpreviewed", title: "Unpreviewed", poster_asset_id: "poster_two" },
+      { ...base, slug: "odd-size", title: "Odd size", poster_asset_id: "poster_three", has_poster_preview: 1, preview_w: 720.5, preview_h: 0 },
+      { ...base, slug: "not-previewed", title: "Not previewed", poster_asset_id: "poster_four", has_poster_preview: "0", preview_w: 720, preview_h: 960 },
+      { ...base, slug: "no-poster", title: "No poster" },
+    ],
+  });
+  // A chosen poster preview is the owner's own artwork, scaled down and sized.
+  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/chosen-poster\/poster-preview" width="720" height="960" aria-label="Chosen &lt;poster&gt;">/);
+  assert.match(html, /<source src="\/p\/chosen-poster\/media" type="video\/mp4">/);
+  assert.doesNotMatch(html, /poster="\/p\/chosen-poster\/poster"/);
+  assert.match(html, /<a href="\/p\/chosen-poster">Open the published piece<\/a>/);
+  // Without the stored preview the full poster stays, and no unverified box is applied.
+  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/unpreviewed\/poster" aria-label="Unpreviewed">/);
+  assert.match(html, /<source src="\/p\/unpreviewed\/media" type="video\/mp4">/);
+  assert.doesNotMatch(html, /\/p\/unpreviewed\/poster-preview/);
+  assert.doesNotMatch(html, /poster="\/p\/unpreviewed\/poster" width=/);
+  // An unsafe preview size keeps the preview route but reserves no box.
+  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/odd-size\/poster-preview" aria-label="Odd size">/);
+  // A non-numeric flag is not a preview: the full poster is still correct.
+  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/not-previewed\/poster" aria-label="Not previewed">/);
+  assert.doesNotMatch(html, /\/p\/not-previewed\/poster-preview/);
+  // A film with no chosen poster keeps the existing placeholder and downloads nothing.
+  assert.match(html, /class="film-placeholder" href="\/p\/no-poster"/);
+  assert.doesNotMatch(html, /\/p\/no-poster\/(?:poster|media|poster-preview)/);
+});
+
 test("showcase lists only currently published live videos and honours withdrawal", async (t) => {
   const { env, project } = await setup();
   env.WOODHOUSE_SHARE = "true";
