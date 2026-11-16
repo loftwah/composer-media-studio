@@ -13,6 +13,8 @@ export interface HomeProps {
   videosConfigured: boolean;
   woodhouseShare: boolean;
   canEdit: boolean;
+  /** Restore is a standalone installation-owner action, never a bridge grant. */
+  canRestore: boolean;
   showcase: { slug: string; title: string; description: string; mime: string; hasPoster: boolean }[];
 }
 

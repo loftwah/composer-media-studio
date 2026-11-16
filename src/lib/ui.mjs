@@ -426,7 +426,7 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
 
   <h2>Ownership and recovery</h2>
   <p>The studio keeps its metadata in D1, media in R2 and provider keys in its own secret storage. The metadata project export contains records including prompts, references, song plans and captions. Studio provider keys and session cookies are excluded, but your text and links may contain sensitive information; share the file carefully. Media files download separately while they still exist. The metadata export is not an importable restore or an R2 backup.</p>
-  <p>A portable project bundle can include the live media originals and restore them into a fresh owner-controlled Studio. Use the owner CLI described in <code>docs/portable-project.md</code>; provider keys and sessions are still excluded, and restored publications start withdrawn and hidden.</p>
+  <p>A portable project bundle can include the live media originals and restore them into a fresh owner-controlled Studio. Export the bundle with the owner CLI described in <code>docs/portable-project.md</code>, then choose that file in the restore panel on the studio home screen. Studio verifies the bundle in your browser, previews what will be written, stages the media, and reports real progress; a retry resumes the same restore rather than duplicating it. Restore is available to a standalone owner session, not to an App Composer bridge session. Provider keys and sessions are still excluded, and restored publications start withdrawn and hidden.</p>
   <p>Code and media restore are separate operations. Restoring an older Worker version does not bring back deleted bytes; restoring bytes does not roll back code.</p>
 
   <h2>Owner setup for a new installation</h2>

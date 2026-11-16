@@ -1,6 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { HomeProps, ProjectSummaryV1 } from "./contracts";
+import { RestorePanel } from "./restore-panel";
 import "./home.css";
 
 const money = (micro: number) => {
@@ -53,6 +54,7 @@ function Home({
   woodhouseShare,
   showcase,
   canEdit,
+  canRestore,
 }: HomeProps) {
   const recent = projects[0];
   return (
@@ -190,6 +192,7 @@ function Home({
           </p>
         )}
       </section>
+      <RestorePanel canRestore={canRestore} />
       <section className="creative-footer" aria-label="Studio tools">
         <div>
           <h2>From first idea to finished piece.</h2>
