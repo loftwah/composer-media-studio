@@ -14,10 +14,45 @@ const bytesLabel = (bytes: number) => !bytes ? "—" : bytes < 1024 * 1024 ? `${
 const dateLabel = (timestamp: string | number) => timestamp ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(timestamp)) : "";
 const extension = (mime: string) => mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
 
-function AssetCard({ asset, comparing, selected, full }: { asset: MediaAssetV1; comparing: boolean; selected: boolean; full: boolean }) {
+const previewUrl = (assetId: string) => `/api/studio/assets/${encodeURIComponent(assetId)}/preview`;
+
+/**
+ * A grid still reads the owner-only stored preview, not the full original.
+ * The original stays as a one-shot fallback: a missing preview (404), a
+ * non-image body or an ended session all fire `error`, which swaps the source
+ * once. `retryToken` only changes after an explicit “Build previews” run, so a
+ * rebuilt preview gets one more try instead of a retry loop.
+ */
+function AssetPreview({ asset, retryToken }: { asset: MediaAssetV1; retryToken: number }) {
+  const [original, setOriginal] = useState(false);
+  useEffect(() => { setOriginal(false); }, [retryToken]);
+  return <img
+    src={original ? asset.file : previewUrl(asset.id)}
+    alt={asset.title}
+    loading="lazy"
+    decoding="async"
+    width={asset.width && asset.height ? asset.width : undefined}
+    height={asset.width && asset.height ? asset.height : undefined}
+    onError={() => { if (!original) setOriginal(true); }}
+  />;
+}
+
+/**
+ * `MediaAssetV1` carries no video poster field, so a grid film shows a
+ * kind/length placeholder instead of a `<video>` that fetches the clip body
+ * just to paint a frame. Playback stays in the viewer.
+ */
+function VideoPlaceholder({ asset }: { asset: MediaAssetV1 }) {
+  return <span className="video-card" aria-hidden="true">
+    <span className="play-mark"/>
+    <span className="video-time">{asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : "video"}</span>
+  </span>;
+}
+
+function AssetCard({ asset, comparing, selected, full, previewToken }: { asset: MediaAssetV1; comparing: boolean; selected: boolean; full: boolean; previewToken: number }) {
   return <article className="asset">
     <button type="button" className="thumb" data-action="open-asset" data-id={asset.id} aria-label={`Open ${asset.title}`}>
-      {asset.kind === "video" ? <video src={asset.file} preload="metadata" muted playsInline aria-label={asset.title} /> : asset.kind === "audio" ? <span className="audio-card"><canvas width="240" height="64" data-waveform={asset.file} aria-hidden="true"/><span className="audio-time">{asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : "audio"}</span></span> : <img src={asset.file} alt={asset.title} loading="lazy" decoding="async"/>}
+      {asset.kind === "video" ? <VideoPlaceholder asset={asset}/> : asset.kind === "audio" ? <span className="audio-card"><canvas width="240" height="64" data-waveform={asset.file} aria-hidden="true"/><span className="audio-time">{asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : "audio"}</span></span> : <AssetPreview asset={asset} retryToken={previewToken}/>}
       <span className="badge">{asset.kind}</span>
     </button>
     <div className="meta"><strong title={asset.title}>{asset.title}</strong><small>{asset.width && asset.height ? `${asset.width}×${asset.height} · ` : ""}{bytesLabel(asset.bytes)} · {asset.source}</small></div>
@@ -26,7 +61,49 @@ function AssetCard({ asset, comparing, selected, full }: { asset: MediaAssetV1; 
   </article>;
 }
 
+type PreviewBackfill = { processed: number; remaining: number; failed: number };
+
+/**
+ * Bounded owner action for assets saved before previews existed. It asks the
+ * server for one batch and reports exactly what came back; it never infers
+ * completion from a non-empty response or from its own optimism.
+ */
+function PreviewBuilder({ onBuilt }: { onBuilt: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<PreviewBackfill | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function build() {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch("/api/studio/previews/backfill", {
+        method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "assets", limit: 10 }),
+      });
+      if (!response.ok) { setError(`The preview builder answered ${response.status}. No preview counts are available.`); return; }
+      const data = await response.json() as Partial<PreviewBackfill>;
+      const processed = Number(data.processed) || 0;
+      const remaining = Number(data.remaining) || 0;
+      const failed = Number(data.failed) || 0;
+      setResult({ processed, remaining, failed });
+      if (processed > 0) onBuilt();
+    } catch { setError("The preview builder could not be reached. No preview counts are available."); }
+    finally { setBusy(false); }
+  }
+  const done = result !== null && result.remaining === 0;
+  return <details className="library-preview-build">
+    <summary>Build library previews</summary>
+    <div className="library-preview-build-body">
+      <p className="small">Cards use a small stored preview when one exists. This builds up to 10 at a time for assets that do not have one yet.</p>
+      {result && <p role="status">Built <strong>{result.processed}</strong> just now. {result.remaining === 0 ? "The server reports no assets still waiting for a preview." : <>The server reports <strong>{result.remaining}</strong> still waiting for one.</>}{result.failed > 0 && <> {result.failed} could not be built.</>}</p>}
+      {error && <p role="alert">{error}</p>}
+      <div><button type="button" className="secondary" onClick={() => void build()} disabled={busy || done}>{busy ? "Building previews…" : done ? "No previews left to build" : result ? "Build 10 more" : "Build previews"}</button></div>
+    </div>
+  </details>;
+}
+
 function Library({ projectId, assets, query, filter, canImportShare, canViewStorage, comparing, compareIds }: LibraryProps) {
+  const [previewToken, setPreviewToken] = useState(0);
   const selected = compareIds.map(id => assets.find(asset => asset.id === id && asset.kind === "image")).filter((asset): asset is MediaAssetV1 => Boolean(asset));
   const trimmed = query.trim().toLowerCase();
   const visible = assets.filter(asset => (filter === "all" || asset.kind === filter) && (!trimmed || `${asset.title} ${asset.caption} ${asset.mime} ${asset.source}`.toLowerCase().includes(trimmed)));
@@ -37,6 +114,7 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
       <div className="row" role="group" aria-label="Filter">{(["all", "image", "video", "audio"] as const).map(value => <button key={value} type="button" className="quiet" data-action="filter" data-filter={value} aria-pressed={filter === value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
     </div><div className="row"><button type="button" className="secondary" data-action="compare-mode" aria-pressed={comparing}>{comparing ? "Close comparison" : "Compare stills"}</button><label className="button secondary library-upload" htmlFor="upload">Upload media<input id="upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" hidden data-input="upload" /></label></div></div>
     {canViewStorage && <StorageHealthPanel key={projectId} projectId={projectId}/>}
+    {canViewStorage && assets.length > 0 && <PreviewBuilder key={`preview-build-${projectId}`} onBuilt={() => setPreviewToken(token => token + 1)}/>}
     {comparing && <section className="compare-panel" aria-labelledby="compare-title">
       <div className="spread"><div><h2 id="compare-title">Compare stills</h2><p className="small">Choose two images from this studio to review them side by side. Your originals stay unchanged.</p></div><button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button></div>
       <p className="sr-only" role="status">{selected.length} of 2 images selected</p>
@@ -44,7 +122,7 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
     </section>}
     {assets.length === 0 && <div className="card"><h2>Nothing here yet.</h2><p>Upload a photo or a clip to start the library. You can generate new stills once uploads work.</p><button type="button" className="button" data-action="tab" data-tab="create">Make the first image</button></div>}
     {assets.length > 0 && visible.length === 0 && <p className="notice">No media matches that search or filter. <button type="button" className="quiet" data-action="clear-library">Clear search and filters</button></p>}
-    <div className="asset-grid">{visible.map(asset => <AssetCard key={asset.id} asset={asset} comparing={comparing} selected={compareIds.includes(asset.id)} full={compareIds.length >= 2}/>)}</div>
+    <div className="asset-grid">{visible.map(asset => <AssetCard key={asset.id} asset={asset} comparing={comparing} selected={compareIds.includes(asset.id)} full={compareIds.length >= 2} previewToken={previewToken}/>)}</div>
     {canImportShare && <details className="share-import" data-project-id={projectId}><summary>Import from Woodhouse Share</summary><form className="stack" data-form="woodhouse-import"><p className="small">Find the asset ID in <a href="/portfolio" target="_blank" rel="noopener noreferrer">Share artwork</a>. The original and source credit are saved to this project.</p><label>Share asset ID <input name="assetId" required maxLength={128} pattern="[a-z0-9][a-z0-9\-]{0,127}" /></label><label><span><input name="reuseConfirmed" type="checkbox" required /> I have permission to reuse this original.</span></label><div><button className="button secondary" type="submit">Import original</button></div></form></details>}
     <div className="dropzone library-dropzone" id="dropzone"><p><strong>Drop files here</strong> or use Upload media.</p><p className="small">JPEG, PNG, WebP, MP4, WebM, WAV, MP3 or M4A. Images and audio up to 32 MB, video up to 64 MB.</p></div>
   </div>;

@@ -61,3 +61,11 @@
 }
 @media (prefers-reduced-motion:reduce) { .storage-health > summary::before { transition:none; } }
 @media (max-width:600px) { .compare-grid { grid-template-columns:1fr; } .compare-frame img { height:260px; } .compare-empty { min-height:110px; } }
+
+/* Bounded owner action for assets saved before asset previews existed. */
+.library-preview-build { margin:0 0 1rem; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.library-preview-build > summary { padding:.7rem 1rem; cursor:pointer; font-size:.9rem; font-weight:700; }
+.library-preview-build-body { display:grid; gap:.55rem; padding:0 1rem 1rem; border-top:1px solid var(--line); }
+.library-preview-build-body > :first-child { margin-top:.7rem; }
+.library-preview-build-body p { margin:0; }
+.library-preview-build-body strong { font-variant-numeric:tabular-nums; }

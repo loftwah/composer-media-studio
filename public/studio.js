@@ -91,6 +91,18 @@ function upgradeFallbackWhenIdle() {
 document.addEventListener("focusout", () => setTimeout(upgradeFallbackWhenIdle, 0));
 app.addEventListener("pause", upgradeFallbackWhenIdle, true);
 
+// The no-bundle library grid loads the owner-only preview first and falls back
+// to the original exactly once. `error` does not bubble, so listen in capture;
+// removing the attribute before the swap is what makes it one-shot.
+app.addEventListener("error", (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement)) return;
+  const fallback = image.dataset.previewFallback;
+  if (!fallback) return;
+  delete image.dataset.previewFallback;
+  image.src = fallback;
+}, true);
+
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (character) =>
     character === "&" ? "&amp;" : character === "<" ? "&lt;" : character === ">" ? "&gt;" : character === '"' ? "&quot;" : "&#39;",
@@ -684,10 +696,10 @@ function libraryView() {
 function assetCard(asset) {
   const media =
     asset.kind === "video"
-      ? `<video src="${esc(asset.file)}" preload="metadata" muted playsinline aria-label="${esc(asset.title)}"></video>`
+      ? `<span class="video-card" aria-hidden="true"><span class="play-mark"></span><span class="video-time">${asset.durationMs ? (asset.durationMs / 1000).toFixed(1) + "s" : "video"}</span></span>`
       : asset.kind === "audio"
         ? `<span class="audio-card"><canvas width="240" height="64" data-waveform="${esc(asset.file)}" aria-hidden="true"></canvas><span class="audio-time">${asset.durationMs ? (asset.durationMs / 1000).toFixed(1) + "s" : "audio"}</span></span>`
-        : `<img src="${esc(asset.file)}" alt="${esc(asset.title)}" loading="lazy" decoding="async">`;
+        : `<img src="/api/studio/assets/${encodeURIComponent(asset.id)}/preview" alt="${esc(asset.title)}" loading="lazy" decoding="async"${asset.width && asset.height ? ` width="${Number(asset.width)}" height="${Number(asset.height)}"` : ""} data-preview-fallback="${esc(asset.file)}">`;
   return `<article class="asset">
     <button class="thumb" data-action="open-asset" data-id="${esc(asset.id)}" aria-label="Open ${esc(asset.title)}">${media}<span class="badge">${esc(asset.kind)}</span></button>
     <div class="meta">
