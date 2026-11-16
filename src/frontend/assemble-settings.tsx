@@ -726,9 +726,11 @@ export function Settings({ project, draft }: SettingsProps) {
           keys. This metadata export includes private prompts, lyrics, scene
           directions and subject and reference history. Text and links may
           contain sensitive information; Studio provider keys and session
-          cookies are excluded. Share it carefully. For a restorable archive
-          with media bytes, use the owner CLI in{" "}
-          <code>docs/portable-project.md</code>; restored publications start
+          cookies are excluded. Share it carefully. It is not a restorable
+          archive. To carry a studio and its original media to another
+          installation, export a portable bundle with the owner CLI in{" "}
+          <code>docs/portable-project.md</code>, then restore it from{" "}
+          <a href="#/">the studio home screen</a>. Restored publications start
           withdrawn and hidden.
         </p>
         <a

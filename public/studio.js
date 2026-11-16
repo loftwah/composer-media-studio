@@ -341,6 +341,9 @@ function render() {
         videosConfigured: state.videosConfigured,
         woodhouseShare: state.woodhouseShare,
         showcase: state.showcase, canEdit: state.session?.actions.includes("edit") ?? false,
+        // Restoring a portable bundle is installation-owner only; a Composer
+        // bridge session keeps its project scope and sees the explanation.
+        canRestore: state.session?.mode === "owner",
       });
     } else app.innerHTML = homeView();
   } else if (state.view === "asset") {
@@ -1178,7 +1181,7 @@ function settingsView() {
         </div>
         <div class="row"><input name="referenceTitle" placeholder="Reference title" maxlength="100"><input name="referenceUrl" type="url" placeholder="https://…"><button class="secondary" type="button" data-action="add-reference">Add</button></div>
         <hr style="border:0;border-top:1px solid var(--line);margin:0.5rem 0">
-        <p class="small">The export includes private prompts, lyrics, scene directions and subject and reference history. Text and links may contain sensitive information; Studio provider keys and session cookies are excluded. Share it carefully. It cannot restore a project; download media files separately while they still exist.</p>
+        <p class="small">The export includes private prompts, lyrics, scene directions and subject and reference history. Text and links may contain sensitive information; Studio provider keys and session cookies are excluded. Share it carefully. It is not a restorable archive; download media files separately while they still exist. To restore a studio with its media, export a portable bundle with the owner CLI and use the restore panel on <a href="#/">the studio home screen</a>.</p>
         <a class="button secondary" href="/api/projects/${esc(project.id)}/export" download>Download project export</a>
       </div>
     </form>`;

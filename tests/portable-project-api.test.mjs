@@ -74,3 +74,124 @@ test('owner export route and restore routes work end to end without exposing sec
   assert.equal(repeat.status, 202);
   assert.equal((await repeat.json()).status, 'already_imported');
 });
+
+test('restore status reports which source assets the server already holds', async () => {
+  const { env, project } = await setup();
+  await addMedia(env, project, 'asset_still', 'image', PNG_1x1, 'image/png');
+  await addMedia(env, project, 'asset_sound', 'audio', wav({ seconds: 2 }), 'audio/wav');
+  const source = await env.DB.prepare('SELECT * FROM projects WHERE id=?1').bind(project.id).first();
+  const { exportProjectManifest } = await import('../src/lib/portable-bundle.mjs');
+  const manifest = await exportProjectManifest(env, source);
+  const fresh = { DB: new SqliteD1(), MEDIA: new FakeBucket(), PUBLIC_ORIGIN: 'https://fresh.studio.test', SESSION_SECRET: 'fresh-session-secret-that-is-long-enough' };
+  const freshCookie = `studio_session=${await createSession(fresh)}`;
+  const start = await worker.fetch(new Request('https://fresh.studio.test/api/studio/restore', { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/json' }, body: JSON.stringify({ manifest }) }), fresh);
+  const started = await start.json();
+  const statusOf = async () => (await worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${started.importId}`, { headers: { cookie: freshCookie } }), fresh)).json();
+
+  const before = await statusOf();
+  assert.equal(before.status, 'staging');
+  assert.equal(before.assets, 2);
+  assert.deepEqual(before.staged, []);
+  assert.equal(before.stagedBytes, 0);
+
+  const first = started.assets[0];
+  const original = await env.DB.prepare('SELECT * FROM assets WHERE id=?1').bind(first.sourceId).first();
+  const bytes = new Uint8Array(await (await env.MEDIA.get(original.r2_key)).arrayBuffer());
+  const stage = () => worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${started.importId}/assets/${first.sourceId}`, { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/octet-stream' }, body: bytes }), fresh);
+  assert.equal((await (await stage()).json()).status, 'staged');
+  // A repeated upload of the same file is acknowledged, not stored twice.
+  assert.equal((await (await stage()).json()).status, 'already_staged');
+
+  const partial = await statusOf();
+  assert.deepEqual(partial.staged, [first.sourceId]);
+  assert.equal(partial.stagedBytes, first.bytes);
+  const r2 = await fresh.MEDIA.list({ prefix: `projects/${started.projectId}/` });
+  assert.equal(r2.objects.length, 1);
+
+  const missing = await worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${started.importId}/commit`, { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/json' }, body: JSON.stringify({ confirm: true }) }), fresh);
+  assert.equal(missing.status, 409);
+  assert.equal((await missing.json()).error.code, 'missing_media');
+  const afterRefusal = await statusOf();
+  assert.equal(afterRefusal.status, 'staging');
+  assert.deepEqual(afterRefusal.staged, [first.sourceId]);
+
+  const second = started.assets[1];
+  const secondBytes = new Uint8Array(await (await env.MEDIA.get((await env.DB.prepare('SELECT * FROM assets WHERE id=?1').bind(second.sourceId).first()).r2_key)).arrayBuffer());
+  await worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${started.importId}/assets/${second.sourceId}`, { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/octet-stream' }, body: secondBytes }), fresh);
+  const commit = await worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${started.importId}/commit`, { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/json' }, body: JSON.stringify({ confirm: true }) }), fresh);
+  assert.equal(commit.status, 200);
+  const done = await statusOf();
+  assert.equal(done.status, 'committed');
+  assert.equal(done.staged.length, 2);
+  assert.equal(done.stagedBytes, started.assets.reduce((sum, asset) => sum + asset.bytes, 0));
+});
+
+test('a cleaned-up restore previews as a clean start, and restarting it does not duplicate rows', async () => {
+  const { env, project } = await setup();
+  await addMedia(env, project, 'asset_still', 'image', PNG_1x1, 'image/png');
+  const source = await env.DB.prepare('SELECT * FROM projects WHERE id=?1').bind(project.id).first();
+  const { exportProjectManifest } = await import('../src/lib/portable-bundle.mjs');
+  const manifest = await exportProjectManifest(env, source);
+  const fresh = { DB: new SqliteD1(), MEDIA: new FakeBucket(), PUBLIC_ORIGIN: 'https://fresh.studio.test', SESSION_SECRET: 'fresh-session-secret-that-is-long-enough' };
+  const freshCookie = `studio_session=${await createSession(fresh)}`;
+  const post = (path, payload) => worker.fetch(new Request(`https://fresh.studio.test${path}`, { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/json' }, body: JSON.stringify(payload) }), fresh);
+
+  const started = await (await post('/api/studio/restore', { manifest })).json();
+  const target = started.assets[0];
+  const original = await env.DB.prepare('SELECT * FROM assets WHERE id=?1').bind('asset_still').first();
+  const bytes = new Uint8Array(await (await env.MEDIA.get(original.r2_key)).arrayBuffer());
+  await worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${started.importId}/assets/asset_still`, { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/octet-stream' }, body: bytes }), fresh);
+  const cleaned = await (await post(`/api/studio/restore/${started.importId}/cleanup`, { confirm: true })).json();
+  assert.equal(cleaned.status, 'cleaned');
+  assert.equal(cleaned.deleted.length, 1);
+  assert.equal((await fresh.MEDIA.list({ prefix: 'projects/' })).objects.length, 0);
+  const cleanedStatus = await (await worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${started.importId}`, { headers: { cookie: freshCookie } }), fresh)).json();
+  assert.equal(cleanedStatus.status, 'failed');
+  assert.deepEqual(cleanedStatus.staged, []);
+  assert.equal(cleanedStatus.stagedBytes, 0);
+
+  const preview = await (await post('/api/studio/restore/preview', { manifest })).json();
+  assert.equal(preview.status, 'ready');
+  assert.equal(preview.importStatus, 'failed');
+  assert.equal(preview.importId, started.importId);
+  assert.deepEqual(preview.blockers, []);
+
+  const restarted = await post('/api/studio/restore', { manifest });
+  assert.equal(restarted.status, 202);
+  const again = await restarted.json();
+  assert.equal(again.status, 'staging');
+  assert.equal(again.restarted, true);
+  assert.notEqual(again.projectId, started.projectId);
+  assert.equal(again.assets.length, 1);
+
+  await worker.fetch(new Request(`https://fresh.studio.test/api/studio/restore/${again.importId}/assets/asset_still`, { method: 'POST', headers: { cookie: freshCookie, 'content-type': 'application/octet-stream' }, body: bytes }), fresh);
+  const committed = await (await post(`/api/studio/restore/${again.importId}/commit`, { confirm: true })).json();
+  assert.equal(committed.status, 'committed');
+  const rows = await fresh.DB.prepare('SELECT COUNT(*) AS n FROM assets WHERE project_id=?1').bind(again.projectId).first();
+  assert.equal(rows.n, 1);
+  const projects = await fresh.DB.prepare('SELECT COUNT(*) AS n FROM projects').first();
+  assert.equal(projects.n, 1);
+});
+
+test('restore stays an installation-owner action for a Composer bridge session', async () => {
+  const { env } = await setup();
+  const cookie = `studio_session=${await createSession(env, {
+    mode: 'bridge',
+    actor: 'acct-123',
+    workspace: 'ws-personal',
+    actions: ['read', 'edit', 'publish', 'admin'],
+    revision: 3,
+  })}`;
+  const preview = await worker.fetch(new Request('https://studio.test/api/studio/restore/preview', {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ manifest: { format: 'studio-project-bundle/v1' } }),
+  }), env);
+  assert.equal(preview.status, 403);
+  assert.equal((await preview.json()).error.code, 'owner_required');
+  const inventory = await worker.fetch(new Request('https://studio.test/api/studio/imports', { headers: { cookie } }), env);
+  assert.equal(inventory.status, 403);
+  assert.equal((await inventory.json()).error.code, 'owner_required');
+  const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM project_bundle_imports').first();
+  assert.equal(rows.n, 0);
+});

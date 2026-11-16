@@ -95,7 +95,48 @@ node scripts/studio-project.mjs cleanup \
 All commands accept `--json` for machine-readable output. `export`, `import`,
 `inventory` and `cleanup` print progress to stderr.
 
-## HTTP API used by the CLI
+## Restore in the Studio browser UI
+
+A standalone owner can restore a bundle without the CLI. On the Studio home
+screen (`/studio`), under **Restore a studio from a bundle**, choose the
+`.studio` file:
+
+1. The page reads the container with bounded random access and checks the magic,
+   manifest length, manifest hash and seal, and the exact container size. Each
+   media blob is hashed when it is read for upload. This needs Web Crypto; over
+   a plain-HTTP origin without it the page says hashes are checked by the server
+   only.
+2. It posts the manifest to `POST /api/studio/restore/preview` and shows the
+   project, media file count, distinct blobs, content bytes, record breakdown,
+   publications, skipped deletions, provider jobs and the fact that no budget is
+   restored, plus any conflicts, blockers and warnings. A preview never writes.
+3. **Restore into this studio** starts the same staging import the CLI uses,
+   sends each media file to
+   `POST /api/studio/restore/:id/assets/:assetId`, and reports the counts the
+   server acknowledged (`staged` or `already_staged`) through a polite live
+   region and a determinate progress bar. There is no timer-based percentage.
+4. Commit verifies every staged hash again and activates the project in one D1
+   batch. The success line uses the counts the server returned at commit.
+5. A retry, a stopped restore or a page reload continues the same import: the
+   status route reports which source assets the server already holds, and the
+   page sends only the missing files. **Remove staged files** is the opt-in
+   cleanup route; it never deletes a live original.
+
+Errors are specific: not a bundle, truncated file, damaged hash, unsupported
+schema, credential-shaped field, storage limit, a project or slug already in
+this installation, an already-imported bundle, and an incomplete commit
+(`missing_media`, "some files have not reached storage; retry sends only the
+missing ones"). Restore is a standalone owner action; a Composer bridge session
+sees the explanation instead of the controls and the API returns
+`403 owner_required`.
+
+Browser restore has the same limits as the CLI: 200 assets, 1.5 MB of records,
+512 MB of media and 64 MB per video entry. Web Crypto has no streaming SHA-256,
+so the browser does not recompute the aggregate blob-stream hash; it verifies
+every blob and the manifest individually and checks the container length, and
+the server repeats every asset hash before commit.
+
+The HTTP API used by the CLI
 
 The CLI uses these owner routes. They are the existing Studio API, not a
 separate backend. Portable restore and inventory are restricted to a standalone
@@ -105,11 +146,11 @@ project or read restore inventory.
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/projects/:id/portable-export` | Sealed manifest (no media bytes) |
-| `POST` | `/api/studio/restore/preview` | Validate a manifest and report conflicts; writes nothing |
+| `POST` | `/api/studio/restore/preview` | Validate a manifest and report conflicts; writes nothing. `status` is `ready`, `resume_staging` (importStatus `staging`), `already_imported` or a 409 `blocked` report |
 | `POST` | `/api/studio/restore` | Create or resume a staging restore |
 | `POST` | `/api/studio/restore/:importId/assets/:assetId` | Stage one raw media entry |
 | `POST` | `/api/studio/restore/:importId/commit` | Verify all staged bytes and activate records |
-| `GET` | `/api/studio/restore/:importId` | Restore status |
+| `GET` | `/api/studio/restore/:importId` | Restore status, including `staged` source asset ids and `stagedBytes` this installation already holds |
 | `GET` | `/api/studio/imports` | Read-only imports and duplicate-content inventory |
 | `POST` | `/api/studio/restore/:importId/cleanup` | Opt-in staging cleanup |
 
@@ -238,3 +279,11 @@ performed and no public page was changed. The remaining gate is an owner-run
 export from the real installation followed by a restore into a separate fresh
 D1/R2 installation, with the resulting hashes and editable flows recorded in
 #157.
+
+The owner browser path was exercised on 16 November 2026 against separate local
+`wrangler dev` installations, in headless Chrome at 1440 px and 390 px: preview
+counts, real staged progress, success counts from commit, resume after a reload,
+opt-in cleanup, already-imported, damaged/truncated file refusal and the
+configured storage limit. That run is recorded in
+[the restore UX note](evidence/2026-11-16-restore-ux/README.md). It still does
+not prove a separate Cloudflare account or the production installation.

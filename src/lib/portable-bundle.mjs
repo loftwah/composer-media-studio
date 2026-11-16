@@ -672,7 +672,10 @@ export async function previewPortableImport(env, manifest, { storageLimitBytes =
   });
   return {
     dryRun: true,
-    status: existingImport ? 'resume_staging' : 'ready',
+    // A staging row can be continued; a failed row (its staged files were
+    // removed) is a clean start, not a resume.
+    status: existingImport?.status === 'staging' ? 'resume_staging' : 'ready',
+    importStatus: existingImport?.status ?? null,
     bundleId: manifest.bundleId,
     importId: existingImport?.id ?? null,
     project: { sourceId: manifest.project.id, name: manifest.project.name, slug: manifest.project.slug, visibility: manifest.project.visibility },
@@ -816,9 +819,38 @@ export async function commitPortableImport(env, importId, { confirm = false } = 
 }
 
 export async function importStatus(env, importId) {
-  const row = await env.DB.prepare('SELECT id,bundle_id,source_project_id,project_id,status,asset_count,byte_count,created_at,updated_at,committed_at FROM project_bundle_imports WHERE id=?1').bind(importId).first();
+  const row = await env.DB.prepare('SELECT id,bundle_id,source_project_id,project_id,status,asset_count,byte_count,created_at,updated_at,committed_at,manifest_json,id_map_json,staged_keys_json FROM project_bundle_imports WHERE id=?1').bind(importId).first();
   if (!row) throw new PortableError(404, 'import_not_found', 'That restore does not exist.');
-  return { importId: row.id, bundleId: row.bundle_id, sourceProjectId: row.source_project_id, projectId: row.project_id, status: row.status, assets: row.asset_count, bytes: row.byte_count, createdAt: row.created_at, updatedAt: row.updated_at, committedAt: row.committed_at };
+  // Remap the recorded staging keys back to source asset ids so a browser
+  // resuming an interrupted restore can skip bytes the server already holds.
+  // A failed import's staged files were removed by cleanup, so it holds none.
+  const manifest = safeJson(row.manifest_json, null);
+  const map = safeJson(row.id_map_json, null);
+  const stagedKeys = row.status === 'failed' ? new Set() : new Set(safeJson(row.staged_keys_json, []));
+  const staged = [];
+  let stagedBytes = 0;
+  for (const asset of manifest?.assets ?? []) {
+    if (asset.content !== 'media') continue;
+    const mapped = map?.assets?.[asset.id];
+    if (!mapped) continue;
+    if (!stagedKeys.has(repoKey(row.project_id, mapped, asset.mime))) continue;
+    staged.push(asset.id);
+    stagedBytes += Number(asset.bytes) || 0;
+  }
+  return {
+    importId: row.id,
+    bundleId: row.bundle_id,
+    sourceProjectId: row.source_project_id,
+    projectId: row.project_id,
+    status: row.status,
+    assets: row.asset_count,
+    bytes: row.byte_count,
+    staged,
+    stagedBytes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    committedAt: row.committed_at,
+  };
 }
 
 /** Read-only inventory. Useful for #158 duplicate review and restore support. */

@@ -1,0 +1,162 @@
+/* MIT. Owner restore panel. Uses the shared paper/ink tokens and card grid. */
+
+.restore-panel {
+  min-width: 0;
+}
+.restore-panel-intro {
+  max-width: 72ch;
+  margin: 0;
+}
+.restore-choose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+}
+.restore-choose label {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+.restore-choose input[type="file"] {
+  max-width: 100%;
+  min-width: 0;
+}
+.restore-file {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.restore-file-name {
+  font: 500 0.82rem/1.4 ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+.restore-preview {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 0.9rem;
+}
+.restore-preview .eyebrow {
+  margin: 0;
+}
+.restore-project {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.restore-project-meta {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.restore-project-meta code {
+  overflow-wrap: anywhere;
+}
+.restore-facts {
+  display: grid;
+  gap: 0.9rem 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  margin: 0.2rem 0 0;
+}
+.restore-facts > div {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+.restore-facts dt {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.restore-facts dd {
+  margin: 0.25rem 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.restore-facts small {
+  display: block;
+  margin-top: 0.25rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.restore-conflicts {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--danger);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+.restore-warnings {
+  border-top: 1px solid var(--line);
+  padding-top: 0.6rem;
+  font-size: 0.85rem;
+}
+.restore-warnings summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.restore-warnings ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+}
+.restore-meter {
+  display: grid;
+  gap: 0.35rem;
+}
+.restore-meter progress {
+  width: 100%;
+  height: 0.7rem;
+  accent-color: var(--accent);
+}
+.restore-meter p {
+  margin: 0;
+}
+.restore-status {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+.restore-problem,
+.restore-done {
+  display: grid;
+  gap: 0.4rem;
+  justify-items: start;
+}
+.restore-problem h3,
+.restore-done h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.restore-problem p,
+.restore-done p {
+  margin: 0;
+  max-width: 72ch;
+}
+.restore-problem h3:focus-visible,
+.restore-done h3:focus-visible {
+  outline: 3px solid var(--accent-bright);
+  outline-offset: 3px;
+}
+.restore-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+.restore-privacy {
+  margin: 0;
+  max-width: 72ch;
+}
+@media (max-width: 480px) {
+  .restore-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .restore-choose {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* A flex-basis of 20rem would become a 320px-tall label in column mode. */
+  .restore-choose label {
+    flex: none;
+  }
+}
