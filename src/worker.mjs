@@ -17,6 +17,7 @@ import {
   requireSession,
   sessionCookie,
   sessionBinding,
+  verifyComposerGrant,
   verifyComposerRead,
   verifyPassphrase,
 } from "./lib/auth.mjs";
@@ -76,6 +77,7 @@ import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrig
 import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
+import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } from "./lib/publication-policy.mjs";
 import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.mjs";
 import { PUBLIC_CACHE_SECONDS, publicOrigin, publicSitemap, robotsTxt } from "./lib/sitemap.mjs";
@@ -1025,6 +1027,10 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       return json(usage);
     }
 
+    if (rest === "assets/upload-link" && method === "POST") {
+      return json(await beginAssetUpload(env, project, session, await body(request, 4096), request));
+    }
+
     if (rest === "assets" && method === "POST") {
       const binding = request.headers.get("x-studio-local-import-binding");
       if (binding !== null && (!/^[a-f0-9]{64}$/.test(binding) || !constantTimeEqual(binding, (await sessionBinding(env, session)) ?? ""))) throw new HttpError(409, "Your Studio session changed. Choose a studio again.", "session_changed");
@@ -1640,6 +1646,118 @@ function normalizeReferences(input) {
   });
 }
 
+/** Begin the supported large-file path: one signed, single-use PUT bound to
+ * this project, this agent connection, the declared size and SHA-256. JSON-RPC
+ * inputs and results stay bounded; only the original bytes travel over HTTP. */
+async function beginAssetUpload(env, project, session, input, request) {
+  if (!session.agentTokenId)
+    throw new HttpError(403, "Begin an upload from an agent connection. No upload link was created.", "agent_connection_required");
+  if (session.project && session.project !== project.id)
+    throw new HttpError(403, "This agent connection can only upload into its granted project. No upload link was created.", "upload_project_mismatch");
+  return createUploadLink(env, {
+    projectId: project.id,
+    tokenId: session.agentTokenId,
+    filename: input.filename,
+    contentType: input.contentType,
+    bytes: input.bytes,
+    sha256: input.sha256,
+    request,
+  });
+}
+
+/** Receive the bytes for one link. Every refusal happens before D1 or R2 is
+ * written; the link is claimed only after the bytes, hash, sniffed type and
+ * duplicate check have all passed. Admission, keys and asset columns are the
+ * same `storeAsset` path a multipart upload uses. */
+async function receiveAssetUpload(request, env, url, linkId) {
+  const link = await loadUploadLink(env, linkId);
+  if (!link) throw new HttpError(404, "This upload link is not valid. Begin a new upload.", "upload_link_unknown");
+  if (link.consumed_at)
+    throw new HttpError(409, "This upload link was already used. Begin a new upload.", "upload_link_used");
+  if (link.expires_at <= now())
+    throw new HttpError(410, "This upload link expired. Begin a new upload.", "upload_link_expired");
+  const projectId = url.searchParams.get("p") ?? "";
+  if (projectId !== link.project_id)
+    throw new HttpError(403, "This upload link belongs to another project. Nothing was saved.", "upload_project_mismatch");
+  if (!await verifyUploadLink(env, link, { expires: url.searchParams.get("e"), signature: url.searchParams.get("s") }))
+    throw new HttpError(403, "This upload link is not valid. Begin a new upload.", "upload_link_invalid");
+
+  const grant = await env.DB.prepare(
+    "SELECT id,project_id,issuer_json,scopes,revoked_at,expires_at FROM mcp_tokens WHERE id=?1",
+  ).bind(link.token_id).first();
+  const scopes = String(grant?.scopes ?? "").split(" ");
+  if (
+    !grant ||
+    grant.revoked_at ||
+    grant.expires_at <= now() ||
+    grant.project_id !== link.project_id ||
+    !scopes.includes("studio.edit")
+  )
+    throw new HttpError(403, "The agent connection for this upload is no longer active. Begin a new upload.", "connection_revoked");
+  const issuer = safeJson(grant.issuer_json, null);
+  if (!issuer || (issuer.mode !== "owner" && issuer.mode !== "bridge"))
+    throw new HttpError(403, "The agent connection for this upload is no longer active. Begin a new upload.", "connection_revoked");
+  await verifyComposerGrant(env, issuer, "edit");
+
+  const project = await env.DB.prepare("SELECT * FROM projects WHERE id=?1").bind(link.project_id).first();
+  if (!project) throw new HttpError(404, "Project not found", "not_found");
+  if (!Number.isSafeInteger(link.bytes) || link.bytes < 1 || link.bytes > MAX_VIDEO_BYTES)
+    throw new HttpError(413, "This upload is larger than Studio accepts. Nothing was saved.", "too_large");
+
+  const bytes = await readBoundedBody(request, link.bytes);
+  if (bytes.length !== link.bytes)
+    throw new HttpError(400, "The upload size does not match the declared byte count. Nothing was saved.", "size_mismatch");
+  const hash = await sha256Hex(bytes);
+  if (!constantTimeEqual(hash, link.sha256))
+    throw new HttpError(422, "The uploaded bytes do not match the declared SHA-256. Nothing was saved.", "hash_mismatch");
+
+  const sniffed = sniffMedia(bytes, link.mime);
+  if (!sniffed.kind)
+    throw new HttpError(415, "Upload a JPEG, PNG or WebP image, an MP4 or WebM video, or WAV, MP3 or M4A audio", "unsupported_type");
+  const limit = sniffed.kind === "image" ? MAX_IMAGE_BYTES : sniffed.kind === "audio" ? MAX_AUDIO_BYTES : MAX_VIDEO_BYTES;
+  if (bytes.length > limit)
+    throw new HttpError(413, `${sniffed.kind === "image" ? "Images" : sniffed.kind === "audio" ? "Audio" : "Videos"} must stay under ${limit / 1024 / 1024} MiB. Nothing was saved.`, "too_large");
+
+  const duplicate = await findDuplicateOriginal(env, project, { sha256: hash, size: bytes.length, mime: sniffed.mime });
+  if (!duplicate.valid) throw new HttpError(400, duplicate.reason, "invalid_fingerprint");
+  if (!await claimUploadLink(env, link)) {
+    const latest = await loadUploadLink(env, link.id);
+    if (latest?.consumed_at)
+      throw new HttpError(409, "This upload link was already used. Begin a new upload.", "upload_link_used");
+    throw new HttpError(410, "This upload link expired. Begin a new upload.", "upload_link_expired");
+  }
+
+  if (duplicate.duplicate) {
+    await env.DB.prepare("UPDATE asset_upload_links SET asset_id=?2 WHERE id=?1 AND asset_id IS NULL")
+      .bind(link.id, duplicate.duplicate.id)
+      .run();
+    return json({
+      asset: assetView(duplicate.duplicate, { duplicate: true, reused: true }),
+      upload: { linkId: link.id, reused: true },
+    });
+  }
+
+  // A deterministic id makes two concurrent uploads of the same bytes collide
+  // on the existing assets row instead of creating a second original.
+  const identity = await sha256Hex(
+    new TextEncoder().encode(JSON.stringify([project.id, "upload-link", hash, bytes.length, sniffed.mime])),
+  );
+  const title = link.filename.replace(/\.[^.]+$/, "").slice(0, 100) || "Untitled";
+  const stored = await storeAsset(env, project, bytes, {
+    mime: sniffed.mime,
+    title,
+    caption: "",
+    importId: `asset_${identity}`,
+    hash,
+  });
+  const payload = await stored.json();
+  if (payload?.asset?.id)
+    await env.DB.prepare("UPDATE asset_upload_links SET asset_id=?2 WHERE id=?1 AND asset_id IS NULL")
+      .bind(link.id, payload.asset.id)
+      .run();
+  return json({ ...payload, upload: { linkId: link.id, reused: stored.status === 200 } }, stored.status);
+}
+
 async function uploadAsset(request, env, project) {
   const type = request.headers.get("content-type") ?? "";
   if (!type.includes("multipart/form-data"))
@@ -1793,6 +1911,16 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
 
 async function handlePublic(request, env, url) {
   const path = url.pathname;
+
+  // Signed, single-use upload for one original. It carries no session cookie:
+  // the signature, the staging row and the live agent connection are the
+  // authority, and the bytes go through the same admission as a form upload.
+  const uploadLink = path.match(/^\/upload\/assets\/(upl_[a-f0-9]{32})$/);
+  if (uploadLink) {
+    if (request.method !== "PUT")
+      throw new HttpError(405, "Method not allowed", "method_not_allowed");
+    return receiveAssetUpload(request, env, url, uploadLink[1]);
+  }
 
   // Signed, short-lived input for one render job. No session, no listing, no
   // other asset: the provider can read exactly what this job needs to read.
@@ -2750,6 +2878,14 @@ export default {
         .run();
     })().catch(() => {}));
     ctx.waitUntil(pruneMcpRecords(env));
+    // A consumed or expired upload handoff has no further use. Keep one day for
+    // the owner-visible receipt, then remove the staging row.
+    ctx.waitUntil(
+      env.DB.prepare("DELETE FROM asset_upload_links WHERE expires_at<?1")
+        .bind(now() - 24 * 60 * 60 * 1000)
+        .run()
+        .catch(() => {}),
+    );
     ctx.waitUntil(pruneReviewAttempts(env).catch(() => {}));
     // Read-only capability freshness: real work at most once a day. The every-
     // minute trigger already exists; a failed check keeps the last good copy.
