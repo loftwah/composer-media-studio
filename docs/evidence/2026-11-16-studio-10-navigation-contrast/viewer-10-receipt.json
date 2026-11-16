@@ -1,0 +1,737 @@
+{
+  "source": "train/viewer-tabs working tree (a2bce55 + pending changes)",
+  "fixture": {
+    "projectId": "prj_47cf53bc23c6483da4e3a679a638577f"
+  },
+  "startedAt": "2026-11-16T10:25:10.710Z",
+  "runs": [
+    {
+      "check": "the project shell exposes one tablist",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "library",
+        "selectedId": "project-tab-library",
+        "tabindexes": [
+          "0",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-library",
+        "focusedId": "",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "the selected tab starts the roving tab order",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "library",
+        "selectedId": "project-tab-library",
+        "tabindexes": [
+          "0",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-library",
+        "focusedId": "",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "every tab controls the labelled tabpanel",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "library",
+        "selectedId": "project-tab-library",
+        "tabindexes": [
+          "0",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-library",
+        "focusedId": "",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "ArrowRight selects and focuses Create",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "create",
+        "selectedId": "project-tab-create",
+        "tabindexes": [
+          "-1",
+          "0",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-create",
+        "focusedId": "project-tab-create",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "End selects and focuses Settings",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "settings",
+        "selectedId": "project-tab-settings",
+        "tabindexes": [
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "0"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-settings",
+        "focusedId": "project-tab-settings",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "Home returns selection and focus to Library",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "library",
+        "selectedId": "project-tab-library",
+        "tabindexes": [
+          "0",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-library",
+        "focusedId": "project-tab-library",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "an open-asset-link result opens the viewer route",
+      "ok": true
+    },
+    {
+      "check": "Close returns to the History tab, not always the library",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "history",
+        "selectedId": "project-tab-history",
+        "tabindexes": [
+          "-1",
+          "-1",
+          "-1",
+          "0",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-history",
+        "focusedId": "project-tab-history",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "a rebuilt History tab keeps focus on a usable control",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "history",
+        "selectedId": "project-tab-history",
+        "tabindexes": [
+          "-1",
+          "-1",
+          "-1",
+          "0",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-history",
+        "focusedId": "project-tab-history",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "open viewer hash is the asset route",
+      "ok": true,
+      "detail": "#/a/prj_47cf53bc23c6483da4e3a679a638577f/asset_ffec3a63253e4d03a79051e4903643ae"
+    },
+    {
+      "check": "focus moves into the viewer on open",
+      "ok": true,
+      "detail": {
+        "action": "close-viewer",
+        "id": null,
+        "text": "Close",
+        "tag": "BUTTON",
+        "insideViewer": true
+      }
+    },
+    {
+      "check": "the viewer is a labelled modal dialog",
+      "ok": true,
+      "detail": {
+        "role": "dialog",
+        "modal": "true",
+        "label": "Fictional take 7",
+        "headerInert": true,
+        "headerHidden": "true",
+        "skipInert": true,
+        "bodyViewerRoute": true
+      }
+    },
+    {
+      "check": "the header and skip link are inert while the viewer is open",
+      "ok": true,
+      "detail": {
+        "role": "dialog",
+        "modal": "true",
+        "label": "Fictional take 7",
+        "headerInert": true,
+        "headerHidden": "true",
+        "skipInert": true,
+        "bodyViewerRoute": true
+      }
+    },
+    {
+      "check": "a Close control is present and named",
+      "ok": true
+    },
+    {
+      "check": "Back to library remains present",
+      "ok": true
+    },
+    {
+      "check": "the viewer starts at its controls with Close visible",
+      "ok": true,
+      "detail": {
+        "top": 142,
+        "bottom": 184,
+        "viewport": 900,
+        "scrollY": 0
+      }
+    },
+    {
+      "check": "Tab from the last control wraps inside the viewer",
+      "ok": true,
+      "detail": {
+        "state": {
+          "action": null,
+          "id": null,
+          "text": "← Back to library",
+          "tag": "A",
+          "insideViewer": true
+        },
+        "focusEdges": {
+          "first": "← Back to library",
+          "last": "Delete from library"
+        }
+      }
+    },
+    {
+      "check": "Shift+Tab from the first control wraps inside the viewer",
+      "ok": true,
+      "detail": {
+        "state": {
+          "action": "delete-asset",
+          "id": "asset_ffec3a63253e4d03a79051e4903643ae",
+          "text": "Delete from library",
+          "tag": "BUTTON",
+          "insideViewer": true
+        },
+        "focusEdges": {
+          "first": "← Back to library",
+          "last": "Delete from library"
+        }
+      }
+    },
+    {
+      "check": "eighteen Tab presses stay inside the viewer",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "Escape returns to the library route",
+      "ok": true,
+      "detail": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library"
+    },
+    {
+      "check": "focus returns to the exact opener",
+      "ok": true,
+      "detail": {
+        "action": "open-asset",
+        "id": "asset_ffec3a63253e4d03a79051e4903643ae",
+        "text": "Open",
+        "ring": true,
+        "outline": "solid 3px",
+        "scrollY": 497
+      }
+    },
+    {
+      "check": "the returned opener shows a visible focus ring",
+      "ok": true,
+      "detail": {
+        "action": "open-asset",
+        "id": "asset_ffec3a63253e4d03a79051e4903643ae",
+        "text": "Open",
+        "ring": true,
+        "outline": "solid 3px",
+        "scrollY": 497
+      }
+    },
+    {
+      "check": "the library scroll position is preserved",
+      "ok": true,
+      "detail": {
+        "before": 497,
+        "after": 497
+      }
+    },
+    {
+      "check": "closing removes inert from the background",
+      "ok": true,
+      "detail": {
+        "role": null,
+        "modal": null,
+        "label": null,
+        "headerInert": false,
+        "headerHidden": null,
+        "skipInert": false,
+        "bodyViewerRoute": false
+      }
+    },
+    {
+      "check": "Close returns to the library route",
+      "ok": true
+    },
+    {
+      "check": "Close returns focus to the card it opened from",
+      "ok": true,
+      "detail": {
+        "action": "open-asset",
+        "id": "asset_ffec3a63253e4d03a79051e4903643ae",
+        "text": "5.6svideo",
+        "tag": "BUTTON",
+        "insideViewer": false
+      }
+    },
+    {
+      "check": "Back to library still returns to the library",
+      "ok": true
+    },
+    {
+      "check": "Back also restores the opener focus",
+      "ok": true,
+      "detail": {
+        "action": "open-asset",
+        "id": "asset_ffec3a63253e4d03a79051e4903643ae",
+        "text": "Open",
+        "tag": "BUTTON",
+        "insideViewer": false
+      }
+    },
+    {
+      "check": "browser Back returns to the library",
+      "ok": true
+    },
+    {
+      "check": "browser Forward reopens the viewer",
+      "ok": true
+    },
+    {
+      "check": "Forward also moves focus into the viewer",
+      "ok": true
+    },
+    {
+      "check": "Escape closes the forward-opened viewer",
+      "ok": true
+    },
+    {
+      "check": "a malformed hash keeps the current project page",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "heading": "Fictional workbench fixture",
+        "library": true,
+        "toastHidden": false,
+        "toast": "That Studio link wasn't recognised, so this page stayed open."
+      }
+    },
+    {
+      "check": "a malformed hash is replaced by the stable route",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "heading": "Fictional workbench fixture",
+        "library": true,
+        "toastHidden": false,
+        "toast": "That Studio link wasn't recognised, so this page stayed open."
+      }
+    },
+    {
+      "check": "a malformed hash shows a short non-blocking message",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "heading": "Fictional workbench fixture",
+        "library": true,
+        "toastHidden": false,
+        "toast": "That Studio link wasn't recognised, so this page stayed open."
+      }
+    },
+    {
+      "check": "a malformed deep link boots on a stable page",
+      "ok": true,
+      "detail": {
+        "hash": "#/",
+        "hasHome": true,
+        "toastHidden": false,
+        "toast": "That Studio link wasn't recognised, so this page stayed open."
+      }
+    },
+    {
+      "check": "the malformed deep link explains itself on boot",
+      "ok": true,
+      "detail": {
+        "hash": "#/",
+        "hasHome": true,
+        "toastHidden": false,
+        "toast": "That Studio link wasn't recognised, so this page stayed open."
+      }
+    },
+    {
+      "check": "an unknown tab replaces the hash with Library",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "selected": "library",
+        "panel": "project-tab-library",
+        "library": true,
+        "heading": "Fictional workbench fixture",
+        "toast": "That studio section doesn't exist, so Library is open."
+      }
+    },
+    {
+      "check": "an unknown tab shows usable Library content",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "selected": "library",
+        "panel": "project-tab-library",
+        "library": true,
+        "heading": "Fictional workbench fixture",
+        "toast": "That studio section doesn't exist, so Library is open."
+      }
+    },
+    {
+      "check": "an unknown tab explains itself in plain language",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "selected": "library",
+        "panel": "project-tab-library",
+        "library": true,
+        "heading": "Fictional workbench fixture",
+        "toast": "That studio section doesn't exist, so Library is open."
+      }
+    },
+    {
+      "check": "an unknown deep-linked tab boots into Library",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "selected": "library",
+        "library": true,
+        "toast": "That studio section doesn't exist, so Library is open."
+      }
+    },
+    {
+      "check": "the unknown deep link explains itself",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "selected": "library",
+        "library": true,
+        "toast": "That studio section doesn't exist, so Library is open."
+      }
+    },
+    {
+      "check": "a valid deep link keeps its hash",
+      "ok": true,
+      "detail": "#/a/prj_47cf53bc23c6483da4e3a679a638577f/asset_ffebbd4d7c6c49d285b35a03484fadb8"
+    },
+    {
+      "check": "a valid deep link focuses the viewer",
+      "ok": true
+    },
+    {
+      "check": "Escape leaves a deep-linked viewer on the library",
+      "ok": true
+    },
+    {
+      "check": "no uncaught page errors",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "390 viewer has no horizontal overflow",
+      "ok": true,
+      "detail": {
+        "width": 390,
+        "scrollWidth": 390,
+        "clientWidth": 390,
+        "close": true,
+        "focused": "close-viewer"
+      }
+    },
+    {
+      "check": "390 viewer exposes Close and starts focus there",
+      "ok": true,
+      "detail": {
+        "width": 390,
+        "scrollWidth": 390,
+        "clientWidth": 390,
+        "close": true,
+        "focused": "close-viewer"
+      }
+    },
+    {
+      "check": "390 Escape closes the viewer",
+      "ok": true
+    },
+    {
+      "check": "fallback project tabs expose the same tablist semantics",
+      "ok": true,
+      "detail": {
+        "role": "tablist",
+        "count": 7,
+        "selectedTab": "library",
+        "selectedId": "project-tab-library",
+        "tabindexes": [
+          "0",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1",
+          "-1"
+        ],
+        "controls": [
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel",
+          "project-panel"
+        ],
+        "panelId": "project-panel",
+        "panelLabel": "project-tab-library",
+        "focusedId": "",
+        "focusedInPanel": false
+      }
+    },
+    {
+      "check": "fallback viewer exposes the named Close control",
+      "ok": true
+    },
+    {
+      "check": "fallback viewer moves focus to Close",
+      "ok": true
+    },
+    {
+      "check": "fallback viewer keeps Tab inside",
+      "ok": true
+    },
+    {
+      "check": "fallback Escape closes to the library",
+      "ok": true
+    },
+    {
+      "check": "fallback Escape restores the opener",
+      "ok": true,
+      "detail": {
+        "action": "open-asset",
+        "id": "asset_ffec3a63253e4d03a79051e4903643ae",
+        "text": "5.6svideo",
+        "tag": "BUTTON",
+        "insideViewer": false
+      }
+    },
+    {
+      "check": "fallback missing-asset viewer is a labelled modal dialog",
+      "ok": true,
+      "detail": {
+        "chrome": {
+          "role": "dialog",
+          "modal": "true",
+          "label": "Asset unavailable",
+          "headerInert": true
+        },
+        "close": 1,
+        "message": "Asset unavailableThat asset is no longer in the library. Back to the library Close",
+        "focused": "close-viewer"
+      }
+    },
+    {
+      "check": "fallback missing-asset viewer shows the same Close action",
+      "ok": true,
+      "detail": {
+        "chrome": {
+          "role": "dialog",
+          "modal": "true",
+          "label": "Asset unavailable",
+          "headerInert": true
+        },
+        "close": 1,
+        "message": "Asset unavailableThat asset is no longer in the library. Back to the library Close",
+        "focused": "close-viewer"
+      }
+    },
+    {
+      "check": "fallback missing-asset viewer explains the missing file",
+      "ok": true,
+      "detail": {
+        "chrome": {
+          "role": "dialog",
+          "modal": "true",
+          "label": "Asset unavailable",
+          "headerInert": true
+        },
+        "close": 1,
+        "message": "Asset unavailableThat asset is no longer in the library. Back to the library Close",
+        "focused": "close-viewer"
+      }
+    },
+    {
+      "check": "fallback missing-asset Escape returns to the library with focus",
+      "ok": true,
+      "detail": {
+        "hash": "#/p/prj_47cf53bc23c6483da4e3a679a638577f/library",
+        "focused": "search",
+        "headerInert": false
+      }
+    }
+  ],
+  "failures": [],
+  "finishedAt": "2026-11-16T10:25:28.011Z",
+  "summary": {
+    "checks": 59,
+    "passed": 59,
+    "failed": 0
+  }
+}

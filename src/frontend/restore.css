@@ -134,7 +134,7 @@
 }
 .restore-problem h3:focus-visible,
 .restore-done h3:focus-visible {
-  outline: 3px solid var(--accent-bright);
+  outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
 .restore-actions {

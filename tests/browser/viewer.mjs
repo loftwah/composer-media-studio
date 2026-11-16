@@ -38,6 +38,40 @@ const openLibrary = async page => {
 };
 const waitForLibrary = page => page.locator('.asset-grid').waitFor({ timeout: 15_000 });
 const waitForViewer = page => page.locator('[data-viewer]').waitFor({ timeout: 15_000 });
+const waitHash = (page, hash) => page.waitForFunction(expected => location.hash === expected, hash, { timeout: 15_000 });
+const readTabs = page => page.evaluate(() => {
+  const list = document.querySelector('[data-project-tabs]');
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  const selected = tabs.find(tab => tab.getAttribute('aria-selected') === 'true');
+  const panel = document.querySelector('[role="tabpanel"]');
+  return {
+    role: list?.getAttribute('role') ?? null,
+    count: tabs.length,
+    selectedTab: selected?.dataset.tab ?? null,
+    selectedId: selected?.id ?? null,
+    tabindexes: tabs.map(tab => tab.getAttribute('tabindex')),
+    controls: tabs.map(tab => tab.getAttribute('aria-controls')),
+    panelId: panel?.id ?? null,
+    panelLabel: panel?.getAttribute('aria-labelledby') ?? null,
+    focusedId: document.activeElement?.id ?? null,
+    focusedInPanel: Boolean(panel?.contains(document.activeElement)),
+  };
+});
+const viewerChrome = page => page.evaluate(() => {
+  const root = document.querySelector('[data-viewer]');
+  const labelId = root?.getAttribute('aria-labelledby');
+  const header = document.querySelector('.site-header');
+  const skip = document.querySelector('.skip');
+  return {
+    role: root?.getAttribute('role') ?? null,
+    modal: root?.getAttribute('aria-modal') ?? null,
+    label: labelId ? document.getElementById(labelId)?.textContent?.trim() ?? null : null,
+    headerInert: header?.hasAttribute('inert') ?? false,
+    headerHidden: header?.getAttribute('aria-hidden') ?? null,
+    skipInert: skip?.hasAttribute('inert') ?? false,
+    bodyViewerRoute: document.body.classList.contains('viewer-route'),
+  };
+});
 
 const browser = await pw.chromium.launch({ headless: true });
 try {
@@ -46,6 +80,61 @@ try {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message.slice(0, 200)));
+
+  // ---------- 0. Project tabs expose real tab semantics and arrow keys ----------
+  await openLibrary(page);
+  const initialTabs = await readTabs(page);
+  assert('the project shell exposes one tablist', initialTabs.role === 'tablist' && initialTabs.count === 7, initialTabs);
+  assert('the selected tab starts the roving tab order', initialTabs.selectedTab === 'library' && initialTabs.selectedId === 'project-tab-library' && initialTabs.tabindexes[0] === '0' && initialTabs.tabindexes.slice(1).every(value => value === '-1'), initialTabs);
+  assert('every tab controls the labelled tabpanel', initialTabs.controls.every(value => value === initialTabs.panelId) && initialTabs.panelId === 'project-panel' && initialTabs.panelLabel === initialTabs.selectedId, initialTabs);
+  await page.locator('#project-tab-library').focus();
+  await page.keyboard.press('ArrowRight');
+  await waitHash(page, `#/p/${projectId}/create`);
+  await page.waitForTimeout(250);
+  const afterRight = await readTabs(page);
+  assert('ArrowRight selects and focuses Create', afterRight.selectedTab === 'create' && afterRight.focusedId === 'project-tab-create' && afterRight.panelLabel === 'project-tab-create', afterRight);
+  await page.keyboard.press('End');
+  await waitHash(page, `#/p/${projectId}/settings`);
+  await page.waitForTimeout(250);
+  const afterEnd = await readTabs(page);
+  assert('End selects and focuses Settings', afterEnd.selectedTab === 'settings' && afterEnd.focusedId === 'project-tab-settings', afterEnd);
+  await page.keyboard.press('Home');
+  await waitHash(page, libraryHash);
+  await page.waitForTimeout(300);
+  const afterHome = await readTabs(page);
+  assert('Home returns selection and focus to Library', afterHome.selectedTab === 'library' && afterHome.focusedId === 'project-tab-library', afterHome);
+  await waitForLibrary(page);
+
+  // ---------- 0b. A result link keeps the History tab as its return origin ----------
+  // The fixture has no paid provider result, so this injects the same
+  // `open-asset-link` control the real History result row renders.
+  await page.locator('#project-tab-history').click();
+  await waitHash(page, `#/p/${projectId}/history`);
+  await page.waitForTimeout(350);
+  await page.evaluate(assetId => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'fixture-open-result';
+    button.className = 'secondary';
+    button.dataset.action = 'open-asset-link';
+    button.dataset.id = assetId;
+    button.textContent = 'Open result';
+    document.querySelector('#project-panel')?.append(button);
+    button.click();
+  }, scrollAsset.id);
+  await waitForViewer(page);
+  await page.waitForTimeout(250);
+  assert('an open-asset-link result opens the viewer route', await page.evaluate(() => location.hash) === viewerHash);
+  await page.keyboard.press('Escape');
+  await waitHash(page, `#/p/${projectId}/history`);
+  await page.waitForTimeout(500);
+  const resultReturn = await readTabs(page);
+  assert('Close returns to the History tab, not always the library', resultReturn.selectedTab === 'history' && resultReturn.panelLabel === 'project-tab-history', resultReturn);
+  assert('a rebuilt History tab keeps focus on a usable control', resultReturn.focusedId === 'project-tab-history', resultReturn);
+  await page.locator('#project-tab-library').click();
+  await waitHash(page, libraryHash);
+  await page.waitForTimeout(350);
+  await waitForLibrary(page);
 
   // ---------- 1. Open from the library, focus enters the viewer ----------
   await openLibrary(page);
@@ -59,6 +148,9 @@ try {
   assert('open viewer hash is the asset route', await page.evaluate(() => location.hash) === viewerHash, await page.evaluate(() => location.hash));
   const opened = await active(page);
   assert('focus moves into the viewer on open', opened.action === 'close-viewer' && opened.insideViewer, opened);
+  const chrome = await viewerChrome(page);
+  assert('the viewer is a labelled modal dialog', chrome.role === 'dialog' && chrome.modal === 'true' && chrome.label === scrollAsset.title, chrome);
+  assert('the header and skip link are inert while the viewer is open', chrome.headerInert && chrome.headerHidden === 'true' && chrome.skipInert && chrome.bodyViewerRoute, chrome);
   assert('a Close control is present and named', await page.getByRole('button', { name: 'Close the viewer' }).count() === 1);
   assert('Back to library remains present', await page.getByRole('link', { name: '← Back to library' }).count() === 1);
   const openedView = await page.evaluate(() => {
@@ -102,6 +194,8 @@ try {
   assert('focus returns to the exact opener', returned.action === 'open-asset' && returned.id === scrollAsset.id && returned.text === 'Open', returned);
   assert('the returned opener shows a visible focus ring', returned.ring && /solid 3px/.test(returned.outline), returned);
   assert('the library scroll position is preserved', Math.abs(returned.scrollY - scrollBefore) <= 2, { before: scrollBefore, after: returned.scrollY });
+  const restoredChrome = await viewerChrome(page);
+  assert('closing removes inert from the background', !restoredChrome.headerInert && restoredChrome.headerHidden === null && !restoredChrome.skipInert && !restoredChrome.bodyViewerRoute, restoredChrome);
   await page.screenshot({ path: `${OUT}/screens/library-return-focus-1440x900.png` });
 
   // ---------- 4. The Close button closes and restores focus ----------
@@ -170,6 +264,36 @@ try {
   assert('the malformed deep link explains itself on boot', !booted.toastHidden && /wasn't recognised/.test(booted.toast), booted);
   await bootPage.close();
 
+  // ---------- 7b. An unknown project tab is a usable Library, not an empty panel ----------
+  await page.evaluate(pid => { location.hash = `#/p/${pid}/nonsense`; }, projectId);
+  await waitHash(page, libraryHash);
+  await page.waitForTimeout(350);
+  const unknownTab = await page.evaluate(() => ({
+    hash: location.hash,
+    selected: document.querySelector('[role="tab"][aria-selected="true"]')?.dataset.tab ?? null,
+    panel: document.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby') ?? null,
+    library: Boolean(document.querySelector('.asset-grid')),
+    heading: document.querySelector('#app h1')?.textContent ?? '',
+    toast: document.querySelector('#toast')?.textContent ?? '',
+  }));
+  assert('an unknown tab replaces the hash with Library', unknownTab.hash === libraryHash && unknownTab.selected === 'library' && unknownTab.panel === 'project-tab-library', unknownTab);
+  assert('an unknown tab shows usable Library content', unknownTab.library && unknownTab.heading.includes('Fictional workbench fixture'), unknownTab);
+  assert('an unknown tab explains itself in plain language', /doesn't exist/.test(unknownTab.toast), unknownTab);
+
+  const unknownBoot = await context.newPage();
+  await unknownBoot.goto(`${ORIGIN}/#/p/${projectId}/nonsense`, { waitUntil: 'networkidle' });
+  await waitHash(unknownBoot, libraryHash);
+  await unknownBoot.waitForTimeout(350);
+  const bootedTab = await unknownBoot.evaluate(() => ({
+    hash: location.hash,
+    selected: document.querySelector('[role="tab"][aria-selected="true"]')?.dataset.tab ?? null,
+    library: Boolean(document.querySelector('.asset-grid')),
+    toast: document.querySelector('#toast')?.textContent ?? '',
+  }));
+  assert('an unknown deep-linked tab boots into Library', bootedTab.hash === libraryHash && bootedTab.selected === 'library' && bootedTab.library, bootedTab);
+  assert('the unknown deep link explains itself', /doesn't exist/.test(bootedTab.toast), bootedTab);
+  await unknownBoot.close();
+
   // ---------- 8. A valid deep link is unchanged ----------
   const image = fixture.images[1];
   const imageHash = `#/a/${projectId}/${image.id}`;
@@ -219,6 +343,8 @@ try {
   await login(fallbackContext);
   const fallback = await fallbackContext.newPage();
   await openLibrary(fallback);
+  const fallbackTabs = await readTabs(fallback);
+  assert('fallback project tabs expose the same tablist semantics', fallbackTabs.role === 'tablist' && fallbackTabs.count === 7 && fallbackTabs.selectedTab === 'library' && fallbackTabs.panelLabel === 'project-tab-library', fallbackTabs);
   const fallbackThumb = fallback.locator(`.asset-grid [data-action="open-asset"].thumb[data-id="${scrollAsset.id}"]`);
   await fallbackThumb.scrollIntoViewIfNeeded();
   await fallbackThumb.click();
@@ -234,6 +360,35 @@ try {
   assert('fallback Escape closes to the library', await fallback.evaluate(() => location.hash) === libraryHash);
   const fallbackReturn = await active(fallback);
   assert('fallback Escape restores the opener', fallbackReturn.action === 'open-asset' && fallbackReturn.id === scrollAsset.id, fallbackReturn);
+
+  // A missing asset still gives the fallback viewer a real dialog and Close.
+  await fallback.evaluate(pid => { location.hash = `#/a/${pid}/missing-asset`; }, projectId);
+  await waitForViewer(fallback);
+  await fallback.waitForTimeout(300);
+  const missing = await fallback.evaluate(() => ({
+    chrome: {
+      role: document.querySelector('[data-viewer]')?.getAttribute('role') ?? null,
+      modal: document.querySelector('[data-viewer]')?.getAttribute('aria-modal') ?? null,
+      label: document.getElementById(document.querySelector('[data-viewer]')?.getAttribute('aria-labelledby') ?? '')?.textContent ?? '',
+      headerInert: document.querySelector('.site-header')?.hasAttribute('inert') ?? false,
+    },
+    close: document.querySelectorAll('[data-action="close-viewer"]').length,
+    message: document.querySelector('[data-viewer]')?.textContent?.trim().replace(/\s+/g, ' ') ?? '',
+    focused: document.activeElement?.getAttribute('data-action') ?? null,
+  }));
+  assert('fallback missing-asset viewer is a labelled modal dialog', missing.chrome.role === 'dialog' && missing.chrome.modal === 'true' && /Asset unavailable/.test(missing.chrome.label) && missing.chrome.headerInert, missing);
+  assert('fallback missing-asset viewer shows the same Close action', missing.close === 1 && missing.focused === 'close-viewer', missing);
+  assert('fallback missing-asset viewer explains the missing file', /no longer in the library/.test(missing.message), missing);
+  await fallback.keyboard.press('Escape');
+  await waitHash(fallback, libraryHash);
+  await waitForLibrary(fallback);
+  await fallback.waitForTimeout(350);
+  const missingReturn = await fallback.evaluate(() => ({
+    hash: location.hash,
+    focused: document.activeElement?.id ?? null,
+    headerInert: document.querySelector('.site-header')?.hasAttribute('inert') ?? false,
+  }));
+  assert('fallback missing-asset Escape returns to the library with focus', missingReturn.hash === libraryHash && missingReturn.focused === 'search' && !missingReturn.headerInert, missingReturn);
   await fallbackContext.close();
 } finally {
   await browser.close();
