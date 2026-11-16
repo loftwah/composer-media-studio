@@ -103,3 +103,22 @@ test("the adjustment and snippet modules stay local and dependency-free", () => 
     assert.doesNotMatch(source, /from "[^"]+"/, `${file} imports no module`);
   }
 });
+
+test("the workbench straightens by a real angle and shows the kept area", () => {
+  assert.match(workbench, /<legend>Rotate, straighten and flip<\/legend>/);
+  assert.match(workbench, /<label>\s*Straighten\{" "\}/);
+  assert.match(workbench, /min=\{-MAX_STRAIGHTEN_DEGREES\}/);
+  assert.match(workbench, /max=\{MAX_STRAIGHTEN_DEGREES\}/);
+  assert.match(workbench, /step="0\.1"/);
+  assert.match(workbench, /aria-describedby="image-straighten-note"/);
+  assert.match(workbench, /largest area that is entirely real pixels/);
+  assert.match(workbench, /Reset straighten/);
+  assert.match(workbench, /keptAreaPolygon\(plan\)/);
+  assert.match(workbench, /className="image-keep-overlay"/);
+  assert.match(workbench, /The dimmed area is discarded by the export/);
+  assert.match(workbench, /Reset controls/);
+  assert.match(workbench, /straighten: settings\.straighten/);
+  assert.match(workbench, /drawStraightened\(stage, plan\.straighten\)/);
+  assert.match(workbench, /straighten: selected\.result\.settings\.straighten/);
+  assert.match(workbench, /Set straighten to 0° before trimming/);
+});

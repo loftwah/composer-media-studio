@@ -1,0 +1,277 @@
+{
+  "startedAt": "2026-11-16T14:27:53.341Z",
+  "origin": "local static server (built frontend, no worker)",
+  "checks": [
+    {
+      "check": "sample decodes at 1400 × 900",
+      "ok": true,
+      "detail": "SOURCE 1400 × 900 px DISPLAYED 1400 × 900 px TYPE image/png BYTES 1.18 MiB ALPHA CHANNEL yes SHA-256 383faea4d9bb…"
+    },
+    {
+      "check": "resize produces a real 320-px PNG with measured bytes",
+      "ok": true,
+      "detail": {
+        "width": 320,
+        "height": 206,
+        "bytes": 83589,
+        "type": "image/png"
+      }
+    },
+    {
+      "check": "the original stays 1400 × 900 while the result is 320 × 206",
+      "ok": true,
+      "detail": {
+        "before": "Before · 1400 × 900 · 1.18 MiB",
+        "after": "After · 320 × 206 · 82 KiB · image/png"
+      }
+    },
+    {
+      "check": "download name carries the real size and extension",
+      "ok": true,
+      "detail": "studio-image-sample-320x206.png"
+    },
+    {
+      "check": "the Mono preset is a real greyscale export",
+      "ok": true,
+      "detail": [
+        [
+          55,
+          55,
+          55,
+          255
+        ],
+        [
+          165,
+          165,
+          165,
+          255
+        ],
+        [
+          119,
+          119,
+          119,
+          255
+        ]
+      ]
+    },
+    {
+      "check": "preset selection is reflected in the visible control",
+      "ok": true,
+      "detail": "mono"
+    },
+    {
+      "check": "the caption states the real adjustment numbers",
+      "ok": true,
+      "detail": "exposure +4, contrast +14, saturation -100, long edge 320px, PNG, canvas re-encode"
+    },
+    {
+      "check": "the export keeps a single opaque alpha value",
+      "ok": true,
+      "detail": [
+        255
+      ]
+    },
+    {
+      "check": "the page reports how many pixels changed",
+      "ok": true,
+      "detail": "Adjustments changed 65,920 pixels in the exported result. Fully transparent pixels kept their colour and every alpha value is unchanged."
+    },
+    {
+      "check": "the data URI decodes back to the exported pixels",
+      "ok": true,
+      "detail": "data:image/png;base64,iVBORw0K"
+    },
+    {
+      "check": "the embedded bytes and dimensions match the download",
+      "ok": true,
+      "detail": {
+        "bytes": 49807,
+        "downloadBytes": 49807,
+        "width": 320,
+        "height": 206,
+        "characters": 66434
+      }
+    },
+    {
+      "check": "the snippet states its real character count",
+      "ok": true,
+      "detail": "66,412 base64 characters · 66,434 data-URI characters · 49 KiB of real output"
+    },
+    {
+      "check": "top crop keeps the red half",
+      "ok": true,
+      "detail": {
+        "size": [
+          100,
+          100
+        ],
+        "pixel": [
+          255,
+          0,
+          0,
+          255
+        ]
+      }
+    },
+    {
+      "check": "bottom crop keeps the transparent half and its alpha",
+      "ok": true,
+      "detail": {
+        "size": [
+          100,
+          100
+        ],
+        "transparent": 10000,
+        "total": 10000,
+        "caption": "bottom crop 1:1 square, long edge 100px, PNG, canvas re-encode"
+      }
+    },
+    {
+      "check": "JPEG export is a real .jpg at the planned size",
+      "ok": true,
+      "detail": {
+        "type": "image/jpeg",
+        "size": [
+          100,
+          200
+        ],
+        "downloadName": "halves-100x200.jpg"
+      }
+    },
+    {
+      "check": "the JPEG matte keeps its exact colour behind transparency and is not warmed by the filter",
+      "ok": true,
+      "detail": [
+        0,
+        255,
+        1,
+        255
+      ]
+    },
+    {
+      "check": "the warm preset is stated in the JPEG caption",
+      "ok": true,
+      "detail": "exposure +4, contrast +6, saturation +10, temperature +32, long edge 200px, JPEG q90, canvas re-encode"
+    },
+    {
+      "check": "a browser without a WebP encoder refuses honestly instead of mislabelling the file",
+      "ok": true,
+      "detail": "This browser encoded image/png instead of image/webp. Choose PNG, or a browser and device that can encode WEBP."
+    },
+    {
+      "check": "the straighten control states its real angle and direction",
+      "ok": true,
+      "detail": "Straighten 10.0° clockwise"
+    },
+    {
+      "check": "the keep overlay outlines a four-corner area aligned with the source preview",
+      "ok": true,
+      "detail": {
+        "points": 4,
+        "shade": true,
+        "caption": "Kept area · 257 × 257 px of 300 × 300. The dimmed area is discarded by the export; the source File stays unchanged.",
+        "viewBox": "0 0 300 300",
+        "aligned": true
+      }
+    },
+    {
+      "check": "straighten exports a real PNG tilted by the chosen angle",
+      "ok": true,
+      "detail": {
+        "size": [
+          300,
+          300
+        ],
+        "tilt": 42,
+        "expectedTilt": 42.31847537003159,
+        "bytes": 7388,
+        "downloadName": "stripe-300x300.png"
+      }
+    },
+    {
+      "check": "every exported pixel is opaque, so no empty rotated corner reached the file",
+      "ok": true,
+      "detail": {
+        "transparent": 0
+      }
+    },
+    {
+      "check": "the caption and keep overlay state the real straighten and crop",
+      "ok": true,
+      "detail": {
+        "caption": "straighten 10.0° clockwise, long edge 300px, PNG, canvas re-encode",
+        "keep": "Kept area · 257 × 257 px of 300 × 300. The dimmed area is discarded by the export; the source File stays unchanged."
+      }
+    },
+    {
+      "check": "reset controls restores the original values without touching images or downloads",
+      "ok": true,
+      "detail": {
+        "straighten": "0",
+        "longEdge": "2048",
+        "stale": true,
+        "download": true,
+        "sourceFacts": "Source300 × 300 pxDisplayed300 × 300 pxTypeimage/pngBytes2.6 KiBAlpha channelyesSHA-256f669711ae636…"
+      }
+    },
+    {
+      "check": "390 px has no horizontal overflow or controls outside the viewport",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390,
+        "controlsOutside": []
+      }
+    },
+    {
+      "check": "no request leaves the local origin",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "no local action writes to an API",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "check": "no page errors",
+      "ok": true,
+      "detail": []
+    }
+  ],
+  "failures": [],
+  "requests": [
+    "GET http://127.0.0.1:64114/check.html",
+    "GET http://127.0.0.1:64114/creative/home.css",
+    "GET http://127.0.0.1:64114/images.js",
+    "GET http://127.0.0.1:64114/creative/home.js",
+    "GET http://127.0.0.1:64114/creative/jsx-runtime-B_EJQQY8.js",
+    "GET http://127.0.0.1:64114/creative/local-framing-DFz89Zt7.js",
+    "GET http://127.0.0.1:64114/creative/rolldown-runtime-CYdcPHCu.js",
+    "GET http://127.0.0.1:64114/creative/images-SN0YRVgg.js",
+    "GET http://127.0.0.1:64114/creative/audio-trim-BkfoZr4g.js",
+    "GET blob:http://127.0.0.1:64114/378cf574-2d08-4944-bde8-d1c9f7ff7305",
+    "GET blob:http://127.0.0.1:64114/6b5338ab-d80b-4a7a-9f67-e810ca9dc31d",
+    "GET blob:http://127.0.0.1:64114/6b5338ab-d80b-4a7a-9f67-e810ca9dc31d",
+    "GET blob:http://127.0.0.1:64114/b0c2ac91-eaef-4a03-bc9d-63e70a1ec03a",
+    "GET blob:http://127.0.0.1:64114/b0c2ac91-eaef-4a03-bc9d-63e70a1ec03a",
+    "GET blob:http://127.0.0.1:64114/b0c2ac91-eaef-4a03-bc9d-63e70a1ec03a",
+    "GET blob:http://127.0.0.1:64114/0ef1b8f3-4734-4f99-93dd-e473199b87ff",
+    "GET blob:http://127.0.0.1:64114/932ff9b4-db8d-4402-8896-7c1b88a51ef3",
+    "GET blob:http://127.0.0.1:64114/932ff9b4-db8d-4402-8896-7c1b88a51ef3",
+    "GET blob:http://127.0.0.1:64114/a2f3d718-e46d-4a9f-b6fd-e6046dd2b0a1",
+    "GET blob:http://127.0.0.1:64114/a2f3d718-e46d-4a9f-b6fd-e6046dd2b0a1",
+    "GET blob:http://127.0.0.1:64114/036f7899-8b9d-4420-8899-fc565dbcfaac",
+    "GET blob:http://127.0.0.1:64114/036f7899-8b9d-4420-8899-fc565dbcfaac",
+    "GET blob:http://127.0.0.1:64114/c06b8f18-ee7b-4bcc-8d91-2e51ec23b775",
+    "GET blob:http://127.0.0.1:64114/cf5d7b59-028b-4cb9-8101-8f283fb3cc57",
+    "GET blob:http://127.0.0.1:64114/cf5d7b59-028b-4cb9-8101-8f283fb3cc57"
+  ],
+  "pageErrors": [],
+  "browser": {
+    "name": "webkit",
+    "version": "27.2"
+  },
+  "finishedAt": "2026-11-16T14:27:56.365Z",
+  "passed": true
+}

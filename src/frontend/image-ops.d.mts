@@ -33,6 +33,27 @@ export type ResizePlan =
 
 export type ImageCrop = { x: number; y: number; width: number; height: number };
 
+export type StraightenPlan = {
+  angle: number;
+  boundingWidth: number;
+  boundingHeight: number;
+  width: number;
+  height: number;
+  offset: { x: number; y: number };
+};
+
+export type StraightenGeometry = {
+  angle: number;
+  radians: number;
+  cos: number;
+  sin: number;
+  width: number;
+  height: number;
+  boundingWidth: number;
+  boundingHeight: number;
+  crop: ImageCrop;
+};
+
 export type TransformPlan =
   | {
       ok: true;
@@ -43,6 +64,7 @@ export type TransformPlan =
       flipV: boolean;
       rotatedWidth: number;
       rotatedHeight: number;
+      straighten: StraightenPlan | null;
       crop: ImageCrop;
       outputWidth: number;
       outputHeight: number;
@@ -52,6 +74,26 @@ export type TransformPlan =
       upscaled: boolean;
     }
   | { ok: false; error: string };
+
+export const MAX_STRAIGHTEN_DEGREES: number;
+export const STRAIGHTEN_INSET_PX: number;
+
+export function normaliseStraighten(value: unknown): number | null;
+
+export function straightenGeometry(
+  width: number,
+  height: number,
+  degrees: number,
+  aspect?: number | null,
+  inset?: number,
+): StraightenGeometry | null;
+
+export type KeptArea = {
+  points: Array<{ x: number; y: number }>;
+  area: number;
+};
+
+export function keptAreaPolygon(plan: TransformPlan): KeptArea | null;
 
 export function rotatedDimensions(
   width: number,
@@ -75,6 +117,7 @@ export function planImageTransform(input?: {
   rotate?: number;
   flipH?: boolean;
   flipV?: boolean;
+  straighten?: number;
   cropAspect?: number | null;
   cropAnchor?: CropAnchorKey;
   cropRect?: ImageCrop | null;
@@ -87,6 +130,7 @@ export function describeTransform(input?: {
   rotate?: number;
   flipH?: boolean;
   flipV?: boolean;
+  straighten?: number;
   cropAspect?: CropAspectKey | number | null;
   cropAnchor?: CropAnchorKey;
   trimmed?: boolean;

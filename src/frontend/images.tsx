@@ -1,12 +1,14 @@
 import {
   DEFAULT_RESIZE_LONG_EDGE,
   CROP_ANCHOR_LABELS,
+  MAX_STRAIGHTEN_DEGREES,
   CROP_ASPECTS,
   CROP_ASPECT_LABELS,
   defaultLongEdge,
   describeTransform,
   extensionForImageMime,
   imageSmoothingFor,
+  keptAreaPolygon,
   mimeForExport,
   planImageTransform,
   rotatedDimensions,
@@ -93,6 +95,7 @@ type Settings = {
   rotate: 0 | 1 | 2 | 3;
   flipH: boolean;
   flipV: boolean;
+  straighten: number;
   resample: ResampleMode;
   adjust: Adjustments;
   format: ExportFormat;
@@ -180,6 +183,7 @@ const DEFAULT_SETTINGS: Settings = {
   rotate: 0,
   flipH: false,
   flipV: false,
+  straighten: 0,
   resample: "smooth",
   adjust: { ...DEFAULT_ADJUSTMENTS },
   format: "png",
@@ -253,6 +257,7 @@ function makePlan(
     rotate: settings.rotate,
     flipH: settings.flipH,
     flipV: settings.flipV,
+    straighten: settings.straighten,
     cropAspect: CROP_ASPECTS[settings.cropAspect],
     cropAnchor: settings.cropAnchor,
     cropRect,
@@ -372,6 +377,28 @@ function drawUserTransform(
   return canvas;
 }
 
+function drawStraightened(
+  source: HTMLCanvasElement,
+  straighten: NonNullable<TransformResult["straighten"]>,
+): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = straighten.width;
+  canvas.height = straighten.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("This browser could not create a drawing surface.");
+  // The kept rectangle sits at `offset` inside the rotated bounding box. Draw
+  // the turned source so that rectangle lands on the output canvas exactly.
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.translate(
+    straighten.boundingWidth / 2 - straighten.offset.x,
+    straighten.boundingHeight / 2 - straighten.offset.y,
+  );
+  context.rotate((straighten.angle * Math.PI) / 180);
+  context.drawImage(source, -source.width / 2, -source.height / 2);
+  return canvas;
+}
+
 async function renderImage(
   item: WorkItem,
   settings: Settings,
@@ -385,6 +412,7 @@ async function renderImage(
   let bitmap: ImageBitmap | null = null;
   let oriented: HTMLCanvasElement | null = null;
   let transformed: HTMLCanvasElement | null = null;
+  let straightened: HTMLCanvasElement | null = null;
   let output: HTMLCanvasElement | null = null;
   let flattened: HTMLCanvasElement | null = null;
   try {
@@ -439,6 +467,7 @@ async function renderImage(
       const actual = planImageTransform({
         sourceWidth: stage.width,
         sourceHeight: stage.height,
+        straighten: settings.straighten,
         cropAspect: CROP_ASPECTS[settings.cropAspect],
         cropAnchor: settings.cropAnchor,
         cropRect,
@@ -458,6 +487,14 @@ async function renderImage(
     }
     if (stage.width !== plan.rotatedWidth || stage.height !== plan.rotatedHeight)
       throw new Error("The transform plan did not match the decoded image.");
+    if (plan.straighten) {
+      straightened = drawStraightened(stage, plan.straighten);
+      stage.width = 0;
+      stage.height = 0;
+      stage = straightened;
+      if (stage.width !== plan.straighten.width || stage.height !== plan.straighten.height)
+        throw new Error("The straightened area did not match the plan.");
+    }
     const crop: ImageCrop = plan.crop;
     if (
       crop.x < 0 ||
@@ -591,6 +628,10 @@ async function renderImage(
       transformed.width = 0;
       transformed.height = 0;
     }
+    if (straightened) {
+      straightened.width = 0;
+      straightened.height = 0;
+    }
     if (flattened) {
       flattened.width = 0;
       flattened.height = 0;
@@ -695,6 +736,7 @@ function Images() {
     selected &&
     trim &&
     trim.itemId === selected.id &&
+    settings.straighten === 0 &&
     trim.rotate === settings.rotate &&
     trim.flipH === settings.flipH &&
     trim.flipV === settings.flipV
@@ -703,6 +745,18 @@ function Images() {
   const plan = selected ? makePlan(selected.source, settings, activeTrim) : null;
   const currentSettingsKey = settingsKey(settings, activeTrim);
   const freshResult = selected?.result?.settingsKey === currentSettingsKey;
+  const keptArea = plan?.ok ? keptAreaPolygon(plan) : null;
+  const keepFull =
+    keptArea && selected
+      ? Math.abs(
+          keptArea.area -
+            selected.source.orientedWidth * selected.source.orientedHeight,
+        ) /
+          (selected.source.orientedWidth * selected.source.orientedHeight) <
+        0.001
+      : false;
+  const controlsAreOriginal =
+    settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim;
   const requestedTargetBytes =
     settings.targetKiB === null ? null : Math.round(settings.targetKiB * 1024);
   const targetProblem =
@@ -740,6 +794,7 @@ function Images() {
             rotate: selected.result.settings.rotate,
             flipH: selected.result.settings.flipH,
             flipV: selected.result.settings.flipV,
+            straighten: selected.result.settings.straighten,
             cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
             cropAnchor: selected.result.settings.cropAnchor,
             trimmed: selected.result.trimmed,
@@ -998,6 +1053,7 @@ function Images() {
       try {
         const cropRect =
           trimSnapshot &&
+          snapshot.straighten === 0 &&
           trimSnapshot.itemId === item.id &&
           trimSnapshot.rotate === snapshot.rotate &&
           trimSnapshot.flipH === snapshot.flipH &&
@@ -1179,6 +1235,32 @@ function Images() {
     );
   }
 
+  function changeStraighten(value: number): void {
+    if (!Number.isFinite(value)) return;
+    setSettings((previous) => ({
+      ...previous,
+      straighten: Math.max(
+        -MAX_STRAIGHTEN_DEGREES,
+        Math.min(MAX_STRAIGHTEN_DEGREES, Math.round(value * 10) / 10),
+      ),
+    }));
+    if (trim) {
+      setTrim(null);
+      setTrimMessage(
+        "Trim cleared: straightening keeps the largest fully-covered area instead of the alpha bounds.",
+      );
+    }
+  }
+
+  function resetControls(): void {
+    setSettings(DEFAULT_SETTINGS);
+    setTrim(null);
+    setTrimMessage("");
+    setMessage(
+      "Controls reset to their original values. Your images and completed downloads are unchanged.",
+    );
+  }
+
   function clearTrim(): void {
     setTrim(null);
     setTrimMessage("Trim cleared. The full image is used again.");
@@ -1328,6 +1410,12 @@ function Images() {
 
   async function checkTrim(): Promise<void> {
     if (!selected || trimBusy || running) return;
+    if (settings.straighten !== 0) {
+      setTrimMessage(
+        "Set straighten to 0° before trimming. Trim measures upright alpha bounds; straighten then keeps the largest fully-covered area.",
+      );
+      return;
+    }
     const item = selected;
     const snapshot = { ...settings };
     setTrimBusy(true);
@@ -1599,14 +1687,37 @@ function Images() {
           </fieldset>
 
           <fieldset className="image-controls">
-            <legend>Rotate and flip</legend>
+            <legend>Rotate, straighten and flip</legend>
             <div className="image-control-actions">
               <button type="button" className="secondary" disabled={running} onClick={() => changeRotation(((settings.rotate + 3) % 4) as Settings["rotate"])}>Rotate left</button>
               <button type="button" className="secondary" disabled={running} onClick={() => changeRotation(((settings.rotate + 1) % 4) as Settings["rotate"])}>Rotate right</button>
               <button type="button" className="secondary" disabled={running} onClick={() => changeRotation(0)}>Reset rotation</button>
+              <button type="button" className="secondary" disabled={running || settings.straighten === 0} onClick={() => changeStraighten(0)}>Reset straighten</button>
             </div>
+            <label>
+              Straighten{" "}
+              {settings.straighten === 0
+                ? "0°"
+                : `${Math.abs(settings.straighten).toFixed(1)}° ${settings.straighten > 0 ? "clockwise" : "anticlockwise"}`}
+              <input
+                type="range"
+                min={-MAX_STRAIGHTEN_DEGREES}
+                max={MAX_STRAIGHTEN_DEGREES}
+                step="0.1"
+                value={settings.straighten}
+                disabled={running}
+                aria-describedby="image-straighten-note"
+                onChange={(event) => changeStraighten(Number(event.target.value))}
+              />
+            </label>
             <label className="image-check"><input type="checkbox" checked={settings.flipH} disabled={running} onChange={(event) => changeFlip("flipH", event.target.checked)} /> Flip horizontal</label>
             <label className="image-check"><input type="checkbox" checked={settings.flipV} disabled={running} onChange={(event) => changeFlip("flipV", event.target.checked)} /> Flip vertical</label>
+            <p className="trim-note" id="image-straighten-note">
+              Straighten keeps the largest area that is entirely real pixels, so no
+              empty corner is exported. Positive turns clockwise. {settings.straighten === 0
+                ? "Trim transparent edges remains available while upright."
+                : "Trim is unavailable while the image is turned; set straighten to 0° to trim instead."}
+            </p>
           </fieldset>
 
           <fieldset className="image-controls">
@@ -1706,7 +1817,68 @@ function Images() {
             {selected.status === "error" && (
               <button type="button" className="secondary" disabled={running} onClick={() => void runItems([selected])}>Retry</button>
             )}
+            <button
+              type="button"
+              className="quiet"
+              disabled={running || adding || controlsAreOriginal}
+              aria-describedby="image-reset-note"
+              onClick={resetControls}
+            >
+              Reset controls
+            </button>
           </div>
+          <p className="trim-note" id="image-reset-note">
+            Reset controls restores the original values for this batch. Images,
+            completed downloads and source Files are unchanged.
+          </p>
+
+          {plan?.ok && keptArea ? (
+            <figure className="image-keep">
+              <div className="image-keep-stage">
+                <img
+                  src={selected.url}
+                  alt={`Original ${selected.file.name} with the kept area outlined`}
+                />
+                <svg
+                  className="image-keep-overlay"
+                  viewBox={`0 0 ${selected.source.orientedWidth} ${selected.source.orientedHeight}`}
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  {!keepFull && (
+                    <path
+                      className="image-keep-shade"
+                      fillRule="evenodd"
+                      d={`M0 0H${selected.source.orientedWidth}V${selected.source.orientedHeight}H0Z ${keptArea.points
+                        .map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`)
+                        .join(" ")} Z`}
+                    />
+                  )}
+                  <polygon
+                    className="image-keep-outline-halo"
+                    points={keptArea.points.map((point) => `${point.x},${point.y}`).join(" ")}
+                  />
+                  <polygon
+                    className="image-keep-outline"
+                    points={keptArea.points.map((point) => `${point.x},${point.y}`).join(" ")}
+                  />
+                </svg>
+              </div>
+              <figcaption>
+                Kept area · {plan.crop.width} × {plan.crop.height} px of{" "}
+                {selected.source.orientedWidth} × {selected.source.orientedHeight}.{" "}
+                {keepFull
+                  ? "The whole displayed image is exported; the source File stays unchanged."
+                  : "The dimmed area is discarded by the export; the source File stays unchanged."}
+              </figcaption>
+            </figure>
+          ) : (
+            <p className="trim-note">
+              No keep preview yet. Choose usable output settings to see the exact area
+              the export will keep.
+            </p>
+          )}
 
           <div className="image-compare">
             <figure>
@@ -1732,6 +1904,7 @@ function Images() {
                   rotate: selected.result.settings.rotate,
                   flipH: selected.result.settings.flipH,
                   flipV: selected.result.settings.flipV,
+                  straighten: selected.result.settings.straighten,
                   cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
                   cropAnchor: selected.result.settings.cropAnchor,
                   trimmed: selected.result.trimmed,

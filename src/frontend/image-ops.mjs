@@ -65,6 +65,80 @@ function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+export const MAX_STRAIGHTEN_DEGREES = 45;
+/** A one-pixel safety inset keeps antialiased rotated edges out of the export. */
+export const STRAIGHTEN_INSET_PX = 1;
+
+/**
+ * A usable straighten angle in degrees, rounded to 0.1°. Positive turns
+ * clockwise. `null` means the value cannot be used; 0 means no straightening.
+ */
+export function normaliseStraighten(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (Math.abs(value) > MAX_STRAIGHTEN_DEGREES) return null;
+  const rounded = Math.round(value * 10) / 10;
+  return Math.abs(rounded) < 0.1 ? 0 : rounded;
+}
+
+/**
+ * The largest centred, axis-aligned rectangle with the requested aspect that
+ * fits inside a `width × height` image turned by `degrees`, inset by one pixel
+ * so a rotated antialiased edge never becomes part of the export. Returns the
+ * rectangle in the rotated bounding box as well as the bounding box itself, so
+ * the renderer and the visible keep overlay use the same numbers.
+ */
+export function straightenGeometry(
+  width,
+  height,
+  degrees,
+  aspect = null,
+  inset = STRAIGHTEN_INSET_PX,
+) {
+  if (!positiveInteger(width) || !positiveInteger(height)) return null;
+  const angle = normaliseStraighten(degrees);
+  if (angle === null || angle === 0) return null;
+  const ratio = aspect === null || aspect === undefined ? width / height : aspect;
+  if (!Number.isFinite(ratio) || ratio <= 0) return null;
+  if (!Number.isFinite(inset) || inset < 0) return null;
+  const radians = (Math.abs(angle) * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const availableWidth = width - 2 * inset;
+  const availableHeight = height - 2 * inset;
+  if (availableWidth < 1 || availableHeight < 1) return null;
+  const half = Math.min(
+    availableWidth / (2 * (ratio * cos + sin)),
+    availableHeight / (2 * (ratio * sin + cos)),
+  );
+  if (!Number.isFinite(half) || half < 0.5) return null;
+  const cropWidth = Math.max(
+    1,
+    Math.min(Math.floor(availableWidth), Math.floor(2 * ratio * half)),
+  );
+  const cropHeight = Math.max(
+    1,
+    Math.min(Math.floor(availableHeight), Math.floor(2 * half)),
+  );
+  const boundingWidth = Math.max(1, Math.ceil(width * cos + height * sin));
+  const boundingHeight = Math.max(1, Math.ceil(width * sin + height * cos));
+  return {
+    angle,
+    radians,
+    cos,
+    sin,
+    width: cropWidth,
+    height: cropHeight,
+    boundingWidth,
+    boundingHeight,
+    crop: {
+      x: Math.max(0, Math.floor((boundingWidth - cropWidth) / 2)),
+      y: Math.max(0, Math.floor((boundingHeight - cropHeight) / 2)),
+      width: cropWidth,
+      height: cropHeight,
+    },
+  };
+}
+
 /** canvas dimensions after a clockwise quarter-turn count. */
 export function rotatedDimensions(width, height, rotate = 0) {
   if (!positiveInteger(width) || !positiveInteger(height)) return null;
@@ -149,6 +223,8 @@ function scaleToLongEdge(cropWidth, cropHeight, longEdge) {
  * `cropAnchor` positions that crop when it is smaller than the source.
  * `cropRect` is an optional exact region in rotated space (used by trim);
  * the aspect crop, when requested, is then taken inside that region.
+ * `straighten` turns the picture by that many degrees (positive clockwise) and
+ * keeps the largest fully-covered area, so no empty corner reaches the export.
  */
 export function planImageTransform({
   sourceWidth,
@@ -156,6 +232,7 @@ export function planImageTransform({
   rotate = 0,
   flipH = false,
   flipV = false,
+  straighten = 0,
   cropAspect = null,
   cropAnchor = "centre",
   cropRect = null,
@@ -171,6 +248,17 @@ export function planImageTransform({
     return { ok: false, error: "Flip settings are invalid." };
   if (!isCropAnchor(cropAnchor))
     return { ok: false, error: "Choose a crop anchor from the list." };
+  const angle = normaliseStraighten(straighten);
+  if (angle === null)
+    return {
+      ok: false,
+      error: `Straighten must be a number between -${MAX_STRAIGHTEN_DEGREES} and ${MAX_STRAIGHTEN_DEGREES} degrees.`,
+    };
+  if (angle !== 0 && cropRect !== null)
+    return {
+      ok: false,
+      error: "Set straighten to 0° before trimming; trim and straighten cannot be combined.",
+    };
   const rotated = rotatedDimensions(sourceWidth, sourceHeight, rotate);
   if (!rotated) return { ok: false, error: "The rotated dimensions are not usable." };
   if (cropRect !== null) {
@@ -184,9 +272,21 @@ export function planImageTransform({
     )
       return { ok: false, error: "The trim rectangle does not fit inside the image." };
   }
+  const straightened =
+    angle === 0
+      ? null
+      : straightenGeometry(rotated.width, rotated.height, angle, cropAspect);
+  if (angle !== 0 && !straightened)
+    return {
+      ok: false,
+      error: "This angle leaves no fully-covered area at this size. Lower the angle or the crop aspect.",
+    };
+  const stage = straightened
+    ? { width: straightened.width, height: straightened.height }
+    : rotated;
   const crop = cropRect
     ? cropWithin(cropRect, cropAspect, cropAnchor)
-    : anchoredCrop(rotated.width, rotated.height, cropAspect, cropAnchor);
+    : anchoredCrop(stage.width, stage.height, cropAspect, cropAnchor);
   if (!crop)
     return { ok: false, error: "The crop aspect or source dimensions are invalid." };
   if (
@@ -194,8 +294,8 @@ export function planImageTransform({
     crop.y < 0 ||
     crop.width < 1 ||
     crop.height < 1 ||
-    crop.x + crop.width > rotated.width ||
-    crop.y + crop.height > rotated.height
+    crop.x + crop.width > stage.width ||
+    crop.y + crop.height > stage.height
   )
     return { ok: false, error: "The crop does not fit inside the source." };
 
@@ -235,6 +335,16 @@ export function planImageTransform({
     flipV,
     rotatedWidth: rotated.width,
     rotatedHeight: rotated.height,
+    straighten: straightened
+      ? {
+          angle: straightened.angle,
+          boundingWidth: straightened.boundingWidth,
+          boundingHeight: straightened.boundingHeight,
+          width: straightened.width,
+          height: straightened.height,
+          offset: { x: straightened.crop.x, y: straightened.crop.y },
+        }
+      : null,
     crop,
     outputWidth: output.width,
     outputHeight: output.height,
@@ -246,6 +356,64 @@ export function planImageTransform({
       0.005,
     upscaled: output.width > crop.width || output.height > crop.height,
   };
+}
+
+/**
+ * Map a point in the transformed stage back to the displayed (EXIF-oriented)
+ * source image, undoing straightening, flips and quarter turns in that order.
+ */
+function sourcePointForStage(plan, point) {
+  let x = point.x;
+  let y = point.y;
+  if (plan.straighten) {
+    const { angle, boundingWidth, boundingHeight, offset } = plan.straighten;
+    const radians = (Math.abs(angle) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const boxX = x + offset.x - boundingWidth / 2;
+    const boxY = y + offset.y - boundingHeight / 2;
+    x = boxX * cos + boxY * sin + plan.rotatedWidth / 2;
+    y = -boxX * sin + boxY * cos + plan.rotatedHeight / 2;
+  }
+  if (plan.flipH) x = plan.rotatedWidth - x;
+  if (plan.flipV) y = plan.rotatedHeight - y;
+  if (plan.rotate === 1) return { x: y, y: plan.rotatedWidth - x };
+  if (plan.rotate === 2)
+    return { x: plan.rotatedWidth - x, y: plan.rotatedHeight - y };
+  if (plan.rotate === 3) return { x: plan.rotatedHeight - y, y: x };
+  return { x, y };
+}
+
+/**
+ * The kept crop as a quadrilateral in displayed-source coordinates, for the
+ * visible overlay. `area` is in source pixels and matches the crop area, so a
+ * zero-area or malformed plan cannot be presented as a real selection.
+ */
+export function keptAreaPolygon(plan) {
+  if (!plan || plan.ok !== true) return null;
+  const crop = plan.crop;
+  if (!validCropRect(crop)) return null;
+  if (!positiveInteger(plan.sourceWidth) || !positiveInteger(plan.sourceHeight)) return null;
+  const corners = [
+    { x: crop.x, y: crop.y },
+    { x: crop.x + crop.width, y: crop.y },
+    { x: crop.x + crop.width, y: crop.y + crop.height },
+    { x: crop.x, y: crop.y + crop.height },
+  ].map((point) => {
+    const source = sourcePointForStage(plan, point);
+    return {
+      x: Math.round(source.x * 1000) / 1000,
+      y: Math.round(source.y * 1000) / 1000,
+    };
+  });
+  const area = Math.abs(
+    corners.reduce((sum, point, index) => {
+      const next = corners[(index + 1) % corners.length];
+      return sum + point.x * next.y - next.x * point.y;
+    }, 0) / 2,
+  );
+  if (!Number.isFinite(area) || area <= 0) return null;
+  return { points: corners, area };
 }
 
 export const DEFAULT_RESIZE_LONG_EDGE = 2048;
@@ -386,6 +554,7 @@ export function describeTransform({
   rotate = 0,
   flipH = false,
   flipV = false,
+  straighten = 0,
   cropAspect = null,
   cropAnchor = "centre",
   trimmed = false,
@@ -400,6 +569,14 @@ export function describeTransform({
   if (rotate) parts.push(`rotate ${rotate * 90}°`);
   if (flipH) parts.push("flip horizontal");
   if (flipV) parts.push("flip vertical");
+  if (
+    typeof straighten === "number" &&
+    Number.isFinite(straighten) &&
+    Math.abs(straighten) >= 0.05
+  )
+    parts.push(
+      `straighten ${Math.abs(straighten).toFixed(1)}° ${straighten > 0 ? "clockwise" : "anticlockwise"}`,
+    );
   if (cropAspect)
     parts.push(
       `${CROP_ANCHOR_WORDS[cropAnchor] ?? "centre"} crop ${cropAspectLabel(cropAspect)}`,

@@ -170,6 +170,11 @@
   grid-column: 1 / -1;
 }
 
+.image-controls > .trim-note {
+  grid-column: 1 / -1;
+  max-width: 72ch;
+}
+
 .image-check {
   display: flex;
   align-items: flex-start;
@@ -367,6 +372,76 @@
     linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--ink) 7%, transparent) 75%);
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   background-size: 16px 16px;
+}
+
+.image-keep {
+  display: grid;
+  gap: 0.4rem;
+  justify-items: center;
+  margin: 0;
+}
+
+.image-keep-stage {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  line-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background-color: var(--paper-deep);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--ink) 7%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--ink) 7%, transparent) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.image-keep-stage img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(58vh, 34rem);
+  image-orientation: from-image;
+}
+
+.image-keep-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.image-keep-shade {
+  fill: rgba(5, 12, 14, 0.66);
+}
+
+.image-keep-outline,
+.image-keep-outline-halo {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+
+.image-keep-outline-halo {
+  stroke: rgba(5, 12, 14, 0.55);
+  stroke-width: 5;
+}
+
+.image-keep-outline {
+  stroke: #f7f1e6;
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+}
+
+.image-keep figcaption {
+  max-width: 68ch;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .image-result {

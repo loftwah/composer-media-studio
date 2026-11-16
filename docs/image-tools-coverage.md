@@ -9,7 +9,8 @@ the whole issue is complete.
 The first slice is publicly usable signed out and without provider spend. It
 runs in the browser, accepts JPEG/PNG/WebP up to 32 MiB and 40 megapixels, and
 processes at most 20 images in one sequential batch. Evidence for the slice is
-in [the image workbench evidence](../evidence/2026-11-16-browser-local-image-workbench/README.md).
+in [the image workbench evidence](../evidence/2026-11-16-browser-local-image-workbench/README.md)
+and [the straighten and kept-area overlay slice](../evidence/2026-11-17-image-tools-straighten/README.md).
 
 ## Status key
 
@@ -25,8 +26,8 @@ in [the image workbench evidence](../evidence/2026-11-16-browser-local-image-wor
 | --- | --- | --- | --- | --- |
 | 1 | Compress and optimise JPEG/PNG/WebP | **Partial** | JPEG/WebP quality control plus an optional target byte size. The target runs a deterministic, bounded search (at most seven encodes) for the highest tested quality that meets the target and reports the real encoded bytes and whether it was met. An unmet target is reported as not met, never as success. PNG states that a lossless byte target is not achievable and points to resizing. The before/after byte count is measured from the encoded Blob. | No perceptual/SSIM target, no automatic quality ladder across formats, no GIF/AVIF optimisation. Target search re-encodes up to seven times per image and is not a perceptually optimal encoder. |
 | 2 | Resize | **Shipped** | Long-edge or exact width and height; output pixel bounds checked before drawing; source dimensions and output dimensions shown. | No separate DPI/print metadata rewrite. Exact dimensions may change aspect and say so. |
-| 3 | Crop | **Shipped** | Aspect crop to original, 1:1, 4:5, 5:4, 16:9, 9:16, 3:2 or 2:3 with safe integer bounds, planned in rotated space. The kept region is chosen from nine positions — centre, four edges or four corners — including inside a trimmed region. | Freeform crop handles and arbitrary focal points are deferred. |
-| 4 | Rotate and flip | **Shipped** | Quarter-turn rotation, horizontal/vertical flip and EXIF orientation applied before editing. | No arbitrary-angle straightening. |
+| 3 | Crop | **Shipped** | Aspect crop to original, 1:1, 4:5, 5:4, 16:9, 9:16, 3:2 or 2:3 with safe integer bounds, planned in rotated space. The kept region is chosen from nine positions — centre, four edges or four corners — including inside a trimmed region. A kept-area overlay outlines that region on the source preview and dims what the export discards, so the crop is visible before **Make this image**. | Freeform crop handles and arbitrary focal points are deferred. |
+| 4 | Rotate and flip | **Shipped** | Quarter-turn rotation, horizontal/vertical flip and EXIF orientation applied before editing. Arbitrary-angle straightening runs from −45° to +45° in 0.1° steps, always clockwise-positive relative to the current view, and keeps the largest centred area whose pixels all come from the source (with a one-pixel safety inset). The kept-area overlay and the export use the same plan, and the caption states the real angle and direction. | No drag-handle horizon tool, edge detection or lens correction. Straighten and alpha trim are mutually exclusive because trim is measured on upright pixels. |
 | 5 | Convert format | **Shipped** | Canvas export to real PNG, JPEG or WebP; the chosen MIME is verified from the output bytes. JPEG flattens alpha onto a chosen matte after adjustments, so the matte keeps its exact colour. | No AVIF/BMP/GIF encode and no universal HEIC decoder. The page refuses those inputs honestly. WebKit's canvas encoder writes PNG instead of WebP; the page detects the returned MIME and says so rather than mislabelling the file. |
 | 6 | Batch selection, progress, cancel, retry, ZIP | **Shipped** | Maximum 20 images, sequential decode/encode, real completed count, cancel between items, per-file error and retry, per-file download and one store-only ZIP. Rows can be dragged or moved with Move up and Move down, and the ZIP follows that list order. ZIP names are flat and unique; the writer rejects traversal, duplicate names and bounded overruns. | No per-file settings matrix. ZIP is store-only, not deflate. |
 | 7 | EXIF/metadata inspect | **Shipped** | Reads JPEG segments, PNG chunks and WebP chunks; reports camera, orientation, GPS presence, ICC, XMP, text/comments and other chunk labels. Unreadable EXIF is reported as present and unreadable, never absent. | No map link from GPS coordinates; coordinates are not decoded or displayed, only presence. |
@@ -59,7 +60,8 @@ the work:
 
 - Input cap: 32 MiB per file, 40,000,000 decoded pixels, 16,384 px per source
   side, 8,192 px per output side, 64 MiB per encoded result, 20 images per batch,
-  128 MiB per ZIP.
+  128 MiB per ZIP. Straighten is bounded to ±45° and reports the real reduced
+  kept area before the export.
 - JPEG, PNG and WebP magic bytes are checked; the declared browser MIME is not
   trusted. SVG/HTML active content, HEIC/HEIF, AVIF, GIF and unknown containers
   are refused with a visible reason.
@@ -89,5 +91,8 @@ the work:
 The browser evidence harness `tests/browser/images.mjs` drives the built page in
 headless Chromium, Firefox and WebKit (`STUDIO_BROWSER`) from a local static
 server and measures decoded pixels and encoded bytes for resize, Mono, embed
-code and crop position. It is evidence tooling, not part of `pnpm check`, and it
-needs `PLAYWRIGHT_MODULE` plus `pnpm build:frontend`.
+code, crop position, straighten and reset. The straighten check reads the
+exported dark stripe's centroid at 10% and 90% of the result height and compares
+its measured tilt with `tan(angle)`, and also requires every exported alpha to be
+255 so no empty rotated corner reached the file. It is evidence tooling, not part
+of `pnpm check`, and it needs `PLAYWRIGHT_MODULE` plus `pnpm build:frontend`.

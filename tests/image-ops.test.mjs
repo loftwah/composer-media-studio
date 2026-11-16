@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   CROP_ANCHOR_LABELS,
   CROP_ASPECTS,
+  MAX_STRAIGHTEN_DEGREES,
   anchoredCrop,
   centredCrop,
   defaultLongEdge,
@@ -11,10 +12,13 @@ import {
   extensionForImageMime,
   imageSmoothingFor,
   isCropAnchor,
+  keptAreaPolygon,
   mimeForExport,
+  normaliseStraighten,
   planImageTransform,
   rotatedDimensions,
   searchTargetQuality,
+  straightenGeometry,
   targetSizeProblem,
 } from "../src/frontend/image-ops.mjs";
 
@@ -287,4 +291,192 @@ test("target-size search returns only real bytes and never false success", async
   const invalid = await searchTargetQuality({ targetBytes: 10, encode });
   assert.equal(invalid.ok, false);
   assert.match(invalid.error, /1 KiB/);
+});
+
+test("straightening keeps the largest fully-covered area of the turned image", () => {
+  assert.equal(normaliseStraighten(0), 0);
+  assert.equal(normaliseStraighten(0.04), 0);
+  assert.equal(normaliseStraighten(0.1), 0.1);
+  assert.equal(normaliseStraighten(3.14), 3.1);
+  assert.equal(normaliseStraighten(-12.24), -12.2);
+  assert.equal(normaliseStraighten(MAX_STRAIGHTEN_DEGREES), 45);
+  assert.equal(normaliseStraighten(45.1), null);
+  assert.equal(normaliseStraighten(Number.NaN), null);
+  assert.equal(normaliseStraighten("3"), null);
+  assert.equal(straightenGeometry(1000, 1000, 0), null, "zero degrees is not a stage");
+
+  const square = straightenGeometry(1000, 1000, 10, 1);
+  assert.equal(square.angle, 10);
+  assert.equal(square.width, square.height);
+  // 1000 / (cos 10° + sin 10°) ≈ 863 px, less a one-pixel inset on each side.
+  assert.ok(Math.abs(square.width - 861) <= 2, `square side ${square.width}`);
+  assert.equal(square.crop.x, Math.floor((square.boundingWidth - square.width) / 2));
+  assert.equal(square.crop.y, Math.floor((square.boundingHeight - square.height) / 2));
+  assert.ok(square.crop.x >= 0 && square.crop.x + square.crop.width <= square.boundingWidth);
+  assert.ok(square.crop.y >= 0 && square.crop.y + square.crop.height <= square.boundingHeight);
+
+  const wide = straightenGeometry(1600, 900, 8, 16 / 9);
+  assert.ok(Math.abs(wide.width / wide.height - 16 / 9) < 0.01);
+  assert.ok(wide.width < 1600 && wide.height < 900);
+  assert.ok(wide.boundingWidth > 1600 && wide.boundingHeight > 900);
+
+  const gentle = straightenGeometry(1600, 900, 0.5);
+  const steep = straightenGeometry(1600, 900, 30);
+  assert.ok(gentle.width > steep.width, "a steeper angle keeps less width");
+  assert.ok(gentle.height > steep.height, "a steeper angle keeps less height");
+  assert.equal(straightenGeometry(2, 2, 45), null, "a tiny image cannot keep a usable area");
+  assert.equal(straightenGeometry(3, 3, 10), null, "a sub-pixel kept area is refused instead of rounded up");
+  assert.equal(straightenGeometry(0, 900, 5), null);
+});
+
+test("the planner applies straighten before the crop and records the real stage", () => {
+  const base = {
+    sourceWidth: 1600,
+    sourceHeight: 900,
+    resize: { mode: "long-edge", longEdge: 800 },
+  };
+  assert.deepEqual(planImageTransform({ ...base, straighten: 0 }), planImageTransform(base));
+  assert.deepEqual(planImageTransform(base).straighten, null);
+
+  const turned = planImageTransform({ ...base, straighten: 6 });
+  assert.equal(turned.ok, true);
+  assert.equal(turned.straighten.angle, 6);
+  assert.ok(turned.straighten.width < 1600);
+  assert.ok(turned.straighten.boundingHeight > 900);
+  assert.deepEqual([turned.outputWidth, turned.outputHeight], [800, Math.round((800 * turned.crop.height) / turned.crop.width)]);
+  assert.equal(turned.crop.x + turned.crop.width <= turned.straighten.width, true);
+
+  const rotated = planImageTransform({ ...base, rotate: 1, straighten: 5 });
+  assert.equal(rotated.rotatedWidth, 900);
+  assert.equal(rotated.rotatedHeight, 1600);
+  assert.ok(rotated.straighten.width < rotated.rotatedWidth);
+  assert.equal(rotated.crop.x + rotated.crop.width <= rotated.straighten.width, true);
+
+  assert.match(
+    planImageTransform({ ...base, straighten: 46 }).error,
+    /Straighten must be a number between -45 and 45 degrees/,
+  );
+  assert.match(
+    planImageTransform({ ...base, straighten: Number.NaN }).error,
+    /Straighten must be a number/,
+  );
+  assert.match(
+    planImageTransform({
+      ...base,
+      straighten: 2,
+      cropRect: { x: 0, y: 0, width: 100, height: 100 },
+    }).error,
+    /Set straighten to 0° before trimming/,
+  );
+  assert.equal(
+    planImageTransform({
+      ...base,
+      straighten: 0.04,
+      cropRect: { x: 0, y: 0, width: 100, height: 100 },
+    }).ok,
+    true,
+    "a value that rounds to zero is still the identity",
+  );
+});
+
+test("the transform caption states the real straighten direction and angle", () => {
+  assert.match(
+    describeTransform({ straighten: -2.5, format: "png" }),
+    /straighten 2\.5° anticlockwise/,
+  );
+  assert.match(
+    describeTransform({ straighten: 3.5, format: "png" }),
+    /straighten 3\.5° clockwise/,
+  );
+  assert.doesNotMatch(describeTransform({ format: "png" }), /straighten/);
+  assert.doesNotMatch(describeTransform({ straighten: 0.04, format: "png" }), /straighten/);
+  assert.equal(
+    describeTransform({ rotate: 1, straighten: 4.5, format: "jpeg", quality: 0.8 }),
+    "rotate 90°, straighten 4.5° clockwise, JPEG q80, re-encoded",
+  );
+});
+
+test("the keep overlay maps the crop back through rotate, flip and straighten", () => {
+  const bounds = (points) => ({
+    minX: Math.min(...points.map((point) => point.x)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxY: Math.max(...points.map((point) => point.y)),
+  });
+
+  const whole = keptAreaPolygon(
+    planImageTransform({ sourceWidth: 400, sourceHeight: 300, resize: { mode: "long-edge", longEdge: 400 } }),
+  );
+  assert.ok(whole);
+  assert.ok(Math.abs(whole.area - 120_000) < 1);
+  assert.deepEqual(bounds(whole.points), { minX: 0, maxX: 400, minY: 0, maxY: 300 });
+
+  const right = planImageTransform({
+    sourceWidth: 1600,
+    sourceHeight: 900,
+    cropAspect: 1,
+    cropAnchor: "right",
+    resize: { mode: "long-edge", longEdge: 450 },
+  });
+  const rightKept = keptAreaPolygon(right);
+  assert.ok(Math.abs(rightKept.area - 810_000) < 1);
+  assert.equal(bounds(rightKept.points).minX, 700);
+
+  const flipped = keptAreaPolygon(
+    planImageTransform({
+      sourceWidth: 1600,
+      sourceHeight: 900,
+      flipH: true,
+      cropAspect: 1,
+      cropAnchor: "left",
+      resize: { mode: "long-edge", longEdge: 450 },
+    }),
+  );
+  assert.ok(Math.abs(flipped.area - 810_000) < 1);
+  const flippedBox = bounds(flipped.points);
+  assert.equal(flippedBox.minX, 700, "a horizontal flip moves the left stage crop to the right of the source");
+  assert.equal(flippedBox.maxX, 1600);
+
+  const turned = planImageTransform({
+    sourceWidth: 1600,
+    sourceHeight: 900,
+    rotate: 1,
+    cropAspect: 1,
+    cropAnchor: "bottom",
+    resize: { mode: "long-edge", longEdge: 800 },
+  });
+  const turnedKept = keptAreaPolygon(turned);
+  assert.ok(Math.abs(turnedKept.area - 900 * 900) < 1);
+  assert.deepEqual(bounds(turnedKept.points), {
+    minX: 700,
+    maxX: 1600,
+    minY: 0,
+    maxY: 900,
+  });
+
+  for (const straighten of [4, -12.5]) {
+    const plan = planImageTransform({
+      sourceWidth: 1600,
+      sourceHeight: 900,
+      rotate: 3,
+      flipV: true,
+      straighten,
+      cropAspect: 4 / 5,
+      resize: { mode: "long-edge", longEdge: 640 },
+    });
+    assert.equal(plan.ok, true);
+    const kept = keptAreaPolygon(plan);
+    assert.ok(kept, `overlay exists for ${straighten}°`);
+    const cropArea = plan.crop.width * plan.crop.height;
+    assert.ok(
+      Math.abs(kept.area - cropArea) / cropArea < 0.005,
+      `overlay area ${kept.area} matches the crop area ${cropArea}`,
+    );
+    const box = bounds(kept.points);
+    assert.ok(box.minX >= -0.01 && box.maxX <= 1600.01, `x inside the source: ${box.minX}..${box.maxX}`);
+    assert.ok(box.minY >= -0.01 && box.maxY <= 900.01, `y inside the source: ${box.minY}..${box.maxY}`);
+  }
+
+  assert.equal(keptAreaPolygon({ ok: false, error: "no" }), null);
+  assert.equal(keptAreaPolygon(null), null);
 });

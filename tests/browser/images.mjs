@@ -417,7 +417,171 @@ try {
     );
   }
 
+  // Straighten: a synthetic vertical stripe on an opaque 300 × 300 PNG. The
+  // export must tilt the stripe by the chosen angle, keep every pixel opaque
+  // (no empty rotated corner) and match the visible kept-area overlay.
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 300;
+    canvas.height = 300;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, 300, 300);
+    context.fillStyle = "#101010";
+    context.fillRect(140, 0, 20, 300);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    const file = new File([blob], "stripe.png", { type: "image/png" });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    document
+      .querySelector(".image-drop")
+      .dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  });
+  await page.locator(".image-list-select", { hasText: "stripe.png" }).click();
+  await page.getByRole("button", { name: "Reset controls" }).click();
+  await page.getByLabel("Long edge (px)").fill("300");
+  await page.getByLabel(/Straighten/).evaluate((element) => {
+    // React's value tracker ignores a direct assignment; use the native setter.
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, "10");
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const straightenLabel = await page.getByLabel(/Straighten/).evaluate((element) =>
+    element.closest("label")?.textContent?.replace(/\s+/g, " ").trim(),
+  );
+  record("the straighten control states its real angle and direction", /10\.0° clockwise/.test(straightenLabel ?? ""), straightenLabel);
+
+  const keep = await page.evaluate(() => {
+    const svg = document.querySelector(".image-keep-overlay");
+    const polygon = svg?.querySelector(".image-keep-outline");
+    const stage = document.querySelector(".image-keep-stage")?.getBoundingClientRect();
+    const overlay = svg?.getBoundingClientRect();
+    return {
+      points: polygon?.getAttribute("points")?.trim().split(/\s+/).length ?? 0,
+      shade: Boolean(svg?.querySelector(".image-keep-shade")),
+      caption: document.querySelector(".image-keep figcaption")?.textContent?.replace(/\s+/g, " ").trim(),
+      viewBox: svg?.getAttribute("viewBox"),
+      aligned: Boolean(stage && overlay && Math.abs(stage.width - overlay.width) < 1 && Math.abs(stage.height - overlay.height) < 1),
+    };
+  });
+  record(
+    "the keep overlay outlines a four-corner area aligned with the source preview",
+    keep.points === 4 && keep.shade && keep.viewBox === "0 0 300 300" && keep.aligned,
+    keep,
+  );
+
+  await page.getByRole("button", { name: "Make this image" }).click();
+  await page.waitForFunction(
+    () => document.querySelector(".image-result .trim-note")?.textContent?.includes("straighten 10.0° clockwise"),
+    null,
+    { timeout: 30_000 },
+  );
+  const straightened = await page.evaluate(async () => {
+    const link = [...document.querySelectorAll(".image-result a")].find((anchor) =>
+      /^Download/.test(anchor.textContent ?? ""),
+    );
+    const response = await fetch(link.href);
+    const buffer = await response.arrayBuffer();
+    const type = response.headers.get("content-type");
+    const bitmap = await createImageBitmap(new Blob([buffer], { type }));
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0);
+    const data = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const at = (x, y) => data[(y * bitmap.width + x) * 4];
+    let transparent = 0;
+    for (let index = 3; index < data.length; index += 4) if (data[index] < 255) transparent += 1;
+    const centroid = (row) => {
+      let sum = 0;
+      let count = 0;
+      for (let x = 0; x < bitmap.width; x += 1) {
+        if (at(x, row) < 96) {
+          sum += x;
+          count += 1;
+        }
+      }
+      return count ? sum / count : null;
+    };
+    const top = centroid(Math.floor(bitmap.height * 0.1));
+    const bottom = centroid(Math.floor(bitmap.height * 0.9));
+    return {
+      type,
+      width: bitmap.width,
+      height: bitmap.height,
+      bytes: buffer.byteLength,
+      transparent,
+      top,
+      bottom,
+      tilt: top !== null && bottom !== null ? top - bottom : null,
+      expectedTilt: bitmap.height * 0.8 * Math.tan((10 * Math.PI) / 180),
+      downloadName: link.getAttribute("download"),
+      caption: document.querySelector(".image-result .trim-note")?.textContent?.replace(/\s+/g, " ").trim(),
+      keepCaption: document.querySelector(".image-keep figcaption")?.textContent?.replace(/\s+/g, " ").trim(),
+      sourceFacts: document.querySelector(".image-facts")?.textContent?.replace(/\s+/g, " ").trim(),
+    };
+  });
+  record(
+    "straighten exports a real PNG tilted by the chosen angle",
+    straightened.type === "image/png" &&
+      straightened.width === 300 &&
+      straightened.height === 300 &&
+      straightened.tilt !== null &&
+      Math.abs(straightened.tilt - straightened.expectedTilt) <= 8,
+    {
+      size: [straightened.width, straightened.height],
+      tilt: straightened.tilt,
+      expectedTilt: straightened.expectedTilt,
+      bytes: straightened.bytes,
+      downloadName: straightened.downloadName,
+    },
+  );
+  record(
+    "every exported pixel is opaque, so no empty rotated corner reached the file",
+    straightened.transparent === 0,
+    { transparent: straightened.transparent },
+  );
+  record(
+    "the caption and keep overlay state the real straighten and crop",
+    /straighten 10\.0° clockwise/.test(straightened.caption ?? "") &&
+      /Kept area · \d+ × \d+ px of 300 × 300/.test(straightened.keepCaption ?? "") &&
+      /300 × 300 px/.test(straightened.sourceFacts ?? ""),
+    { caption: straightened.caption, keep: straightened.keepCaption },
+  );
+
+  await page.locator(".image-keep").screenshot({ path: join(OUT, "keep-overlay-desktop.png") });
+  await page
+    .locator("fieldset.image-controls", { hasText: "Straighten" })
+    .screenshot({ path: join(OUT, "straighten-control-desktop.png") });
+  await page.screenshot({ path: join(OUT, "straighten-desktop.png") });
+
+  await page.getByRole("button", { name: "Reset controls" }).click();
+  const reset = await page.evaluate(() => ({
+    straighten: document.querySelector('input[type="range"][aria-describedby="image-straighten-note"]')?.value,
+    longEdge: document.querySelector('input[type="number"]')?.value,
+    stale: document.body.textContent?.includes("The settings changed since this result"),
+    download: [...document.querySelectorAll(".image-result a")].some((anchor) =>
+      /^Download/.test(anchor.textContent ?? ""),
+    ),
+    sourceFacts: document.querySelector(".image-facts")?.textContent?.replace(/\s+/g, " ").trim(),
+  }));
+  record(
+    "reset controls restores the original values without touching images or downloads",
+    reset.straighten === "0" && reset.longEdge === "2048" && reset.stale && reset.download && /300 × 300 px/.test(reset.sourceFacts ?? ""),
+    reset,
+  );
+
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel(/Straighten/).evaluate((element) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, "-6");
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.waitForTimeout(150);
+  await page.locator(".image-keep").screenshot({ path: join(OUT, "keep-overlay-phone.png") });
+  await page
+    .locator("fieldset.image-controls", { hasText: "Straighten" })
+    .screenshot({ path: join(OUT, "straighten-control-phone.png") });
+  await page.screenshot({ path: join(OUT, "straighten-phone.png"), fullPage: false });
   await page.waitForTimeout(150);
   const phone = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
