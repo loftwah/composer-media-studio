@@ -78,7 +78,9 @@ test("a library preview is owner-only, never public and only served once it exis
     project: project.id,
     actions: ["read", "edit", "generate", "publish", "admin"],
   }));
-  assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie: bridge })).status, 403);
+  // The owner's real session is the Composer handoff. It is project-scoped, so
+  // it is not refused: before a preview exists it simply has nothing to serve.
+  assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie: bridge })).status, 404);
   assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie })).status, 404);
   assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie, method: "POST" })).status, 405);
 
@@ -108,6 +110,9 @@ test("a library preview is owner-only, never public and only served once it exis
 
   const served = await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie });
   assert.equal(served.status, 200);
+  // The bridged owner sees the same private preview, because the library grid
+  // they actually use is the bridged session.
+  assert.equal((await call(env, `/api/studio/assets/${asset.id}/preview`, { cookie: bridge })).status, 200);
   assert.equal(served.headers.get("content-type"), "image/webp");
   assert.equal(served.headers.get("content-length"), String(row.bytes));
   assert.equal(served.headers.get("cache-control"), "private, max-age=0, no-store");
@@ -233,7 +238,7 @@ test("another project's asset is never served to a project-scoped session", asyn
   }));
   const refused = await call(env, `/api/studio/assets/${foreign.id}/preview`, { cookie: scoped });
   assert.equal(refused.status, 403);
-  assert.equal((await refused.json()).error.code, "owner_required");
+  assert.equal((await refused.json()).error.code, "forbidden");
 
   // The project read does not name the foreign preview either.
   const state = await (await call(env, `/api/projects/${project.id}`, { cookie })).json();
