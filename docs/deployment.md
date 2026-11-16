@@ -55,6 +55,11 @@ pnpm release:watchdog --retry-pending
 A passing release adds recovery evidence but never closes the breach issue
 automatically. Receipts contain no credentials, signed URLs or private media.
 
+An alert that still cannot be filed keeps `pnpm release:watchdog --retry-pending`
+failing with exit 2 and the number of queued events; it is never reported as a
+clean retry. An alert that arrived through the queue keeps its breach identity, so
+a later compliant release adds recovery evidence to the same issue.
+
 ## Darkroom
 
 Studio Print, Film, Quick and Detail use the exact npm release
