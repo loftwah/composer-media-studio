@@ -301,10 +301,12 @@ function generationView(generation, extra = {}) {
 async function homeShowcase(env) {
   const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 8);
   const rows = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,
-    d.publication_id AS thumb_id,d.width AS thumb_width,d.height AS thumb_height
+    d.publication_id AS poster_preview_id,d.width AS poster_preview_width,d.height AS poster_preview_height,
+    t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height
     FROM publications p JOIN assets a ON a.id=p.asset_id
     LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
-    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='thumb'
+    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster' AND d.source_sha256=poster.sha256
+    LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
     WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
   return rows.filter(Boolean).slice(0, 3).map((row) => ({
     slug: row.slug,
@@ -313,22 +315,121 @@ async function homeShowcase(env) {
     mime: row.mime,
     hasPoster: Boolean(row.poster_asset_id),
     ...(row.thumb_id ? { thumb_id: row.thumb_id, thumb_width: row.thumb_width, thumb_height: row.thumb_height } : {}),
+    ...(row.poster_preview_id
+      ? {
+          poster_preview_id: row.poster_preview_id,
+          poster_preview_width: row.poster_preview_width,
+          poster_preview_height: row.poster_preview_height,
+        }
+      : {}),
   }));
 }
 
-async function publicCatalogue(env, page = 1, limit = 24, { query = "", kind = "", order = "newest" } = {}) {
-  const direction = order === "oldest" ? "ASC" : "DESC";
-  const result = await env.DB.prepare(`SELECT p.slug,p.title,p.description,p.created_at,a.kind,a.mime,a.width,a.height,
+// Capability is derived from stored lineage only: never from a title, a prompt
+// or a filename. `assembled` records a composition or multi-track assembly;
+// `refinement` is an edit of an existing asset (mask, edit model or saved
+// variant); `variation` used an existing asset as its input; `original` is a
+// saved generation with no recorded input asset. Uploads, deleted or unreadable
+// generation records stay absent and never match a capability filter.
+const capabilitySql = `CASE
+  WHEN a.source='assembled' OR g.composition_id IS NOT NULL THEN 'assembled'
+  WHEN json_valid(g.request_json) AND json_type(g.request_json)='object' AND (
+    json_type(g.request_json,'$.shots') IN ('array','object')
+    OR json_type(g.request_json,'$.audioTracks')='array'
+    OR json_type(g.request_json,'$.slateAssetId')='text'
+    OR json_type(g.request_json,'$.slateVideoAssetId')='text'
+  ) THEN 'assembled'
+  WHEN (a.source='variant' AND a.parent_asset_id IS NOT NULL)
+    OR (json_valid(g.request_json) AND json_type(g.request_json)='object' AND (
+      json_type(g.request_json,'$.maskAssetId')='text'
+      OR json_type(g.request_json,'$.maskSha256')='text'
+      OR g.model IN ('studio-fill','studio-cutout','studio-upscale','kling-o1-restyle')
+    )) THEN 'refinement'
+  WHEN a.parent_asset_id IS NOT NULL
+    OR (json_valid(g.request_json) AND json_type(g.request_json)='object' AND (
+      json_type(g.request_json,'$.referenceAssetId')='text'
+      OR json_type(g.request_json,'$.parentAssetId')='text'
+    )) THEN 'variation'
+  WHEN a.source='generated' AND json_valid(g.request_json) AND json_type(g.request_json)='object' THEN 'original'
+  ELSE NULL END`;
+
+// The public browse facets are a stable, small taxonomy rather than whatever a
+// single page happens to contain.
+const CAPABILITY_ORDER = ["original", "variation", "refinement", "assembled"];
+
+// One CTE keeps the card query, its total and its facet options on exactly the
+// same public boundary. `listed=1` is the deliberate listing decision: hidden,
+// unlisted, withdrawn and privately published rows never enter `works`.
+const publicWorksSql = `WITH works AS (
+  SELECT p.id,p.slug,p.title,p.description,p.created_at,a.kind,a.mime,a.width,a.height,
+    pr.slug AS project_slug,pr.name AS project_name,
     poster.id AS poster_asset_id,poster.width AS poster_width,poster.height AS poster_height,
-    d.publication_id AS thumb_id,d.width AS thumb_width,d.height AS thumb_height
-    FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
-    LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
-    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='thumb'
-    WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL
-      AND (?1 = '' OR instr(lower(p.title), lower(?1)) > 0 OR instr(lower(p.description), lower(?1)) > 0)
-      AND (?2 = '' OR a.kind = ?2)
-    ORDER BY p.created_at ${direction},p.id ${direction} LIMIT ?3 OFFSET ?4`).bind(query, kind, limit + 1, (page - 1) * limit).all();
-  return { items: result.results.slice(0, limit), hasMore: result.results.length > limit };
+    t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height,
+    pd.publication_id AS poster_preview_id,pd.width AS poster_preview_width,pd.height AS poster_preview_height,
+    ${capabilitySql} AS capability
+  FROM publications p
+  JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
+  JOIN projects pr ON pr.id=p.project_id
+  LEFT JOIN generations g ON g.id=a.generation_id AND g.project_id=p.project_id AND g.deleted_at IS NULL
+  LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
+  LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
+  LEFT JOIN publication_derivatives pd ON pd.publication_id=p.id AND pd.kind='poster' AND pd.source_sha256=poster.sha256
+  WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL
+)`;
+const publicWorksFilter = `WHERE (?1 = '' OR instr(lower(title), lower(?1)) > 0 OR instr(lower(description), lower(?1)) > 0)
+  AND (?2 = '' OR kind = ?2)
+  AND (?3 = '' OR project_slug = ?3)
+  AND (?4 = '' OR capability = ?4)`;
+
+/**
+ * Read the public catalogue, its honest total and the facets that actually have
+ * at least one listed work. Unknown project or capability values are ignored,
+ * matching the existing invalid-kind fallback, so a stale link still renders.
+ * The query count is fixed (three for the gallery, two for the home preview) and
+ * never grows with the number of cards.
+ */
+async function publicCatalogue(env, page = 1, limit = 24, { query = "", kind = "", order = "newest", project = "", capability = "", withFacets = true } = {}) {
+  const direction = order === "oldest" ? "ASC" : "DESC";
+  let facets = { projects: [], capabilities: [] };
+  if (withFacets) {
+    const facetRows = await env.DB.prepare(`${publicWorksSql}
+      SELECT 'project' AS facet,project_slug AS value,project_name AS label,COUNT(*) AS works FROM works
+      GROUP BY project_slug,project_name
+      UNION ALL
+      SELECT 'capability' AS facet,capability AS value,capability AS label,COUNT(*) AS works FROM works
+      WHERE capability IS NOT NULL GROUP BY capability
+      ORDER BY facet,label COLLATE NOCASE`).all();
+    const projectFacets = facetRows.results.filter((row) => row.facet === "project");
+    const present = new Set(facetRows.results.filter((row) => row.facet === "capability").map((row) => row.value));
+    facets = {
+      projects: projectFacets.map((row) => ({ value: row.value, label: row.label })),
+      capabilities: CAPABILITY_ORDER.filter((value) => present.has(value)),
+    };
+  }
+  const selectedProject = facets.projects.some((entry) => entry.value === project) ? project : "";
+  const selectedCapability = facets.capabilities.includes(capability) ? capability : "";
+  const [result, count] = await Promise.all([
+    env.DB.prepare(`${publicWorksSql}
+      SELECT slug,title,description,created_at,kind,mime,width,height,project_name,capability,
+        poster_asset_id,poster_width,poster_height,thumb_id,thumb_width,thumb_height,
+        poster_preview_id,poster_preview_width,poster_preview_height
+      FROM works ${publicWorksFilter}
+      ORDER BY created_at ${direction},id ${direction} LIMIT ?5 OFFSET ?6`)
+      .bind(query, kind, selectedProject, selectedCapability, limit + 1, (page - 1) * limit)
+      .all(),
+    env.DB.prepare(`${publicWorksSql} SELECT COUNT(*) AS total FROM works ${publicWorksFilter}`)
+      .bind(query, kind, selectedProject, selectedCapability)
+      .first(),
+  ]);
+  return {
+    items: result.results.slice(0, limit),
+    hasMore: result.results.length > limit,
+    total: count?.total ?? 0,
+    projects: facets.projects,
+    capabilities: facets.capabilities,
+    project: selectedProject,
+    capability: selectedCapability,
+  };
 }
 
 /** Every private route that names a project checks the same binding: the
@@ -2211,10 +2312,14 @@ async function handlePublic(request, env, url) {
         const params = new URLSearchParams();
         const query = (backUrl.searchParams.get("q") ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
         const kind = backUrl.searchParams.get("kind");
+        const project = (backUrl.searchParams.get("project") ?? "").slice(0, 80);
+        const capability = backUrl.searchParams.get("capability");
         const order = backUrl.searchParams.get("order");
         const page = backUrl.searchParams.get("page");
         if (query) params.set("q", query);
         if (["image", "video", "audio"].includes(kind)) params.set("kind", kind);
+        if (/^[A-Za-z0-9_-]+$/.test(project)) params.set("project", project);
+        if (["original", "variation", "refinement", "assembled"].includes(capability)) params.set("capability", capability);
         if (order === "oldest") params.set("order", order);
         if (page && /^[1-9][0-9]{0,4}$/.test(page)) params.set("page", page);
         if (params.size) galleryBack += `?${params}`;
@@ -2374,9 +2479,13 @@ async function handlePublic(request, env, url) {
     const query = (url.searchParams.get("q") ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
     const requestedKind = url.searchParams.get("kind") ?? "";
     const kind = ["image", "video", "audio"].includes(requestedKind) ? requestedKind : "";
+    const requestedProject = (url.searchParams.get("project") ?? "").slice(0, 80);
+    const project = /^[A-Za-z0-9_-]+$/.test(requestedProject) ? requestedProject : "";
+    const requestedCapability = url.searchParams.get("capability") ?? "";
+    const capability = ["original", "variation", "refinement", "assembled"].includes(requestedCapability) ? requestedCapability : "";
     const order = url.searchParams.get("order") === "oldest" ? "oldest" : "newest";
-    const catalogue = await publicCatalogue(env, page, 24, { query, kind, order });
-    return new Response(publicGallery({ ...catalogue, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+    const catalogue = await publicCatalogue(env, page, 24, { query, kind, order, project, capability });
+    return new Response(publicGallery({ ...catalogue, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
   }
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
@@ -2498,9 +2607,9 @@ async function handlePublic(request, env, url) {
     const session = await readSession(env, request);
     if (!session) {
       if (path === "/studio") return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
-      const catalogue = await publicCatalogue(env, 1, 6);
+      const catalogue = await publicCatalogue(env, 1, 6, { withFacets: false });
       const featured = catalogue.items.length ? [] : await homeShowcase(env);
-      return new Response(publicGallery({ ...catalogue, ...sharingDestinations(env), featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+      return new Response(publicGallery({ ...catalogue, ...sharingDestinations(env), featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
     }
     return new Response(shell({
       revision: BUILD.revision,
@@ -2509,7 +2618,7 @@ async function handlePublic(request, env, url) {
       storyUrl: env.PUBLIC_STORY_URL,
       woodhouseShare: env.WOODHOUSE_SHARE === "true",
     }), {
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" },
     });
   }
 

@@ -569,17 +569,28 @@ function galleryDescription(description) {
   });
 }
 
-export function publicGallery({ items = [], featured = [], hasMore = false, page = 1, home = false, woodhouseShare = false, buildUrl = null, storyUrl = null, query = "", kind = "", order = "newest" }) {
+export function publicGallery({ items = [], featured = [], hasMore = false, total = 0, projects = [], capabilities = [], page = 1, home = false, woodhouseShare = false, buildUrl = null, storyUrl = null, query = "", kind = "", project = "", capability = "", order = "newest" }) {
   const pageHref = (number) => {
     const params = new URLSearchParams();
     if (query) params.set("q", query);
+    if (project) params.set("project", project);
     if (kind) params.set("kind", kind);
+    if (capability) params.set("capability", capability);
     if (order === "oldest") params.set("order", order);
     params.set("page", String(number));
     return `/gallery?${params}`;
   };
-  const option = (value, label, selected) => `<option value="${value}"${selected ? " selected" : ""}>${label}</option>`;
-  const controls = `<form class="gallery-controls" action="/gallery" method="get"><label>Search titles and descriptions<input type="search" name="q" value="${escapeHtml(query)}" maxlength="80" placeholder="Search public work"></label><label>Type<select name="kind">${option("", "All media", !kind)}${option("image", "Images", kind === "image")}${option("video", "Video", kind === "video")}${option("audio", "Audio", kind === "audio")}</select></label><label>Order<select name="order">${option("newest", "Newest first", order !== "oldest")}${option("oldest", "Oldest first", order === "oldest")}</select></label><button type="submit">Apply filters</button>${query || kind || order === "oldest" ? '<a href="/gallery">Clear filters</a>' : ""}</form>`;
+  const option = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  const capabilityNames = { original: "Original", variation: "Variation", refinement: "Refinement", assembled: "Assembled" };
+  const projectOptions = projects.map((entry) => option(entry.value, entry.label, entry.value === project)).join("");
+  const capabilityOptions = capabilities.map((value) => option(value, capabilityNames[value] ?? value, value === capability)).join("");
+  const projectControl = projects.length
+    ? `<label>Project<select name="project">${option("", "All projects", !project)}${projectOptions}</select></label>`
+    : "";
+  const capabilityControl = capabilities.length
+    ? `<label>Creation<select name="capability">${option("", "All creations", !capability)}${capabilityOptions}</select></label>`
+    : "";
+  const controls = `<form class="gallery-controls" action="/gallery" method="get"><label>Search titles and descriptions<input type="search" name="q" value="${escapeHtml(query)}" maxlength="80" placeholder="Search public work"></label>${projectControl}<label>Type<select name="kind">${option("", "All media", !kind)}${option("image", "Images", kind === "image")}${option("video", "Video", kind === "video")}${option("audio", "Audio", kind === "audio")}</select></label>${capabilityControl}<label>Order<select name="order">${option("newest", "Newest first", order !== "oldest")}${option("oldest", "Oldest first", order === "oldest")}</select></label><button type="submit">Apply filters</button>${query || kind || project || capability || order === "oldest" ? '<a href="/gallery">Clear filters</a>' : ""}</form>`;
   const dimensions = (width, height) =>
     Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
       ? ` width="${width}" height="${height}"`
@@ -593,33 +604,39 @@ export function publicGallery({ items = [], featured = [], hasMore = false, page
     // original or a large parent poster. The old routes stay as fallbacks.
     const preview = item.thumb_id
       ? previewImage(`/p/${slug}/thumb`, item.thumb_width, item.thumb_height)
-      : item.kind === "image"
-        ? previewImage(`/p/${slug}/media`, item.width, item.height)
-        : item.kind === "video" && item.poster_asset_id
-          ? previewImage(`/p/${slug}/poster`, item.poster_width, item.poster_height)
-          : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
+      : item.poster_preview_id
+        ? previewImage(`/p/${slug}/poster-preview`, item.poster_preview_width, item.poster_preview_height)
+        : item.kind === "image"
+          ? previewImage(`/p/${slug}/media`, item.width, item.height)
+          : item.kind === "video" && item.poster_asset_id
+            ? previewImage(`/p/${slug}/poster`, item.poster_width, item.poster_height)
+            : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
     const action = item.kind === "video" ? "Watch film →" : item.kind === "audio" ? "Listen →" : "View image →";
-    const pieceHref = `/p/${slug}${home || (!query && !kind && order !== "oldest" && page === 1) ? "" : `?back=${encodeURIComponent(pageHref(page))}`}`;
+    const filtered = Boolean(query || kind || project || capability) || order === "oldest" || page > 1;
+    const pieceHref = `/p/${slug}${home || !filtered ? "" : `?back=${encodeURIComponent(pageHref(page))}`}`;
     return `<li><a class="gallery-card" href="${escapeHtml(pieceHref)}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(galleryDescription(item.description))}</span>` : ""}</a></li>`;
   }).join("");
-  const heroItem = home ? (items.find((item) => item.kind === "video" && (item.poster_asset_id || item.thumb_id)) || items.find((item) => item.kind === "image")) : null;
+  const heroItem = home ? (items.find((item) => item.kind === "video" && (item.poster_preview_id || item.poster_asset_id || item.thumb_id)) || items.find((item) => item.kind === "image")) : null;
   const heroSlug = heroItem ? encodeURIComponent(heroItem.slug) : "";
   const heroSource = heroItem
-    ? heroItem.thumb_id
-      ? { route: "thumb", width: heroItem.thumb_width, height: heroItem.thumb_height }
-      : heroItem.kind === "image"
-        ? { route: "media", width: heroItem.width, height: heroItem.height }
-        : { route: "poster", width: heroItem.poster_width, height: heroItem.poster_height }
+    ? heroItem.poster_preview_id
+      ? { route: "poster-preview", width: heroItem.poster_preview_width, height: heroItem.poster_preview_height }
+      : heroItem.thumb_id
+        ? { route: "thumb", width: heroItem.thumb_width, height: heroItem.thumb_height }
+        : heroItem.kind === "image"
+          ? { route: "media", width: heroItem.width, height: heroItem.height }
+          : { route: "poster", width: heroItem.poster_width, height: heroItem.poster_height }
     : null;
   // The hero is the page's largest paint, so it asks for the first bytes. Cards
   // below it stay lazy: the gallery grid defers offscreen cards in studio.css.
   const heroArtwork = heroItem ? `<a class="gallery-hero-art" href="/p/${heroSlug}"><img src="/p/${heroSlug}/${heroSource.route}" alt=""${dimensions(heroSource.width, heroSource.height)} decoding="async" fetchpriority="high"><span><small>Published in Media Studio</small><strong>${escapeHtml(heroItem.title)}</strong><span>Explore this work →</span></span></a>` : "";
   const cards = renderCards(items);
   const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));
+  const countText = `${total} ${total === 1 ? "work" : "works"}`;
   return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio." })}
 <body><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="wordmark" href="/">${mark}<span>Media Studio</span></a><nav class="header-nav" aria-label="Main"><a href="/gallery">Gallery</a>${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}<a class="button secondary" href="/studio">Open Studio</a><button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button></nav></header>
 <main id="main" class="public-gallery${home ? "" : " public-gallery--catalogue"}"><section class="gallery-intro${heroArtwork ? " gallery-intro--art" : ""}"><div class="gallery-intro-copy"><p class="eyebrow">Images · film · sound</p><h1>${home ? "Made to be seen." : "The public gallery."}</h1><p>${home ? "Explore work made and kept in Media Studio." : "Images, films and sound shared by their creators."}</p>${home ? `<div class="gallery-actions"><a class="button" href="/gallery">Explore the gallery →</a>${buildUrl ? `<a class="button secondary" href="${escapeHtml(buildUrl)}">Build your own studio</a>` : ""}${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story →</a>` : ""}</div>` : ""}</div>${heroArtwork}</section>
-<section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><p class="eyebrow">Shared work</p><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${items.length ? `<ul class="gallery-grid">${cards}</ul>` : query || kind ? '<p>No published work matches these filters.</p>' : '<p>No work has been added to the public gallery yet.</p>'}
+<section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><p class="eyebrow">Shared work</p><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2>${home ? "" : `<p class="gallery-count" data-total="${total}">${countText}</p>`}</div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${items.length ? `<ul class="gallery-grid">${cards}</ul>` : query || kind || project || capability ? '<p>No published work matches these filters.</p>' : '<p>No work has been added to the public gallery yet.</p>'}
 ${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(pageHref(page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(pageHref(page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? '<p><a href="/portfolio">See more featured films and artwork →</a></p>' : ""}</section>` : ""}</main></body></html>`;
 }
 
