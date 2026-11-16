@@ -239,6 +239,20 @@ export function Publish({ publications, origin }: PublishProps) {
         <button type="button" className="secondary" data-action="publication-inventory">Review publication inventory</button>
       </div>
       {publications.length > 0 && (
+        <div className="stack" data-bulk-publications>
+          <p className="small">
+            Select published pages, then change their visibility in one action. Every
+            change is recorded with who made it, when, and the state before and after.
+            A failure names the exact items that changed and the ones that did not.
+          </p>
+          <div className="row">
+            <button type="button" className="secondary" data-action="bulk-publish">Add selected to gallery</button>
+            <button type="button" className="secondary" data-action="bulk-unlist">Unlist selected</button>
+            <button type="button" className="quiet" data-action="bulk-withdraw">Withdraw selected</button>
+          </div>
+        </div>
+      )}
+      {publications.length > 0 && (
         <div className="stack publish-previews">
           <button type="button" className="secondary" data-action="backfill-thumbs">
             Make public previews faster
@@ -260,6 +274,9 @@ export function Publish({ publications, origin }: PublishProps) {
         {publications.map((publication) => (
           <article className="job" key={publication.id}>
             <header>
+              <label className="small">
+                <input type="checkbox" data-bulk-publication={publication.id} /> Select
+              </label>
               <strong>{publication.title}</strong>
               <span className="small">{date(publication.createdAt)}</span>
             </header>

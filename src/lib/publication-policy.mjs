@@ -114,7 +114,7 @@ function shareRootProof(idParam, hashParam, captionParam) {
 }
 
 export async function inventory(env, projectId, after = "") {
-  const rows = await env.DB.prepare(`SELECT a.id,a.title,a.kind,a.source,a.created_at,
+  const rows = await env.DB.prepare(`SELECT a.id,a.title,a.kind,a.source,a.created_at,a.sha256,a.parent_asset_id,a.deleted_at,a.r2_key,
     CASE WHEN ${eligible} THEN 1 ELSE 0 END AS eligible,
     CASE WHEN ${eligible} AND (${attributionSafe} OR ${generatedChain}) THEN 1 ELSE 0 END AS attribution_safe,
     CASE WHEN ${eligible} AND (${directReference} OR ${shareChain}) THEN 1 ELSE 0 END AS source_verifiable,
@@ -124,7 +124,185 @@ export async function inventory(env, projectId, after = "") {
     FROM assets a LEFT JOIN generations g ON g.id=a.generation_id WHERE a.project_id=?1 AND a.id>?2
     ORDER BY a.id LIMIT 26`).bind(projectId, after).all();
   const page = rows.results.slice(0, 25);
-  return { items: page.map((a) => ({ id:a.id, title:a.title, kind:a.kind, source:a.source, status: !a.eligible ? "ineligible" : a.withdrawn ? "withdrawn" : a.hidden ? "hidden" : !a.attribution_safe && a.source_verifiable ? "source_verification_available" : !a.attribution_safe ? "attribution_review_required" : a.published ? "existing" : "candidate" })), nextAfter: rows.results.length > 25 ? page.at(-1).id : null };
+  const [referenceRows, duplicateRows, publishedRows, summaryRow] = await Promise.all([
+    env.DB.prepare(`SELECT DISTINCT parent_asset_id AS id FROM assets WHERE project_id=?1 AND parent_asset_id IS NOT NULL
+      UNION SELECT DISTINCT json_extract(request_json,'$.referenceAssetId') FROM generations
+        WHERE project_id=?1 AND json_valid(request_json) AND json_type(request_json,'$.referenceAssetId')='text'
+      UNION SELECT DISTINCT json_extract(request_json,'$.maskAssetId') FROM generations
+        WHERE project_id=?1 AND json_valid(request_json) AND json_type(request_json,'$.maskAssetId')='text'
+      UNION SELECT DISTINCT json_extract(request_json,'$.parentAssetId') FROM generations
+        WHERE project_id=?1 AND json_valid(request_json) AND json_type(request_json,'$.parentAssetId')='text'`)
+      .bind(projectId)
+      .all(),
+    env.DB.prepare("SELECT sha256 FROM assets WHERE project_id=?1 AND deleted_at IS NULL GROUP BY sha256 HAVING COUNT(*)>1")
+      .bind(projectId)
+      .all(),
+    env.DB.prepare(`SELECT a.id,a.sha256,p.slug FROM assets a JOIN publications p ON p.asset_id=a.id
+      WHERE a.project_id=?1 AND a.deleted_at IS NULL AND p.revoked_at IS NULL`).bind(projectId).all(),
+    env.DB.prepare(`SELECT
+      (SELECT COUNT(*) FROM assets WHERE project_id=?1) AS total_assets,
+      (SELECT COUNT(*) FROM assets WHERE project_id=?1 AND deleted_at IS NULL) AS active_assets,
+      (SELECT COUNT(*) FROM assets WHERE project_id=?1 AND deleted_at IS NOT NULL) AS deleted_assets,
+      (SELECT COUNT(*) FROM assets a LEFT JOIN generations g ON g.id=a.generation_id WHERE a.project_id=?1 AND ${eligible}) AS saved_generated_outputs,
+      (SELECT COUNT(*) FROM publications WHERE project_id=?1 AND revoked_at IS NULL) AS active_publications,
+      (SELECT COUNT(*) FROM publications WHERE project_id=?1 AND revoked_at IS NULL AND listed=1 AND hidden=0) AS listed_publications,
+      (SELECT COUNT(*) FROM publications WHERE project_id=?1 AND revoked_at IS NULL AND listed=0) AS unlisted_publications,
+      (SELECT COUNT(*) FROM publications WHERE project_id=?1 AND revoked_at IS NULL AND hidden=1) AS hidden_publications,
+      (SELECT COUNT(*) FROM publications WHERE project_id=?1 AND revoked_at IS NOT NULL) AS withdrawn_publications,
+      (SELECT COUNT(DISTINCT asset_id) FROM publications WHERE project_id=?1 AND revoked_at IS NULL) AS published_assets,
+      (SELECT COUNT(*) FROM assets a LEFT JOIN generations g ON g.id=a.generation_id WHERE a.project_id=?1 AND ${eligible}
+        AND (${attributionSafe} OR ${generatedChain} OR ${directReference} OR ${shareChain})
+        AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id)) AS record_candidates,
+      (SELECT COUNT(*) FROM (SELECT 1 FROM assets WHERE project_id=?1 AND deleted_at IS NULL GROUP BY sha256 HAVING COUNT(*)>1)) AS duplicate_groups,
+      (SELECT COALESCE(SUM(n),0) FROM (SELECT COUNT(*) AS n FROM assets WHERE project_id=?1 AND deleted_at IS NULL GROUP BY sha256 HAVING COUNT(*)>1)) AS duplicate_assets,
+      (SELECT COUNT(*) FROM assets WHERE project_id=?1 AND deleted_at IS NULL AND parent_asset_id IS NOT NULL) AS versions,
+      (SELECT COUNT(*) FROM assets a WHERE a.project_id=?1 AND a.deleted_at IS NULL AND a.source='upload' AND ${referenceOf("a")}) AS reference_originals,
+      (SELECT COUNT(*) FROM assets a WHERE a.project_id=?1 AND a.deleted_at IS NULL AND a.source='upload' AND NOT ${referenceOf("a")}) AS private_uploads`)
+      .bind(projectId)
+      .first(),
+  ]);
+  const referenced = new Set(referenceRows.results.map((row) => row.id).filter(Boolean));
+  const duplicateHashes = new Set(duplicateRows.results.map((row) => row.sha256));
+  const publishedBySha = new Map();
+  for (const row of publishedRows.results) if (!publishedBySha.has(row.sha256)) publishedBySha.set(row.sha256, row.slug);
+  // R2 reads are bounded to the page (25 items) and only answer "do the saved
+  // bytes still exist?", never content.
+  const storageMissing = new Set();
+  await Promise.all(
+    page
+      .filter((asset) => !asset.deleted_at && asset.r2_key)
+      .map(async (asset) => {
+        try {
+          if (!(await env.MEDIA.head(asset.r2_key))) storageMissing.add(asset.id);
+        } catch {
+          storageMissing.add(asset.id);
+        }
+      }),
+  );
+  const items = page.map((a) => {
+    const status = !a.eligible
+      ? "ineligible"
+      : a.withdrawn
+        ? "withdrawn"
+        : a.hidden
+          ? "hidden"
+          : !a.attribution_safe && a.source_verifiable
+            ? "source_verification_available"
+            : !a.attribution_safe
+              ? "attribution_review_required"
+              : a.published
+                ? "existing"
+                : "candidate";
+    const missing = storageMissing.has(a.id);
+    const duplicatePublished = Boolean(!a.published && a.sha256 && publishedBySha.has(a.sha256));
+    let excludedReason = null;
+    if (status === "candidate") {
+      if (missing) excludedReason = "output_bytes_missing";
+      else if (duplicatePublished) excludedReason = "duplicate_of_published";
+    } else if (status === "ineligible") {
+      excludedReason = a.deleted_at
+        ? "asset_deleted"
+        : a.source === "upload"
+          ? referenced.has(a.id)
+            ? "reference_original"
+            : "private_upload"
+          : "not_a_saved_generated_output";
+    } else if (status === "withdrawn") excludedReason = "previously_withdrawn";
+    else if (status === "hidden") excludedReason = "hidden_placement";
+    else if (status === "attribution_review_required") excludedReason = "attribution_review_required";
+    return {
+      id: a.id,
+      title: a.title,
+      kind: a.kind,
+      source: a.source,
+      status,
+      eligible: status === "candidate" && !missing && !duplicatePublished,
+      excludedReason,
+      duplicate: Boolean(a.sha256 && duplicateHashes.has(a.sha256)),
+      duplicateOfPublished: duplicatePublished ? publishedBySha.get(a.sha256) : null,
+      versionOf: a.parent_asset_id ?? null,
+      storageMissing: missing,
+    };
+  });
+  const summary = summaryRow ?? {};
+  return {
+    items,
+    nextAfter: rows.results.length > 25 ? page.at(-1).id : null,
+    summary: {
+      totalAssets: summary.total_assets ?? 0,
+      activeAssets: summary.active_assets ?? 0,
+      deletedAssets: summary.deleted_assets ?? 0,
+      savedGeneratedOutputs: summary.saved_generated_outputs ?? 0,
+      activePublications: summary.active_publications ?? 0,
+      listedPublications: summary.listed_publications ?? 0,
+      unlistedPublications: summary.unlisted_publications ?? 0,
+      hiddenPublications: summary.hidden_publications ?? 0,
+      withdrawnPublications: summary.withdrawn_publications ?? 0,
+      publishedAssets: summary.published_assets ?? 0,
+      recordCandidates: summary.record_candidates ?? 0,
+      duplicateGroups: summary.duplicate_groups ?? 0,
+      duplicateAssets: summary.duplicate_assets ?? 0,
+      versions: summary.versions ?? 0,
+      referenceOriginals: summary.reference_originals ?? 0,
+      privateUploads: summary.private_uploads ?? 0,
+      page: {
+        returned: items.length,
+        eligible: items.filter((item) => item.eligible).length,
+        storageChecked: page.filter((asset) => !asset.deleted_at && asset.r2_key).length,
+        storageMissing: items.filter((item) => item.storageMissing).length,
+      },
+    },
+  };
+}
+
+/** A reference original is an upload that another asset or generation names. */
+function referenceOf(alias) {
+  return `(EXISTS(SELECT 1 FROM assets c WHERE c.project_id=${alias}.project_id AND c.parent_asset_id=${alias}.id)
+    OR EXISTS(SELECT 1 FROM generations r WHERE r.project_id=${alias}.project_id AND json_valid(r.request_json)
+      AND (json_extract(r.request_json,'$.referenceAssetId')=${alias}.id OR json_extract(r.request_json,'$.maskAssetId')=${alias}.id)))`;
+}
+
+/**
+ * Publish the next bounded page of already-eligible, still-unpublished saved
+ * outputs. It is idempotent: any asset with a publication row (including a
+ * withdrawn or hidden one) is never selected again, and items that share the
+ * exact bytes of an already-published page are left out as duplicates.
+ *
+ * The caller must have explicitly confirmed the project policy and rights; this
+ * function performs no selection beyond that and never runs on a GET.
+ */
+export async function boundedBackfill(env, projectId, { limit = 10, after = "" } = {}) {
+  const bounded = Math.min(Math.max(Number(limit) || 10, 1), 25);
+  const rows = await env.DB.prepare(`SELECT a.id,a.r2_key FROM assets a JOIN generations g ON g.id=a.generation_id
+    WHERE a.project_id=?1 AND a.id>?2 AND ${eligible}
+      AND (${attributionSafe} OR ${generatedChain} OR ${directReference} OR ${shareChain})
+      AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id)
+      AND NOT EXISTS(SELECT 1 FROM publications px JOIN assets ax ON ax.id=px.asset_id
+        WHERE px.project_id=a.project_id AND px.revoked_at IS NULL AND ax.deleted_at IS NULL AND ax.sha256=a.sha256)
+    ORDER BY a.id LIMIT ?3`).bind(projectId, after, bounded + 1).all();
+  const page = rows.results.slice(0, bounded);
+  const results = [];
+  for (const candidate of page) {
+    const object = await env.MEDIA.head(candidate.r2_key).catch(() => null);
+    if (!object) {
+      results.push({ assetId: candidate.id, result: "bytes_missing" });
+      continue;
+    }
+    results.push({ assetId: candidate.id, result: await publishCandidate(env, projectId, candidate.id) });
+  }
+  const count = (name) => results.filter((item) => item.result === name).length;
+  return {
+    attempted: results.length,
+    created: count("created"),
+    existing: count("existing"),
+    held: count("attribution_review_required") + count("metadata_review_required"),
+    skipped: count("skipped") + count("not_allowed"),
+    missingBytes: count("bytes_missing"),
+    results,
+    // Progress is by asset cursor, so a held or missing item cannot block the
+    // next call forever. An empty page is the end of the bounded selection.
+    nextAfter: page.length ? page.at(-1).id : null,
+  };
 }
 
 // Recheck eligibility and policy in the write statement, serialising competing
