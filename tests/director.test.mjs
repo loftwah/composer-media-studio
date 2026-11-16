@@ -49,6 +49,11 @@ test('the Director returns a typed proposal for selected scenes without changing
   assert.equal(ai.calls.length, 1);
   assert.equal(ai.calls[0].model, DIRECTOR_MODEL);
   const prompt = JSON.stringify(ai.calls[0].input);
+  const system = ai.calls[0].input.messages[0].content;
+  assert.match(system, /creative-direction assistant/);
+  assert.match(system, /no name, persona or backstory/i);
+  // The model prompt stays product-neutral even when the UI is white-labelled.
+  assert.doesNotMatch(system, /you are the studio director|marlow/i);
   assert.match(prompt, /Make scene 2 warmer and slower/);
   assert.match(prompt, new RegExp(plan.scenes[1].id));
   assert.doesNotMatch(prompt, new RegExp(plan.scenes[2].id));

@@ -1,7 +1,9 @@
-// MIT. The Studio Director turns one creator request into a typed, reviewable
-// scene-direction proposal. It never applies, saves, generates media or spends.
-// Workers AI is an existing installation entitlement, not a paid per-request
-// provider route; every call is a single bounded request with no retries.
+// MIT. The creative-direction route turns one creator request into a typed,
+// reviewable scene-direction proposal. It never applies, saves, generates media
+// or spends. The model is not given a character or installation identity; the
+// visible name is presentation only. Workers AI is an existing installation
+// entitlement, not a paid per-request provider route; every call is a single
+// bounded request with no retries.
 import { HttpError, money, safeJson, text } from './util.mjs';
 import { previewSceneProposal } from './scene-proposals.mjs';
 import { songPlanRevisionDigest, viewSongPlan } from './song-plans.mjs';
@@ -12,7 +14,8 @@ const MAX_DIRECTION = 1200;
 const CONTEXT_DIRECTION = 600;
 
 const instructions = [
-  'You are the Studio Director inside a private media studio.',
+  'You are a creative-direction assistant inside a private media studio.',
+  'You have no name, persona or backstory. Do not write as a character or refer to yourself as one.',
   'You propose scene-direction edits only, for a human to review.',
   'Return exactly one JSON object and nothing else: {"changes":[{"sceneId":"...","direction":"..."}]}',
   'Rules:',
@@ -102,7 +105,7 @@ export async function proposeSceneDirection(env, project, planId, input, { ai = 
   const plan = { id: row.id, revision: row.revision, ...JSON.parse(row.spec_json) };
   const indexById = new Map((plan.scenes ?? []).map((scene, index) => [scene.id, index]));
   if (input.sceneIds.some(id => !indexById.has(id))) throw new HttpError(400, 'A chosen scene is not in this plan.', 'invalid_director_request');
-  if (!ai || typeof ai.run !== 'function') throw new HttpError(503, 'The Studio Director is not configured on this studio. Nothing was changed.', 'director_unavailable');
+  if (!ai || typeof ai.run !== 'function') throw new HttpError(503, 'Creative direction is not configured on this studio. Nothing was changed.', 'director_unavailable');
 
   // Titles only; no media bytes or provider credentials enter the prompt.
   const assetIds = new Set(plan.scenes.flatMap(scene => [scene.referenceAssetId, scene.selectedTakeId]).filter(Boolean));
@@ -126,8 +129,8 @@ export async function proposeSceneDirection(env, project, planId, input, { ai = 
     reply = await ai.run(DIRECTOR_MODEL, { messages: [{ role: 'system', content: instructions }, { role: 'user', content: prompt }], max_tokens: 1200, temperature: 0.2 });
   } catch (error) {
     // Provider faults are operational information, never the prompt or saved text.
-    console.warn('Studio Director model call failed', { model: DIRECTOR_MODEL, message: error?.message ?? String(error) });
-    throw new HttpError(502, 'The Studio Director did not answer. Nothing was changed; try again in a moment.', 'director_failed');
+    console.warn('Creative direction model call failed', { model: DIRECTOR_MODEL, message: error?.message ?? String(error) });
+    throw new HttpError(502, 'Creative direction did not answer. Nothing was changed; try again in a moment.', 'director_failed');
   }
   // Workers AI returns either a plain string, { response } or an
   // OpenAI-compatible chat completion, depending on the model generation.
