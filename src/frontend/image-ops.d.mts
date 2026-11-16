@@ -55,6 +55,7 @@ export function planImageTransform(input?: {
   flipH?: boolean;
   flipV?: boolean;
   cropAspect?: number | null;
+  cropRect?: ImageCrop | null;
   resize?: ResizePlan;
   maxPixels?: number;
   maxDimension?: number;
@@ -65,10 +66,48 @@ export function describeTransform(input?: {
   flipH?: boolean;
   flipV?: boolean;
   cropAspect?: number | null;
+  trimmed?: boolean;
   resize?: ResizePlan | null;
+  resample?: "smooth" | "nearest";
   format?: string;
   quality?: number | null;
   metadata?: string;
 }): string;
 export function extensionForImageMime(mime: string): string;
 export function mimeForExport(format: string): string;
+
+export const TARGET_QUALITY_MIN: number;
+export const TARGET_QUALITY_MAX: number;
+export const TARGET_SEARCH_ATTEMPTS: number;
+export const MIN_TARGET_BYTES: number;
+
+export function targetSizeProblem(
+  format: string,
+  targetBytes: number | null | undefined,
+): string | null;
+
+export type TargetSearchResult =
+  | {
+      ok: true;
+      met: boolean;
+      quality: number;
+      bytes: number;
+      blob: Blob;
+      attempts: number;
+      targetBytes: number;
+      overBy?: number;
+    }
+  | { ok: false; error: string };
+
+export function searchTargetQuality(input: {
+  targetBytes: number;
+  encode: (quality: number) => Promise<Blob>;
+  minQuality?: number;
+  maxQuality?: number;
+  attempts?: number;
+}): Promise<TargetSearchResult>;
+
+export function imageSmoothingFor(resample?: "smooth" | "nearest"): {
+  enabled: boolean;
+  quality: "low" | "high";
+};

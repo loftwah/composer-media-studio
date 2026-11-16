@@ -7,9 +7,12 @@ import {
   defaultLongEdge,
   describeTransform,
   extensionForImageMime,
+  imageSmoothingFor,
   mimeForExport,
   planImageTransform,
   rotatedDimensions,
+  searchTargetQuality,
+  targetSizeProblem,
 } from "../src/frontend/image-ops.mjs";
 
 test("rotation swaps dimensions only for odd quarter turns", () => {
@@ -44,6 +47,15 @@ test("a long-edge plan produces the exact rounded edge", () => {
     resize: { mode: "long-edge", longEdge: 2048 },
   });
   assert.deepEqual([portrait.outputWidth, portrait.outputHeight], [1536, 2048]);
+
+  // One-pixel rounding on a long edge is not a distorted aspect.
+  const rounded = planImageTransform({
+    sourceWidth: 200,
+    sourceHeight: 300,
+    resize: { mode: "long-edge", longEdge: 260 },
+  });
+  assert.deepEqual([rounded.outputWidth, rounded.outputHeight], [173, 260]);
+  assert.equal(rounded.aspectDistorted, false);
 
   const rotated = planImageTransform({
     sourceWidth: 4000,
@@ -115,4 +127,112 @@ test("defaults and caption text are deterministic", () => {
   assert.equal(mimeForExport("jpeg"), "image/jpeg");
   assert.equal(mimeForExport("webp"), "image/webp");
   assert.equal(mimeForExport("png"), "image/png");
+});
+
+test("trim can supply an exact crop before the centre crop and resize", () => {
+  const trimmed = planImageTransform({
+    sourceWidth: 100,
+    sourceHeight: 80,
+    cropRect: { x: 10, y: 5, width: 50, height: 40 },
+    resize: { mode: "long-edge", longEdge: 50 },
+  });
+  assert.equal(trimmed.ok, true);
+  assert.deepEqual(trimmed.crop, { x: 10, y: 5, width: 50, height: 40 });
+  assert.deepEqual([trimmed.outputWidth, trimmed.outputHeight], [50, 40]);
+
+  const squared = planImageTransform({
+    sourceWidth: 100,
+    sourceHeight: 80,
+    cropRect: { x: 10, y: 5, width: 50, height: 40 },
+    cropAspect: 1,
+    resize: { mode: "long-edge", longEdge: 50 },
+  });
+  assert.deepEqual(squared.crop, { x: 15, y: 5, width: 40, height: 40 });
+  assert.deepEqual([squared.outputWidth, squared.outputHeight], [50, 50]);
+
+  assert.match(
+    planImageTransform({
+      sourceWidth: 100,
+      sourceHeight: 80,
+      cropRect: { x: 90, y: 70, width: 20, height: 20 },
+      resize: { mode: "long-edge", longEdge: 50 },
+    }).error,
+    /trim rectangle/,
+  );
+  assert.match(
+    planImageTransform({
+      sourceWidth: 100,
+      sourceHeight: 80,
+      cropRect: { x: 0, y: 0, width: 0, height: 20 },
+      resize: { mode: "long-edge", longEdge: 50 },
+    }).error,
+    /trim rectangle/,
+  );
+});
+
+test("nearest-neighbour resampling is an explicit, captioned choice", () => {
+  assert.deepEqual(imageSmoothingFor("smooth"), { enabled: true, quality: "high" });
+  assert.deepEqual(imageSmoothingFor("nearest"), { enabled: false, quality: "low" });
+  assert.deepEqual(imageSmoothingFor(), { enabled: true, quality: "high" });
+  assert.equal(
+    describeTransform({
+      cropAspect: "square",
+      trimmed: true,
+      resize: { mode: "exact", width: 320, height: 320 },
+      resample: "nearest",
+      format: "png",
+    }),
+    "centre crop 1:1 square, trim transparent edges, nearest-neighbour, exact 320×320px, PNG, re-encoded",
+  );
+  assert.doesNotMatch(
+    describeTransform({ resize: { mode: "long-edge", longEdge: 100 }, format: "webp" }),
+    /nearest/,
+  );
+});
+
+test("a byte target is refused honestly for PNG and invalid sizes", async () => {
+  assert.match(targetSizeProblem("png", 50_000), /PNG is lossless/);
+  assert.equal(targetSizeProblem("png", null), null);
+  assert.equal(targetSizeProblem("jpeg", 50_000), null);
+  assert.match(targetSizeProblem("webp", 512), /at least 1 KiB/);
+  assert.match(targetSizeProblem("webp", 0), /at least 1 KiB/);
+  assert.match(targetSizeProblem("webp", 65 * 1024 * 1024), /64 MiB/);
+});
+
+test("target-size search returns only real bytes and never false success", async () => {
+  const encode = async (quality) => ({
+    size: Math.round(100_000 * quality * quality),
+    type: "image/jpeg",
+  });
+  const met = await searchTargetQuality({ targetBytes: 40_000, encode });
+  assert.equal(met.ok, true);
+  assert.equal(met.met, true);
+  assert.ok(met.bytes <= 40_000, "the reported bytes meet the target");
+  assert.ok(met.quality > 0.6 && met.quality <= 0.98, `quality ${met.quality} is a real search result`);
+  assert.ok(met.attempts >= 2 && met.attempts <= 7);
+
+  const missed = await searchTargetQuality({ targetBytes: 1_024, encode });
+  assert.equal(missed.ok, true);
+  assert.equal(missed.met, false, "an impossible target is not claimed as met");
+  assert.ok(missed.bytes > 1_024);
+  assert.equal(missed.quality, 0.35);
+  assert.equal(missed.overBy, missed.bytes - 1_024);
+
+  const highest = await searchTargetQuality({ targetBytes: 200_000, encode });
+  assert.equal(highest.met, true);
+  assert.equal(highest.quality, 0.98);
+  assert.equal(highest.attempts, 1);
+
+  const broken = await searchTargetQuality({
+    targetBytes: 40_000,
+    encode: async () => {
+      throw new Error("encoder unavailable");
+    },
+  });
+  assert.equal(broken.ok, false);
+  assert.match(broken.error, /encoder unavailable/);
+
+  const invalid = await searchTargetQuality({ targetBytes: 10, encode });
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.error, /1 KiB/);
 });

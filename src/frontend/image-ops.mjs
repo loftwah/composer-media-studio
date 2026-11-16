@@ -3,6 +3,7 @@
 
 import {
   MAX_DECODED_PIXELS,
+  MAX_IMAGE_OUTPUT_BYTES,
   MAX_IMAGE_OUTPUT_DIMENSION,
 } from "./image-limits.mjs";
 
@@ -62,6 +63,28 @@ export function centredCrop(width, height, aspect = null) {
   };
 }
 
+function centredCropWithin(rect, aspect = null) {
+  if (aspect === null || aspect === undefined) return { ...rect };
+  const inner = centredCrop(rect.width, rect.height, aspect);
+  if (!inner) return null;
+  return {
+    x: rect.x + inner.x,
+    y: rect.y + inner.y,
+    width: inner.width,
+    height: inner.height,
+  };
+}
+
+function validCropRect(rect) {
+  return (
+    rect &&
+    Number.isSafeInteger(rect.x) &&
+    Number.isSafeInteger(rect.y) &&
+    positiveInteger(rect.width) &&
+    positiveInteger(rect.height)
+  );
+}
+
 function scaleToLongEdge(cropWidth, cropHeight, longEdge) {
   if (cropWidth >= cropHeight) {
     return {
@@ -80,6 +103,8 @@ function scaleToLongEdge(cropWidth, cropHeight, longEdge) {
  *   { mode: "long-edge", longEdge }
  *   { mode: "exact", width, height }
  * `cropAspect` is a positive aspect ratio, or null for no crop.
+ * `cropRect` is an optional exact region in rotated space (used by trim);
+ * the centre crop, when requested, is then taken inside that region.
  */
 export function planImageTransform({
   sourceWidth,
@@ -88,6 +113,7 @@ export function planImageTransform({
   flipH = false,
   flipV = false,
   cropAspect = null,
+  cropRect = null,
   resize = { mode: "long-edge", longEdge: 2048 },
   maxPixels = MAX_DECODED_PIXELS,
   maxDimension = MAX_IMAGE_OUTPUT_DIMENSION,
@@ -100,7 +126,20 @@ export function planImageTransform({
     return { ok: false, error: "Flip settings are invalid." };
   const rotated = rotatedDimensions(sourceWidth, sourceHeight, rotate);
   if (!rotated) return { ok: false, error: "The rotated dimensions are not usable." };
-  const crop = centredCrop(rotated.width, rotated.height, cropAspect);
+  if (cropRect !== null) {
+    if (!validCropRect(cropRect))
+      return { ok: false, error: "The trim rectangle is not usable." };
+    if (
+      cropRect.x < 0 ||
+      cropRect.y < 0 ||
+      cropRect.x + cropRect.width > rotated.width ||
+      cropRect.y + cropRect.height > rotated.height
+    )
+      return { ok: false, error: "The trim rectangle does not fit inside the image." };
+  }
+  const crop = cropRect
+    ? centredCropWithin(cropRect, cropAspect)
+    : centredCrop(rotated.width, rotated.height, cropAspect);
   if (!crop)
     return { ok: false, error: "The crop aspect or source dimensions are invalid." };
   if (
@@ -154,7 +193,10 @@ export function planImageTransform({
     outputHeight: output.height,
     scaleX,
     scaleY,
-    aspectDistorted: Math.abs(scaleX - scaleY) > 0.0001,
+    aspectDistorted:
+      Math.abs(output.width / output.height - crop.width / crop.height) /
+        (crop.width / crop.height) >
+      0.005,
     upscaled: output.width > crop.width || output.height > crop.height,
   };
 }
@@ -166,13 +208,135 @@ export function defaultLongEdge(width, height) {
   return Math.max(1, Math.min(DEFAULT_RESIZE_LONG_EDGE, Math.max(width, height)));
 }
 
+export const TARGET_QUALITY_MIN = 0.35;
+export const TARGET_QUALITY_MAX = 0.98;
+export const TARGET_SEARCH_ATTEMPTS = 7;
+export const MIN_TARGET_BYTES = 1024;
+
+/**
+ * A byte target is only an instruction for a lossy encoder. PNG is honest about
+ * not having one, and the bounds match the export path.
+ */
+export function targetSizeProblem(format, targetBytes) {
+  if (targetBytes === null || targetBytes === undefined) return null;
+  if (format === "png")
+    return "PNG is lossless, so a byte target cannot be guaranteed. Lower the output width and height, or choose JPEG or WebP.";
+  if (!Number.isSafeInteger(targetBytes) || targetBytes < MIN_TARGET_BYTES)
+    return `Choose a target of at least ${MIN_TARGET_BYTES / 1024} KiB.`;
+  if (targetBytes > MAX_IMAGE_OUTPUT_BYTES)
+    return `The target must stay at or below ${MAX_IMAGE_OUTPUT_BYTES / 1024 / 1024} MiB.`;
+  return null;
+}
+
+function roundQuality(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+/**
+ * Find the highest tested encoder quality whose real bytes meet the target.
+ *
+ * `encode(quality)` must resolve to a Blob with a measured `size`. The search
+ * is deterministic and bounded: it tries the maximum, then the minimum, then a
+ * binary search for at most `attempts` encodes. `met` is always read from the
+ * returned bytes; an unmet target is returned with the smallest real result,
+ * never as success.
+ */
+export async function searchTargetQuality({
+  targetBytes,
+  encode,
+  minQuality = TARGET_QUALITY_MIN,
+  maxQuality = TARGET_QUALITY_MAX,
+  attempts = TARGET_SEARCH_ATTEMPTS,
+} = {}) {
+  if (!Number.isSafeInteger(targetBytes) || targetBytes < MIN_TARGET_BYTES)
+    return { ok: false, error: `Choose a target of at least ${MIN_TARGET_BYTES / 1024} KiB.` };
+  if (typeof encode !== "function")
+    return { ok: false, error: "This browser cannot encode a target-sized result." };
+  if (
+    !Number.isFinite(minQuality) ||
+    !Number.isFinite(maxQuality) ||
+    minQuality < 0 ||
+    maxQuality > 1 ||
+    minQuality >= maxQuality
+  )
+    return { ok: false, error: "The quality range is invalid." };
+  if (!Number.isSafeInteger(attempts) || attempts < 2 || attempts > 12)
+    return { ok: false, error: "The quality search must run between 2 and 12 attempts." };
+
+  let used = 0;
+  async function attempt(quality) {
+    const rounded = roundQuality(quality);
+    const blob = await encode(rounded);
+    used += 1;
+    if (!blob || !Number.isFinite(blob.size) || blob.size < 1)
+      throw new Error("The encoder returned no measurable image bytes.");
+    return { quality: rounded, bytes: blob.size, blob };
+  }
+
+  try {
+    const highest = await attempt(maxQuality);
+    if (highest.bytes <= targetBytes)
+      return { ok: true, met: true, ...highest, attempts: used, targetBytes };
+
+    const lowest = await attempt(minQuality);
+    if (lowest.bytes > targetBytes)
+      return {
+        ok: true,
+        met: false,
+        ...lowest,
+        attempts: used,
+        targetBytes,
+        overBy: lowest.bytes - targetBytes,
+      };
+
+    let best = lowest;
+    let low = minQuality;
+    let high = maxQuality;
+    while (used < attempts) {
+      const quality = roundQuality((low + high) / 2);
+      if (quality <= low || quality >= high) break;
+      const candidate = await attempt(quality);
+      if (candidate.bytes <= targetBytes) {
+        best = candidate;
+        low = quality;
+      } else {
+        high = quality;
+      }
+    }
+    return {
+      ok: true,
+      met: true,
+      ...best,
+      attempts: used,
+      targetBytes,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "This browser could not encode a target-sized result.",
+    };
+  }
+}
+
+/** Canvas sampling settings for the chosen resampler. */
+export function imageSmoothingFor(resample = "smooth") {
+  return resample === "nearest"
+    ? { enabled: false, quality: "low" }
+    : { enabled: true, quality: "high" };
+}
+
 /** A deterministic caption fragment for an explicit Studio import. */
 export function describeTransform({
   rotate = 0,
   flipH = false,
   flipV = false,
   cropAspect = null,
+  trimmed = false,
   resize = null,
+  resample = "smooth",
   format = "png",
   quality = null,
   metadata = "re-encoded",
@@ -182,6 +346,8 @@ export function describeTransform({
   if (flipH) parts.push("flip horizontal");
   if (flipV) parts.push("flip vertical");
   if (cropAspect) parts.push(`centre crop ${CROP_ASPECT_LABELS[cropAspect] ?? "aspect"}`);
+  if (trimmed) parts.push("trim transparent edges");
+  if (resample === "nearest") parts.push("nearest-neighbour");
   if (resize?.mode === "long-edge") parts.push(`long edge ${resize.longEdge}px`);
   if (resize?.mode === "exact") parts.push(`exact ${resize.width}×${resize.height}px`);
   parts.push(`${String(format).toUpperCase()}${quality !== null && format !== "png" ? ` q${Math.round(quality * 100)}` : ""}`);

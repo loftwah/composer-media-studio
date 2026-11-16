@@ -23,7 +23,7 @@ in [the image workbench evidence](../evidence/2026-11-16-browser-local-image-wor
 
 | # | Tool job | Status | What this slice does | Remaining gap / owner |
 | --- | --- | --- | --- | --- |
-| 1 | Compress and optimise JPEG/PNG/WebP | **Partial** | JPEG/WebP quality control and real output bytes; PNG is lossless. The before/after byte count is measured from the encoded Blob. | No perceptual target-size search, no automatic quality ladder, no GIF/AVIF optimisation. Quantified compression presets remain for a later slice. |
+| 1 | Compress and optimise JPEG/PNG/WebP | **Partial** | JPEG/WebP quality control plus an optional target byte size. The target runs a deterministic, bounded search (at most seven encodes) for the highest tested quality that meets the target and reports the real encoded bytes and whether it was met. An unmet target is reported as not met, never as success. PNG states that a lossless byte target is not achievable and points to resizing. The before/after byte count is measured from the encoded Blob. | No perceptual/SSIM target, no automatic quality ladder across formats, no GIF/AVIF optimisation. Target search re-encodes up to seven times per image and is not a perceptually optimal encoder. |
 | 2 | Resize | **Shipped** | Long-edge or exact width and height; output pixel bounds checked before drawing; source dimensions and output dimensions shown. | No separate DPI/print metadata rewrite. Exact dimensions may change aspect and say so. |
 | 3 | Crop | **Shipped** | Centre crop to original, 1:1, 4:5, 5:4, 16:9, 9:16, 3:2 or 2:3 with safe integer bounds. Crop is planned in rotated space. | Focal-point and freeform crop handles are deferred. |
 | 4 | Rotate and flip | **Shipped** | Quarter-turn rotation, horizontal/vertical flip and EXIF orientation applied before editing. | No arbitrary-angle straightening. |
@@ -31,7 +31,7 @@ in [the image workbench evidence](../evidence/2026-11-16-browser-local-image-wor
 | 6 | Batch selection, progress, cancel, retry, ZIP | **Shipped** | Maximum 20 images, sequential decode/encode, real completed count, cancel between items, per-file error and retry, per-file download and one store-only ZIP. ZIP names are flat and unique; the writer rejects traversal, duplicate names and bounded overruns. | No drag-reorder or per-file settings matrix. ZIP is store-only, not deflate. |
 | 7 | EXIF/metadata inspect | **Shipped** | Reads JPEG segments, PNG chunks and WebP chunks; reports camera, orientation, GPS presence, ICC, XMP, text/comments and other chunk labels. Unreadable EXIF is reported as present and unreadable, never absent. | No map link from GPS coordinates; coordinates are not decoded or displayed, only presence. |
 | 8 | Metadata strip and verify | **Shipped** | Metadata-only copy for JPEG/PNG/WebP, no canvas re-encode. Verifies pixel payload bytes, dimensions, orientation and declared metadata after the rewrite. Preserves non-default orientation with a one-tag EXIF block so the picture does not rotate. ICC removal is optional and warned. | No guaranteed anonymity; pixel clues remain. Unknown ancillary chunks are reported, not silently treated as identity metadata. |
-| 9 | Palette / eyedropper | **Deferred** | — | Needs an accessible colour picker, copy formats and an alpha-aware palette UI. No implementation in this slice. |
+| 9 | Palette / eyedropper | **Shipped** | Up to 8 dominant colours from the decoded source, merging near-duplicates in a 5-bit RGB histogram. Fully transparent pixels are ignored; semi-transparent pixels keep their average alpha. Each colour reports HEX, RGB, HSL and coverage of visible sampled pixels. Swatches are keyboard-reachable buttons and each format has its own copy button, so copying does not need a canvas click. A pointer eyedropper on the encoded result preview, with arrow-key/Enter keyboard sampling, reads the exact intrinsic pixel; CSS coordinates map through the displayed box, so DPR scaling is handled. | Palette is sampled from a reduced working copy (1400 px long edge) on large images and coverage is over sampled visible pixels. No palette import/export (ASE/GPL), cross-image palette application or colour-blindness simulation. |
 | 10 | Basic photo adjustments and filters | **Deferred** | — | Exposure/contrast/saturation/temperature, filters and text/frames are a separate editor scope; adding a second canvas engine here would exceed this slice. |
 | 11 | Background removal | **Delegated / optional provider** | — | Existing Studio Cutout (`fal-ai/birefnet/v2`) remains the provider-backed path with estimate, billing and consent. No on-device model is shipped. |
 | 12 | Upscale | **Delegated / optional provider** | Local resize can enlarge by resampling and explicitly says it invents no detail. | Existing Studio Upscale (`fal-ai/clarity-upscaler`) is the detail-reconstruction path; it is not free or local. No local sharpening claim. |
@@ -50,10 +50,10 @@ the work:
 
 | Extension | Status | Note |
 | --- | --- | --- |
-| Transparency / alpha-edge checker | Deferred | The source summary already reports a declared alpha channel and the export preserves alpha for PNG/WebP. Edge inspection and hard checks are separate. |
+| Transparency / alpha-edge checker | Partial | Exact alpha bounds are now read from decoded pixels for trim, and the source/export summary reports declared alpha. Edge fringing, halo and matte checks are still separate and not shipped. |
 | Sprite-sheet / atlas assembly | Deferred | Needs ordering, cell geometry, padding and metadata output. |
-| Trim transparent padding | Deferred | Needs alpha bounds measured from decoded pixels. |
-| Consistent pixel-art nearest-neighbour mode | Deferred | The current resampler uses high-quality smoothing; a nearest-neighbour export mode and tests are required. |
+| Trim transparent padding | Shipped | Alpha bounds are measured from every decoded pixel. The trim action updates the crop plan (centre crop composes inside the trimmed region), applies to the selected image only, and is cleared by rotation, flips, image change or clear. Opaque images report that there is nothing to trim instead of cropping silently. |
+| Consistent pixel-art nearest-neighbour mode | Shipped | Resampling is an explicit smooth/nearest choice applied to resize and crop output. Nearest-neighbour is recorded in the exported caption and the visible transform description. |
 
 ## Safety and bounds shipped by this slice
 
@@ -74,6 +74,7 @@ the work:
 
 - `tests/image-limits.test.mjs`
 - `tests/image-ops.test.mjs`
+- `tests/image-colour.test.mjs`
 - `tests/image-metadata.test.mjs`
 - `tests/image-zip.test.mjs`
 - `tests/image-page.test.mjs`
