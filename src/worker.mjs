@@ -75,7 +75,9 @@ import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrig
 import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
-import { inventory, policyFor, publishCandidate, setPolicy } from "./lib/publication-policy.mjs";
+import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } from "./lib/publication-policy.mjs";
+import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.mjs";
+import { PUBLIC_CACHE_SECONDS, publicOrigin, publicSitemap, robotsTxt } from "./lib/sitemap.mjs";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative } from "./lib/publication-derivatives.mjs";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview } from "./lib/asset-previews.mjs";
@@ -556,7 +558,8 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/\/render$/.test(path) && method === "POST") action = "generate";
   if (/\/publish$/.test(path) && method === "POST") action = "publish";
   if (/^\/api\/publications\//.test(path)) action = "publish";
-  if (/^\/api\/projects\/[a-z0-9_]+\/publication-(policy|inventory|reconcile)$/.test(path)) action = "publish";
+  if (/^\/api\/projects\/[a-z0-9_]+\/publication-(policy|inventory|reconcile|backfill|audit)$/.test(path)) action = "publish";
+  if (/^\/api\/projects\/[a-z0-9_]+\/publications\/bulk$/.test(path)) action = "publish";
   if (/^\/api\/generations\/[a-z0-9_]+$/.test(path) && method === "DELETE") action = "edit";
   if (/^\/api\/generations\/[a-z0-9_]+\/(cancel|reconcile|save-retry)$/.test(path)) action = "generate";
   if (/\/export$/.test(path)) action = "read";
@@ -574,7 +577,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
 
   if (method !== "GET" && method !== "HEAD") assertSameOrigin(request, env);
 
-  const publicationPolicyMatch = path.match(/^\/api\/projects\/([a-z0-9_]+)\/publication-(policy|inventory|reconcile)$/);
+  const publicationPolicyMatch = path.match(/^\/api\/projects\/([a-z0-9_]+)\/publication-(policy|inventory|reconcile|backfill|audit)$/);
   if (publicationPolicyMatch) {
     const [, projectId, operation] = publicationPolicyMatch;
     const project = await env.DB.prepare("SELECT id FROM projects WHERE id=?1").bind(projectId).first();
@@ -590,6 +593,9 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       if (after && !/^asset_[a-z0-9_]+$/.test(after)) throw new HttpError(400, "Invalid inventory cursor.");
       return json({ policy: await policyFor(env, projectId), ...(await inventory(env, projectId, after)) });
     }
+    if (operation === "audit" && method === "GET") {
+      return json({ items: await publicationAudit(env, projectId, url.searchParams.get("limit")) });
+    }
     if (operation === "reconcile" && method === "POST") {
       const input = await body(request);
       if (input.confirm !== true || input.rightsConfirmed !== true || !Array.isArray(input.assetIds) || input.assetIds.length > 100 || input.assetIds.length < 1 || input.assetIds.some((item) => typeof item !== "string" || !/^asset_[a-z0-9_]+$/.test(item))) throw new HttpError(400, "Confirm rights and provide 1–100 asset IDs.");
@@ -599,7 +605,30 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       for (const assetId of [...new Set(input.assetIds)]) results.push({ assetId, result: await publishCandidate(env, projectId, assetId) });
       return json({ results });
     }
+    if (operation === "backfill" && method === "POST") {
+      const input = await body(request);
+      const limit = Number(input.limit ?? 10);
+      const after = input.after ?? "";
+      if (input.confirm !== true || input.rightsConfirmed !== true || !Number.isInteger(limit) || limit < 1 || limit > 25 || (after && (typeof after !== "string" || !/^asset_[a-z0-9_]+$/.test(after)))) throw new HttpError(400, "Confirm rights, then send an optional after cursor and a limit of 1–25.");
+      const policy = await policyFor(env, projectId);
+      if (!policy.installationAllowed || !policy.enabled) throw new HttpError(403, "Enable the first-party publication policy for this project first.", "not_allowed");
+      return json(await boundedBackfill(env, projectId, { limit, after }));
+    }
     throw new HttpError(405, "Method not allowed", "method_not_allowed");
+  }
+
+  const bulkPublicationsMatch = path.match(/^\/api\/projects\/([a-z0-9_]+)\/publications\/bulk$/);
+  if (bulkPublicationsMatch) {
+    if (method !== "POST") throw new HttpError(405, "Method not allowed", "method_not_allowed");
+    const input = await body(request);
+    if (input.confirm !== true) throw new HttpError(400, "Confirm the bulk visibility change.");
+    return json(
+      await bulkPublicationChange(env, bulkPublicationsMatch[1], {
+        action: input.action,
+        publicationIds: input.publicationIds,
+        session,
+      }),
+    );
   }
 
   if (path === "/api/models" && method === "GET")
@@ -2153,6 +2182,19 @@ async function handlePublic(request, env, url) {
   }
   if (path === "/tools/audio-trim") {
     return new Response(audioTrimPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
+  }
+  // Public discovery files are rebuilt from D1 and enumerate only the public
+  // state. They share the 60-second public cache boundary with the pages they
+  // name, so a withdrawal disappears within that window.
+  if (path === "/sitemap.xml" || path === "/robots.txt") {
+    const origin = publicOrigin(env, request.url);
+    const sitemap = path === "/sitemap.xml";
+    return new Response(sitemap ? await publicSitemap(env, origin) : robotsTxt(origin), {
+      headers: {
+        "content-type": sitemap ? "application/xml; charset=utf-8" : "text/plain; charset=utf-8",
+        "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}`,
+      },
+    });
   }
   if (path === "/gallery") {
     const rawPage = url.searchParams.get("page") ?? "1";

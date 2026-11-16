@@ -1132,6 +1132,10 @@ function publishView() {
     <div class="spread"><h2 style="margin:0">Published pages</h2><button class="button" data-action="choose-publish">Publish a piece</button></div>
     <p class="small">A published page includes its title, description, media, download link and any eligible public source credits and links. Prompts, other projects and private filenames stay private. Withdrawal stops new visits; downloads already taken cannot be recalled.</p>
     <div class="row"><button class="secondary" data-action="publication-policy">First-party publishing settings</button><button class="secondary" data-action="publication-inventory">Review publication inventory</button></div>
+    ${publications.length ? `<div class="stack" data-bulk-publications>
+      <p class="small" style="margin:0">Select published pages, then change their visibility in one action. Every change is recorded with who made it, when, and the state before and after. A failure names the exact items that changed and the ones that did not.</p>
+      <div class="row"><button class="secondary" type="button" data-action="bulk-publish">Add selected to gallery</button><button class="secondary" type="button" data-action="bulk-unlist">Unlist selected</button><button class="quiet" type="button" data-action="bulk-withdraw">Withdraw selected</button></div>
+    </div>` : ""}
     ${publications.length ? `<div class="stack" style="margin-top:0.7rem">
       <button class="secondary" type="button" data-action="backfill-thumbs">Make public previews faster</button>
       <p class="small" style="margin:0">Adds a small gallery preview where one is missing. Originals and published pages stay unchanged; running it again only fills gaps.</p>
@@ -1141,7 +1145,7 @@ function publishView() {
       ${publications.length === 0 ? `<div class="card"><p style="margin:0">Nothing published yet.</p></div>` : ""}
       ${publications
         .map((publication) => `<article class="job">
-          <header><strong>${esc(publication.title)}</strong><span class="small">${dateLabel(publication.createdAt)}</span></header>
+          <header><label class="small"><input type="checkbox" data-bulk-publication="${esc(publication.id)}"> Select</label><strong>${esc(publication.title)}</strong><span class="small">${dateLabel(publication.createdAt)}</span></header>
           <p class="small"><a href="${esc(publication.path)}" target="_blank" rel="noopener">${esc(location.origin + publication.path)}</a></p>
           <p class="small">${publication.hidden ? "Hidden from gallery · anyone with the link can view" : publication.listed ? "Listed in the public gallery" : "Unlisted · anyone with the link can view"}</p>
           ${publication.review ? `<p class="small">Approved in a private review for this exact version · ${esc(String(publication.review.assetSha256 ?? "").slice(0, 12))}…</p>` : ""}
@@ -1920,6 +1924,46 @@ async function handleAction(action, element, keyboard = false) {
             : "The details could not be saved. Your text is still here; check it or copy it before cancelling and trying again.";
         }
       }
+    }
+    case "bulk-publish":
+    case "bulk-unlist":
+    case "bulk-withdraw": {
+      const bulkAction = action.slice("bulk-".length);
+      const publicationIds = [...document.querySelectorAll("[data-bulk-publication]:checked")]
+        .map((input) => input.dataset.bulkPublication)
+        .filter(Boolean);
+      if (!publicationIds.length) {
+        notify("Select at least one published page first.", "bad");
+        return;
+      }
+      if (publicationIds.length > 100) {
+        notify("Choose at most 100 pages in one action.", "bad");
+        return;
+      }
+      const label = bulkAction === "publish" ? "Add to gallery" : bulkAction === "unlist" ? "Unlist" : "Withdraw";
+      const copy = bulkAction === "withdraw"
+        ? `Withdraw ${publicationIds.length} selected page(s)? New visits stop immediately; copies already downloaded cannot be recalled. Each item is attempted separately and the result names what changed.`
+        : `${label} ${publicationIds.length} selected page(s)? Every change records who made it, when, and the state before and after. Each item is attempted separately.`;
+      if (!(await confirmAction(`${label} selected pages?`, copy, label, bulkAction === "withdraw"))) return;
+      const result = await api(`/api/projects/${state.projectId}/publications/bulk`, {
+        method: "POST",
+        body: JSON.stringify({ action: bulkAction, publicationIds, confirm: true }),
+      });
+      await loadProject(state.projectId);
+      render();
+      const problems = result.results.filter(
+        (item) => item.result === "failed" || item.result === "not_found" || item.result === "asset_unavailable" || (bulkAction !== "withdraw" && item.result === "withdrawn"),
+      );
+      notify(`${result.changed} changed, ${result.unchanged} unchanged, ${result.blocked} blocked.`, problems.length ? "bad" : "ok");
+      if (problems.length)
+        await ask({
+          title: "Bulk visibility result",
+          copy: problems
+            .map((item) => `${esc(item.publicationId)}: ${esc(item.result)}${item.detail ? ` — ${esc(item.detail)}` : ""}`)
+            .join("<br>"),
+          submit: "Close",
+        });
+      return;
     }
     case "toggle-listing": {
       const publication = state.project.publications.find((item) => item.id === id);
