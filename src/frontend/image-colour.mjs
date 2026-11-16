@@ -94,6 +94,18 @@ export function formatHsl(hsl) {
   return `hsl(${h}, ${s}%, ${l}%)`;
 }
 
+// Export only the extracted swatches, without the source filename or image metadata.
+export function paletteToGpl(colors) {
+  const lines = ["GIMP Palette", "Name: Studio palette", "Columns: 8", "#"];
+  for (const { rgb, hex } of colors) {
+    const channels = [rgb.r, rgb.g, rgb.b]
+      .map((value) => String(value).padStart(3, " "))
+      .join(" ");
+    lines.push(`${channels}\t${hex}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 const PALETTE_BIN_SHIFT = 3;
 
 /**

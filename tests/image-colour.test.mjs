@@ -8,6 +8,7 @@ import {
   formatRgb,
   hexToRgb,
   mapBoundsThroughTransform,
+  paletteToGpl,
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
@@ -115,6 +116,14 @@ test("the palette is capped while coverage reports the remainder honestly", () =
 test("bad palette inputs fail with a readable reason", () => {
   assert.match(extractPalette(new Uint8ClampedArray(3), { width: 1, height: 1 }).error, /smaller/);
   assert.match(extractPalette(new Uint8ClampedArray(4), { width: 1, height: 1, maxColors: 0 }).error, /palette colours/);
+});
+
+test("GPL palette exports extracted RGB channels and HEX names", () => {
+  const { colors } = extractPalette(makePixels(2, 1, () => [255, 0, 0, 255]), {
+    width: 2,
+    height: 1,
+  });
+  assert.equal(paletteToGpl(colors), "GIMP Palette\nName: Studio palette\nColumns: 8\n#\n255   0   0\t#ff0000\n");
 });
 
 test("alpha bounds find transparent padding without silently cropping opaque images", () => {
