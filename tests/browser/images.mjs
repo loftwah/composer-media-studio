@@ -310,6 +310,113 @@ try {
     bottomCrop,
   );
 
+  // JPEG has no alpha, so the matte must be composited after the adjustments
+  // and stay the exact chosen colour behind the transparent half.
+  await page.getByLabel("Crop aspect").selectOption("original");
+  await page.getByLabel("Long edge (px)").fill("200");
+  await page.getByLabel("Preset").selectOption("warm");
+  await page.getByLabel("Format").selectOption("jpeg");
+  await page.getByLabel("Matte colour for transparency").fill("#00ff00");
+  await page.getByRole("button", { name: "Make this image" }).click();
+  await page.getByRole("link", { name: /^Download JPEG$/ }).waitFor({ timeout: 30_000 });
+  const jpeg = await page.evaluate(async () => {
+    const link = [...document.querySelectorAll(".image-result a")].find((anchor) =>
+      /^Download/.test(anchor.textContent ?? ""),
+    );
+    const response = await fetch(link.href);
+    const buffer = await response.arrayBuffer();
+    const type = response.headers.get("content-type");
+    const bitmap = await createImageBitmap(new Blob([buffer], { type }));
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0);
+    const data = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const at = (x, y) => {
+      const offset = (y * bitmap.width + x) * 4;
+      return [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
+    };
+    return {
+      type,
+      size: [bitmap.width, bitmap.height],
+      downloadName: link.getAttribute("download"),
+      top: at(50, 20),
+      matte: at(50, 150),
+      caption: document.querySelector(".image-result .trim-note")?.textContent?.trim(),
+    };
+  });
+  record(
+    "JPEG export is a real .jpg at the planned size",
+    jpeg.type === "image/jpeg" && jpeg.size[0] === 100 && jpeg.size[1] === 200 && /\.jpg$/.test(jpeg.downloadName ?? ""),
+    { type: jpeg.type, size: jpeg.size, downloadName: jpeg.downloadName },
+  );
+  record(
+    "the JPEG matte keeps its exact colour behind transparency and is not warmed by the filter",
+    jpeg.matte[1] > 200 && jpeg.matte[0] < 40 && jpeg.matte[2] < 40,
+    jpeg.matte,
+  );
+  record("the warm preset is stated in the JPEG caption", /temperature \+32/.test(jpeg.caption ?? ""), jpeg.caption);
+
+  await page.getByLabel("Format").selectOption("webp");
+  await page.getByRole("button", { name: "Make this image" }).click();
+  const webpOutcome = await page
+    .waitForFunction(
+      () => {
+        const link = [...document.querySelectorAll(".image-result a")].find((anchor) =>
+          /^Download WEBP$/.test(anchor.textContent ?? ""),
+        );
+        if (link) return { ok: true };
+        const error = document.querySelector('.notice.warn[role="alert"]')?.textContent?.trim();
+        return error ? { ok: false, error } : null;
+      },
+      null,
+      { timeout: 30_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  if (!webpOutcome.ok) {
+    record(
+      "a browser without a WebP encoder refuses honestly instead of mislabelling the file",
+      /instead of image\/webp/.test(webpOutcome.error ?? ""),
+      webpOutcome.error,
+    );
+  } else {
+    const webp = await page.evaluate(async () => {
+      const link = [...document.querySelectorAll(".image-result a")].find((anchor) =>
+        /^Download/.test(anchor.textContent ?? ""),
+      );
+      const response = await fetch(link.href);
+      const buffer = await response.arrayBuffer();
+      const type = response.headers.get("content-type");
+      const bitmap = await createImageBitmap(new Blob([buffer], { type }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0);
+      const data = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      let transparent = 0;
+      for (let y = 100; y < bitmap.height; y += 1) {
+        for (let x = 0; x < bitmap.width; x += 1) {
+          if (data[(y * bitmap.width + x) * 4 + 3] === 0) transparent += 1;
+        }
+      }
+      return {
+        type,
+        size: [bitmap.width, bitmap.height],
+        bytes: buffer.byteLength,
+        downloadName: link.getAttribute("download"),
+        transparent,
+        expected: bitmap.width * 100,
+      };
+    });
+    record(
+      "WebP export keeps the transparent half as alpha",
+      webp.type === "image/webp" && webp.transparent === webp.expected && /\.webp$/.test(webp.downloadName ?? ""),
+      { type: webp.type, size: webp.size, bytes: webp.bytes, transparent: webp.transparent, expected: webp.expected, downloadName: webp.downloadName },
+    );
+  }
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
   const phone = await page.evaluate(() => ({

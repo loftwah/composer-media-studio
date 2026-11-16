@@ -53,12 +53,19 @@ design.
 | Snippet size | 70,018 / 46,102 / 66,434 data-URI characters |
 | Crop position top | 100 × 100 export, pixel `[255,0,0,255]` from the opaque red half |
 | Crop position bottom | 100 × 100 export, all 10,000 pixels alpha 0 from the transparent half |
+| JPEG with a green matte | 100 × 200 `.jpg`; the transparent half decodes as `[0,255,1,255]` while the Warm preset is active, so the matte is not tinted |
+| WebP alpha | 100 × 200 `.webp`, 10,000 transparent pixels, 712 / 248 bytes in Chromium / Firefox |
+| WebKit WebP | its canvas returns PNG, so the page refuses and names the real MIME instead of mislabelling the file |
 | 390 px | `scrollWidth === innerWidth === 390`, no control outside the viewport |
 | Network | every request stayed on `127.0.0.1`; no POST/PUT/PATCH/DELETE; no page errors |
+
+All 22 checks passed in all three engines.
 
 ## Not verified here
 
 - A physical phone, real touch dragging and Safari on iOS.
+- A WebP export in WebKit: its canvas encoder returns PNG, so only the honest
+  refusal path was verified there.
 - The signed-in Studio import path (it needs a session and a project).
 - A deployed production revision; this slice is local source only.
 - GIF, PDF, background removal, redaction, sprite sheets and HTML-to-image stay

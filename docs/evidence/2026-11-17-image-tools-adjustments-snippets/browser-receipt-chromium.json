@@ -1,5 +1,5 @@
 {
-  "startedAt": "2026-11-16T13:25:28.833Z",
+  "startedAt": "2026-11-16T13:28:39.463Z",
   "origin": "local static server (built frontend, no worker)",
   "checks": [
     {
@@ -127,6 +127,48 @@
       }
     },
     {
+      "check": "JPEG export is a real .jpg at the planned size",
+      "ok": true,
+      "detail": {
+        "type": "image/jpeg",
+        "size": [
+          100,
+          200
+        ],
+        "downloadName": "halves-100x200.jpg"
+      }
+    },
+    {
+      "check": "the JPEG matte keeps its exact colour behind transparency and is not warmed by the filter",
+      "ok": true,
+      "detail": [
+        0,
+        255,
+        1,
+        255
+      ]
+    },
+    {
+      "check": "the warm preset is stated in the JPEG caption",
+      "ok": true,
+      "detail": "exposure +4, contrast +6, saturation +10, temperature +32, long edge 200px, JPEG q90, canvas re-encode"
+    },
+    {
+      "check": "WebP export keeps the transparent half as alpha",
+      "ok": true,
+      "detail": {
+        "type": "image/webp",
+        "size": [
+          100,
+          200
+        ],
+        "bytes": 712,
+        "transparent": 10000,
+        "expected": 10000,
+        "downloadName": "halves-100x200.webp"
+      }
+    },
+    {
       "check": "390 px has no horizontal overflow or controls outside the viewport",
       "ok": true,
       "detail": {
@@ -153,32 +195,36 @@
   ],
   "failures": [],
   "requests": [
-    "GET http://127.0.0.1:59085/check.html",
-    "GET http://127.0.0.1:59085/creative/home.css",
-    "GET http://127.0.0.1:59085/images.js",
-    "GET http://127.0.0.1:59085/creative/home.js",
-    "GET http://127.0.0.1:59085/creative/jsx-runtime-B_EJQQY8.js",
-    "GET http://127.0.0.1:59085/creative/local-framing-DFz89Zt7.js",
-    "GET http://127.0.0.1:59085/creative/rolldown-runtime-CYdcPHCu.js",
-    "GET http://127.0.0.1:59085/creative/images-CePhKGan.js",
-    "GET http://127.0.0.1:59085/creative/audio-trim-BkfoZr4g.js",
-    "GET blob:http://127.0.0.1:59085/4ac207ee-4639-4adf-8cb0-381cd9f93a7b",
-    "GET blob:http://127.0.0.1:59085/ca4c1c25-ee7c-4db9-8270-de4963041830",
-    "GET blob:http://127.0.0.1:59085/ca4c1c25-ee7c-4db9-8270-de4963041830",
-    "GET blob:http://127.0.0.1:59085/c032a9a9-7b9a-4e64-9f4e-a9f4a8fbdfab",
-    "GET blob:http://127.0.0.1:59085/c032a9a9-7b9a-4e64-9f4e-a9f4a8fbdfab",
-    "GET blob:http://127.0.0.1:59085/c032a9a9-7b9a-4e64-9f4e-a9f4a8fbdfab",
-    "GET blob:http://127.0.0.1:59085/0f89bc2d-5aac-407f-8492-faa6c9b80d55",
-    "GET blob:http://127.0.0.1:59085/a7551907-af0a-46fa-ac3d-e496fe1271b0",
-    "GET blob:http://127.0.0.1:59085/a7551907-af0a-46fa-ac3d-e496fe1271b0",
-    "GET blob:http://127.0.0.1:59085/0963fe09-c693-4c9b-825a-0827bf11c8de",
-    "GET blob:http://127.0.0.1:59085/0963fe09-c693-4c9b-825a-0827bf11c8de"
+    "GET http://127.0.0.1:59492/check.html",
+    "GET http://127.0.0.1:59492/creative/home.css",
+    "GET http://127.0.0.1:59492/images.js",
+    "GET http://127.0.0.1:59492/creative/home.js",
+    "GET http://127.0.0.1:59492/creative/jsx-runtime-B_EJQQY8.js",
+    "GET http://127.0.0.1:59492/creative/local-framing-DFz89Zt7.js",
+    "GET http://127.0.0.1:59492/creative/rolldown-runtime-CYdcPHCu.js",
+    "GET http://127.0.0.1:59492/creative/images-Csu-ONB3.js",
+    "GET http://127.0.0.1:59492/creative/audio-trim-BkfoZr4g.js",
+    "GET blob:http://127.0.0.1:59492/199d8b84-31b7-45e2-81d8-26ea0431bfe2",
+    "GET blob:http://127.0.0.1:59492/2e37f9e2-86dc-4feb-a510-47c8b9412961",
+    "GET blob:http://127.0.0.1:59492/2e37f9e2-86dc-4feb-a510-47c8b9412961",
+    "GET blob:http://127.0.0.1:59492/1f232605-5f1b-47e5-8fa0-6c5c664f3f96",
+    "GET blob:http://127.0.0.1:59492/1f232605-5f1b-47e5-8fa0-6c5c664f3f96",
+    "GET blob:http://127.0.0.1:59492/1f232605-5f1b-47e5-8fa0-6c5c664f3f96",
+    "GET blob:http://127.0.0.1:59492/c868c40f-9722-4de3-89f9-84184b82b23c",
+    "GET blob:http://127.0.0.1:59492/f04337ba-3615-4eac-953e-fdf9347afb63",
+    "GET blob:http://127.0.0.1:59492/f04337ba-3615-4eac-953e-fdf9347afb63",
+    "GET blob:http://127.0.0.1:59492/c0b80f12-f4af-4e18-8291-901efe8f23d8",
+    "GET blob:http://127.0.0.1:59492/c0b80f12-f4af-4e18-8291-901efe8f23d8",
+    "GET blob:http://127.0.0.1:59492/f745092e-f2ec-4dd2-9790-a3aca45ba44d",
+    "GET blob:http://127.0.0.1:59492/f745092e-f2ec-4dd2-9790-a3aca45ba44d",
+    "GET blob:http://127.0.0.1:59492/71bd755c-9202-43d5-ac8d-e61bd48b1638",
+    "GET blob:http://127.0.0.1:59492/71bd755c-9202-43d5-ac8d-e61bd48b1638"
   ],
   "pageErrors": [],
   "browser": {
     "name": "chromium",
     "version": "158.0.8127.18"
   },
-  "finishedAt": "2026-11-16T13:25:37.715Z",
+  "finishedAt": "2026-11-16T13:28:48.273Z",
   "passed": true
 }

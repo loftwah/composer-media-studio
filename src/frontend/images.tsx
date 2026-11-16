@@ -547,7 +547,7 @@ async function renderImage(
     if (signal.aborted) throw abortError();
     if (blob.type !== mime)
       throw new Error(
-        `This browser encoded ${blob.type || "another format"} instead of ${mime}. Choose PNG or use a current browser.`,
+        `This browser encoded ${blob.type || "another format"} instead of ${mime}. Choose PNG, or a browser and device that can encode ${mime.replace("image/", "").toUpperCase()}.`,
       );
     if (!blob.size) throw new Error("The result was empty.");
     if (blob.size > MAX_IMAGE_OUTPUT_BYTES)

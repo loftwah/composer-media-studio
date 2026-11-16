@@ -1,11 +1,11 @@
 {
-  "startedAt": "2026-11-16T13:25:37.968Z",
+  "startedAt": "2026-11-16T13:28:48.513Z",
   "origin": "local static server (built frontend, no worker)",
   "checks": [
     {
       "check": "sample decodes at 1400 × 900",
       "ok": true,
-      "detail": "SOURCE 1400 × 900 px DISPLAYED 1400 × 900 px TYPE image/png BYTES 385 KiB ALPHA CHANNEL yes SHA-256 7aa53462684f…"
+      "detail": "SOURCE 1400 × 900 px DISPLAYED 1400 × 900 px TYPE image/png BYTES 385 KiB ALPHA CHANNEL yes SHA-256 9c62631cd922…"
     },
     {
       "check": "resize produces a real 320-px PNG with measured bytes",
@@ -127,6 +127,48 @@
       }
     },
     {
+      "check": "JPEG export is a real .jpg at the planned size",
+      "ok": true,
+      "detail": {
+        "type": "image/jpeg",
+        "size": [
+          100,
+          200
+        ],
+        "downloadName": "halves-100x200.jpg"
+      }
+    },
+    {
+      "check": "the JPEG matte keeps its exact colour behind transparency and is not warmed by the filter",
+      "ok": true,
+      "detail": [
+        0,
+        255,
+        1,
+        255
+      ]
+    },
+    {
+      "check": "the warm preset is stated in the JPEG caption",
+      "ok": true,
+      "detail": "exposure +4, contrast +6, saturation +10, temperature +32, long edge 200px, JPEG q90, canvas re-encode"
+    },
+    {
+      "check": "WebP export keeps the transparent half as alpha",
+      "ok": true,
+      "detail": {
+        "type": "image/webp",
+        "size": [
+          100,
+          200
+        ],
+        "bytes": 248,
+        "transparent": 10000,
+        "expected": 10000,
+        "downloadName": "halves-100x200.webp"
+      }
+    },
+    {
       "check": "390 px has no horizontal overflow or controls outside the viewport",
       "ok": true,
       "detail": {
@@ -153,21 +195,21 @@
   ],
   "failures": [],
   "requests": [
-    "GET http://127.0.0.1:59100/check.html",
-    "GET http://127.0.0.1:59100/creative/home.css",
-    "GET http://127.0.0.1:59100/images.js",
-    "GET http://127.0.0.1:59100/creative/home.js",
-    "GET http://127.0.0.1:59100/creative/jsx-runtime-B_EJQQY8.js",
-    "GET http://127.0.0.1:59100/creative/local-framing-DFz89Zt7.js",
-    "GET http://127.0.0.1:59100/creative/rolldown-runtime-CYdcPHCu.js",
-    "GET http://127.0.0.1:59100/creative/images-CePhKGan.js",
-    "GET http://127.0.0.1:59100/creative/audio-trim-BkfoZr4g.js"
+    "GET http://127.0.0.1:59512/check.html",
+    "GET http://127.0.0.1:59512/creative/home.css",
+    "GET http://127.0.0.1:59512/images.js",
+    "GET http://127.0.0.1:59512/creative/home.js",
+    "GET http://127.0.0.1:59512/creative/jsx-runtime-B_EJQQY8.js",
+    "GET http://127.0.0.1:59512/creative/local-framing-DFz89Zt7.js",
+    "GET http://127.0.0.1:59512/creative/rolldown-runtime-CYdcPHCu.js",
+    "GET http://127.0.0.1:59512/creative/images-Csu-ONB3.js",
+    "GET http://127.0.0.1:59512/creative/audio-trim-BkfoZr4g.js"
   ],
   "pageErrors": [],
   "browser": {
     "name": "firefox",
     "version": "159.0"
   },
-  "finishedAt": "2026-11-16T13:25:40.518Z",
+  "finishedAt": "2026-11-16T13:28:51.424Z",
   "passed": true
 }
