@@ -74,7 +74,7 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, imagesPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.mjs";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
@@ -2459,6 +2459,9 @@ async function handlePublic(request, env, url) {
   }
   if (path === "/tools/audio-trim") {
     return new Response(audioTrimPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
+  }
+  if (path === "/tools/images") {
+    return new Response(imagesPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
   }
   // Public discovery files are rebuilt from D1 and enumerate only the public
   // state. They share the 60-second public cache boundary with the pages they

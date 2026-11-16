@@ -209,6 +209,11 @@ export function audioTrimPage({ revision = "dev" } = {}) {
 <body><div id="audio-trim"><main id="main"><h1>Trim a song</h1><p>JavaScript is required to trim audio on your device.</p></main></div><script type="module" src="/audio-trim.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
 }
 
+export function imagesPage({ revision = "dev" } = {}) {
+  return `${head({ title: "Image tools — Media Studio", description: "Resize, crop, convert, batch export and inspect image metadata privately on your device.", extra: `<link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}">` })}
+<body><div id="images"><main id="main"><h1>Image tools</h1><p>JavaScript is required to resize, crop, convert and inspect images on your device.</p></main></div><script type="module" src="/images.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
+}
+
 export function videoClipPage({ revision = "dev" } = {}) {
   return `${head({ title: "Clip and frame a video — Media Studio", description: "Clip and frame video privately on your device.", extra: `<link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}">` })}
 <body><div id="video-clip"><main id="main"><h1>Clip and frame a video</h1><p>JavaScript is required to edit video on your device.</p></main></div><script type="module" src="/video-clip.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
@@ -249,7 +254,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
     </form>
     ${bridged ? "</details>" : ""}
     ${woodhouseShare ? '<p><a href="/portfolio">Browse artwork from Woodhouse Share</a></p>' : ""}
-    <p><a href="/tools/audio-trim">Trim a song</a> · <a href="/tools/video-clip">Clip and frame a video</a> · <a href="/tools/add-music">Add music</a> · no sign-in needed</p>
+    <p><a href="/tools/images">Resize, crop and convert images</a> · <a href="/tools/audio-trim">Trim a song</a> · <a href="/tools/video-clip">Clip and frame a video</a> · <a href="/tools/add-music">Add music</a> · no sign-in needed</p>
     <p class="small">Your media stays in this studio. The owner passphrase is separate from your App Composer password.</p>
   </main>
 </div>
@@ -414,6 +419,7 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
   <h2>Without an AI account</h2>
   <p>Uploads, project collections, search and filters, the viewer, renaming, downloads, deletion, creative references, storyboards, export and public pages all work without any model provider. Nothing on those paths calls a model or spends money.</p>
   <p>Uploads accept JPEG, PNG and WebP images and WAV, MP3 or M4A audio up to 32&nbsp;MB, and MP4 or WebM video up to 64&nbsp;MB. The studio checks the file bytes and records dimensions, duration and audio format. A reference image for generation is capped at 8&nbsp;MB. A saved storyboard can also render to MP4 on a compatible device without a provider or generation charge. Keep the page open while it renders; browser and device support, input size and duration limits apply.</p>
+  <p>The signed-out <a href="/tools/images">browser-local image workbench</a> resizes, crops, rotates, converts and batch-exports JPEG, PNG and WebP files without an upload, and can inspect or losslessly strip metadata. Its limits and the honest remaining gaps are listed there and in the repository's image-tools coverage matrix.</p>
 
   <h2>Generation and editing</h2>
   <p>Generation uses this studio’s configured providers, rather than a separate personal account:</p>

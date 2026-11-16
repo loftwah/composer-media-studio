@@ -1,0 +1,420 @@
+/* MIT. The signed-out local image workbench. */
+
+.image-page {
+  width: min(100% - 2rem, 78rem);
+}
+
+.image-page header p {
+  max-width: 72ch;
+}
+
+.image-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.image-section-head h2 {
+  margin: 0;
+}
+
+.image-section-head > span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.image-drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 0.35rem;
+  min-height: 10rem;
+  padding: 1.5rem;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.image-drop strong {
+  font-size: 1.1rem;
+}
+
+.image-drop span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.image-drop:hover,
+.image-drop.is-dragging,
+.image-drop:focus-within {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+}
+
+.image-drop input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.image-drop input[type="file"]:disabled {
+  cursor: not-allowed;
+}
+
+.image-source-actions,
+.image-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.image-source-actions button,
+.image-control-actions button,
+.image-control-actions .button {
+  justify-self: start;
+}
+
+.image-status {
+  min-height: 1.5em;
+}
+
+.image-rejections {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  padding: 0.8rem 1rem;
+}
+
+.image-rejections summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--danger);
+}
+
+.image-rejections ul {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.image-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.7rem;
+  margin: 0;
+}
+
+.image-facts > div {
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.image-facts dt {
+  margin: 0 0 0.2rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.image-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+}
+
+.image-facts code {
+  font-size: 0.8rem;
+}
+
+.image-danger {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.image-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin: 0;
+  background: var(--surface);
+}
+
+.image-controls legend {
+  padding: 0 0.35rem;
+  font-weight: 700;
+}
+
+.image-controls .image-control-actions,
+.image-controls .image-check {
+  grid-column: 1 / -1;
+}
+
+.image-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.image-check input {
+  width: auto;
+  margin: 0.15rem 0 0;
+  flex: none;
+}
+
+.image-plan {
+  border-left: 3px solid var(--teal);
+  padding: 0.55rem 0.75rem;
+  background: color-mix(in srgb, var(--teal) 6%, transparent);
+  line-height: 1.5;
+}
+
+.image-plan.is-error {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  color: var(--danger);
+}
+
+.image-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.image-compare figure {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.image-compare figcaption {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.image-compare img {
+  display: block;
+  width: 100%;
+  max-height: min(56vh, 34rem);
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background-color: var(--paper-deep);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--ink) 7%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--ink) 7%, transparent) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.image-result {
+  display: grid;
+  gap: 0.7rem;
+  justify-items: start;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.image-result p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.image-result .button,
+.image-result .button:hover {
+  color: var(--paper);
+  text-decoration: none;
+}
+
+.image-strip-result {
+  display: grid;
+  gap: 0.6rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.image-strip-result > p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.image-strip-result .button,
+.image-strip-result .button:hover {
+  justify-self: start;
+  color: var(--paper);
+  text-decoration: none;
+}
+
+.image-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+}
+
+.image-checks li {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+}
+
+.image-checks li::before {
+  content: "✗";
+  font-weight: 800;
+  color: var(--danger);
+}
+
+.image-checks li.is-ok::before {
+  content: "✓";
+  color: var(--ok);
+}
+
+.image-checks li.is-bad {
+  color: var(--danger);
+}
+
+.image-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.image-progress progress {
+  width: min(100%, 24rem);
+  height: 0.7rem;
+  accent-color: var(--teal);
+}
+
+.image-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.image-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.image-list li.is-selected {
+  border-color: var(--teal);
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.image-list-select {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  justify-self: stretch;
+}
+
+.image-list-select:hover {
+  background: transparent;
+  color: var(--ink);
+}
+
+.image-list-name {
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.image-list-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.image-list-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.image-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.image-list-actions .button,
+.image-list-actions button {
+  min-height: 36px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.image-list-actions .button.secondary,
+.image-list-actions button.secondary {
+  color: var(--ink);
+}
+
+.image-import {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.image-import h2 {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .image-compare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .image-list li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .image-list-actions {
+    justify-content: flex-start;
+  }
+
+  .image-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

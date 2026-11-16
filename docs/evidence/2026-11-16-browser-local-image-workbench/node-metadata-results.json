@@ -1,0 +1,215 @@
+{
+  "studio-public.webp": {
+    "before": {
+      "bytes": 48780,
+      "format": "webp",
+      "w": 411,
+      "h": 720,
+      "orientation": 1,
+      "alpha": false,
+      "camera": null,
+      "gps": false,
+      "exif": false,
+      "exifEntries": 0,
+      "icc": true,
+      "xmp": false,
+      "text": {
+        "present": false,
+        "count": 0
+      },
+      "other": {
+        "present": false,
+        "count": 0,
+        "labels": []
+      },
+      "hasMetadata": true
+    },
+    "strip": {
+      "afterBytes": 48780,
+      "removed": [],
+      "keptOrientation": false,
+      "changed": false,
+      "warning": null,
+      "verified": {
+        "pixelsUnchanged": true,
+        "dimensionsMatch": true,
+        "metadataRemoved": true,
+        "all": true
+      },
+      "after": {
+        "w": 411,
+        "h": 720,
+        "orientation": 1,
+        "alpha": false,
+        "camera": null,
+        "gps": false,
+        "exif": false,
+        "exifEntries": 0,
+        "icc": true,
+        "xmp": false,
+        "text": {
+          "present": false,
+          "count": 0
+        },
+        "other": {
+          "present": false,
+          "count": 0,
+          "labels": []
+        }
+      }
+    }
+  },
+  "fixture-exif.jpg": {
+    "before": {
+      "bytes": 16090,
+      "format": "jpeg",
+      "w": 800,
+      "h": 600,
+      "orientation": 6,
+      "alpha": false,
+      "camera": {
+        "make": "Evidence Camera Co",
+        "model": "Browser 1"
+      },
+      "gps": true,
+      "exif": true,
+      "exifEntries": 4,
+      "icc": false,
+      "xmp": true,
+      "text": {
+        "present": true,
+        "count": 1
+      },
+      "other": {
+        "present": false,
+        "count": 0,
+        "labels": []
+      },
+      "hasMetadata": true
+    },
+    "strip": {
+      "afterBytes": 15887,
+      "removed": [
+        "EXIF (privacy tags)",
+        "XMP",
+        "Comment"
+      ],
+      "keptOrientation": true,
+      "changed": true,
+      "warning": null,
+      "verified": {
+        "pixelsUnchanged": true,
+        "dimensionsMatch": true,
+        "metadataRemoved": true,
+        "all": true
+      },
+      "after": {
+        "w": 800,
+        "h": 600,
+        "orientation": 6,
+        "alpha": false,
+        "camera": null,
+        "gps": false,
+        "exif": true,
+        "exifEntries": 1,
+        "icc": false,
+        "xmp": false,
+        "text": {
+          "present": false,
+          "count": 0
+        },
+        "other": {
+          "present": false,
+          "count": 0,
+          "labels": []
+        }
+      }
+    }
+  },
+  "fixture-meta.png": {
+    "before": {
+      "bytes": 507366,
+      "format": "png",
+      "w": 411,
+      "h": 720,
+      "orientation": 1,
+      "alpha": false,
+      "camera": null,
+      "gps": false,
+      "exif": false,
+      "exifEntries": 0,
+      "icc": true,
+      "xmp": false,
+      "text": {
+        "present": true,
+        "count": 7
+      },
+      "other": {
+        "present": true,
+        "count": 2,
+        "labels": [
+          {
+            "label": "cHRM",
+            "count": 1
+          },
+          {
+            "label": "bKGD",
+            "count": 1
+          }
+        ]
+      },
+      "hasMetadata": true
+    },
+    "strip": {
+      "afterBytes": 506767,
+      "removed": [
+        "zTXt",
+        "tEXt",
+        "tEXt",
+        "tEXt",
+        "tEXt",
+        "tEXt",
+        "tEXt"
+      ],
+      "keptOrientation": false,
+      "changed": true,
+      "warning": null,
+      "verified": {
+        "pixelsUnchanged": true,
+        "dimensionsMatch": true,
+        "metadataRemoved": true,
+        "all": true
+      },
+      "after": {
+        "w": 411,
+        "h": 720,
+        "orientation": 1,
+        "alpha": false,
+        "camera": null,
+        "gps": false,
+        "exif": false,
+        "exifEntries": 0,
+        "icc": true,
+        "xmp": false,
+        "text": {
+          "present": false,
+          "count": 0
+        },
+        "other": {
+          "present": true,
+          "count": 2,
+          "labels": [
+            {
+              "label": "cHRM",
+              "count": 1
+            },
+            {
+              "label": "bKGD",
+              "count": 1
+            }
+          ]
+        }
+      }
+    }
+  }
+}
