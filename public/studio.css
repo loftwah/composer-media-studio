@@ -250,7 +250,7 @@ dialog h2 { margin: 0; }
 .asset-technical summary { cursor: pointer; font-weight: 700; }
 .asset-technical p, .asset-technical dd { overflow-wrap: anywhere; }
 
-.public-piece-header .theme-toggle[hidden] { display: none; }
+.public-piece-header .theme-toggle[hidden], .public-page [data-copy-link][hidden] { display: none; }
 @media (max-width: 480px) {
   .public-piece-header .header-nav { gap: 0.35rem; }
   .public-piece-header .header-nav a, .public-piece-header .header-nav button { font-size: 0.82rem; }
