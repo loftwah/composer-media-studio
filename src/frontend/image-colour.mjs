@@ -117,6 +117,31 @@ export function paletteToCss(colors) {
   return `${lines.join("\n")}\n`;
 }
 
+// A small, self-describing JSON document for deliberate reuse in another
+// project. Version 1 is immutable: the same swatches in the same order and
+// exact HEX values as the GPL/CSS exports, with no source filename, image
+// metadata, sampled pixels, credentials or timestamps. The units block gives
+// each exported colour field an explicit meaning.
+export function paletteToJson(colors) {
+  const document = {
+    format: "media-studio-palette",
+    version: 1,
+    units: {
+      hex: "lowercase #rrggbb",
+      rgb: "sRGB channels, 0-255",
+      hsl: "hue 0-359 degrees; saturation and lightness 0-100 percent",
+      alpha: "average alpha per swatch, 0-255; 255 is opaque",
+    },
+    colors: colors.map(({ hex, rgb, hsl, alpha }) => ({
+      hex,
+      rgb: { r: rgb.r, g: rgb.g, b: rgb.b },
+      hsl: { h: hsl.h, s: hsl.s, l: hsl.l },
+      alpha,
+    })),
+  };
+  return `${JSON.stringify(document, null, 2)}\n`;
+}
+
 // Adobe Swatch Exchange (.ase) bytes for the exact same swatches. A standard
 // ASEF 1.0 header, one colour block per swatch with an "RGB " model and 0-1
 // float channels, UTF-16BE HEX names and the normal colour type. The file

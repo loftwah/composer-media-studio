@@ -54,6 +54,7 @@ import {
   paletteToAse,
   paletteToCss,
   paletteToGpl,
+  paletteToJson,
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
@@ -2039,6 +2040,13 @@ function Images() {
                     download="studio-palette.ase"
                   >
                     Download palette (.ase)
+                  </a>
+                  <a
+                    className="button secondary"
+                    href={`data:application/json;charset=utf-8,${encodeURIComponent(paletteToJson(visiblePalette.result.colors))}`}
+                    download="studio-palette.json"
+                  >
+                    Download palette (.json)
                   </a>
                 </>
               )}
