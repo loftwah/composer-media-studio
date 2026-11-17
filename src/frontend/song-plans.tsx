@@ -23,7 +23,7 @@ import { SongPlanImport, downloadSongPlan } from './song-plan-portability';
 
 type Scene = { id: string; startMs: number; endMs: number; direction: string; referenceAssetId: string | null; selectedTakeId: string | null; subjectOrigin?: { subjectId: string; revision: number; name: string } | null };
 type Cue = { id: string; startMs: number; endMs: number; text: string; speaker: string };
-type Plan = { id: string; songAssetId: string; revision: number; revisionDigest?: string; title: string; treatment: string; aspect: string; startMs: number; endMs: number; scenes: Scene[]; captions?: { cues: Cue[] } | null };
+type Plan = { id: string; songAssetId: string; songSha256: string; revision: number; revisionDigest?: string; title: string; treatment: string; aspect: string; startMs: number; endMs: number; scenes: Scene[]; captions?: { cues: Cue[] } | null };
 const seconds = (ms: number) => String(ms / 1000);
 const milliseconds = (s: string) => Math.round(Number(s) * 1000);
 const copy = <T,>(value: T): T => structuredClone(value);

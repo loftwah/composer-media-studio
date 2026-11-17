@@ -1,6 +1,6 @@
 // MIT. Durable, project-scoped editorial planning; no provider calls or spend.
 import { HttpError, id, now, safeJson, sha256Hex, text } from './util.mjs';
-import { readSongPlanPack, type PortableSongPlan } from './song-plan-pack.mjs';
+import { readSongPlanPack, type PortableSongPlan } from './song-plan-pack.ts';
 
 // Narrow structural seams for the D1 binding and the saved rows: only the
 // members this module calls and the columns it reads are described. No

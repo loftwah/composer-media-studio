@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { createSongPlanPack, readSongPlanPack, type PortableSongPlan } from '../lib/song-plan-pack.mjs';
+import { createSongPlanPack, readSongPlanPack, type PortableSongPlan, type SongPlanPackSource } from '../lib/song-plan-pack.ts';
 import type { MediaAssetV1 } from './contracts';
 
-export function downloadSongPlan(plan: unknown) {
+export function downloadSongPlan(plan: SongPlanPackSource) {
   const pack=createSongPlanPack(plan), bytes=JSON.stringify(pack,null,2);
   if(new TextEncoder().encode(bytes).length>60*1024) throw new Error('This plan is too large for the portable format.');
   const url=URL.createObjectURL(new Blob([bytes],{type:'application/json'})); const link=document.createElement('a'); link.href=url;link.download='media-studio-song-plan.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
