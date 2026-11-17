@@ -2,22 +2,93 @@
 // These functions read decoded RGBA bytes only, so the browser path and the
 // Node tests use the same palette, trim and eyedropper arithmetic.
 
+export type Rgb = { r: number; g: number; b: number };
+export type Hsl = { h: number; s: number; l: number };
+export type ImageBounds = { x: number; y: number; width: number; height: number };
+
+export type PaletteColour = {
+  hex: string;
+  rgb: Rgb;
+  alpha: number;
+  hsl: Hsl;
+  count: number;
+  coverage: number;
+};
+
+export type PaletteResult =
+  | {
+      ok: true;
+      colors: PaletteColour[];
+      totalPixels: number;
+      sampledPixels: number;
+      sampleStride: number;
+      sampledVisiblePixels: number;
+      transparentPixels: number;
+      complete: boolean;
+      coveredPercent: number;
+    }
+  | { ok: false; error: string };
+
+export type AlphaBoundsResult =
+  | {
+      ok: true;
+      empty: boolean;
+      visiblePixels: number;
+      transparentPixels: number;
+      bounds: ImageBounds | null;
+      isFull: boolean;
+    }
+  | { ok: false; error: string };
+
 export const MAX_PALETTE_COLOURS = 8;
 export const PALETTE_MERGE_DISTANCE = 18;
 export const PALETTE_MAX_SAMPLES = 1_000_000;
 export const PALETTE_WORKING_EDGE = 1400;
 
-function clampByte(value) {
+type Bin = { key: number; count: number; r: number; g: number; b: number; a: number };
+type Cluster = { count: number; r: number; g: number; b: number; a: number };
+
+type PaletteOptions = {
+  width: number;
+  height: number;
+  maxColors?: number;
+  mergeDistance?: number;
+  maxSamples?: number;
+};
+
+type AlphaBoundsOptions = { width: number; height: number; threshold?: number };
+
+type TransformOptions = {
+  width: number;
+  height: number;
+  rotate?: number;
+  flipH?: boolean;
+  flipV?: boolean;
+};
+
+type PickPixelOptions = {
+  clientX: number;
+  clientY: number;
+  rect: { left: number; top: number; width: number; height: number };
+  imageWidth: number;
+  imageHeight: number;
+};
+
+function clampByte(value: unknown): number {
   const number = Math.round(Number(value));
   if (!Number.isFinite(number)) return 0;
   return number < 0 ? 0 : number > 255 ? 255 : number;
 }
 
-function isPositiveInteger(value) {
-  return Number.isSafeInteger(value) && value > 0;
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function pixelLengthProblem(pixels, width, height) {
+function pixelLengthProblem(
+  pixels: Uint8Array | Uint8ClampedArray,
+  width: unknown,
+  height: unknown,
+): string | null {
   if (!pixels || typeof pixels.length !== "number")
     return "The decoded pixels are not readable.";
   if (!isPositiveInteger(width) || !isPositiveInteger(height))
@@ -28,18 +99,18 @@ function pixelLengthProblem(pixels, width, height) {
 }
 
 /** Normalise an RGB triple to whole 0–255 values. */
-export function normaliseRgb({ r, g, b } = {}) {
+export function normaliseRgb({ r, g, b }: Partial<Rgb> = {}): Rgb {
   return { r: clampByte(r), g: clampByte(g), b: clampByte(b) };
 }
 
 /** `#rrggbb` for an RGB triple. */
-export function rgbToHex(rgb) {
+export function rgbToHex(rgb: Partial<Rgb>): string {
   const { r, g, b } = normaliseRgb(rgb);
   return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** Parse `#rgb` or `#rrggbb`; returns null for anything else. */
-export function hexToRgb(hex) {
+export function hexToRgb(hex: string): Rgb | null {
   const value = String(hex ?? "").trim();
   const short = /^#?([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(value);
   if (short)
@@ -58,7 +129,7 @@ export function hexToRgb(hex) {
 }
 
 /** HSL with whole-number hue (0–359), saturation and lightness (0–100). */
-export function rgbToHsl(rgb) {
+export function rgbToHsl(rgb: Partial<Rgb>): Hsl {
   const { r, g, b } = normaliseRgb(rgb);
   const red = r / 255;
   const green = g / 255;
@@ -70,7 +141,7 @@ export function rgbToHsl(rgb) {
   const delta = max - min;
   const saturation =
     lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
-  let hue;
+  let hue: number;
   if (max === red) hue = (green - blue) / delta + (green < blue ? 6 : 0);
   else if (max === green) hue = (blue - red) / delta + 2;
   else hue = (red - green) / delta + 4;
@@ -82,20 +153,21 @@ export function rgbToHsl(rgb) {
   };
 }
 
-export function formatRgb(rgb) {
+export function formatRgb(rgb: Partial<Rgb>): string {
   const { r, g, b } = normaliseRgb(rgb);
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-export function formatHsl(hsl) {
-  const h = Number.isFinite(hsl?.h) ? Math.round(hsl.h) % 360 : 0;
-  const s = Number.isFinite(hsl?.s) ? Math.round(hsl.s) : 0;
-  const l = Number.isFinite(hsl?.l) ? Math.round(hsl.l) : 0;
+export function formatHsl(hsl: Partial<Hsl>): string {
+  const { h: hue, s: saturation, l: lightness } = hsl ?? {};
+  const h = typeof hue === "number" && Number.isFinite(hue) ? Math.round(hue) % 360 : 0;
+  const s = typeof saturation === "number" && Number.isFinite(saturation) ? Math.round(saturation) : 0;
+  const l = typeof lightness === "number" && Number.isFinite(lightness) ? Math.round(lightness) : 0;
   return `hsl(${h}, ${s}%, ${l}%)`;
 }
 
 // Export only the extracted swatches, without the source filename or image metadata.
-export function paletteToGpl(colors) {
+export function paletteToGpl(colors: PaletteColour[]): string {
   const lines = ["GIMP Palette", "Name: Studio palette", "Columns: 8", "#"];
   for (const { rgb, hex } of colors) {
     const channels = [rgb.r, rgb.g, rgb.b]
@@ -108,7 +180,7 @@ export function paletteToGpl(colors) {
 
 // The same swatches as :root custom properties for an owned app. Values are the
 // exact extracted HEX strings, in palette order; no filename or image metadata.
-export function paletteToCss(colors) {
+export function paletteToCss(colors: PaletteColour[]): string {
   const lines = ["/* Studio palette - extracted swatches */", ":root {"];
   colors.forEach(({ hex }, index) => {
     lines.push(`  --swatch-${index + 1}: ${hex};`);
@@ -122,7 +194,7 @@ export function paletteToCss(colors) {
 // exact HEX values as the GPL/CSS exports, with no source filename, image
 // metadata, sampled pixels, credentials or timestamps. The units block gives
 // each exported colour field an explicit meaning.
-export function paletteToJson(colors) {
+export function paletteToJson(colors: PaletteColour[]): string {
   const document = {
     format: "media-studio-palette",
     version: 1,
@@ -146,7 +218,7 @@ export function paletteToJson(colors) {
 // ASEF 1.0 header, one colour block per swatch with an "RGB " model and 0-1
 // float channels, UTF-16BE HEX names and the normal colour type. The file
 // contains only swatch names and values.
-export function paletteToAse(colors) {
+export function paletteToAse(colors: PaletteColour[]): Uint8Array {
   const blocks = colors.map(({ rgb, hex }) => {
     const name = `${hex}\0`; // ASE names are null-terminated UTF-16BE
     const nameBytes = name.length * 2;
@@ -197,15 +269,15 @@ const PALETTE_BIN_SHIFT = 3;
  * - Coverage is the share of sampled visible pixels, not of all pixels.
  */
 export function extractPalette(
-  pixels,
+  pixels: Uint8Array | Uint8ClampedArray,
   {
     width,
     height,
     maxColors = MAX_PALETTE_COLOURS,
     mergeDistance = PALETTE_MERGE_DISTANCE,
     maxSamples = PALETTE_MAX_SAMPLES,
-  } = {},
-) {
+  }: PaletteOptions = { width: 0, height: 0 },
+): PaletteResult {
   const problem = pixelLengthProblem(pixels, width, height);
   if (problem) return { ok: false, error: problem };
   if (!isPositiveInteger(maxColors) || maxColors > 64)
@@ -217,7 +289,7 @@ export function extractPalette(
 
   const totalPixels = width * height;
   const sampleStride = Math.max(1, Math.ceil(totalPixels / maxSamples));
-  const bins = new Map();
+  const bins = new Map<number, Bin>();
   let sampledPixels = 0;
   let sampledVisiblePixels = 0;
   let transparentPixels = 0;
@@ -267,12 +339,12 @@ export function extractPalette(
   const orderedBins = [...bins.values()].sort(
     (left, right) => right.count - left.count || left.key - right.key,
   );
-  const clusters = [];
+  const clusters: Cluster[] = [];
   for (const bin of orderedBins) {
     const red = bin.r / bin.count;
     const green = bin.g / bin.count;
     const blue = bin.b / bin.count;
-    let match = null;
+    let match: Cluster | null = null;
     let matchDistance = Number.POSITIVE_INFINITY;
     for (const cluster of clusters) {
       const distance = Math.hypot(
@@ -349,7 +421,10 @@ export function extractPalette(
  * that still counts as content, so the default trims only fully transparent
  * padding. An opaque image comes back as `isFull`, never as a silent crop.
  */
-export function alphaBounds(pixels, { width, height, threshold = 0 } = {}) {
+export function alphaBounds(
+  pixels: Uint8Array | Uint8ClampedArray,
+  { width, height, threshold = 0 }: AlphaBoundsOptions = { width: 0, height: 0 },
+): AlphaBoundsResult {
   const problem = pixelLengthProblem(pixels, width, height);
   if (problem) return { ok: false, error: problem };
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 255)
@@ -409,9 +484,15 @@ export function alphaBounds(pixels, { width, height, threshold = 0 } = {}) {
  * `drawUserTransform` (flips first, then the clockwise quarter turns).
  */
 export function mapBoundsThroughTransform(
-  bounds,
-  { width, height, rotate = 0, flipH = false, flipV = false } = {},
-) {
+  bounds: ImageBounds,
+  {
+    width,
+    height,
+    rotate = 0,
+    flipH = false,
+    flipV = false,
+  }: TransformOptions = { width: 0, height: 0 },
+): { ok: true; bounds: ImageBounds } | { ok: false; error: string } {
   if (!isPositiveInteger(width) || !isPositiveInteger(height)) {
     return { ok: false, error: "The image dimensions are not usable." };
   }
@@ -471,13 +552,9 @@ export function mapBoundsThroughTransform(
  * ratio is already folded into `rect`; a high-DPR screen does not shift the
  * source pixel. Returns null outside the image.
  */
-export function pickImagePixel({
-  clientX,
-  clientY,
-  rect,
-  imageWidth,
-  imageHeight,
-} = {}) {
+export function pickImagePixel(options?: PickPixelOptions): { x: number; y: number } | null {
+  if (options === undefined) return null;
+  const { clientX, clientY, rect, imageWidth, imageHeight } = options;
   if (
     !Number.isFinite(clientX) ||
     !Number.isFinite(clientY) ||

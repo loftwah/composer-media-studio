@@ -59,7 +59,7 @@ test("PNG states that a byte target is not achievable and offers resize guidance
 
 test("the new colour and trim modules stay browser-local and dependency-free", () => {
   const colour = readFileSync(
-    new URL("../src/frontend/image-colour.mjs", import.meta.url),
+    new URL("../src/frontend/image-colour.ts", import.meta.url),
     "utf8",
   );
   assert.doesNotMatch(colour, /from "react"|fetch\(|XMLHttpRequest|import\(/);

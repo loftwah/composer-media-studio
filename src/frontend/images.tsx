@@ -61,7 +61,7 @@ import {
   type ImageBounds,
   type PaletteResult,
   type Rgb,
-} from "./image-colour.mjs";
+} from "./image-colour.ts";
 import {
   MAX_BATCH_IMAGES,
   MAX_IMAGE_INPUT_BYTES,
