@@ -26,6 +26,10 @@ export const ALERT_LABEL = "delivery-sla";
 export const MARKER_PREFIX = "delivery-sla:";
 const FIRST_EDIT_BOTTLENECK = "first-edit to exact live identity";
 
+// Full UTC ISO 8601: `Z` only, whole seconds or exactly three fractional digits.
+// `date -u +%Y-%m-%dT%H:%M:%SZ` emits the seconds-only form.
+const FULL_UTC_SECOND = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{3}))?Z$/;
+
 const SECRET_KEY = /(token|secret|password|passwd|cookie|authorization|api[-_]?key|private[-_]?key)/i;
 const SECRET_VALUE = [
   [/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, "[redacted]"],
@@ -48,8 +52,14 @@ export function classifyDuration(durationMs, { failed = false } = {}) {
 
 function parseFirstEditAt(value) {
   if (typeof value !== "string") return null;
+  const match = FULL_UTC_SECOND.exec(value);
+  if (!match || match[0] !== value) return null;
   const epoch = Date.parse(value);
-  return Number.isFinite(epoch) && new Date(epoch).toISOString() === value ? epoch : null;
+  if (!Number.isFinite(epoch)) return null;
+  // Round-trip through toISOString to reject rollover (e.g. 2026-02-30, 24:00:00)
+  // and to pin the stored note to the canonical three-digit UTC form.
+  const normalized = match[2] ? `${match[1]}.${match[2]}Z` : `${match[1]}.000Z`;
+  return new Date(epoch).toISOString() === normalized ? epoch : null;
 }
 
 /** Remove credentials, private URLs and obvious secret-shaped values. */
@@ -255,12 +265,14 @@ delivery record explicitly decides it can close.
 `;
 }
 
-/** Remember which open issue owns a fingerprint, so recovery evidence can attach. */
+/** Record the latest breach and clear the recovery marker from the previous one. */
 function rememberIssue(breachesPath, { fingerprint, repo, releasePath, issue, at = new Date() }) {
   const state = readJson(breachesPath) ?? { schema: "release-timing-breaches/v1", issues: {} };
   state.schema = "release-timing-breaches/v1";
   state.issues = { ...(state.issues ?? {}) };
-  const previous = state.issues[fingerprint] ?? {};
+  const previous = { ...(state.issues[fingerprint] ?? {}) };
+  delete previous.recoveredBy;
+  delete previous.recoveredAt;
   state.issues[fingerprint] = { ...previous, repo, releasePath, issue, lastBreachAt: iso(at) };
   writeJson(breachesPath, state);
 }
@@ -422,6 +434,12 @@ export function createReleaseRun({
         await github.comment(existing.number, `<!-- ${MARKER_PREFIX}${fingerprint} -->\n` + payload.body);
         alertState = "updated";
         alertIssue = existing.number;
+        try {
+          rememberBreach(fingerprint, existing.number);
+        } catch {
+          // The breach comment was already posted. Keep its delivery result.
+          logger.error(`Could not record local recovery state for issue #${alertIssue}.`);
+        }
       } else {
         const created = await github.create(payload);
         alertState = "created";
