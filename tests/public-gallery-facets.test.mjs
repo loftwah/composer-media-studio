@@ -336,8 +336,8 @@ test("gallery and filtered card links carry the browsing context back to the wor
   assert.equal(back, "/gallery?project=alpha-studio&capability=assembled&page=1");
   const detail = await (await get(env, href)).text();
   assert.match(detail, /Back to gallery/);
-  assert.match(detail, /href="https:\/\/studio\.test\/gallery\?project=alpha-studio&amp;capability=assembled&amp;page=1"/);
-  assert.match(detail, /data-gallery-back="\/gallery\?project=alpha-studio&amp;capability=assembled&amp;page=1"/);
+  assert.match(detail, /href="https:\/\/studio\.test\/gallery\?project=alpha-studio&amp;capability=assembled&amp;page=1#gallery-results"/);
+  assert.match(detail, /data-gallery-back="\/gallery\?project=alpha-studio&amp;capability=assembled&amp;page=1#gallery-results"/);
 });
 
 test("public pages share the documented cache window while owner pages stay uncached", async () => {

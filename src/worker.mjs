@@ -2371,7 +2371,7 @@ async function handlePublic(request, env, url) {
         if (["original", "variation", "refinement", "assembled"].includes(capability)) params.set("capability", capability);
         if (order === "oldest") params.set("order", order);
         if (page && /^[1-9][0-9]{0,4}$/.test(page)) params.set("page", page);
-        if (params.size) galleryBack += `?${params}`;
+        if (params.size) galleryBack += `?${params}#gallery-results`;
       }
     }
     // Bounded, same-project public continuations. Uses the gallery's own public

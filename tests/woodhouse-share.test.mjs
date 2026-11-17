@@ -346,8 +346,8 @@ test("public gallery requires explicit listing and honors removal, deletion and 
   assert.match(await read("/"), /A &lt;piece&gt;/);
   const back = encodeURIComponent('/gallery?q=Bubbles&kind=video&order=oldest&page=2');
   const piece = await read(`/p/gallery-piece?back=${back}`);
-  assert.match(piece, /href="https:\/\/studio\.test\/gallery\?q=Bubbles&amp;kind=video&amp;order=oldest&amp;page=2"/);
-  assert.match(piece, /data-gallery-back="\/gallery\?q=Bubbles&amp;kind=video&amp;order=oldest&amp;page=2"/);
+  assert.match(piece, /href="https:\/\/studio\.test\/gallery\?q=Bubbles&amp;kind=video&amp;order=oldest&amp;page=2#gallery-results"/);
+  assert.match(piece, /data-gallery-back="\/gallery\?q=Bubbles&amp;kind=video&amp;order=oldest&amp;page=2#gallery-results"/);
   const malicious = await read(`/p/gallery-piece?back=${encodeURIComponent('https://example.com')}`);
   assert.match(malicious, /href="https:\/\/studio\.test\/gallery" data-gallery-back="\/gallery">← Back to gallery/);
   assert.equal((await patch(false)).status, 200);
