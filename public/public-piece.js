@@ -23,7 +23,9 @@ if (button && status && field) {
 // The browser can report the previous same-tab entry on supported engines.
 // Keep the ordinary gallery link when that entry is unavailable or different.
 function galleryEntry(url) {
-  if (url.origin !== location.origin || url.pathname !== "/gallery" || url.hash) return null;
+  if (url.origin !== location.origin || url.pathname !== "/gallery") return null;
+  // The filter form and returned back links carry #gallery-results; other fragments stay normal links.
+  if (url.hash && url.hash !== "#gallery-results") return null;
   const params = url.searchParams;
   if (new Set(params.keys()).size !== params.size) return null;
   for (const key of ["q", "project", "kind", "capability"]) {
