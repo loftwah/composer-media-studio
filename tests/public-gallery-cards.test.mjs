@@ -66,6 +66,15 @@ test('the hero asks for its bytes first while every gallery card stays lazy', ()
   assert.doesNotMatch(publicGallery({ items }), /fetchpriority="high"/);
 });
 
+test("only the catalogue results opt into keyboard return focus", () => {
+  const items = [{ slug: "abyssjaw", kind: "image", title: "Abyssjaw" }];
+  const catalogue = publicGallery({ items });
+  assert.match(catalogue, /<ul class="gallery-grid" data-gallery-cards>/);
+  assert.ok(catalogue.includes('<script src="/gallery-focus.js" defer></script>'), "the focus handler is local and deferred");
+  assert.doesNotMatch(publicGallery({ home: true, items }), /data-gallery-cards|gallery-focus\.js/);
+  assert.doesNotMatch(publicGallery({ items: [] }), /data-gallery-cards|gallery-focus\.js/);
+});
+
 test("the gallery leads with a curated film and keeps its full browse path", () => {
   const html = publicGallery({
     items: [{ slug: "image", kind: "image", title: "An image" }],
