@@ -2879,8 +2879,12 @@ function Images() {
           <button
             type="button"
             className="secondary"
-            disabled={running || socialBusy || adding || Boolean(batchExport) || doneItems.length < CONTACT_SHEET_MIN_IMAGES}
-            onClick={() => void makeContactSheet()}
+            disabled={running || socialBusy || adding || zipBusy || doneItems.length < CONTACT_SHEET_MIN_IMAGES}
+            aria-disabled={sheetBusy}
+            onClick={() => {
+              if (sheetBusy) return;
+              void makeContactSheet();
+            }}
           >
             {sheetBusy ? "Making contact sheet…" : "Make contact sheet"}
           </button>
