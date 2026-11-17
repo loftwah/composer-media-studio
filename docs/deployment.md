@@ -63,7 +63,7 @@ a later compliant release adds recovery evidence to the same issue.
 ### Optional first-edit timestamp
 
 Record the UTC instant of the first relevant edit in JavaScript `toISOString()`
-format:
+format.
 
 ```sh
 STUDIO_FIRST_EDIT_AT=2026-11-17T01:23:45.000Z pnpm deploy
@@ -71,8 +71,8 @@ STUDIO_FIRST_EDIT_AT=2026-11-17T01:23:45.000Z pnpm deploy
 
 Once the exact live source matches, the private receipt records that timestamp
 and `firstEditToLiveIdentityMs`, the UTC gap before the guard plus the monotonic
-guard interval. The watchdog keeps its existing guard interval and the strict
-300,000 ms limit is unchanged; invalid, future or unverified values are ignored.
+guard interval. The watchdog still classifies the guard interval against the
+strict 300,000 ms limit. Invalid, future or unverified values are ignored.
 
 ## Darkroom
 
