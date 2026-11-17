@@ -271,8 +271,9 @@ test("Share search is a bounded, read-only GET behind the real edit role", async
   env.COMPOSER_ORIGIN = "https://composer.test";
   env.BRIDGE_SECRET = "fixture-bridge-secret-at-least-32-bytes";
   const origin = "https://woodhouse.loftwah.com";
-  const publicAsset = { id: "foilbury-print", title: "Foilbury <print>", project: "foilbury", visibility: "public" };
+  const publicAsset = { id: "foilbury-print", title: "Foilbury <print>", project: "foilbury", visibility: "public", thumbnailUrl: origin + "/campaign/foilbury.webp" };
   const privateAsset = { id: "hidden-print", title: "Hidden", project: "foilbury", visibility: "private" };
+  const offOriginAsset = { id: "off-origin-print", title: "Off origin", project: "foilbury", visibility: "public", thumbnailUrl: "https://other.example/track.png" };
   const calls = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {
     if (String(url).startsWith(env.COMPOSER_ORIGIN)) {
@@ -281,7 +282,7 @@ test("Share search is a bounded, read-only GET behind the real edit role", async
     }
     calls.push({ url: String(url), options });
     assert.equal(options.redirect, "manual");
-    return Response.json({ version: 1, assets: [publicAsset, privateAsset], nextAfter: null });
+    return Response.json({ version: 1, assets: [publicAsset, privateAsset, offOriginAsset], nextAfter: null });
   });
   const cookie = async (actions) => "studio_session=" + await createSession(env, {
     mode: "bridge", actor: "fixture", workspace: "fixture", project: project.id, actions,
@@ -302,7 +303,11 @@ test("Share search is a bounded, read-only GET behind the real edit role", async
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.equal(data.readOnly, true);
-  assert.deepEqual(data.assets, [{ id: "foilbury-print", title: "Foilbury <print>", project: "foilbury" }]);
+  // A safe-origin thumbnail is returned; an off-origin one yields no image field.
+  assert.deepEqual(data.assets, [
+    { id: "foilbury-print", title: "Foilbury <print>", project: "foilbury", thumbnailUrl: origin + "/campaign/foilbury.webp" },
+    { id: "off-origin-print", title: "Off origin", project: "foilbury" },
+  ]);
   assert.equal(calls.length, 1);
   const upstream = new URL(calls[0].url);
   assert.equal(upstream.origin, origin);
@@ -311,6 +316,11 @@ test("Share search is a bounded, read-only GET behind the real edit role", async
   assert.equal(upstream.searchParams.get("limit"), "8");
   assert.equal(upstream.searchParams.has("after"), false);
   assert.equal(env.MEDIA.objects.size, 0, "a GET never stores an asset");
+
+  const shell = await worker.fetch(new Request("https://studio.test/studio", { headers: { cookie: editor } }), env);
+  assert.match(shell.headers.get("content-security-policy"), /img-src [^;]*https:\/\/woodhouse\.loftwah\.com/);
+  const login = await worker.fetch(new Request("https://studio.test/studio"), env);
+  assert.doesNotMatch(login.headers.get("content-security-policy"), /https:\/\/woodhouse\.loftwah\.com/);
 
   // Without the opt-in flag the route is not served at all.
   env.WOODHOUSE_SHARE = "false";

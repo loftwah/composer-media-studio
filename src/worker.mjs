@@ -1097,10 +1097,14 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       }
       return json({
         readOnly: true,
-        assets: page.assets.flatMap(({ id, title, project: shareProject }) =>
-          typeof title === "string" && title.length <= 200 && typeof shareProject === "string" && shareProject.length <= 128
-            ? [{ id, title, project: shareProject }]
-            : []),
+        // Only approved public fields cross this boundary. An optional upstream
+        // thumbnail is kept only when it passes the fixed-origin check; otherwise
+        // the result stays text-only. The sharePage(..., 8) bound is unchanged.
+        assets: page.assets.flatMap(({ id, title, project: shareProject, thumbnailUrl }) => {
+          if (typeof title !== "string" || title.length > 200 || typeof shareProject !== "string" || shareProject.length > 128) return [];
+          const image = woodhouseUrl(thumbnailUrl);
+          return [image ? { id, title, project: shareProject, thumbnailUrl: image } : { id, title, project: shareProject }];
+        }),
       });
     }
 
@@ -2976,7 +2980,11 @@ export default {
         ? await handleApi(request, env, url, ctx)
         : await handlePublic(request, env, url);
       const reviewPath = /^\/r\/[A-Za-z0-9_-]{1,128}(?:\/(?:media|compare))?\/?$/.test(url.pathname) || url.pathname.startsWith("/api/review/");
-      return securityHeaders(response, url.pathname.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true", { noReferrer: reviewPath });
+      const pagePath = url.pathname.replace(/\/+$/, "") || "/";
+      const studioShell = (pagePath === "/" || pagePath === "/studio") &&
+        response.headers.get("cache-control") === "private, no-store";
+      const shareImages = env.WOODHOUSE_SHARE === "true" && (pagePath === "/portfolio" || studioShell);
+      return securityHeaders(response, shareImages, { noReferrer: reviewPath });
     } catch (error) {
       if (error instanceof PortableError)
         return securityHeaders(json({ error: { code: error.code, message: error.message }, report: error.report }, error.status));
