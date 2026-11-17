@@ -63,7 +63,10 @@ export async function runLocalImages(source, run) {
       return route.abort();
     });
     await page.goto(origin);
-    await page.locator(".image-drop input[type=file]").setInputFiles({ name: "source.png", mimeType: "image/png", buffer: source });
+    const selections = Array.isArray(source)
+      ? source.map((buffer, index) => ({ name: `source-${index + 1}.png`, mimeType: "image/png", buffer }))
+      : { name: "source.png", mimeType: "image/png", buffer: source };
+    await page.locator(".image-drop input[type=file]").setInputFiles(selections);
     const result = await run(page);
     assert.equal(blocked, 0, "The workbench tried to access an unexpected resource.");
     return { browser: browser.version(), ...result, networkRequestsPassedThrough: 0 };
