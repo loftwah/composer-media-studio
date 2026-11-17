@@ -2382,7 +2382,7 @@ function Images() {
                   </a>
                   <a
                     className="button secondary"
-                    href="https://composer-launch-kit.loftwah.workers.dev/"
+                    href="https://composer-launch-kit.loftwah.workers.dev/#studio-palette"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
