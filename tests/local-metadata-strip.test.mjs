@@ -10,11 +10,38 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { inspectImage, stripImageMetadata } from "../src/frontend/image-metadata.ts";
-import { pngFixture } from "./support/image-fixtures.mjs";
+import { jpegFixture, pngFixture, webpFixture } from "./support/image-fixtures.mjs";
 
 const run = promisify(execFile);
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 const command = ["scripts/local-metadata-strip.mjs"];
+
+for (const [format, source] of [
+  ["jpeg", jpegFixture({ orientation: 6 })],
+  ["webp", webpFixture({ orientation: 6 })],
+]) {
+  test(`the local ${format} strip preserves image data, ICC and orientation`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "studio-metadata-strip-"));
+    try {
+      const sourcePath = join(root, `source.${format}`);
+      const outputPath = join(root, `stripped.${format}`);
+      await writeFile(sourcePath, source);
+
+      const { stdout } = await run(process.execPath, [...command, "--source", sourcePath, "--output", outputPath], { cwd });
+      const report = JSON.parse(stdout);
+      const output = new Uint8Array(await readFile(outputPath));
+      assert.equal(report.output.mime, `image/${format}`);
+      assert.equal(report.verified.all, true);
+      assert.deepEqual(output, stripImageMetadata(source).bytes);
+      const parsed = inspectImage(output);
+      assert.equal(parsed.orientation, 6);
+      assert.equal(parsed.icc.present, true);
+      assert.equal(parsed.xmp.present, false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("a valid PNG keeps its ICC profile and image bytes", async () => {
   const root = await mkdtemp(join(tmpdir(), "studio-metadata-strip-"));

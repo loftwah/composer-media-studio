@@ -14,18 +14,20 @@ export function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Write PNG bytes to a new path: stage beside the destination, then link exclusively. */
-export async function saveNewPng(output, bytes) {
+/** Write encoded image bytes to a new path: stage beside the destination, then link exclusively. */
+export async function saveNewImage(output, bytes) {
   const destination = resolve(output);
-  const stage = await mkdtemp(join(dirname(destination), ".studio-local-png-"));
+  const stage = await mkdtemp(join(dirname(destination), ".studio-local-image-"));
   try {
-    const file = join(stage, "output.png");
+    const file = join(stage, "output");
     await writeFile(file, bytes);
     await link(file, destination);
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
 }
+
+export { saveNewImage as saveNewPng };
 
 async function readSelection(path, limit) {
   const file = await open(path, "r");
@@ -39,6 +41,13 @@ async function readSelection(path, limit) {
   } finally {
     await file.close();
   }
+}
+
+export async function readLocalImage(path) {
+  const bytes = await readSelection(path, MAX_IMAGE_INPUT_BYTES);
+  const sniffed = sniffLocalImage(bytes);
+  assert(sniffed.supported, sniffed.reason ?? "This replay supports JPEG, PNG and WebP inputs.");
+  return bytes;
 }
 
 export async function readLocalPng(path) {
