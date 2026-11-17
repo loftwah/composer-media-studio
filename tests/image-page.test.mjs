@@ -100,6 +100,10 @@ test("the embed-code button keeps keyboard focus while it is building", () => {
   assert.match(workbench, /if \(!selected\?\.result \|\| snippetBusy \|\| running\) return;/);
 });
 
+test("the make-image button keeps keyboard focus while the canvas encodes", () => {
+  assert.match(workbench, /disabled=\{socialBusy \|\| adding \|\| sheetBusy \|\| !plan\?\.ok \|\| Boolean\(targetProblem\)\}\s+aria-disabled=\{running\}\s+onClick=\{\(\) => \{\s+if \(running\) return;\s+void runItems\(\[selected\]\);/);
+});
+
 test("the metadata strip button keeps keyboard focus while the bytes load", () => {
   assert.match(workbench, /disabled=\{running\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
   assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running\) return;/);
