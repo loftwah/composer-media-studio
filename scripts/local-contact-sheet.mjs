@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { CONTACT_SHEET_MIN_IMAGES } from "../src/frontend/image-contact-sheet.ts";
 import { MAX_BATCH_IMAGES } from "../src/frontend/image-limits.ts";
 import { inspectImage } from "../src/frontend/image-metadata.ts";
-import { digest, downloadLink, readLocalPng, runLocalImages, saveNewPng } from "./local-image-workbench.mjs";
+import { digest, downloadLink, readLocalImage, runLocalImages, saveNewPng } from "./local-image-workbench.mjs";
 
 async function main() {
   const { values } = parseArgs({
@@ -14,11 +14,11 @@ async function main() {
   });
   const sourcePaths = values.source ?? [];
   assert(sourcePaths.length >= CONTACT_SHEET_MIN_IMAGES && sourcePaths.length <= MAX_BATCH_IMAGES,
-    `Supply ${CONTACT_SHEET_MIN_IMAGES}–${MAX_BATCH_IMAGES} explicit --source <PNG> options in sheet order.`);
+    `Supply ${CONTACT_SHEET_MIN_IMAGES}–${MAX_BATCH_IMAGES} explicit --source <JPEG, PNG or WebP> options in sheet order.`);
   assert(values.output, "Supply an explicit --output <new PNG path>.");
 
   const inputs = [];
-  for (const path of sourcePaths) inputs.push(await readLocalPng(path));
+  for (const path of sourcePaths) inputs.push(await readLocalImage(path));
   const { bytes, ...report } = await runLocalImages(inputs, async page => {
     const batch = page.getByRole("region", { name: "Batch", exact: true });
     await batch.getByRole("button", { name: `Process all ${inputs.length} with these settings`, exact: true }).click();
