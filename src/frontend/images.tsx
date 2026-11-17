@@ -77,6 +77,11 @@ import {
   type ImageMetadataSummary,
   type StripResult,
 } from "./image-metadata.ts";
+import {
+  CONTACT_SHEET_MIN_IMAGES,
+  contactSheetLayout,
+  contactSheetPlacement,
+} from "./image-contact-sheet.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
 import {
@@ -198,6 +203,8 @@ type WorkItem = {
 };
 
 type Rejection = { name: string; message: string };
+
+type ContactSheet = { url: string; count: number; width: number; height: number };
 
 const DEFAULT_SETTINGS: Settings = {
   resizeMode: "long-edge",
@@ -748,7 +755,10 @@ function Images() {
   const [batch, setBatch] = useState({ total: 0, completed: 0, current: "" });
   const [zipUrl, setZipUrl] = useState("");
   const [zipBytes, setZipBytes] = useState(0);
-  const [zipBusy, setZipBusy] = useState(false);
+  const [contactSheet, setContactSheet] = useState<ContactSheet | null>(null);
+  const [batchExport, setBatchExport] = useState<"zip" | "contact-sheet" | null>(null);
+  const zipBusy = batchExport === "zip";
+  const sheetBusy = batchExport === "contact-sheet";
   const [batchMessage, setBatchMessage] = useState("");
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
   const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
@@ -774,7 +784,7 @@ function Images() {
   const [snippetUrl, setSnippetUrl] = useState<{ kind: SnippetKind; url: string } | null>(null);
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
-  const zipRevision = useRef(0);
+  const batchExportRevision = useRef(0);
   const batchController = useRef<{ controller: AbortController; report: (message: string) => void } | null>(null);
   const socialController = useRef<AbortController | null>(null);
   const stripRevision = useRef(0);
@@ -897,13 +907,16 @@ function Images() {
     releaseUrl(item.stripped?.url);
   }
 
-  function clearZip(): void {
-    zipRevision.current += 1;
-    setBatchMessage(zipBusy ? "The batch changed. Prepare the ZIP again." : "");
-    if (!zipUrl) return;
+  function clearBatchExports(): void {
+    batchExportRevision.current += 1;
+    const nextMessage = zipBusy ? "The batch changed. Prepare the ZIP again." :
+      sheetBusy ? "The batch changed. Make the contact sheet again." : "";
+    setBatchMessage(nextMessage);
     releaseUrl(zipUrl);
+    releaseUrl(contactSheet?.url);
     setZipUrl("");
     setZipBytes(0);
+    setContactSheet(null);
   }
 
   function releaseSocial(): void {
@@ -922,7 +935,7 @@ function Images() {
     return () => {
       revision.current += 1;
       stripRevision.current += 1;
-      zipRevision.current += 1;
+      batchExportRevision.current += 1;
       batchController.current?.controller.abort();
       socialController.current?.abort();
       socialController.current = null;
@@ -976,7 +989,7 @@ function Images() {
     const currentRevision = ++revision.current;
     setAdding(true);
     setRejections([]);
-    clearZip();
+    clearBatchExports();
     const available = Math.max(0, MAX_BATCH_IMAGES - items.length);
     if (!available) {
       setMessage(`This batch already has ${MAX_BATCH_IMAGES} images. Remove one before adding another.`);
@@ -1080,7 +1093,7 @@ function Images() {
   function removeItem(item: WorkItem): void {
     if (running) return;
     focusPickerAfterRemoval.current = true;
-    clearZip();
+    clearBatchExports();
     releaseItem(item);
     setItems((previous) => previous.filter((candidate) => candidate.id !== item.id));
     if (selectedId === item.id) {
@@ -1129,14 +1142,14 @@ function Images() {
   }
 
   async function runItems(list: WorkItem[], report: (message: string) => void = setMessage): Promise<void> {
-    if (!list.length || runningRef.current || socialController.current) return;
+    if (!list.length || runningRef.current || socialController.current || sheetBusy) return;
     runningRef.current = true;
     const snapshot = { ...settings };
     const trimSnapshot = trim;
     const controller = new AbortController();
     batchController.current = { controller, report };
     setRunning(true);
-    clearZip();
+    clearBatchExports();
     setBatch({ total: list.length, completed: 0, current: list[0]?.file.name ?? "" });
     let completed = 0;
     let processed = 0;
@@ -1272,9 +1285,9 @@ function Images() {
   }
 
   async function makeZip(): Promise<void> {
-    if (!doneItems.length || zipBusy || addingRef.current || runningRef.current || socialController.current) return;
-    const zipAttempt = zipRevision.current;
-    setZipBusy(true);
+    if (!doneItems.length || batchExport || addingRef.current || runningRef.current || socialController.current) return;
+    const zipAttempt = batchExportRevision.current;
+    setBatchExport("zip");
     setBatchMessage("Preparing the ZIP on this device…");
     try {
       const entries: Array<{ name: string; data: Uint8Array }> = [];
@@ -1282,7 +1295,7 @@ function Images() {
       for (const item of doneItems) {
         if (!item.result) continue;
         const bytes = new Uint8Array(await item.result.blob.arrayBuffer());
-        if (zipAttempt !== zipRevision.current) return;
+        if (zipAttempt !== batchExportRevision.current) return;
         total += bytes.length;
         if (total > MAX_ZIP_BYTES)
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download images separately instead.`);
@@ -1300,11 +1313,51 @@ function Images() {
       setZipBytes(blob.size);
       setBatchMessage(`ZIP ready: ${entries.length} image${entries.length === 1 ? "" : "s"}, ${formatBytes(blob.size)}.`);
     } catch (error) {
-      if (zipAttempt === zipRevision.current) {
+      if (zipAttempt === batchExportRevision.current) {
         setBatchMessage(error instanceof Error ? error.message : "Could not build the ZIP.");
       }
     } finally {
-      setZipBusy(false);
+      setBatchExport(null);
+    }
+  }
+
+  async function makeContactSheet(): Promise<void> {
+    const results = doneItems.flatMap(item => item.result ? [item.result] : []);
+    const layout = contactSheetLayout(results.length);
+    if (!layout || batchExport || addingRef.current || runningRef.current || socialController.current) return;
+
+    const attempt = batchExportRevision.current;
+    setBatchExport("contact-sheet");
+    setBatchMessage("Making a contact sheet on this device…");
+    const canvas = document.createElement("canvas");
+    canvas.width = layout.width;
+    canvas.height = layout.height;
+    try {
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("This browser could not make the contact sheet.");
+      for (const [index, result] of results.entries()) {
+        const bitmap = await createImageBitmap(result.blob);
+        try {
+          if (attempt !== batchExportRevision.current) return;
+          const tile = contactSheetPlacement(layout, index, bitmap.width, bitmap.height);
+          context.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height);
+        } finally {
+          bitmap.close();
+        }
+      }
+      const blob = await canvasToBlob(canvas, "image/png");
+      if (attempt !== batchExportRevision.current) return;
+      releaseUrl(contactSheet?.url);
+      setContactSheet({ url: trackUrl(blob), count: layout.count, width: layout.width, height: layout.height });
+      setBatchMessage(`Contact sheet ready: ${layout.count} images · ${layout.width} × ${layout.height} px.`);
+    } catch (error) {
+      if (attempt === batchExportRevision.current) {
+        setBatchMessage(error instanceof Error ? error.message : "Could not make the contact sheet.");
+      }
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+      setBatchExport(null);
     }
   }
 
@@ -1330,7 +1383,7 @@ function Images() {
   }
 
   async function makeSocialKit(): Promise<void> {
-    if (!selected || runningRef.current || socialController.current || zipBusy || addingRef.current) return;
+    if (!selected || runningRef.current || socialController.current || batchExport || addingRef.current) return;
     if (selected.source.mime !== "image/png") return;
     const item = selected;
     const snapshot = { ...settings };
@@ -1562,7 +1615,7 @@ function Images() {
 
   function moveItem(id: string, offset: number): void {
     if (running) return;
-    clearZip();
+    clearBatchExports();
     setItems((previous) => {
       const index = previous.findIndex((candidate) => candidate.id === id);
       const target = index + offset;
@@ -1581,7 +1634,7 @@ function Images() {
     const source = dragIdRef.current;
     dragIdRef.current = "";
     if (!source || source === id || running) return;
-    clearZip();
+    clearBatchExports();
     setItems((previous) => {
       const from = previous.findIndex((candidate) => candidate.id === source);
       const to = previous.findIndex((candidate) => candidate.id === id);
@@ -1889,7 +1942,7 @@ function Images() {
             <label>Kit format
               <select
                 value={socialFormat}
-                disabled={running || socialBusy || zipBusy || adding}
+                disabled={running || socialBusy || Boolean(batchExport) || adding}
                 aria-describedby="image-social-kit-note"
                 onChange={(event) => {
                   const next = SOCIAL_KIT_FORMATS.find((format) => format === event.target.value);
@@ -1910,7 +1963,7 @@ function Images() {
               <button
                 type="button"
                 className="secondary"
-                disabled={running || socialBusy || zipBusy || adding || !socialReady}
+                disabled={running || socialBusy || Boolean(batchExport) || adding || !socialReady}
                 aria-describedby="image-social-kit-note"
                 onClick={() => void makeSocialKit()}
               >
@@ -2142,12 +2195,12 @@ function Images() {
           </p>
           {targetProblem && <p className="image-plan is-error" role="alert">{targetProblem}</p>}
           <div className="image-control-actions">
-            <button type="button" disabled={running || socialBusy || adding || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems([selected])}>
+            <button type="button" disabled={running || socialBusy || adding || sheetBusy || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems([selected])}>
               {selected.status === "working" ? "Processing…" : "Make this image"}
             </button>
             {selected.result && <a className="button secondary" href="#image-downloads">Go to downloads</a>}
             {selected.status === "error" && (
-              <button type="button" className="secondary" disabled={running} onClick={() => void runItems([selected])}>Retry</button>
+              <button type="button" className="secondary" disabled={running || sheetBusy} onClick={() => void runItems([selected])}>Retry</button>
             )}
             <button
               type="button"
@@ -2741,11 +2794,11 @@ function Images() {
           <span>{items.length} image{items.length === 1 ? "" : "s"} · sequential</span>
         </div>
         <div className="image-control-actions">
-          <button type="button" disabled={running || socialBusy || adding || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items, setBatchMessage)}>
+          <button type="button" disabled={running || socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items, setBatchMessage)}>
             Process all {items.length || ""} with these settings
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
-          <button type="button" className="secondary" disabled={running || socialBusy || adding || zipBusy || !doneItems.length} onClick={() => void makeZip()}>
+          <button type="button" className="secondary" disabled={running || socialBusy || adding || Boolean(batchExport) || !doneItems.length} onClick={() => void makeZip()}>
             {zipBusy ? "Preparing ZIP…" : `Prepare ZIP${doneItems.length ? ` (${doneItems.length})` : ""}`}
           </button>
           {zipUrl && (
@@ -2753,8 +2806,30 @@ function Images() {
               Download ZIP · {formatBytes(zipBytes)}
             </a>
           )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={running || socialBusy || adding || Boolean(batchExport) || doneItems.length < CONTACT_SHEET_MIN_IMAGES}
+            onClick={() => void makeContactSheet()}
+          >
+            {sheetBusy ? "Making contact sheet…" : "Make contact sheet"}
+          </button>
+          {contactSheet && (
+            <a className="button secondary" href={contactSheet.url} download={`media-studio-contact-sheet-${contactSheet.count}.png`}>
+              Download contact sheet PNG
+            </a>
+          )}
         </div>
         <p className="image-status" role="status" aria-live="polite">{batchMessage}</p>
+        {contactSheet && (
+          <img
+            className="image-contact-sheet"
+            src={contactSheet.url}
+            width={contactSheet.width}
+            height={contactSheet.height}
+            alt={`Contact sheet of ${contactSheet.count} completed images`}
+          />
+        )}
         {running && (
           <div className="image-progress">
             <progress value={batch.completed} max={batch.total || 1} aria-label="Batch progress" />
@@ -2812,7 +2887,7 @@ function Images() {
                     <a className="button secondary" href={item.result.url} download={`${safeStem(item.file.name)}-${item.result.width}x${item.result.height}.${extensionForImageMime(item.result.mime)}`}>Download</a>
                   )}
                   {(item.status === "error" || item.status === "cancelled") && (
-                    <button type="button" className="secondary" disabled={running} onClick={() => void runItems([item])}>Retry</button>
+                    <button type="button" className="secondary" disabled={running || sheetBusy} onClick={() => void runItems([item])}>Retry</button>
                   )}
                   <button type="button" className="quiet" disabled={running || adding || importing} onClick={() => removeItem(item)}>Remove</button>
                 </div>
@@ -2822,7 +2897,7 @@ function Images() {
         )}
         <p className="trim-note">
           Drag a row or use Move up and Move down to change the order. Each image is
-          decoded and encoded one at a time; the ZIP follows this list order. Cancelling
+          decoded and encoded one at a time. ZIPs and contact sheets follow this list order. Cancelling
           stops after the current encode, and already completed downloads stay in the
           list. ZIP export uses a small store-only writer in this page, not a server
           archive.

@@ -459,6 +459,13 @@
   font-size: 0.78rem;
 }
 
+.image-contact-sheet {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-bottom: 1rem;
+}
+
 .image-result {
   display: grid;
   gap: 0.7rem;
