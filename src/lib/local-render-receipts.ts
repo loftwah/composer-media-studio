@@ -1,63 +1,115 @@
 import { HttpError, id, now, safeJson } from './util.mjs';
 import { shotRange } from '../../public/shot-trims.js';
+import type { CompositionV1 } from '../frontend/contracts.ts';
+import type { Framing } from '../frontend/local-framing.ts';
+import type { CaptionStyle } from '../frontend/caption-paint.ts';
+import type { SongPlanRow, SongPlanSpec } from './song-plans.ts';
 
-const fail = (message, code = 'invalid_receipt') => { throw new HttpError(400, message, code); };
-const conflict = () => { throw new HttpError(409, 'The saved storyboard or its sources changed. Reload before rendering.', 'revision_conflict'); };
+// Narrow structural seams for the D1 binding and the saved rows: only the
+// members this module calls and the columns it reads are described. No
+// Cloudflare types are imported and every annotation here is erased at runtime.
+interface LocalRenderStatement {
+  bind(...values: unknown[]): LocalRenderStatement;
+  first<Row>(): Promise<Row | null>;
+  run(): Promise<unknown>;
+}
+export interface LocalRenderEnv {
+  DB: { prepare(query: string): LocalRenderStatement };
+}
+export interface LocalRenderProject { id: string }
+export interface LocalRenderAssetRow {
+  id: string;
+  kind: string;
+  sha256: string;
+  duration_ms: number | null;
+  bytes: number;
+  mime: string;
+}
+interface LocalRenderCompositionRow {
+  id: string;
+  spec_json: string;
+  updated_at: number;
+}
+export interface LocalRenderReceiptInput {
+  expectedUpdatedAt: number;
+  includeCaptions: boolean;
+  framing: Framing;
+  captionStyle?: CaptionStyle;
+}
+type SavedCompositionSpec = Pick<CompositionV1, 'shots' | 'audioAssetId' | 'audioTracks' | 'originSongPlan' | 'totalMs'>;
+interface LocalRenderShot { assetId: string; sha256: string; startMs: number; endMs: number }
+interface LocalRenderSoundtrack { assetId: string; sha256: string }
+interface LocalRenderTrack {
+  assetId: string;
+  sha256: string;
+  role: string;
+  startMs: number;
+  trimStartMs: number;
+  trimEndMs: number;
+  gainDb: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+}
+interface LocalRenderCaptions { planId: string; revision: number; songAssetId: string; songSha256: string }
+export interface CreatedLocalRenderReceipt { id: string; expiresAt: number }
+
+const fail: (message: string, code?: string) => never = (message, code = 'invalid_receipt') => { throw new HttpError(400, message, code); };
+const conflict: () => never = () => { throw new HttpError(409, 'The saved storyboard or its sources changed. Reload before rendering.', 'revision_conflict'); };
 const hashPattern = /^[a-f0-9]{64}$/i;
 
-export async function createLocalRenderReceipt(env, project, compositionId, input) {
+export async function createLocalRenderReceipt(env: LocalRenderEnv, project: LocalRenderProject, compositionId: string, input: LocalRenderReceiptInput): Promise<CreatedLocalRenderReceipt> {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['expectedUpdatedAt','includeCaptions','framing','captionStyle'].includes(k)) || !Number.isSafeInteger(input.expectedUpdatedAt) || typeof input.includeCaptions !== 'boolean') fail('Provide the saved version and caption choice');
   if (!['classic','lower-third'].includes(input.captionStyle ?? 'classic')) fail('Choose a supported caption look');
   const framing = input.framing;
   if (!framing || !['source','16:9','9:16','1:1'].includes(framing.aspect) || !['contain','cover'].includes(framing.fit) || !['standard','hd'].includes(framing.quality ?? 'standard') || Object.keys(framing).some(k => !['aspect','fit','quality'].includes(k))) fail('Choose a supported frame and fit');
-  const composition = await env.DB.prepare('SELECT * FROM compositions WHERE id=?1 AND project_id=?2').bind(compositionId, project.id).first();
+  const composition = await env.DB.prepare('SELECT * FROM compositions WHERE id=?1 AND project_id=?2').bind(compositionId, project.id).first<LocalRenderCompositionRow>();
   if (!composition) throw new HttpError(404, 'Storyboard not found', 'not_found');
   if (composition.updated_at !== input.expectedUpdatedAt) conflict();
-  const spec = safeJson(composition.spec_json, {});
+  const spec = safeJson(composition.spec_json, {}) as SavedCompositionSpec;
   if (!Array.isArray(spec.shots) || spec.shots.length < 2 || spec.shots.length > 6 || !Array.isArray(spec.audioTracks ?? []) || (spec.audioTracks ?? []).length > 4) fail('This storyboard is outside local render limits');
-  const checked = new Map();
-  const source = async (assetId, kind) => {
-    const row = await env.DB.prepare('SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND deleted_at IS NULL').bind(assetId, project.id).first();
+  const checked = new Map<string, LocalRenderAssetRow>();
+  const source = async (assetId: string, kind: string): Promise<LocalRenderAssetRow> => {
+    const row = await env.DB.prepare('SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND deleted_at IS NULL').bind(assetId, project.id).first<LocalRenderAssetRow>();
     if (!row || row.kind !== kind || !hashPattern.test(row.sha256 ?? '')) conflict();
     checked.set(row.id, row);
     return row;
   };
-  const shots = [];
+  const shots: LocalRenderShot[] = [];
   let inputBytes = 0;
   for (const shot of spec.shots) {
     const asset = await source(shot.assetId, 'video');
     const range = shotRange(shot, { durationMs: asset.duration_ms });
-    if (!range || asset.duration_ms > 16000 || !Number.isSafeInteger(asset.bytes) || asset.bytes <= 0 || shots.some(existing => existing.assetId === asset.id)) fail('A selected shot has an invalid range or size');
+    if (!range || (asset.duration_ms as number) > 16000 || !Number.isSafeInteger(asset.bytes) || asset.bytes <= 0 || shots.some(existing => existing.assetId === asset.id)) fail('A selected shot has an invalid range or size');
     inputBytes += asset.bytes;
     shots.push({ assetId: asset.id, sha256: asset.sha256, startMs: range.start, endMs: range.end });
   }
   const totalMs = shots.reduce((sum, shot) => sum + shot.endMs - shot.startMs, 0);
   if (totalMs <= 0 || totalMs > 60000 || totalMs !== spec.totalMs) fail('The saved storyboard duration is invalid');
-  let soundtrack = null;
+  let soundtrack: LocalRenderSoundtrack | null = null;
   if (spec.audioAssetId) {
     const asset = await source(spec.audioAssetId, 'audio');
-    if (asset.mime !== 'audio/wav' || !Number.isSafeInteger(asset.bytes) || asset.bytes <= 0 || asset.bytes > 16*1024*1024 || !Number.isSafeInteger(asset.duration_ms) || Math.abs(asset.duration_ms - totalMs) > 100) fail('The mixed WAV soundtrack must match the storyboard and fit the local limit');
+    if (asset.mime !== 'audio/wav' || !Number.isSafeInteger(asset.bytes) || asset.bytes <= 0 || asset.bytes > 16*1024*1024 || !Number.isSafeInteger(asset.duration_ms) || Math.abs((asset.duration_ms as number) - totalMs) > 100) fail('The mixed WAV soundtrack must match the storyboard and fit the local limit');
     inputBytes += asset.bytes;
     soundtrack = { assetId: asset.id, sha256: asset.sha256 };
   } else if ((spec.audioTracks ?? []).length) fail('Mix the soundtrack before rendering');
   if (inputBytes > 128*1024*1024) fail('The selected media exceeds the local input limit');
-  const tracks = [];
+  const tracks: LocalRenderTrack[] = [];
   for (const track of spec.audioTracks ?? []) {
     const asset = await source(track.assetId, 'audio');
     tracks.push({ assetId: asset.id, sha256: asset.sha256, role: track.role, startMs: track.startMs, trimStartMs: track.trimStartMs, trimEndMs: track.trimEndMs, gainDb: track.gainDb, fadeInMs: track.fadeInMs, fadeOutMs: track.fadeOutMs });
   }
-  let captions = null, plan = null;
+  let captions: LocalRenderCaptions | null = null, plan: SongPlanRow | null = null;
   if (input.includeCaptions) {
     const origin = spec.originSongPlan;
     if (!origin) fail('This storyboard has no linked song plan');
-    plan = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(origin.id, project.id).first();
+    plan = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(origin.id, project.id).first<SongPlanRow>();
     if (!plan || plan.revision !== origin.revision || plan.song_sha256 !== origin.songSha256) conflict();
     const song = await source(plan.song_asset_id, 'audio');
-    const planSpec = safeJson(plan.spec_json, {});
+    const planSpec = safeJson(plan.spec_json, {}) as SongPlanSpec;
     if (song.sha256 !== plan.song_sha256 || planSpec.rightsConfirmed !== true || planSpec.startMs !== origin.sourceStartMs || planSpec.endMs !== origin.sourceEndMs || totalMs !== planSpec.endMs - planSpec.startMs || !Array.isArray(planSpec.scenes) || !Array.isArray(origin.scenes) || planSpec.scenes.length !== shots.length || origin.scenes.length !== shots.length) conflict();
     let cursor = planSpec.startMs;
     for (const [i, scene] of planSpec.scenes.entries()) {
-      const frozen = origin.scenes[i], shot = shots[i], clip = checked.get(shot.assetId);
+      const frozen = origin.scenes[i], shot = shots[i], clip = checked.get(shot.assetId)!;
       const range = frozen && shotRange(frozen, { durationMs: clip.duration_ms });
       if (!frozen || scene.id !== frozen.id || scene.selectedTakeId !== frozen.selectedTakeId || scene.selectedTakeId !== shot.assetId || scene.startMs !== frozen.startMs || scene.endMs !== frozen.endMs || scene.startMs !== cursor || scene.endMs <= cursor || !range || range.start !== shot.startMs || range.end !== shot.endMs || range.durationMs !== scene.endMs - scene.startMs) conflict();
       cursor = scene.endMs;
@@ -76,13 +128,13 @@ export async function createLocalRenderReceipt(env, project, compositionId, inpu
   await env.DB.prepare('DELETE FROM local_render_receipts WHERE project_id=?1 AND expires_at<?2 AND NOT EXISTS (SELECT 1 FROM assets WHERE id=output_asset_id)').bind(project.id, timestamp).run();
   const rows = [...checked.values()];
   let sql = 'INSERT INTO local_render_receipts(id,project_id,output_asset_id,snapshot_json,created_at,expires_at) SELECT ?1,?2,?3,?4,?5,?6 WHERE EXISTS (SELECT 1 FROM compositions WHERE id=?7 AND project_id=?2 AND spec_json=?8 AND updated_at=?9) AND (SELECT COUNT(*) FROM local_render_receipts r WHERE r.project_id=?2 AND r.expires_at>=?5 AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=r.output_asset_id)) < 16';
-  const args = [receiptId,project.id,outputAssetId,JSON.stringify(snapshot),timestamp,timestamp+30*60*1000,composition.id,composition.spec_json,composition.updated_at];
+  const args: unknown[] = [receiptId,project.id,outputAssetId,JSON.stringify(snapshot),timestamp,timestamp+30*60*1000,composition.id,composition.spec_json,composition.updated_at];
   for (const row of rows) { const i=args.length+1; sql += ` AND EXISTS (SELECT 1 FROM assets WHERE id=?${i} AND project_id=?2 AND sha256=?${i+1} AND duration_ms IS ?${i+2} AND deleted_at IS NULL)`; args.push(row.id,row.sha256,row.duration_ms); }
   if (plan) { const i=args.length+1; sql += ` AND EXISTS (SELECT 1 FROM song_plans WHERE id=?${i} AND project_id=?2 AND revision=?${i+1} AND spec_json=?${i+2})`; args.push(plan.id,plan.revision,plan.spec_json); }
-  const created = await env.DB.prepare(sql+' RETURNING id').bind(...args).first();
+  const created = await env.DB.prepare(sql+' RETURNING id').bind(...args).first<{ id: string }>();
   if (!created) {
-    const pending = await env.DB.prepare('SELECT COUNT(*) AS n FROM local_render_receipts r WHERE r.project_id=?1 AND r.expires_at>=?2 AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=r.output_asset_id)').bind(project.id,timestamp).first();
-    if (pending.n >= 16) throw new HttpError(429, 'Too many unfinished local renders. Wait for an earlier receipt to expire.', 'receipt_limit');
+    const pending = await env.DB.prepare('SELECT COUNT(*) AS n FROM local_render_receipts r WHERE r.project_id=?1 AND r.expires_at>=?2 AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.id=r.output_asset_id)').bind(project.id,timestamp).first<{ n: number }>();
+    if (pending!.n >= 16) throw new HttpError(429, 'Too many unfinished local renders. Wait for an earlier receipt to expire.', 'receipt_limit');
     conflict();
   }
   return { id: receiptId, expiresAt: timestamp+30*60*1000 };

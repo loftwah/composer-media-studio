@@ -4,5 +4,5 @@
     "strict": true, "noEmit": true, "allowImportingTsExtensions": true, "jsx": "react-jsx", "lib": ["ES2022", "DOM"],
     "skipLibCheck": true, "verbatimModuleSyntax": true, "types": ["vite/client"]
   },
-  "include": ["src/frontend/**/*.ts", "src/frontend/**/*.tsx", "src/lib/asset-previews.ts", "src/lib/capabilities.ts", "src/lib/comparisons.ts", "src/lib/footage-plans.ts", "src/lib/publication-attribution.ts", "src/lib/publication-derivatives.ts", "src/lib/preview-rendition.ts", "src/lib/public-image-privacy.ts", "src/lib/recipes.ts", "src/lib/sharing.ts", "src/lib/sitemap.ts", "src/lib/song-plans.ts", "src/lib/woodhouse-share.ts"]
+  "include": ["src/frontend/**/*.ts", "src/frontend/**/*.tsx", "src/lib/asset-previews.ts", "src/lib/capabilities.ts", "src/lib/comparisons.ts", "src/lib/footage-plans.ts", "src/lib/local-render-receipts.ts", "src/lib/publication-attribution.ts", "src/lib/publication-derivatives.ts", "src/lib/preview-rendition.ts", "src/lib/public-image-privacy.ts", "src/lib/recipes.ts", "src/lib/sharing.ts", "src/lib/sitemap.ts", "src/lib/song-plans.ts", "src/lib/woodhouse-share.ts"]
 }
