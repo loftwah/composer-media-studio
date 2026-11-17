@@ -20,7 +20,40 @@ export const PREVIEW_QUALITY = 80;
 export const PREVIEW_MIME = "image/webp";
 const PREVIEW_FORMATS = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
-const asStream = (bytes) =>
+export interface RenderedPreview {
+  bytes: Uint8Array;
+  mime: string;
+  width: number;
+  height: number;
+  sha256: string;
+}
+
+// Only the Images members this module actually calls are described: no
+// Cloudflare types are imported, and every annotation here is erased at runtime.
+interface ImagesResult {
+  response(): { arrayBuffer(): Promise<ArrayBuffer> };
+}
+interface ImagesBinding {
+  input(stream: ReadableStream<Uint8Array>): {
+    transform(options: { width?: number; height?: number }): {
+      output(options: { format: string; quality: number }): ImagesResult;
+    };
+  };
+}
+
+export interface PreviewEnv {
+  // Owned and used by renderPreview, not by its callers.
+  IMAGES: ImagesBinding | null | undefined;
+}
+
+export interface RenderPreviewOptions {
+  maxEdge?: number;
+  quality?: number;
+  width?: number;
+  height?: number;
+}
+
+const asStream = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
   new ReadableStream({
     start(controller) {
       controller.enqueue(bytes.slice());
@@ -29,7 +62,7 @@ const asStream = (bytes) =>
   });
 
 /** Scale one dimension pair down inside `maxEdge`, never up. */
-export function previewDimensions(width, height, maxEdge = MAX_PREVIEW_EDGE) {
+export function previewDimensions(width: number, height: number, maxEdge: number = MAX_PREVIEW_EDGE) {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1)
     return null;
   const edge = Number.isSafeInteger(maxEdge) && maxEdge > 0 ? maxEdge : MAX_PREVIEW_EDGE;
@@ -46,7 +79,11 @@ export function previewDimensions(width, height, maxEdge = MAX_PREVIEW_EDGE) {
  *
  * @returns {Promise<{bytes: Uint8Array, mime: string, width: number, height: number, sha256: string}>}
  */
-export async function renderPreview(env, bytes, { maxEdge = MAX_PREVIEW_EDGE, quality = PREVIEW_QUALITY, width, height } = {}) {
+export async function renderPreview(
+  env: PreviewEnv,
+  bytes: Uint8Array,
+  { maxEdge = MAX_PREVIEW_EDGE, quality = PREVIEW_QUALITY, width, height }: RenderPreviewOptions = {}
+): Promise<RenderedPreview> {
   if (!bytes?.byteLength) throw new HttpError(400, "There are no image bytes to preview", "invalid");
   const source = sniffMedia(bytes);
   if (source.kind !== "image" || !PREVIEW_FORMATS.has(source.mime))
@@ -58,25 +95,25 @@ export async function renderPreview(env, bytes, { maxEdge = MAX_PREVIEW_EDGE, qu
       "preview_unavailable",
     );
 
-  let sourceWidth = width;
-  let sourceHeight = height;
+  let sourceWidth: number | null | undefined = width;
+  let sourceHeight: number | null | undefined = height;
   if (!Number.isSafeInteger(sourceWidth) || !Number.isSafeInteger(sourceHeight)) {
     const measured = imageSize(bytes);
     sourceWidth = measured.width;
     sourceHeight = measured.height;
   }
-  const target = previewDimensions(sourceWidth, sourceHeight, maxEdge);
+  const target = previewDimensions(sourceWidth!, sourceHeight!, maxEdge);
   if (!target) throw new HttpError(415, "That still's size could not be read", "unsupported_type");
 
   // A still that is already inside the target is not worth re-encoding, but it
   // is also not necessarily a WebP: normalise it so one MIME type is cached.
   const transform = target.width >= target.height ? { width: target.width } : { height: target.height };
-  let output;
+  let output: ImagesResult;
   try {
     output = await env.IMAGES.input(asStream(bytes))
       .transform(transform)
       .output({ format: "image/webp", quality });
-  } catch (cause) {
+  } catch (cause: any) {
     // Cloudflare answers 9432 on an account with legacy billing; the surface
     // should say what is wrong rather than repeat a binding failure. Keep one
     // bounded line in the log so a released failure can be diagnosed without
@@ -98,8 +135,8 @@ export async function renderPreview(env, bytes, { maxEdge = MAX_PREVIEW_EDGE, qu
   if (!rendered.byteLength)
     throw new HttpError(502, "The preview came back empty. Try again.", "preview_empty");
   const measured = imageSize(rendered);
-  const previewWidth = Number.isSafeInteger(measured.width) && measured.width > 0 ? measured.width : target.width;
-  const previewHeight = Number.isSafeInteger(measured.height) && measured.height > 0 ? measured.height : target.height;
+  const previewWidth = Number.isSafeInteger(measured.width) && measured.width! > 0 ? measured.width! : target.width;
+  const previewHeight = Number.isSafeInteger(measured.height) && measured.height! > 0 ? measured.height! : target.height;
   return {
     bytes: rendered,
     mime: PREVIEW_MIME,

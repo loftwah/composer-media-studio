@@ -10,7 +10,7 @@
 
 import { HttpError, sha256Hex } from "./util.mjs";
 import { inspectDerivative } from "./publication-derivatives.ts";
-import { renderPreview } from "./preview-rendition.mjs";
+import { renderPreview } from "./preview-rendition.ts";
 
 /** Only a stored still can be previewed; a film's frame needs a different job. */
 const PREVIEWABLE_KIND = "image";
