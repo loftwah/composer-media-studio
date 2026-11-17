@@ -72,6 +72,7 @@ const release = createReleaseRun({
   releasePath: "scripts/deploy.mjs",
   kind: "worker-production",
   receiptDir: ".release/timing",
+  firstEditAt: process.env.STUDIO_FIRST_EDIT_AT,
   github,
 });
 await release.flushPending();
