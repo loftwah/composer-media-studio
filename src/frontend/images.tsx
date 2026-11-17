@@ -214,7 +214,10 @@ type WorkItem = {
 
 type Rejection = { name: string; message: string };
 
-type RemovalFocus = { kind: "row"; id: string } | { kind: "picker" };
+type ListFocus =
+  | { kind: "row"; id: string }
+  | { kind: "row-action"; id: string; offset: -1 | 1 }
+  | { kind: "picker" };
 
 type ContactSheet = { url: string; layoutUrl: string; count: number; width: number; height: number };
 
@@ -810,7 +813,7 @@ function Images() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const processAllRef = useRef<HTMLButtonElement | null>(null);
-  const focusAfterRemoval = useRef<RemovalFocus | null>(null);
+  const focusAfterListChange = useRef<ListFocus | null>(null);
   const eyedropperRef = useRef<HTMLImageElement | null>(null);
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragIdRef = useRef("");
@@ -1003,17 +1006,29 @@ function Images() {
     setSnippetMessage("");
   }, [selected?.result?.url]);
 
-  useEffect(() => {
-    const pending = focusAfterRemoval.current;
+  // One list focus lifecycle serves removals and reorders: the pending target
+  // is chosen before the rows change, then restored after commit. Pointer
+  // drags never set it, so they leave focus where the user had it.
+  useLayoutEffect(() => {
+    const pending = focusAfterListChange.current;
     if (!pending) return;
-    focusAfterRemoval.current = null;
+    focusAfterListChange.current = null;
     if (pending.kind === "picker") {
       fileInputRef.current?.focus();
       return;
     }
     const row = listRef.current?.querySelector<HTMLButtonElement>(`[data-image-row="${pending.id}"]`);
+    if (pending.kind === "row-action") {
+      // At a list boundary move focus to the same row without reversing direction.
+      const direction = pending.offset < 0 ? "up" : "down";
+      const action = row?.closest("li")?.querySelector<HTMLButtonElement>(
+        `[data-image-move="${direction}"]:not(:disabled)`,
+      );
+      (action ?? row ?? fileInputRef.current)?.focus();
+      return;
+    }
     (row ?? fileInputRef.current)?.focus();
-  }, [items.length]);
+  }, [items]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -1162,7 +1177,7 @@ function Images() {
     const index = items.findIndex((candidate) => candidate.id === item.id);
     // One surviving neighbour keeps focus and the preview on the same row.
     const neighbour = items[index + 1] ?? items[index - 1] ?? null;
-    focusAfterRemoval.current = neighbour ? { kind: "row", id: neighbour.id } : { kind: "picker" };
+    focusAfterListChange.current = neighbour ? { kind: "row", id: neighbour.id } : { kind: "picker" };
     clearBatchExports();
     releaseItem(item);
     setItems((previous) => previous.filter((candidate) => candidate.id !== item.id));
@@ -1180,7 +1195,7 @@ function Images() {
   }
 
   function resetAll(): void {
-    focusAfterRemoval.current = { kind: "picker" };
+    focusAfterListChange.current = { kind: "picker" };
     revision.current += 1;
     stripRevision.current += 1;
     batchController.current?.controller.abort();
@@ -1744,20 +1759,26 @@ function Images() {
     setSettings((previous) => ({ ...previous, adjust: presetAdjustments(id) }));
   }
 
-  function moveItem(id: string, offset: number): void {
+  function moveItem(id: string, offset: -1 | 1): void {
     if (running) return;
+    const index = items.findIndex((candidate) => candidate.id === id);
+    const target = index + offset;
+    if (index < 0 || target < 0 || target >= items.length) return;
+    // The moved row keeps focus: the same direction while it remains valid,
+    // then the row selector at an edge.
+    focusAfterListChange.current = { kind: "row-action", id, offset };
     clearBatchExports();
     setItems((previous) => {
-      const index = previous.findIndex((candidate) => candidate.id === id);
-      const target = index + offset;
-      if (index < 0 || target < 0 || target >= previous.length) return previous;
+      const from = previous.findIndex((candidate) => candidate.id === id);
+      const to = from + offset;
+      if (from < 0 || to < 0 || to >= previous.length) return previous;
       const next = [...previous];
-      const [moved] = next.splice(index, 1);
-      next.splice(target, 0, moved);
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
       return next;
     });
     setMessage(
-      `${offset < 0 ? "Moved up" : "Moved down"}. The ZIP follows this list order.`,
+      `${offset < 0 ? "Moved up" : "Moved down"}. The ZIP and contact sheet follow this list order.`,
     );
   }
 
@@ -1775,7 +1796,7 @@ function Images() {
       next.splice(to, 0, moved);
       return next;
     });
-    setMessage("Reordered. The ZIP follows this list order.");
+    setMessage("Reordered. The ZIP and contact sheet follow this list order.");
   }
 
   async function extractSelectedPalette(): Promise<void> {
@@ -3081,8 +3102,9 @@ function Images() {
                   <button
                     type="button"
                     className="quiet"
+                    data-image-move="up"
                     disabled={running || index === 0}
-                    aria-label={`Move ${item.file.name} up in the ZIP order`}
+                    aria-label={`Move ${item.file.name} up in batch order`}
                     onClick={() => moveItem(item.id, -1)}
                   >
                     Move up
@@ -3090,8 +3112,9 @@ function Images() {
                   <button
                     type="button"
                     className="quiet"
+                    data-image-move="down"
                     disabled={running || index === items.length - 1}
-                    aria-label={`Move ${item.file.name} down in the ZIP order`}
+                    aria-label={`Move ${item.file.name} down in batch order`}
                     onClick={() => moveItem(item.id, 1)}
                   >
                     Move down
