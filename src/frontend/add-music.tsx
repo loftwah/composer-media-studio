@@ -143,6 +143,8 @@ function AddMusic() {
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [preview, setPreview] = useState("");
   const sourceVideo = useRef<HTMLVideoElement>(null), sourceMusic = useRef<HTMLAudioElement>(null), previewPlayer = useRef<HTMLAudioElement>(null), resultPlayer = useRef<HTMLVideoElement>(null);
+  const previewAction = useRef<HTMLButtonElement>(null);
+  const exportAction = useRef<HTMLButtonElement>(null);
   function pauseOthers(active?: HTMLMediaElement | null) { for (const player of [sourceVideo.current, sourceMusic.current, previewPlayer.current, resultPlayer.current]) if (player && player !== active) player.pause(); }
   function clearOutputs() { pauseOthers(); setPreview(""); setResult(""); setResultBlob(null); }
   const controller = useRef<AbortController | null>(null);
@@ -168,6 +170,15 @@ function AddMusic() {
     } catch (error) { setMessage(error instanceof Error && error.name === "AbortError" ? "Cancelled. Your originals are unchanged." : error instanceof Error ? error.message : "Could not prepare this on your device."); }
     finally { controller.current = null; setBusy(null); }
   }
+  function cancelRun(trigger: HTMLButtonElement) {
+    if (!controller.current) return;
+    controller.current.abort();
+    setMessage("Cancelling…");
+    if (document.activeElement === trigger) {
+      (busy === "preview" ? previewAction : exportAction).current?.focus();
+    }
+  }
+  const canRun = Boolean(video && music && !importing);
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Add music to a video</h1><p>Make a new MP4 from your own video and music on this device, without sign-in or paid generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="inputs-title"><h2 id="inputs-title">Choose your files</h2>
       <label className="trim-file">Video<input type="file" accept="video/mp4,video/webm" disabled={busy !== null || importing} onChange={e => choose(e.target.files?.[0],"video")}/></label>
@@ -181,7 +192,11 @@ function AddMusic() {
       <p className="trim-note">If your video has no original sound, only the chosen audio is added. Combining loud tracks can distort; lower the volumes and listen before saving.</p>
       <label>Export quality<select value={quality} disabled={busy !== null || importing} onChange={e=>{setQuality(e.target.value as "standard" | "hd");clearOutputs();}}><option value="standard">Standard · smaller file</option><option value="hd">HD · 720p</option></select></label>
       <p className="trim-note">HD takes longer and uses more memory. The original frame is fitted to your chosen size; bars may be added. Export uses H.264/AAC MP4 in a compatible browser.</p>
-      {!busy ? <div className="video-tool-actions"><button type="button" className="secondary" disabled={!video || !music || importing} onClick={()=>void run("preview")}>Preview mix (audio only)</button><button type="button" disabled={!video || !music || importing} onClick={()=>void run("export")}>Make MP4</button></div> : <button type="button" className="secondary" onClick={()=>{controller.current?.abort();setMessage("Cancelling…");}}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
+      <div className="video-tool-actions">
+        <button type="button" className="secondary" ref={previewAction} disabled={!canRun || busy === "export"} aria-disabled={busy === "preview"} onClick={() => void run("preview")}>Preview mix (audio only)</button>
+        <button type="button" ref={exportAction} disabled={!canRun || busy === "preview"} aria-disabled={busy === "export"} onClick={() => void run("export")}>Make MP4</button>
+        {busy && <button type="button" className="secondary" onClick={event => cancelRun(event.currentTarget)}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
+      </div>
       {preview && <div className="trim-result"><h2>Audio-only mix preview</h2><p className="trim-note">This is the sound mix, without video. Play the original video above to compare. The MP4 uses AAC encoding, so it may sound slightly different.</p><audio ref={previewPlayer} onPlay={()=>pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/></div>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/>}</div>}
     </section></main>;
