@@ -84,6 +84,7 @@ import {
 } from "./image-contact-sheet.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
+import { ImageCover } from "./image-cover.tsx";
 import {
   SOCIAL_KIT_FORMATS,
   SOCIAL_SIZES,
@@ -2391,6 +2392,11 @@ function Images() {
                 Keep the hashes and settings for this finished image. Later
                 edits to the controls leave this receipt tied to the download.
               </p>
+              <ImageCover
+                key={`${selected.id}:${selected.result.sha256}`}
+                source={selected.result}
+                encodePng={canvas => canvasToBlob(canvas, "image/png")}
+              />
             </div>
           )}
           {selected.error && <p className="notice warn" role="alert">{selected.error}</p>}
