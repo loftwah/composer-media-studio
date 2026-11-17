@@ -2048,9 +2048,22 @@ function Images() {
                   >
                     Download palette (.json)
                   </a>
+                  <a
+                    className="button secondary"
+                    href="https://composer-launch-kit.loftwah.workers.dev/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Use palette in Launch Kit
+                  </a>
                 </>
               )}
             </div>
+            {!running && !paletteBusy && visiblePalette && visiblePalette.result.colors.length > 0 && (
+              <p className="trim-note">
+                Download the palette JSON, then select it under “Import a Media Studio palette” in Launch Kit. The file stays on your device.
+              </p>
+            )}
             <p className="trim-note" role="status" aria-live="polite">
               {paletteMessage ||
                 "No palette yet. Extraction runs on this device and does not change the original File."}
