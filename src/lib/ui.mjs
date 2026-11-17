@@ -2,7 +2,7 @@
 
 import { escapeHtml } from "./util.mjs";
 import { composerShare, composerShowcase } from "./composer-share.ts";
-import { woodhouseUrl } from "./woodhouse-share.mjs";
+import { woodhouseUrl } from "./woodhouse-share.ts";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 

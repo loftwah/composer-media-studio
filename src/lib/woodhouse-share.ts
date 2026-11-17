@@ -1,13 +1,40 @@
 // MIT. Public, read-through access to the installation's Woodhouse Share source.
 import { HttpError } from "./util.mjs";
 
+// The catalogue is an external contract. These narrow names cover only the
+// fields this module and its existing callers read; the runtime checks below
+// still decide what is safe to return.
+export interface ShareOriginal {
+  url?: unknown;
+  sha256?: unknown;
+}
+
+export interface ShareAsset {
+  id: string;
+  title?: unknown;
+  project?: unknown;
+  thumbnailUrl?: unknown;
+  visibility?: unknown;
+  credit: string;
+  reuse: string;
+  sourceUrl: unknown;
+  original?: ShareOriginal;
+}
+
+interface ShareCatalogue {
+  version: unknown;
+  asset?: ShareAsset;
+  assets: ShareAsset[];
+  nextAfter?: string;
+}
+
 export const shareOrigin = "https://woodhouse.loftwah.com";
 export const shareApi = shareOrigin + "/api/v1/assets";
 const MAX_CATALOGUE_BYTES = 256 * 1024;
 const identifier = /^[a-z0-9][a-z0-9-]{0,127}$/;
-export function woodhouseUrl(value) {
+export function woodhouseUrl(value: unknown): string | null {
   try {
-    const url = new URL(value);
+    const url = new URL(value as string | URL);
     if (url.origin === shareOrigin && !url.username && !url.password) return url.href;
   } catch {
     // Invalid catalogue links are skipped.
@@ -15,11 +42,11 @@ export function woodhouseUrl(value) {
   return null;
 }
 
-function shareFetch(url, timeout) {
+function shareFetch(url: string, timeout: number): Promise<Response> {
   return fetch(url, { redirect: "manual", signal: AbortSignal.timeout(timeout) });
 }
 
-async function requestCatalogue(url, timeout = 8000) {
+async function requestCatalogue(url: string, timeout = 8000): Promise<ShareCatalogue> {
   const response = await shareFetch(url, timeout);
   if (response.status === 404) throw new HttpError(404, "This artwork is no longer listed in Woodhouse Share.");
   if (!response.ok) throw new Error(`Share catalogue returned HTTP ${response.status}`);
@@ -28,19 +55,19 @@ async function requestCatalogue(url, timeout = 8000) {
     throw new Error("Share catalogue response is too large");
   }
   let size = 0;
-  const bounded = response.body.pipeThrough(new TransformStream({
+  const bounded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       size += chunk.byteLength;
       if (size > MAX_CATALOGUE_BYTES) controller.error(new Error("Share catalogue response is too large"));
       else controller.enqueue(chunk);
     },
   }));
-  const data = await new Response(bounded).json();
+  const data = await new Response(bounded).json() as ShareCatalogue;
   if (data.version !== 1) throw new Error("Unexpected Share catalogue version");
   return data;
 }
 
-export async function shareAsset(assetId, timeout = 8000) {
+export async function shareAsset(assetId: string, timeout = 8000): Promise<ShareAsset> {
   if (typeof assetId !== "string" || !identifier.test(assetId))
     throw new HttpError(400, "Enter a valid Woodhouse Share asset ID.");
   const { asset } = await requestCatalogue(shareApi + "/" + assetId, timeout);
@@ -49,7 +76,7 @@ export async function shareAsset(assetId, timeout = 8000) {
   return asset;
 }
 
-export async function sharePage(params, limit = 24) {
+export async function sharePage(params: URLSearchParams, limit = 24) {
   const query = (params.get("q") ?? "").trim().slice(0, 100);
   const project = params.get("project") ?? "";
   const after = params.get("after") ?? "";
@@ -66,7 +93,7 @@ export async function sharePage(params, limit = 24) {
   };
 }
 
-export async function shareOriginal(asset, limit, timeout = 20000) {
+export async function shareOriginal(asset: ShareAsset, limit: number, timeout = 20000): Promise<Uint8Array> {
   const url = woodhouseUrl(asset.original?.url);
   if (!url) throw new HttpError(422, "This artwork has no supported original.");
   const response = await shareFetch(url, timeout);
@@ -77,7 +104,7 @@ export async function shareOriginal(asset, limit, timeout = 20000) {
     throw new HttpError(413, "This artwork exceeds the image upload limit.");
   }
   const reader = response.body.getReader();
-  const parts = [];
+  const parts: BlobPart[] = [];
   let total = 0;
   try {
     while (true) {
