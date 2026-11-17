@@ -2386,6 +2386,8 @@ async function handlePublic(request, env, url) {
       title: publication.title,
       description: publication.description,
       listed,
+      // First playable publication instant, not the asset's own created_at.
+      publishedAt: publication.created_at,
       attribution: safeJson(publication.attribution_json, []),
       kind: publication.asset_kind,
       mime: publication.asset_mime,
