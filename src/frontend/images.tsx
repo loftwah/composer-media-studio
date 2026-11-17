@@ -83,6 +83,11 @@ import {
   contactSheetPlacement,
 } from "./image-contact-sheet.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
+import {
+  canExportImageAsPng,
+  settingsForImage,
+  type ExportFormat,
+} from "./image-export-override.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
 import { ImageCover } from "./image-cover.tsx";
 import {
@@ -97,7 +102,6 @@ import { createRoot } from "react-dom/client";
 import "./audio-trim.css";
 import "./images.css";
 
-type ExportFormat = "png" | "jpeg" | "webp";
 type ResizeMode = "long-edge" | "max-long-edge" | "exact";
 type ResampleMode = "smooth" | "nearest";
 type PreviewBackdrop = "checkerboard" | "white" | "black";
@@ -201,6 +205,8 @@ type WorkItem = {
   result?: RenderedImage;
   stripped?: StrippedImage;
   error?: string;
+  /** A reversible one-image choice: export this PNG source as lossless PNG. */
+  pngOverride?: boolean;
 };
 
 type Rejection = { name: string; message: string };
@@ -814,8 +820,13 @@ function Images() {
     trim.flipV === settings.flipV
       ? trim.rect
       : null;
-  const plan = selected ? makePlan(selected.source, settings, activeTrim) : null;
-  const currentSettingsKey = settingsKey(settings, activeTrim);
+  // The batch controls stay shared; this one choice changes only the selected
+  // PNG image's effective settings. Everything downstream reads that snapshot.
+  const selectedSettings = selected
+    ? settingsForImage(settings, selected.source.mime, Boolean(selected.pngOverride))
+    : settings;
+  const plan = selected ? makePlan(selected.source, selectedSettings, activeTrim) : null;
+  const currentSettingsKey = settingsKey(selectedSettings, activeTrim);
   const freshResult = selected?.result?.settingsKey === currentSettingsKey;
   const outputHash = selected?.result?.sha256;
   const canCopyPng =
@@ -833,14 +844,22 @@ function Images() {
           (selected.source.orientedWidth * selected.source.orientedHeight) <
         0.001
       : false;
+  const hasPngOverride = items.some((item) => item.pngOverride);
   const controlsAreOriginal =
-    settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim;
-  const requestedTargetBytes =
-    settings.targetKiB === null ? null : Math.round(settings.targetKiB * 1024);
+    settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim && !hasPngOverride;
+  const requestedTargetBytes = targetBytesFor(selectedSettings);
   const targetProblem =
     requestedTargetBytes === null
       ? null
-      : targetSizeProblem(settings.format, requestedTargetBytes);
+      : targetSizeProblem(selectedSettings.format, requestedTargetBytes);
+  // A PNG override drops the byte target for that image only. The batch is
+  // blocked by an unusable target only when at least one image still uses it.
+  const batchUsesTarget = items.some(
+    (item) => !canExportImageAsPng(item.source.mime, settings.format) || !item.pngOverride,
+  );
+  const batchTargetProblem = batchUsesTarget
+    ? targetSizeProblem(settings.format, targetBytesFor(settings))
+    : null;
   const visiblePalette = palette && selected && palette.itemId === selected.id ? palette : null;
   const visibleSnippets =
     snippets && selected?.result?.sha256 === snippets.key ? snippets.data : null;
@@ -1188,7 +1207,12 @@ function Images() {
           trimSnapshot.flipV === snapshot.flipV
             ? trimSnapshot.rect
             : null;
-        const rendered = await renderImage(item, snapshot, controller.signal, cropRect);
+        const itemSettings = settingsForImage(
+          snapshot,
+          item.source.mime,
+          Boolean(item.pngOverride),
+        );
+        const rendered = await renderImage(item, itemSettings, controller.signal, cropRect);
         if (controller.signal.aborted) {
           cancelled = true;
           setItems((previous) =>
@@ -1381,8 +1405,19 @@ function Images() {
     }));
   }
 
+  function setPngOverride(item: WorkItem, enabled: boolean): void {
+    if (runningRef.current || addingRef.current) return;
+    if (enabled && !canExportImageAsPng(item.source.mime, settings.format)) return;
+    setItems((previous) =>
+      previous.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, pngOverride: enabled } : candidate,
+      ),
+    );
+  }
+
   function applyWebReady(): void {
     if (!selected || runningRef.current || socialController.current) return;
+    if (selected.pngOverride) setPngOverride(selected, false);
     setSettings((previous) => ({
       ...previous,
       resizeMode: "max-long-edge",
@@ -1537,6 +1572,9 @@ function Images() {
 
   function resetControls(): void {
     setSettings(DEFAULT_SETTINGS);
+    setItems((previous) =>
+      previous.map((item) => (item.pngOverride ? { ...item, pngOverride: false } : item)),
+    );
     setTrim(null);
     setTrimMessage("");
     setMessage(
@@ -2193,6 +2231,9 @@ function Images() {
                 The quality slider applies when no target is set. A target instead runs a bounded, deterministic search and reports the real encoded bytes; if the smallest result still exceeds it, the result says so instead of claiming success.
               </p>
             )}
+            {selectedSettings.format !== settings.format && (
+              <p className="trim-note">This image will export as PNG. The batch format and byte target still apply to the other images using those settings.</p>
+            )}
             {settings.format === "jpeg" && (
               <label>Matte colour for transparency
                 <input type="color" value={settings.matte} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, matte: event.target.value }))} />
@@ -2811,8 +2852,11 @@ function Images() {
           <h2 id="image-batch-heading">Batch</h2>
           <span>{items.length} image{items.length === 1 ? "" : "s"} · sequential</span>
         </div>
+        {batchTargetProblem && batchTargetProblem !== targetProblem && (
+          <p className="trim-note">Batch output size: {batchTargetProblem}</p>
+        )}
         <div className="image-control-actions">
-          <button type="button" disabled={running || socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items, setBatchMessage)}>
+          <button type="button" disabled={running || socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(batchTargetProblem)} onClick={() => void runItems(items, setBatchMessage)}>
             Process all {items.length || ""} with these settings
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
@@ -2874,20 +2918,35 @@ function Images() {
                   dropItem(item.id);
                 }}
               >
-                <button
-                  type="button"
-                  className="image-list-select"
-                  data-image-row={item.id}
-                  onClick={() => selectItem(item.id)}
-                  aria-pressed={item.id === selectedId}
-                >
-                  <span className="image-list-name">{item.file.name}</span>
-                  <span className="image-list-meta">
-                    {item.source.orientedWidth} × {item.source.orientedHeight} · {formatBytes(item.file.size)} · {item.status}
-                    {item.result ? ` · ${item.result.width} × ${item.result.height} · ${formatBytes(item.result.bytes)}` : ""}
-                  </span>
-                  {item.error && <span className="image-list-error">{item.error}</span>}
-                </button>
+                <div className="image-list-main">
+                  <button
+                    type="button"
+                    className="image-list-select"
+                    data-image-row={item.id}
+                    onClick={() => selectItem(item.id)}
+                    aria-pressed={item.id === selectedId}
+                  >
+                    <span className="image-list-name">{item.file.name}</span>
+                    <span className="image-list-meta">
+                      {item.source.orientedWidth} × {item.source.orientedHeight} · {formatBytes(item.file.size)} · {item.status}
+                      {item.result ? ` · ${item.result.width} × ${item.result.height} · ${formatBytes(item.result.bytes)}` : ""}
+                    </span>
+                    {item.error && <span className="image-list-error">{item.error}</span>}
+                  </button>
+                  {canExportImageAsPng(item.source.mime, settings.format) && (
+                    <label className="image-list-override">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(item.pngOverride)}
+                        disabled={running || adding}
+                        aria-label={`Export ${item.file.name} as PNG`}
+                        aria-describedby="image-batch-note"
+                        onChange={(event) => setPngOverride(item, event.target.checked)}
+                      />
+                      Export this image as PNG
+                    </label>
+                  )}
+                </div>
                 <div className="image-list-actions">
                   <button
                     type="button"
@@ -2919,12 +2978,13 @@ function Images() {
             ))}
           </ul>
         )}
-        <p className="trim-note">
+        <p className="trim-note" id="image-batch-note">
           Drag a row or use Move up and Move down to change the order. Each image is
           decoded and encoded one at a time. ZIPs and contact sheets follow this list order. Cancelling
           stops after the current encode, and already completed downloads stay in the
           list. ZIP export uses a small store-only writer in this page, not a server
-          archive.
+          archive. <strong>Export this image as PNG</strong> applies only to that checked
+          PNG and uses no byte target; unchecked images keep the batch format.
         </p>
       </section>
     </main>
