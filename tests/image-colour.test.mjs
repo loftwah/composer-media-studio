@@ -11,6 +11,7 @@ import {
   paletteToAse,
   paletteToCss,
   paletteToGpl,
+  paletteToJson,
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
@@ -144,6 +145,44 @@ test("CSS palette exports the exact swatches as valid :root custom properties", 
   const values = [...css.matchAll(/--swatch-\d+:\s*(#[0-9a-f]{6});/g)].map((match) => match[1]);
   assert.deepEqual(values, colors.map((colour) => colour.hex));
   assert.equal(values.length, colors.length);
+});
+
+test("JSON palette is a versioned, swatch-only document with clear colour semantics", () => {
+  const rgb = [[255, 0, 0], [0, 0, 255], [51, 102, 153]];
+  const { colors } = extractPalette(
+    makePixels(rgb.length, 1, (x) => [...rgb[x], x === 0 ? 128 : 255]),
+    { width: rgb.length, height: 1 },
+  );
+  const text = paletteToJson(colors);
+  const doc = JSON.parse(text);
+
+  assert.equal(doc.format, "media-studio-palette");
+  assert.equal(doc.version, 1, "version 1 is the immutable schema");
+  assert.deepEqual(Object.keys(doc), ["format", "version", "units", "colors"]);
+  assert.match(doc.units.hex, /rrggbb/);
+  assert.match(doc.units.rgb, /0-255/);
+  assert.match(doc.units.hsl, /degrees/);
+  assert.match(doc.units.alpha, /255/);
+
+  assert.equal(doc.colors.length, colors.length);
+  assert.equal(doc.colors.find((swatch) => swatch.hex === "#ff0000").alpha, 128);
+  assert.deepEqual(
+    doc.colors.map((swatch) => swatch.hex),
+    colors.map((colour) => colour.hex),
+    "same order and exact HEX values as the CSS/GPL exports",
+  );
+  doc.colors.forEach((swatch, index) => {
+    const colour = colors[index];
+    assert.deepEqual(Object.keys(swatch), ["hex", "rgb", "hsl", "alpha"]);
+    assert.deepEqual(swatch.rgb, colour.rgb);
+    assert.deepEqual(swatch.hsl, colour.hsl);
+    assert.equal(swatch.alpha, colour.alpha);
+  });
+
+  // No source filename, private extraction metadata, pixels, credentials or timestamps.
+  assert.ok(
+    !/\b(count|coverage|filename|pixel|timestamp|created|updated|credential|token|secret)\b/i.test(text),
+  );
 });
 
 test("ASE palette writes a valid ASEF 1.0 header and one normal RGB block per exact swatch", () => {
