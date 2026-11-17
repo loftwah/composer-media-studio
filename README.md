@@ -107,14 +107,15 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 
 The script uses **Extract palette** and compares the complete v1 JSON export, including the swatch order. The report includes a digest of the selected PNG and a separate digest of the downloaded palette. The palette format itself carries swatches and units. Use the same build and Chrome version for an exact replay.
 
-## Strip metadata from an explicit local PNG
+## Strip metadata from an explicit local image
 
-Choose one PNG and an unused destination. This uses the same lossless metadata
-rewrite and checks as **Strip metadata and verify**; the ICC profile is kept by
-default and the pixels are not re-encoded.
+Choose one JPEG, PNG or WebP image and an unused destination. This uses the same
+lossless metadata rewrite and checks as **Strip metadata and verify**; the ICC
+profile is kept by default, a non-default orientation is retained, and the pixels
+are not re-encoded.
 
 ```sh
-node scripts/local-metadata-strip.mjs --source ./source.png --output ./stripped.png
+node scripts/local-metadata-strip.mjs --source ./source.jpg --output ./stripped.jpg
 ```
 
 It refuses an existing output path and reports the source and output hashes,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { parseArgs } from "node:util";
 import { stripImageMetadata } from "../src/frontend/image-metadata.ts";
-import { digest, readLocalPng, saveNewPng } from "./local-image-workbench.mjs";
+import { digest, readLocalImage, saveNewImage } from "./local-image-workbench.mjs";
 
 async function main() {
   const { values } = parseArgs({
@@ -10,15 +10,14 @@ async function main() {
       output: { type: "string" },
     },
   });
-  assert(values.source, "Supply an explicit --source <PNG>.");
-  assert(values.output, "Supply an explicit new --output <PNG path>.");
+  assert(values.source, "Supply an explicit --source <JPEG, PNG or WebP>.");
+  assert(values.output, "Supply an explicit new --output path.");
 
-  const source = await readLocalPng(values.source);
+  const source = await readLocalImage(values.source);
   const result = stripImageMetadata(source);
-  assert.equal(result.format, "png");
   assert(result.verified.all, "The metadata-only copy did not pass verification; the original is unchanged.");
 
-  await saveNewPng(values.output, result.bytes);
+  await saveNewImage(values.output, result.bytes);
   console.log(JSON.stringify({
     format: result.format,
     source: { sha256: digest(source), bytes: source.length, width: result.before.width, height: result.before.height },
