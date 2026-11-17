@@ -6,6 +6,7 @@ import {
   allowedActions,
   claimHandoff,
   createSession,
+  projectResumeBinding,
   readBridgeToken,
   readSession,
   requireSession,
@@ -46,6 +47,17 @@ function requestWith(token) {
     headers: { cookie: `studio_session=${token}` },
   });
 }
+
+test("project resume stays with one actor and workspace across handoffs", async () => {
+  const session = { mode: "bridge", actor: "creator", workspace: "first", project: null, issued: 1 };
+  const binding = await projectResumeBinding(env, session);
+  assert.match(binding, /^[a-f0-9]{64}$/);
+  assert.equal(await projectResumeBinding(env, { ...session, issued: 2, revision: 7 }), binding);
+  for (const scope of [{ actor: "someone-else" }, { workspace: "second" }, { project: "prj_example" }, { mode: "owner" }]) {
+    assert.notEqual(await projectResumeBinding(env, { ...session, ...scope }), binding);
+  }
+  assert.equal(await projectResumeBinding(env, null), null);
+});
 
 test("a bridge token carries the actor, workspace, project and actions", async () => {
   const token = await bridge({

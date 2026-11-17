@@ -50,13 +50,14 @@ function ProjectCard({ project }: { project: ProjectSummaryV1 }) {
 }
 function Home({
   projects,
+  resumeProjectId,
   videosConfigured,
   woodhouseShare,
   showcase,
   canEdit,
   canRestore,
 }: HomeProps) {
-  const recent = projects[0];
+  const recent = projects.find((project) => project.id === resumeProjectId);
   return (
     <div className="creative-home">
       <header className="creative-intro">
@@ -113,7 +114,7 @@ function Home({
             )}
           </div>
         </section>
-      ) : (
+      ) : projects.length === 0 ? (
         <section className="creative-blank">
           <h2>Start with an idea</h2>
           <p>
@@ -126,7 +127,24 @@ function Home({
             </button>
           )}
         </section>
-      )}
+      ) : null}
+      <section aria-labelledby="creative-projects">
+        <div className="creative-section-head">
+          <h2 id="creative-projects">Your studios</h2>
+          <span>{count(projects.length, "project")}</span>
+        </div>
+        {projects.length ? (
+          <div className="creative-grid">
+            {projects.map((p) => (
+              <ProjectCard key={p.id} project={p} />
+            ))}
+          </div>
+        ) : (
+          <p className="creative-meta">
+            There are no studios available for this account yet.
+          </p>
+        )}
+      </section>
       {showcase.length > 0 && (
         <section
           className="creative-showcase"
@@ -175,23 +193,6 @@ function Home({
           </div>
         </section>
       )}
-      <section aria-labelledby="creative-projects">
-        <div className="creative-section-head">
-          <h2 id="creative-projects">Your studios</h2>
-          <span>{count(projects.length, "project")}</span>
-        </div>
-        {projects.length ? (
-          <div className="creative-grid">
-            {projects.map((p) => (
-              <ProjectCard key={p.id} project={p} />
-            ))}
-          </div>
-        ) : (
-          <p className="creative-meta">
-            There are no studios available for this account yet.
-          </p>
-        )}
-      </section>
       <RestorePanel canRestore={canRestore} />
       <section className="creative-footer" aria-label="Studio tools">
         <div>

@@ -10,6 +10,7 @@ import {
   clearCookie,
   createSession,
   projectAccessible,
+  projectResumeBinding,
   projectAccessDeniedMessage,
   readBridgeToken,
   readSession,
@@ -661,6 +662,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     return json({
       signedIn: Boolean(live),
       localImportBinding: await sessionBinding(env, live),
+      projectResumeBinding: await projectResumeBinding(env, live),
       mode: live?.mode ?? null,
       actor: live?.actorName ?? live?.actor ?? null,
       workspace: live?.workspaceName ?? live?.workspace ?? null,

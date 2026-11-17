@@ -55,6 +55,12 @@ export async function sessionBinding(env, session) {
   return sign(env.SESSION_SECRET, `local-import-session:${JSON.stringify(fields)}`);
 }
 
+// Stable across sign-in handoffs for one actor and access scope.
+export async function projectResumeBinding(env, session) {
+  if (!session || !env.SESSION_SECRET) return null;
+  return sign(env.SESSION_SECRET, `project-resume:${JSON.stringify([session.mode, session.actor, session.workspace, session.project])}`);
+}
+
 export async function createSession(env, claims = {}) {
   if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32)
     throw new HttpError(500, "Studio session secret is not configured", "not_configured");
