@@ -33,7 +33,7 @@ import {
   cancelVideo,
 } from "./providers.mjs";
 import { DARKROOM_VERSION, darkroomOriginalKey, eraseDarkroomOperation, isDarkroomGeneration, recoverDarkroomImage, runDarkroomImage, usesDarkroom } from "./darkroom.mjs";
-import { builtinRecipe } from "./recipes.mjs";
+import { builtinRecipe } from "./recipes.ts";
 import { signRenderLink } from "./render-links.mjs";
 import { measureFootageSource } from "./footage-preflight.mjs";
 import {

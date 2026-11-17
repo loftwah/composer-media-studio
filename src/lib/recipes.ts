@@ -2,7 +2,103 @@
 // Every control states how it is applied: provider-native or prompt instruction.
 // A recipe is a starting point, never hidden billed work.
 
-export const builtinRecipes = [
+export type RecipeKind = "image" | "video";
+
+/** How a control reaches the provider: as prompt text or as a native field. */
+export type RecipeApplication = "prompt" | "provider-native";
+
+export interface RecipeTextControl {
+  key: string;
+  label: string;
+  type: "text";
+  default: string;
+  application: RecipeApplication;
+}
+
+export interface RecipeSelectControl {
+  key: string;
+  label: string;
+  type: "select";
+  options: readonly string[];
+  default: string;
+  application: RecipeApplication;
+}
+
+/** A fixed native value the owner does not edit. */
+export interface RecipeHiddenControl {
+  key: string;
+  label: string;
+  type: "hidden";
+  default: string;
+  application: "provider-native";
+}
+
+/** A required input asset, such as a still to animate. It has no default. */
+export interface RecipeReferenceControl {
+  key: string;
+  label: string;
+  type: "reference";
+  default?: never;
+  application: "provider-native";
+}
+
+export type RecipeControl =
+  | RecipeTextControl
+  | RecipeSelectControl
+  | RecipeHiddenControl
+  | RecipeReferenceControl;
+
+export interface BuiltinRecipe {
+  slug: string;
+  title: string;
+  description: string;
+  kind: RecipeKind;
+  model: string;
+  promptTemplate: string;
+  controls: RecipeControl[];
+  negativePrompt: string;
+}
+
+/** The `recipes` columns the project view projects, exactly as D1 returns them. */
+export interface RecipeRow {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  kind: RecipeKind;
+  prompt_template: string;
+  controls_json: string;
+  version: number;
+}
+
+export interface ProjectedBuiltinRecipe {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  kind: RecipeKind;
+  model: string;
+  promptTemplate: string;
+  controls: RecipeControl[];
+  version: 1;
+  builtin: true;
+}
+
+export interface ProjectedStoredRecipe {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  kind: RecipeKind;
+  promptTemplate: string;
+  controls: RecipeControl[];
+  version: number;
+  builtin: false;
+}
+
+export type ProjectedRecipe = ProjectedBuiltinRecipe | ProjectedStoredRecipe;
+
+export const builtinRecipes: BuiltinRecipe[] = [
   {
     slug: "editorial-print",
     title: "Editorial print",
@@ -83,21 +179,24 @@ export const builtinRecipes = [
   },
 ];
 
-export function builtinRecipe(slug) {
+export function builtinRecipe(slug: string): BuiltinRecipe | null {
   return builtinRecipes.find((recipe) => recipe.slug === slug) ?? null;
 }
 
-export function renderPrompt(recipe, values) {
-  return recipe.promptTemplate.replace(/\{(\w+)\}/g, (_, key) => {
+export function renderPrompt(
+  recipe: { promptTemplate: string; controls: readonly RecipeControl[] },
+  values: Readonly<Record<string, unknown>>,
+): string {
+  return recipe.promptTemplate.replace(/\{(\w+)\}/g, (_, key: string) => {
     const control = recipe.controls.find((item) => item.key === key);
     const value = values[key] ?? control?.default ?? "";
     return String(value).slice(0, 600);
   });
 }
 
-export function projectRecipes(projectId, rows) {
+export function projectRecipes(projectId: string, rows: readonly RecipeRow[]): ProjectedRecipe[] {
   return [
-    ...builtinRecipes.map((recipe) => ({
+    ...builtinRecipes.map((recipe): ProjectedBuiltinRecipe => ({
       id: `builtin:${recipe.slug}`,
       slug: recipe.slug,
       title: recipe.title,
@@ -109,7 +208,7 @@ export function projectRecipes(projectId, rows) {
       version: 1,
       builtin: true,
     })),
-    ...rows.map((row) => ({
+    ...rows.map((row): ProjectedStoredRecipe => ({
       id: row.id,
       slug: row.slug,
       title: row.title,
