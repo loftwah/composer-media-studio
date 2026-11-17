@@ -2521,13 +2521,29 @@ async function handlePublic(request, env, url) {
   }
   // Public discovery files are rebuilt from D1 and enumerate only the public
   // state. They share the 60-second public cache boundary with the pages they
-  // name, so a withdrawal disappears within that window.
-  if (path === "/sitemap.xml" || path === "/robots.txt") {
+  // name, so a withdrawal disappears within that window. Above the single-file
+  // cap, /sitemap.xml is a same-origin index of numbered child sitemaps.
+  const sitemapChild = path.match(/^\/sitemap-([1-9][0-9]*)\.xml$/);
+  if (path === "/sitemap.xml" || sitemapChild || path === "/robots.txt") {
     const origin = publicOrigin(env, request.url);
-    const sitemap = path === "/sitemap.xml";
-    return new Response(sitemap ? await publicSitemap(env, origin) : robotsTxt(origin), {
+    if (path === "/robots.txt") {
+      return new Response(robotsTxt(origin), {
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}`,
+        },
+      });
+    }
+    const body = await publicSitemap(env, origin, sitemapChild ? Number(sitemapChild[1]) : null);
+    if (body === null) {
+      return new Response(notFoundPage(), {
+        status: 404,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+    return new Response(body, {
       headers: {
-        "content-type": sitemap ? "application/xml; charset=utf-8" : "text/plain; charset=utf-8",
+        "content-type": "application/xml; charset=utf-8",
         "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}`,
       },
     });

@@ -12,12 +12,28 @@
 // engine de-indexing is outside this app's control.
 //
 // Publication copy can change after creation. A verified last-public-change
-// timestamp is needed before these URLs can include lastmod.
+// timestamp is needed before these URLs can include lastmod, so none is emitted
+// here (in the urlset or in a sitemap index).
+//
+// Overflow: while the catalogue fits in one file, /sitemap.xml is a plain
+// urlset, unchanged. Past SITEMAP_LIMIT eligible publications, /sitemap.xml
+// becomes a sitemap index of same-origin, same-directory numbered children
+// (/sitemap-1.xml, ...), each within the same URL cap. Everything is derived
+// from the same eligibility query on each read: no sitemap rows are stored.
 
 import { escapeHtml } from "./util.mjs";
 
 export const SITEMAP_LIMIT = 5000;
 export const PUBLIC_CACHE_SECONDS = 60;
+
+// The one predicate that decides whether a publication may be enumerated.
+// Reused verbatim by the count and the paginated reads so an overflow page can
+// never disagree with the file that indexes it.
+const ELIGIBLE_PUBLICATIONS =
+  `FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
+   WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL`;
+const PUBLICATION_ORDER = ` ORDER BY p.created_at DESC,p.id DESC`;
+const STATIC_PATHS = ["/", "/gallery"];
 
 /** The configured public origin, falling back to the request's own origin. */
 export function publicOrigin(env, requestUrl) {
@@ -33,24 +49,63 @@ export function publicOrigin(env, requestUrl) {
   return new URL(requestUrl).origin;
 }
 
-/** Rebuild sitemap.xml from the publications whose state is public. */
-export async function publicSitemap(env, origin) {
-  const rows = await env.DB.prepare(
-    `SELECT p.slug
-     FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
-     WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL
-     ORDER BY p.created_at DESC,p.id DESC LIMIT ?1`,
-  )
-    .bind(SITEMAP_LIMIT)
-    .all();
-  const urls = [
-    `${origin}/`,
-    `${origin}/gallery`,
-    ...rows.results.map((row) => `${origin}/p/${encodeURIComponent(row.slug)}`),
-  ];
+function urlset(urls) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
     .map((loc) => `  <url><loc>${escapeHtml(loc)}</loc></url>`)
     .join("\n")}\n</urlset>\n`;
+}
+
+/** One page of eligible publication URLs, in the same order as the flat file. */
+async function publicationUrls(env, origin, limit, offset) {
+  const { results } = await env.DB.prepare(
+    `SELECT p.slug ${ELIGIBLE_PUBLICATIONS}${PUBLICATION_ORDER} LIMIT ?1 OFFSET ?2`,
+  )
+    .bind(limit, offset)
+    .all();
+  return results.map((row) => `${origin}/p/${encodeURIComponent(row.slug)}`);
+}
+
+async function eligibleCount(env) {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS n ${ELIGIBLE_PUBLICATIONS}`).first();
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * Rebuild a public sitemap document from the publications whose state is public.
+ * With `child === null` this is /sitemap.xml: a urlset below the cap, a sitemap
+ * index above it. A numbered child returns its urlset, or null if that child is
+ * not part of the current index (the router answers 404).
+ */
+export async function publicSitemap(env, origin, child = null) {
+  const count = await eligibleCount(env);
+  const totalUrls = count + STATIC_PATHS.length;
+  const overflow = count > SITEMAP_LIMIT;
+  // No numbered children exist for a catalogue that fits in one file.
+  const pageCount = overflow ? Math.ceil(totalUrls / SITEMAP_LIMIT) : 0;
+
+  if (child === null) {
+    if (!overflow) {
+      return urlset([
+        ...STATIC_PATHS.map((path) => `${origin}${path}`),
+        ...await publicationUrls(env, origin, SITEMAP_LIMIT, 0),
+      ]);
+    }
+    const locs = Array.from({ length: pageCount }, (_, index) => `${origin}/sitemap-${index + 1}.xml`);
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${locs
+      .map((loc) => `  <sitemap><loc>${escapeHtml(loc)}</loc></sitemap>`)
+      .join("\n")}\n</sitemapindex>\n`;
+  }
+
+  if (!Number.isInteger(child) || child < 1 || child > pageCount) return null;
+  const start = (child - 1) * SITEMAP_LIMIT;
+  const end = Math.min(start + SITEMAP_LIMIT, totalUrls);
+  // The two static URLs live at the head of child 1; every publication keeps
+  // one stable zero-based slot in the global ordering across all children.
+  const publicationStart = Math.max(start, STATIC_PATHS.length) - STATIC_PATHS.length;
+  const publicationCount = end - STATIC_PATHS.length - publicationStart;
+  const urls = start === 0 ? STATIC_PATHS.map((path) => `${origin}${path}`) : [];
+  if (publicationCount > 0) urls.push(...await publicationUrls(env, origin, publicationCount, publicationStart));
+  return urlset(urls);
 }
 
 /** Point crawlers at the public catalogue and away from private surfaces. */
