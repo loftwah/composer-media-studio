@@ -10,6 +10,9 @@
 // seconds (`public, max-age=60`): a withdrawal stops new reads at once, and a
 // cache that already holds a copy may serve it for at most that window. Search
 // engine de-indexing is outside this app's control.
+//
+// Publication copy can change after creation. A verified last-public-change
+// timestamp is needed before these URLs can include lastmod.
 
 import { escapeHtml } from "./util.mjs";
 
@@ -30,16 +33,10 @@ export function publicOrigin(env, requestUrl) {
   return new URL(requestUrl).origin;
 }
 
-function lastmod(value) {
-  const milliseconds = Number(value);
-  if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0) return "";
-  return `<lastmod>${new Date(milliseconds).toISOString()}</lastmod>`;
-}
-
 /** Rebuild sitemap.xml from the publications whose state is public. */
 export async function publicSitemap(env, origin) {
   const rows = await env.DB.prepare(
-    `SELECT p.slug,p.created_at
+    `SELECT p.slug
      FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
      WHERE p.listed=1 AND p.hidden=0 AND p.revoked_at IS NULL AND a.deleted_at IS NULL
      ORDER BY p.created_at DESC,p.id DESC LIMIT ?1`,
@@ -47,15 +44,12 @@ export async function publicSitemap(env, origin) {
     .bind(SITEMAP_LIMIT)
     .all();
   const urls = [
-    { loc: `${origin}/`, lastmod: "" },
-    { loc: `${origin}/gallery`, lastmod: "" },
-    ...rows.results.map((row) => ({
-      loc: `${origin}/p/${encodeURIComponent(row.slug)}`,
-      lastmod: lastmod(row.created_at),
-    })),
+    `${origin}/`,
+    `${origin}/gallery`,
+    ...rows.results.map((row) => `${origin}/p/${encodeURIComponent(row.slug)}`),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
-    .map((entry) => `  <url><loc>${escapeHtml(entry.loc)}</loc>${entry.lastmod}</url>`)
+    .map((loc) => `  <url><loc>${escapeHtml(loc)}</loc></url>`)
     .join("\n")}\n</urlset>\n`;
 }
 

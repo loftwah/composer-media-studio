@@ -54,6 +54,15 @@ test("sitemap.xml lists exactly the public publications and robots points at it"
   ]);
   assert.match(sitemap, /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
   assert.doesNotMatch(sitemap, /PRIVATE|PROMPT|page-unlisted|page-hidden|page-withdrawn|page-deleted/);
+  assert.doesNotMatch(sitemap, /<lastmod>/);
+
+  // Editing the public copy leaves the original creation time unchanged.
+  await env.DB.prepare(
+    "UPDATE publications SET title='Edited public title',description='Edited public description' WHERE slug='page-public'",
+  ).run();
+  const editedSitemap = await (await get(env, "/sitemap.xml")).text();
+  assert.deepEqual(locs(editedSitemap).sort(), locs(sitemap).sort());
+  assert.doesNotMatch(editedSitemap, /<lastmod>/);
 
   const robotsResponse = await get(env, "/robots.txt");
   assert.equal(robotsResponse.status, 200);
