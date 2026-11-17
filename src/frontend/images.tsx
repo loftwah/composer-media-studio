@@ -2250,7 +2250,14 @@ function Images() {
                     : `, ${formatBytes(selected.result.bytes - selected.result.target.requestedBytes)} over. Lower the output size or choose a different format.`}
                 </p>
               )}
-              {!freshResult && <p className="notice calm">The settings changed since this result. Make the image again to match the current controls; the existing download is still valid for the earlier settings.</p>}
+              <p className={freshResult ? "sr-only" : "notice calm"} role="status" aria-atomic="true">
+                {!freshResult && (
+                  <>
+                    The settings changed since this result. Make the image again to match the
+                    current controls. The existing download still uses the earlier settings.
+                  </>
+                )}
+              </p>
               <a
                 className="button"
                 href={selected.result.url}
