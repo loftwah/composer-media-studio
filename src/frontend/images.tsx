@@ -1283,7 +1283,7 @@ function Images() {
   async function copyValue(
     label: string,
     value: string,
-    { echo = value.length <= 120 }: { echo?: boolean } = {},
+    { echo = value.length <= 120, fallback }: { echo?: boolean; fallback?: string } = {},
   ): Promise<void> {
     try {
       await navigator.clipboard.writeText(value);
@@ -1293,7 +1293,7 @@ function Images() {
           : `Copied ${label} (${value.length.toLocaleString()} characters).`,
       );
     } catch {
-      setCopyMessage(`Could not copy automatically. Select the ${label} value and copy it.`);
+      setCopyMessage(fallback ?? `Could not copy automatically. Select the ${label} value and copy it.`);
     }
   }
 
@@ -2009,6 +2009,16 @@ function Images() {
               </button>
               {!running && !paletteBusy && visiblePalette && visiblePalette.result.colors.length > 0 && (
                 <>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void copyValue("palette CSS", paletteToCss(visiblePalette.result.colors), {
+                      echo: false,
+                      fallback: "Could not copy the palette. Download the CSS file instead.",
+                    })}
+                  >
+                    Copy palette CSS
+                  </button>
                   <a
                     className="button secondary"
                     href={`data:text/plain;charset=utf-8,${encodeURIComponent(paletteToGpl(visiblePalette.result.colors))}`}
