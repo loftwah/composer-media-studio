@@ -3436,6 +3436,11 @@ app.addEventListener("change", async (event) => {
 });
 
 app.addEventListener("input", (event) => {
+  const editedShareId = event.target.closest('[data-form="woodhouse-import"] input[name="assetId"]');
+  if (editedShareId) {
+    editedShareId.form.elements.reuseConfirmed.checked = false;
+    return;
+  }
   const composeField = event.target.closest("[data-compose]");
   if (composeField) {
     if (composeField.dataset.compose === "title") state.compose.title = composeField.value;
@@ -3484,7 +3489,8 @@ app.addEventListener("submit", async (event) => {
   const importForm = event.target.closest('[data-form="woodhouse-import"]');
   if (importForm) {
     event.preventDefault();
-    const projectId = state.projectId;
+    const projectId = importForm.closest("details.share-import")?.dataset.projectId;
+    if (!projectId || projectId !== state.projectId) return;
     const values = new FormData(importForm);
     const submit = importForm.querySelector('[type="submit"]');
     submit.disabled = true;

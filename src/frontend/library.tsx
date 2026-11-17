@@ -64,7 +64,7 @@ function AssetCard({ asset, comparing, selected, full, previewToken }: { asset: 
 type ShareHit = { id: string; title: string; project: string };
 
 /**
- * Owner-only import from Woodhouse Share. Searching is a single read-only GET
+ * Project-scoped import from Woodhouse Share. Searching is a single read-only GET
  * that never saves an asset: it only fills the manual ID once an artwork is
  * chosen. The existing reuse checkbox and the exact original import route
  * still gate the write, so confirming reuse rights cannot be skipped.
@@ -159,10 +159,7 @@ function ShareImport({ projectId }: { projectId: string }) {
       {chosen && <p className="small" role="status">
         Selected {chosen.title}. <a href={`/portfolio?asset=${encodeURIComponent(chosen.id)}`} target="_blank" rel="noopener noreferrer">View original and credits</a>
       </p>}
-      <label>Share asset ID <input name="assetId" ref={idRef} onChange={() => {
-        setChosen(null);
-        if (reuseRef.current) reuseRef.current.checked = false;
-      }} required maxLength={128} pattern="[a-z0-9][a-z0-9\-]{0,127}" /></label>
+      <label>Share asset ID <input name="assetId" ref={idRef} onChange={() => setChosen(null)} required maxLength={128} pattern="[a-z0-9][a-z0-9\-]{0,127}" /></label>
       <label><span><input name="reuseConfirmed" ref={reuseRef} type="checkbox" required /> I have permission to reuse this original.</span></label>
       <div><button className="button secondary" type="submit">Import original</button></div>
     </form>
