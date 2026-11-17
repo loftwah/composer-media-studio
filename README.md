@@ -93,6 +93,10 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 
 This uses the same isolated page and renderer. It drives the shipped social kit with default controls, downloads the chosen size's WebP and receipt, and fails with the exact differing settings when the receipt asks for something the default social kit cannot reproduce. Without `--size`, the original Web-ready replay is unchanged.
 
+The browser's **Kit format** control offers WebP (default) and lossless PNG.
+Choose PNG when your browser cannot encode WebP. The four sizes and the ZIP
+use verified output bytes and include one receipt per size.
+
 ## Replay a palette JSON export locally
 
 Use this tool with an explicitly selected PNG and its downloaded Image Tools palette JSON from **Download palette (.json)**. It uses the same isolated workbench and explicit local file selection as the receipt replay:

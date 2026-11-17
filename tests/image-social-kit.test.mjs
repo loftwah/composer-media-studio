@@ -5,10 +5,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  SOCIAL_KIT_FORMATS,
   SOCIAL_SIZES,
   socialKitSettings,
 } from "../src/frontend/image-social-kit.ts";
-import { CROP_ASPECTS } from "../src/frontend/image-ops.mjs";
+import { CROP_ASPECTS, extensionForImageMime, mimeForExport } from "../src/frontend/image-ops.mjs";
 import {
   MAX_DECODED_PIXELS,
   MAX_IMAGE_OUTPUT_DIMENSION,
@@ -54,7 +55,7 @@ test("four exact social sizes map to the existing crop aspects and stay inside t
   }
 });
 
-test("each size keeps the user's crop anchor and edits, and forces alpha-safe WebP", () => {
+test("each size keeps the user's crop anchor and edits, and defaults to alpha-safe WebP", () => {
   for (const size of SOCIAL_SIZES) {
     const settings = socialKitSettings(BASE, size, 0.82);
     assert.equal(settings.cropAnchor, "bottomRight");
@@ -70,6 +71,56 @@ test("each size keeps the user's crop anchor and edits, and forces alpha-safe We
     assert.equal(settings.format, "webp");
     assert.equal(settings.quality, 0.82);
     assert.equal(settings.targetKiB, null);
+  }
+});
+
+test("the kit offers exactly one explicit choice, with WebP as the default", () => {
+  assert.deepEqual([...SOCIAL_KIT_FORMATS], ["webp", "png"]);
+  for (const size of SOCIAL_SIZES) {
+    assert.equal(socialKitSettings(BASE, size, 0.82).format, "webp");
+  }
+});
+
+test("an explicit PNG choice keeps every exact size and edit but changes only the format", () => {
+  for (const size of SOCIAL_SIZES) {
+    const settings = socialKitSettings(BASE, size, 0.82, "png");
+    assert.equal(settings.cropAnchor, "bottomRight");
+    assert.equal(settings.rotate, 1);
+    assert.equal(settings.flipH, true);
+    assert.equal(settings.straighten, 0);
+    assert.equal(settings.resample, "nearest");
+    assert.deepEqual(settings.adjust, BASE.adjust);
+    assert.equal(settings.resizeMode, "exact");
+    assert.equal(settings.exactWidth, size.width);
+    assert.equal(settings.exactHeight, size.height);
+    assert.equal(settings.cropAspect, size.aspect);
+    assert.equal(settings.format, "png");
+    assert.equal(settings.quality, 0.82);
+    assert.equal(settings.targetKiB, null);
+  }
+});
+
+test("download names, ZIP names and receipts follow verified bytes, never a false format label", () => {
+  for (const format of SOCIAL_KIT_FORMATS) {
+    const mime = mimeForExport(format);
+    assert.equal(extensionForImageMime(mime), format);
+    const size = SOCIAL_SIZES[0];
+    const settings = socialKitSettings(BASE, size, 0.82, format);
+    const receipt = buildImageReceipt({
+      sourceHash: "b".repeat(64),
+      result: {
+        plan: { ok: true, outputWidth: size.width, outputHeight: size.height },
+        settings,
+        width: size.width,
+        height: size.height,
+        mime,
+        bytes: 123456,
+        sha256: "a".repeat(64),
+      },
+    });
+    assert.equal(receipt.output.mime, mime);
+    assert.equal(receipt.transform.settings.format, format);
+    assert.equal(extensionForImageMime(receipt.output.mime), format);
   }
 });
 
