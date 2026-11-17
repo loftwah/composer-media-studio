@@ -125,15 +125,16 @@ network or upload is involved.
 ## Make a contact sheet from explicit local files
 
 Build the frontend with `pnpm build:frontend`. Repeat `--source` for two to
-twenty PNGs in the order you want them on the sheet. Choose an unused
-`--output` path for the result.
+twenty JPEG, PNG or WebP images, in any mix, in the order you want them on the
+sheet. Choose an unused `--output` path for the PNG result.
 
 ```sh
 PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   node scripts/local-contact-sheet.mjs --source ./first.png --source ./next.png --output ./contact-sheet.png
 ```
 
-The isolated Chrome workbench processes the selected images and saves its
+The isolated Chrome workbench processes the selected images, sniffing each
+file's JPEG, PNG or WebP bytes and passing only a synthetic name, and saves its
 native contact sheet PNG. The report includes the source hashes, dimensions
 and output SHA-256.
 

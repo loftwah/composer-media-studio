@@ -66,6 +66,22 @@ export async function downloadLink(page, link) {
   return { name: result.suggestedFilename(), bytes: await buffer(await result.createReadStream()) };
 }
 
+/**
+ * Synthetic file payloads for an explicit local selection: sniffed MIME and a
+ * matching extension, in selection order. Names never contain a local path.
+ */
+export function localSelections(source) {
+  const multiple = Array.isArray(source);
+  const sources = multiple ? source : [source];
+  return sources.map((buffer, index) => {
+    const sniffed = sniffLocalImage(buffer);
+    assert(sniffed.supported, sniffed.reason ?? "This replay supports JPEG, PNG and WebP inputs.");
+    const extension = sniffed.format === "jpeg" ? "jpg" : sniffed.format;
+    const name = multiple ? `source-${index + 1}` : "source";
+    return { name: `${name}.${extension}`, mimeType: sniffed.mime, buffer };
+  });
+}
+
 export async function runLocalImages(source, run) {
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
   const browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -86,10 +102,7 @@ export async function runLocalImages(source, run) {
       return route.abort();
     });
     await page.goto(origin);
-    const selections = Array.isArray(source)
-      ? source.map((buffer, index) => ({ name: `source-${index + 1}.png`, mimeType: "image/png", buffer }))
-      : { name: "source.png", mimeType: "image/png", buffer: source };
-    await page.locator(".image-drop input[type=file]").setInputFiles(selections);
+    await page.locator(".image-drop input[type=file]").setInputFiles(localSelections(source));
     const result = await run(page);
     assert.equal(blocked, 0, "The workbench tried to access an unexpected resource.");
     return { browser: browser.version(), ...result, networkRequestsPassedThrough: 0 };
