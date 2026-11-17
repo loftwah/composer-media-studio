@@ -17,7 +17,7 @@ export function SceneMediaReview({ index, referenceId, takeId, assets }: Props) 
   const [open, setOpen] = useState(false);
   const reference = assets.find(asset => asset.id === referenceId && asset.kind === 'image');
   const take = assets.find(asset => asset.id === takeId && asset.kind === 'video');
-  return <details className="scene-media-review" onToggle={event => {
+  return <details className="scene-media-review" name="studio-scene-media-review" onToggle={event => {
     if (!event.currentTarget.open) event.currentTarget.querySelector('video')?.pause();
     setOpen(event.currentTarget.open);
   }}>
