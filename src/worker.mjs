@@ -83,7 +83,7 @@ import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, ver
 import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } from "./lib/publication-policy.mjs";
 import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.mjs";
 import { PUBLIC_CACHE_SECONDS, publicOrigin, publicSitemap, robotsTxt } from "./lib/sitemap.ts";
-import { checkPublicImage } from "./lib/public-image-privacy.mjs";
+import { checkPublicImage } from "./lib/public-image-privacy.ts";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.ts";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
