@@ -1,23 +1,9 @@
 import assert from "node:assert/strict";
-import { link, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { CONTACT_SHEET_MIN_IMAGES } from "../src/frontend/image-contact-sheet.ts";
 import { MAX_BATCH_IMAGES } from "../src/frontend/image-limits.ts";
 import { inspectImage } from "../src/frontend/image-metadata.ts";
-import { digest, downloadLink, readLocalPng, runLocalImages } from "./local-image-workbench.mjs";
-
-async function saveContactSheet(output, bytes) {
-  const destination = resolve(output);
-  const stage = await mkdtemp(join(dirname(destination), ".studio-contact-sheet-"));
-  try {
-    const file = join(stage, "sheet.png");
-    await writeFile(file, bytes);
-    await link(file, destination);
-  } finally {
-    await rm(stage, { recursive: true, force: true });
-  }
-}
+import { digest, downloadLink, readLocalPng, runLocalImages, saveNewPng } from "./local-image-workbench.mjs";
 
 async function main() {
   const { values } = parseArgs({
@@ -46,7 +32,7 @@ async function main() {
   });
   const { mime, width, height } = inspectImage(bytes);
   assert.equal(mime, "image/png");
-  await saveContactSheet(values.output, bytes);
+  await saveNewPng(values.output, bytes);
   console.log(JSON.stringify({
     ...report,
     sources: inputs.map(input => ({ sha256: digest(input), bytes: input.length })),
