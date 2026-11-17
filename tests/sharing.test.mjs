@@ -246,7 +246,7 @@ test("a published still gives a signed-out visitor the build journey", () => {
   assert.match(html, />Read how this was made<\/a>/);
   assert.match(html, /href="https:\/\/composer\.loftwah\.com\/media-studio"/);
   assert.match(html, /href="https:\/\/media\.loftwah\.com\/studio">Owner sign-in<\/a>/);
-  assert.match(html, /href="https:\/\/media\.loftwah\.com\/gallery">← Back to gallery<\/a>/);
+  assert.match(html, /href="https:\/\/media\.loftwah\.com\/gallery" data-gallery-back="\/gallery">← Back to gallery<\/a>/);
   assert.doesNotMatch(html, /visit the studio/);
   assert.match(html, /<script src="\/theme\.js" defer><\/script>/);
   assert.match(html, /<script src="\/public-piece\.js" defer><\/script>/);
