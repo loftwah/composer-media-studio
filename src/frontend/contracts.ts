@@ -10,6 +10,7 @@ export interface ProjectSummaryV1 {
 
 export interface HomeProps {
   projects: ProjectSummaryV1[];
+  resumeProjectId: string | null;
   videosConfigured: boolean;
   woodhouseShare: boolean;
   canEdit: boolean;

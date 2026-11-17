@@ -407,6 +407,25 @@ app.addEventListener("keydown", (event) => {
 });
 
 
+function projectResumeKey() {
+  const binding = state.session?.projectResumeBinding;
+  return binding ? `studio.project-resume.v1.${binding}` : null;
+}
+
+function rememberedProjectId() {
+  const key = projectResumeKey();
+  try { return key ? localStorage.getItem(key) : null; }
+  catch { return null; }
+}
+
+function rememberOpenedProject(route) {
+  if (route.view !== "project" || route.unknownTab || state.view !== "project" ||
+      state.projectId !== route.projectId || state.project?.id !== route.projectId) return;
+  const key = projectResumeKey();
+  try { if (key) localStorage.setItem(key, route.projectId); }
+  catch { /* Project browsing still works when storage is unavailable. */ }
+}
+
 async function boot() {
   const session = await api("/api/session");
   if (!session.signedIn) {
@@ -437,6 +456,7 @@ async function boot() {
     if (state.view === "project" || state.view === "asset") {
       if (state.view === "asset") state.assetId = route.assetId;
       await loadProject(state.projectId);
+      rememberOpenedProject(route);
     }
     if (state.view === "project" && state.tab === "review") await loadReviewRooms(state.projectId).catch((error) => { state.reviewRooms = []; notify(error.message, "bad"); });
     if (state.view === "home") await creativeModuleReady;
@@ -556,6 +576,7 @@ function render() {
       }
       creativeHome.renderHome(app.querySelector("#creative-home"), {
         projects: state.projects,
+        resumeProjectId: rememberedProjectId(),
         videosConfigured: state.videosConfigured,
         woodhouseShare: state.woodhouseShare,
         showcase: state.showcase, canEdit: state.session?.actions.includes("edit") ?? false,
@@ -3605,6 +3626,7 @@ window.addEventListener("hashchange", async () => {
     }
     if (state.projectId !== requestedProject) return;
   }
+  rememberOpenedProject(route);
   if (route.view === "project" && route.tab === "review") {
     try { await loadReviewRooms(route.projectId); }
     catch (error) { if (state.projectId === route.projectId) { state.reviewRooms = []; notify(error.message, "bad"); } }
