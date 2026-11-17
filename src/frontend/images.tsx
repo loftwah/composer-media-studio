@@ -1241,7 +1241,7 @@ function Images() {
   }
 
   async function stripSelected(): Promise<void> {
-    if (!selected || stripBusy) return;
+    if (!selected || stripBusy || running) return;
     const item = selected;
     const token = ++stripRevision.current;
     setStripBusy(true);
@@ -2734,7 +2734,7 @@ function Images() {
             Also remove the ICC colour profile — this can change how colours appear in other apps
           </label>
           <div className="image-control-actions">
-            <button type="button" className="secondary" disabled={stripBusy || running || !selected} onClick={() => void stripSelected()}>
+            <button type="button" className="secondary" disabled={running} aria-disabled={stripBusy || running} onClick={() => void stripSelected()}>
               {stripBusy ? "Stripping and verifying…" : "Strip metadata and verify"}
             </button>
           </div>
