@@ -40,7 +40,7 @@ export async function readLocalJson(path) {
 export async function downloadLink(page, link) {
   await link.waitFor();
   const [result] = await Promise.all([page.waitForEvent("download"), link.click()]);
-  return buffer(await result.createReadStream());
+  return { name: result.suggestedFilename(), bytes: await buffer(await result.createReadStream()) };
 }
 
 export async function runLocalImages(source, run) {
