@@ -9,8 +9,8 @@ the whole issue is complete.
 The first slice is publicly usable signed out and without provider spend. It
 runs in the browser, accepts JPEG/PNG/WebP up to 32 MiB and 40 megapixels, and
 processes at most 20 images in one sequential batch. Evidence for the slice is
-in [the image workbench evidence](../evidence/2026-11-16-browser-local-image-workbench/README.md)
-and [the straighten and kept-area overlay slice](../evidence/2026-11-17-image-tools-straighten/README.md).
+in [the image workbench evidence](evidence/2026-11-16-browser-local-image-workbench/README.md)
+and [the straighten and kept-area overlay slice](evidence/2026-11-17-image-tools-straighten/README.md).
 
 ## Status key
 
