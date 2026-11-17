@@ -2563,8 +2563,12 @@ async function handlePublic(request, env, url) {
     const requestedCapability = url.searchParams.get("capability") ?? "";
     const capability = ["original", "variation", "refinement", "assembled"].includes(requestedCapability) ? requestedCapability : "";
     const order = url.searchParams.get("order") === "oldest" ? "oldest" : "newest";
-    const catalogue = await publicCatalogue(env, page, 24, { query, kind, order, project, capability });
-    return new Response(publicGallery({ ...catalogue, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
+    const showFeatured = page === 1 && order === "newest" && !query && !kind && !project && !capability;
+    const [catalogue, featured] = await Promise.all([
+      publicCatalogue(env, page, 24, { query, kind, order, project, capability }),
+      showFeatured ? homeShowcase(env) : [],
+    ]);
+    return new Response(publicGallery({ ...catalogue, featured, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
   }
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {

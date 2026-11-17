@@ -7,7 +7,7 @@ test('the local app launcher uses only a configured safe Composer origin', () =>
   assert.match(configured, /data-composer-home="https:\/\/composer\.example\/"/);
   assert.match(configured, /src="\/brand\/launcher\.js"/);
   assert.match(configured, /Opened from App Composer|Standalone owner session/);
-  assert.match(configured, /href="https:\/\/composer\.example\/media-studio\/studio">App Composer/);
+  assert.match(configured, /href="https:\/\/composer\.example\/">App Composer/);
   assert.doesNotMatch(configured, /dean · dean/);
   assert.doesNotMatch(shell({revision:'a1'}), /data-open-apps/);
   assert.doesNotMatch(shell({revision:'a1', composerOrigin:'https:\/\/user:pass@example.com'}), /data-open-apps/);
