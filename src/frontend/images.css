@@ -374,6 +374,21 @@
   background-size: 16px 16px;
 }
 
+/* Display-only choice on the actual result previews. White and black are
+   literal diagnostic colours so a halo is judged against true extremes, not
+   a themed neutral; the checkerboard default above stays token-driven. */
+.image-compare img[data-backdrop="white"],
+.image-eyedropper-stage img[data-backdrop="white"] {
+  background-image: none;
+  background-color: #fff;
+}
+
+.image-compare img[data-backdrop="black"],
+.image-eyedropper-stage img[data-backdrop="black"] {
+  background-image: none;
+  background-color: #000;
+}
+
 .image-keep {
   display: grid;
   gap: 0.4rem;
