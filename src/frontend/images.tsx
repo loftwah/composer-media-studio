@@ -779,6 +779,8 @@ function Images() {
   const addFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
   const addingRef = useRef(false);
   const runningRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const focusPickerAfterClear = useRef(false);
   const eyedropperRef = useRef<HTMLImageElement | null>(null);
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragIdRef = useRef("");
@@ -938,6 +940,12 @@ function Images() {
   }, [selected?.result?.url]);
 
   useEffect(() => {
+    if (items.length || !focusPickerAfterClear.current) return;
+    focusPickerAfterClear.current = false;
+    fileInputRef.current?.focus();
+  }, [items.length]);
+
+  useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       const files = [...(event.clipboardData?.files ?? [])].filter((file) =>
         file.type.startsWith("image/") || /\.(?:jpe?g|png|webp)$/i.test(file.name),
@@ -1077,6 +1085,7 @@ function Images() {
   }
 
   function resetAll(): void {
+    focusPickerAfterClear.current = true;
     revision.current += 1;
     stripRevision.current += 1;
     batchController.current?.abort();
@@ -1755,6 +1764,7 @@ function Images() {
           <strong>Drop images here</strong>
           <span>or choose files · paste anywhere on this page</span>
           <input
+            ref={fileInputRef}
             type="file"
             multiple
             accept="image/jpeg,image/png,image/webp"
