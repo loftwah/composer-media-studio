@@ -158,6 +158,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
           ${session ? '<li data-destination data-local-launcher-group="studio"><a href="/compare"><span>Compare models<small>Saved takes for the same job</small></span></a></li>' : ""}
           ${woodhouseShare ? '<li data-destination data-local-launcher-group="studio"><a href="/portfolio"><span>Share artwork<small>Woodhouse Share originals</small></span></a></li>' : ""}
           <li data-destination data-local-launcher-group="studio"><a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener"><span>Help<small>Studio guides and limits</small></span></a></li>
+          <li data-destination data-local-launcher-group="studio" data-keywords="image editor image workbench resize crop convert rotate batch export"><a href="/tools/images"><span>Edit images<small>Image tools: resize, crop, convert and batch-export local images</small></span></a></li>
         </ul>
       </dialog>
     </div>` : ""}
