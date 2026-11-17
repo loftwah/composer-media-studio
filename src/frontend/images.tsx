@@ -765,6 +765,7 @@ function Images() {
   const [picked, setPicked] = useState<PickedColour | null>(null);
   const [pickMessage, setPickMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [outputCopy, setOutputCopy] = useState<{ hash: string; message: string } | null>(null);
   const [snippets, setSnippets] = useState<SnippetState | null>(null);
   const [snippetKind, setSnippetKind] = useState<SnippetKind>("dataUri");
   const [snippetBusy, setSnippetBusy] = useState(false);
@@ -800,6 +801,7 @@ function Images() {
   const plan = selected ? makePlan(selected.source, settings, activeTrim) : null;
   const currentSettingsKey = settingsKey(settings, activeTrim);
   const freshResult = selected?.result?.settingsKey === currentSettingsKey;
+  const outputHash = selected?.result?.sha256;
   const keptArea = plan?.ok ? keptAreaPolygon(plan) : null;
   const keepFull =
     keptArea && selected
@@ -1470,17 +1472,21 @@ function Images() {
   async function copyValue(
     label: string,
     value: string,
-    { echo = value.length <= 120, fallback }: { echo?: boolean; fallback?: string } = {},
+    {
+      echo = value.length <= 120,
+      fallback,
+      report = setCopyMessage,
+    }: { echo?: boolean; fallback?: string; report?: (message: string) => void } = {},
   ): Promise<void> {
     try {
       await navigator.clipboard.writeText(value);
-      setCopyMessage(
+      report(
         echo
           ? `Copied ${label}: ${value}`
           : `Copied ${label} (${value.length.toLocaleString()} characters).`,
       );
     } catch {
-      setCopyMessage(fallback ?? `Could not copy automatically. Select the ${label} value and copy it.`);
+      report(fallback ?? `Could not copy automatically. Select the ${label} value and copy it.`);
     }
   }
 
@@ -2272,6 +2278,22 @@ function Images() {
               >
                 Download image receipt (.json)
               </a>
+              {outputHash && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => void copyValue("output SHA-256", outputHash, {
+                    echo: false,
+                    fallback: "Copy unavailable. Download the image receipt to get the full hash.",
+                    report: (message) => setOutputCopy({ hash: outputHash, message }),
+                  })}
+                >
+                  Copy output SHA-256
+                </button>
+              )}
+              <p className="trim-note" role="status">
+                {outputCopy?.hash === outputHash ? outputCopy?.message : ""}
+              </p>
               <p className="trim-note">
                 Keep the hashes and settings for this finished image. Later
                 edits to the controls leave this receipt tied to the download.
