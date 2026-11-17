@@ -286,6 +286,7 @@ export function publicPage({
   storyUrl,
   origin,
   slug,
+  related = [],
 }) {
   const url = `${origin}/p/${slug}`;
   const isVideo = kind === "video";
@@ -335,6 +336,16 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
   const nextCopy = buildUrl
     ? "Take the same kind of studio into your own Cloudflare account, with your own media storage and model keys."
     : "The project, references and decisions behind this published piece.";
+  // A bounded, optional continuation. The related items are already vetted
+  // listed public works of this same project, so they reuse the gallery card
+  // renderer verbatim and link to the canonical public page for each work.
+  const relatedSection = Array.isArray(related) && related.length
+    ? `\n<section class="public-related" aria-labelledby="related-title">
+    <h2 id="related-title">More from this project</h2>
+    <p class="small">Other published work from the same project.</p>
+    <ul class="gallery-grid">${galleryCards(related)}</ul>
+  </section>\n  `
+    : "";
   return `${head({
     title,
     description: description || "Published from an independent Media Studio.",
@@ -395,7 +406,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
   </section>`
       : ""
   }
-  <footer class="public-footer">Published with an independently owned Media Studio · <a href="${escapeHtml(origin)}/studio">Owner sign-in</a></footer>
+  ${relatedSection}<footer class="public-footer">Published with an independently owned Media Studio · <a href="${escapeHtml(origin)}/studio">Owner sign-in</a></footer>
 </main>
 </body>
 </html>`;
@@ -604,35 +615,32 @@ function galleryDescription(description) {
   });
 }
 
-export function publicGallery({ items = [], featured = [], hasMore = false, total = 0, projects = [], capabilities = [], page = 1, home = false, woodhouseShare = false, buildUrl = null, storyUrl = null, query = "", kind = "", project = "", capability = "", order = "newest" }) {
-  const pageHref = (number) => {
-    const params = new URLSearchParams();
-    if (query) params.set("q", query);
-    if (project) params.set("project", project);
-    if (kind) params.set("kind", kind);
-    if (capability) params.set("capability", capability);
-    if (order === "oldest") params.set("order", order);
-    params.set("page", String(number));
-    return `/gallery?${params}`;
-  };
-  const option = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
-  const capabilityNames = { original: "Original", variation: "Variation", refinement: "Refinement", assembled: "Assembled" };
-  const projectOptions = projects.map((entry) => option(entry.value, entry.label, entry.value === project)).join("");
-  const capabilityOptions = capabilities.map((value) => option(value, capabilityNames[value] ?? value, value === capability)).join("");
-  const projectControl = projects.length
-    ? `<label>Project<select name="project">${option("", "All projects", !project)}${projectOptions}</select></label>`
+// One renderer for public gallery cards and the related-work strip on a work
+// page. It keeps the exact /p/<slug> canonical link, preview fallbacks and
+// published-copy handling identical everywhere a listed work is shown.
+function galleryDimensions(width, height) {
+  return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
+    ? ` width="${width}" height="${height}"`
     : "";
-  const capabilityControl = capabilities.length
-    ? `<label>Creation<select name="capability">${option("", "All creations", !capability)}${capabilityOptions}</select></label>`
-    : "";
-  const controls = `<form class="gallery-controls" action="/gallery" method="get"><label>Search titles and descriptions<input type="search" name="q" value="${escapeHtml(query)}" maxlength="80" placeholder="Search public work"></label>${projectControl}<label>Type<select name="kind">${option("", "All media", !kind)}${option("image", "Images", kind === "image")}${option("video", "Video", kind === "video")}${option("audio", "Audio", kind === "audio")}</select></label>${capabilityControl}<label>Order<select name="order">${option("newest", "Newest first", order !== "oldest")}${option("oldest", "Oldest first", order === "oldest")}</select></label><button type="submit">Apply filters</button>${query || kind || project || capability || order === "oldest" ? '<a href="/gallery">Clear filters</a>' : ""}</form>`;
-  const dimensions = (width, height) =>
-    Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
-      ? ` width="${width}" height="${height}"`
-      : "";
+}
+
+function galleryPageHref({ query = "", project = "", kind = "", capability = "", order = "newest" }, number) {
+  const params = new URLSearchParams();
+  if (query) params.set("q", query);
+  if (project) params.set("project", project);
+  if (kind) params.set("kind", kind);
+  if (capability) params.set("capability", capability);
+  if (order === "oldest") params.set("order", order);
+  params.set("page", String(number));
+  return `/gallery?${params}`;
+}
+
+function galleryCards(entries, { query = "", kind = "", project = "", capability = "", order = "newest", page = 1, home = false } = {}) {
   const previewImage = (src, width, height) =>
-    `<img src="${src}" alt=""${dimensions(width, height)} loading="lazy" decoding="async">`;
-  const renderCards = (entries) => entries.map((item) => {
+    `<img src="${src}" alt=""${galleryDimensions(width, height)} loading="lazy" decoding="async">`;
+  const filtered = Boolean(query || kind || project || capability) || order === "oldest" || page > 1;
+  const pageHref = (number) => galleryPageHref({ query, project, kind, capability, order }, number);
+  return entries.map((item) => {
     const slug = encodeURIComponent(item.slug);
     const title = escapeHtml(item.title);
     // A stored preview is small and regenerable, so it always beats the full
@@ -647,10 +655,23 @@ export function publicGallery({ items = [], featured = [], hasMore = false, tota
             ? previewImage(`/p/${slug}/poster`, item.poster_width, item.poster_height)
             : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
     const action = item.kind === "video" ? "Watch film →" : item.kind === "audio" ? "Listen →" : "View image →";
-    const filtered = Boolean(query || kind || project || capability) || order === "oldest" || page > 1;
     const pieceHref = `/p/${slug}${home || !filtered ? "" : `?back=${encodeURIComponent(pageHref(page))}`}`;
     return `<li><a class="gallery-card" href="${escapeHtml(pieceHref)}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(galleryDescription(item.description))}</span>` : ""}</a></li>`;
   }).join("");
+}
+
+export function publicGallery({ items = [], featured = [], hasMore = false, total = 0, projects = [], capabilities = [], page = 1, home = false, woodhouseShare = false, buildUrl = null, storyUrl = null, query = "", kind = "", project = "", capability = "", order = "newest" }) {
+  const option = (value, label, selected) => `<option value="${escapeHtml(value)}"${selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  const capabilityNames = { original: "Original", variation: "Variation", refinement: "Refinement", assembled: "Assembled" };
+  const projectOptions = projects.map((entry) => option(entry.value, entry.label, entry.value === project)).join("");
+  const capabilityOptions = capabilities.map((value) => option(value, capabilityNames[value] ?? value, value === capability)).join("");
+  const projectControl = projects.length
+    ? `<label>Project<select name="project">${option("", "All projects", !project)}${projectOptions}</select></label>`
+    : "";
+  const capabilityControl = capabilities.length
+    ? `<label>Creation<select name="capability">${option("", "All creations", !capability)}${capabilityOptions}</select></label>`
+    : "";
+  const controls = `<form class="gallery-controls" action="/gallery" method="get"><label>Search titles and descriptions<input type="search" name="q" value="${escapeHtml(query)}" maxlength="80" placeholder="Search public work"></label>${projectControl}<label>Type<select name="kind">${option("", "All media", !kind)}${option("image", "Images", kind === "image")}${option("video", "Video", kind === "video")}${option("audio", "Audio", kind === "audio")}</select></label>${capabilityControl}<label>Order<select name="order">${option("newest", "Newest first", order !== "oldest")}${option("oldest", "Oldest first", order === "oldest")}</select></label><button type="submit">Apply filters</button>${query || kind || project || capability || order === "oldest" ? '<a href="/gallery">Clear filters</a>' : ""}</form>`;
   const heroItem = home ? (items.find((item) => item.kind === "video" && (item.poster_preview_id || item.poster_asset_id || item.thumb_id)) || items.find((item) => item.kind === "image")) : null;
   const heroSlug = heroItem ? encodeURIComponent(heroItem.slug) : "";
   const heroSource = heroItem
@@ -664,15 +685,16 @@ export function publicGallery({ items = [], featured = [], hasMore = false, tota
     : null;
   // The hero is the page's largest paint, so it asks for the first bytes. Cards
   // below it stay lazy: the gallery grid defers offscreen cards in studio.css.
-  const heroArtwork = heroItem ? `<a class="gallery-hero-art" href="/p/${heroSlug}"><img src="/p/${heroSlug}/${heroSource.route}" alt=""${dimensions(heroSource.width, heroSource.height)} decoding="async" fetchpriority="high"><span><small>Published in Media Studio</small><strong>${escapeHtml(heroItem.title)}</strong><span>Explore this work →</span></span></a>` : "";
-  const cards = renderCards(items);
-  const featuredCards = renderCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })));
+  const heroArtwork = heroItem ? `<a class="gallery-hero-art" href="/p/${heroSlug}"><img src="/p/${heroSlug}/${heroSource.route}" alt=""${galleryDimensions(heroSource.width, heroSource.height)} decoding="async" fetchpriority="high"><span><small>Published in Media Studio</small><strong>${escapeHtml(heroItem.title)}</strong><span>Explore this work →</span></span></a>` : "";
+  const cardOptions = { query, kind, project, capability, order, page, home };
+  const cards = galleryCards(items, cardOptions);
+  const featuredCards = galleryCards(featured.map((film) => ({ ...film, kind: "video", poster_asset_id: film.hasPoster })), cardOptions);
   const countText = `${total} ${total === 1 ? "work" : "works"}`;
   return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio." })}
 <body><a class="skip" href="#main">Skip to content</a><header class="site-header"><a class="wordmark" href="/">${mark}<span>Media Studio</span></a><nav class="header-nav" aria-label="Main"><a href="/gallery">Gallery</a>${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}<a class="button secondary" href="/studio">Open Studio</a><button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button></nav></header>
 <main id="main" class="public-gallery${home ? "" : " public-gallery--catalogue"}"><section class="gallery-intro${heroArtwork ? " gallery-intro--art" : ""}"><div class="gallery-intro-copy"><p class="eyebrow">Images · film · sound</p><h1>${home ? "Made to be seen." : "The public gallery."}</h1><p>${home ? "Explore work made and kept in Media Studio." : "Images, films and sound shared by their creators."}</p>${home ? `<div class="gallery-actions"><a class="button" href="/gallery">Explore the gallery →</a>${buildUrl ? `<a class="button secondary" href="${escapeHtml(buildUrl)}">Build your own studio</a>` : ""}${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story →</a>` : ""}</div>` : ""}</div>${heroArtwork}</section>
 <section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><p class="eyebrow">Shared work</p><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2>${home ? "" : `<p class="gallery-count" data-total="${total}">${countText}</p>`}</div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${items.length ? `<ul class="gallery-grid">${cards}</ul>` : query || kind || project || capability ? '<p>No published work matches these filters.</p>' : '<p>No work has been added to the public gallery yet.</p>'}
-${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(pageHref(page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(pageHref(page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? '<p><a href="/portfolio">See more featured films and artwork →</a></p>' : ""}</section>` : ""}</main></body></html>`;
+${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(galleryPageHref({ query, project, kind, capability, order }, page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(galleryPageHref({ query, project, kind, capability, order }, page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? '<p><a href="/portfolio">See more featured films and artwork →</a></p>' : ""}</section>` : ""}</main></body></html>`;
 }
 
 /**
