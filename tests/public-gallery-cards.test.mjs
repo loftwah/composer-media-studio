@@ -37,6 +37,14 @@ test('public home offers configured next steps while standalone installations om
   assert.doesNotMatch(standalone, /Build your own studio|Read the story/);
 });
 
+test('public home links free Image Tools once without changing Owner sign-in or the catalogue', () => {
+  const home = publicGallery({home: true});
+  assert.match(home, /href="\/tools\/images">Image Tools →/);
+  assert.equal((home.match(/href="\/tools\/images"/g) ?? []).length, 1);
+  assert.match(home, /class="button secondary" href="\/studio">Open Studio/);
+  assert.doesNotMatch(publicGallery({}), /href="\/tools\/images"/);
+});
+
 test('home highlights an existing published preview without changing the gallery', () => {
   const items = [ { slug: 'still', kind: 'image', title: 'Still' }, { slug: 'film', kind: 'video', title: 'A <film>', poster_asset_id: 'poster' } ];
   const home = publicGallery({home:true, items});
