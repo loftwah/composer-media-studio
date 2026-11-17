@@ -1,6 +1,7 @@
 // Narrow, type-only declarations for the util.mjs helpers consumed by
-// publication-derivatives.ts. Runtime behaviour stays in util.mjs; this file
-// only names the symbols that lane imports so it can be checked in strict TS.
+// publication-derivatives.ts and sitemap.ts. Runtime behaviour stays in
+// util.mjs; this file only names the symbols those lanes import so they can be
+// checked in strict TS.
 
 export class HttpError extends Error {
   status: number;
@@ -9,6 +10,8 @@ export class HttpError extends Error {
 }
 
 export function extensionFor(mime: string): string;
+
+export function escapeHtml(value: unknown): string;
 
 export function imageSize(bytes: Uint8Array): {
   width: number | null;

@@ -26,6 +26,24 @@ import { escapeHtml } from "./util.mjs";
 export const SITEMAP_LIMIT = 5000;
 export const PUBLIC_CACHE_SECONDS = 60;
 
+// Narrow structural seams. Only the binding members and row fields this module
+// actually touches are described: no Cloudflare types are imported, and every
+// annotation here is erased at runtime. Callers keep passing the same Worker
+// env, query rows and child numbers they always did.
+interface SitemapRow {
+  slug: string;
+  n?: number | string | null;
+}
+interface SitemapStatement {
+  bind(...values: unknown[]): SitemapStatement;
+  first(): Promise<SitemapRow | null>;
+  all(): Promise<{ results: SitemapRow[] }>;
+}
+interface SitemapEnv {
+  PUBLIC_ORIGIN?: unknown;
+  DB: { prepare(query: string): SitemapStatement };
+}
+
 // The one predicate that decides whether a publication may be enumerated.
 // Reused verbatim by the count and the paginated reads so an overflow page can
 // never disagree with the file that indexes it.
@@ -36,7 +54,7 @@ const PUBLICATION_ORDER = ` ORDER BY p.created_at DESC,p.id DESC`;
 const STATIC_PATHS = ["/", "/gallery"];
 
 /** The configured public origin, falling back to the request's own origin. */
-export function publicOrigin(env, requestUrl) {
+export function publicOrigin(env: SitemapEnv, requestUrl: string): string {
   const configured = env.PUBLIC_ORIGIN;
   if (typeof configured === "string") {
     try {
@@ -49,14 +67,14 @@ export function publicOrigin(env, requestUrl) {
   return new URL(requestUrl).origin;
 }
 
-function urlset(urls) {
+function urlset(urls: string[]): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
     .map((loc) => `  <url><loc>${escapeHtml(loc)}</loc></url>`)
     .join("\n")}\n</urlset>\n`;
 }
 
 /** One page of eligible publication URLs, in the same order as the flat file. */
-async function publicationUrls(env, origin, limit, offset) {
+async function publicationUrls(env: SitemapEnv, origin: string, limit: number, offset: number): Promise<string[]> {
   const { results } = await env.DB.prepare(
     `SELECT p.slug ${ELIGIBLE_PUBLICATIONS}${PUBLICATION_ORDER} LIMIT ?1 OFFSET ?2`,
   )
@@ -65,7 +83,7 @@ async function publicationUrls(env, origin, limit, offset) {
   return results.map((row) => `${origin}/p/${encodeURIComponent(row.slug)}`);
 }
 
-async function eligibleCount(env) {
+async function eligibleCount(env: SitemapEnv): Promise<number> {
   const row = await env.DB.prepare(`SELECT COUNT(*) AS n ${ELIGIBLE_PUBLICATIONS}`).first();
   return Number(row?.n ?? 0);
 }
@@ -76,7 +94,7 @@ async function eligibleCount(env) {
  * index above it. A numbered child returns its urlset, or null if that child is
  * not part of the current index (the router answers 404).
  */
-export async function publicSitemap(env, origin, child = null) {
+export async function publicSitemap(env: SitemapEnv, origin: string, child: number | null = null): Promise<string | null> {
   const count = await eligibleCount(env);
   const totalUrls = count + STATIC_PATHS.length;
   const overflow = count > SITEMAP_LIMIT;
@@ -96,8 +114,8 @@ export async function publicSitemap(env, origin, child = null) {
       .join("\n")}\n</sitemapindex>\n`;
   }
 
-  if (!Number.isInteger(child) || child < 1 || child > pageCount) return null;
-  const start = (child - 1) * SITEMAP_LIMIT;
+  if (!Number.isInteger(child) || child! < 1 || child! > pageCount) return null;
+  const start = (child! - 1) * SITEMAP_LIMIT;
   const end = Math.min(start + SITEMAP_LIMIT, totalUrls);
   // The two static URLs live at the head of child 1; every publication keeps
   // one stable zero-based slot in the global ordering across all children.
@@ -109,7 +127,7 @@ export async function publicSitemap(env, origin, child = null) {
 }
 
 /** Point crawlers at the public catalogue and away from private surfaces. */
-export function robotsTxt(origin) {
+export function robotsTxt(origin: string): string {
   return [
     "User-agent: *",
     "Allow: /",

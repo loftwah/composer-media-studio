@@ -4,5 +4,5 @@
     "strict": true, "noEmit": true, "allowImportingTsExtensions": true, "jsx": "react-jsx", "lib": ["ES2022", "DOM"],
     "skipLibCheck": true, "verbatimModuleSyntax": true, "types": ["vite/client"]
   },
-  "include": ["src/frontend/**/*.ts", "src/frontend/**/*.tsx", "src/lib/publication-derivatives.ts"]
+  "include": ["src/frontend/**/*.ts", "src/frontend/**/*.tsx", "src/lib/publication-derivatives.ts", "src/lib/sitemap.ts"]
 }
