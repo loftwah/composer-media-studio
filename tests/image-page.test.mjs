@@ -100,6 +100,12 @@ test("the embed-code button keeps keyboard focus while it is building", () => {
   assert.match(workbench, /if \(!selected\?\.result \|\| snippetBusy \|\| running\) return;/);
 });
 
+test("the metadata strip button keeps keyboard focus while the bytes load", () => {
+  assert.match(workbench, /disabled=\{running\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
+  assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running\) return;/);
+  assert.match(workbench, /Download verified copy/);
+});
+
 test("the adjustment and snippet modules stay local and dependency-free", () => {
   for (const file of ["image-adjust.ts", "image-snippets.ts"]) {
     const source = readFileSync(new URL(`../src/frontend/${file}`, import.meta.url), "utf8");
