@@ -69,7 +69,7 @@ import {
   MAX_ZIP_BYTES,
   imageInputProblem,
   imagePixelProblem,
-} from "./image-limits.mjs";
+} from "./image-limits.ts";
 import {
   inspectImage,
   sniffLocalImage,

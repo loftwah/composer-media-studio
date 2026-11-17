@@ -1,7 +1,7 @@
 // MIT. A small store-only ZIP writer. No compression, no dependency and no
 // directory traversal: every entry is a basename in one flat archive.
 
-import { MAX_ZIP_BYTES, MAX_ZIP_ENTRIES } from "./image-limits.mjs";
+import { MAX_ZIP_BYTES, MAX_ZIP_ENTRIES } from "./image-limits.ts";
 
 export const ZIP_MIME = "application/zip";
 

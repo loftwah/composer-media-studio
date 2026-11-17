@@ -4,7 +4,7 @@ import { open } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
-import { MAX_IMAGE_INPUT_BYTES } from "../src/frontend/image-limits.mjs";
+import { MAX_IMAGE_INPUT_BYTES } from "../src/frontend/image-limits.ts";
 import { sniffLocalImage } from "../src/frontend/image-metadata.mjs";
 import { IMAGE_RECEIPT_SCHEMA, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.ts";
 import { SOCIAL_SIZES } from "../src/frontend/image-social-kit.ts";

@@ -14,7 +14,7 @@ import {
   MAX_IMAGE_OUTPUT_DIMENSION,
   MAX_ZIP_BYTES,
   MAX_ZIP_ENTRIES,
-} from "../src/frontend/image-limits.mjs";
+} from "../src/frontend/image-limits.ts";
 import { buildImageReceipt, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.ts";
 import { createZip } from "../src/frontend/image-zip.mjs";
 

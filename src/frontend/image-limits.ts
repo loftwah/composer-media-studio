@@ -10,7 +10,7 @@ export const MAX_BATCH_IMAGES = 20;
 export const MAX_ZIP_ENTRIES = MAX_BATCH_IMAGES;
 export const MAX_ZIP_BYTES = 128 * 1024 * 1024;
 
-export const ACCEPTED_IMAGE_MIMES = Object.freeze([
+export const ACCEPTED_IMAGE_MIMES: readonly string[] = Object.freeze([
   "image/jpeg",
   "image/png",
   "image/webp",
@@ -22,12 +22,12 @@ const HEIF_EXTENSION = /\.(?:heic|heif)$/i;
 const AVIF_EXTENSION = /\.avif$/i;
 const ACCEPTED_EXTENSION = new Set(["jpg", "jpeg", "png", "webp"]);
 
-function extensionOf(name) {
+function extensionOf(name: string): string {
   const match = /\.([A-Za-z0-9]+)$/.exec(String(name ?? "").trim());
   return match ? match[1].toLowerCase() : "";
 }
 
-function labelFor(mime) {
+function labelFor(mime: string): string {
   if (mime === "image/gif") return "GIF";
   if (mime === "image/avif") return "AVIF";
   if (mime === "image/heic") return "HEIC";
@@ -38,7 +38,9 @@ function labelFor(mime) {
 }
 
 /** Validate the browser's declared file facts before any bytes are read. */
-export function imageInputProblem({ name = "", type = "", size = 0 } = {}) {
+export function imageInputProblem(
+  { name = "", type = "", size = 0 }: { name?: string; type?: string; size?: number } = {},
+): string | null {
   if (!Number.isFinite(size) || size <= 0) return "That file is empty.";
   if (size > MAX_IMAGE_INPUT_BYTES)
     return `Keep image files at or below ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MiB.`;
@@ -63,7 +65,7 @@ export function imageInputProblem({ name = "", type = "", size = 0 } = {}) {
 }
 
 /** A decoded-pixel and dimension check for untrusted image headers. */
-export function imagePixelProblem(width, height) {
+export function imagePixelProblem(width: number, height: number): string | null {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1)
     return "The image dimensions could not be read. Try a standard JPEG, PNG or WebP.";
   if (width > MAX_SOURCE_DIMENSION || height > MAX_SOURCE_DIMENSION)
@@ -73,7 +75,7 @@ export function imagePixelProblem(width, height) {
   return null;
 }
 
-export function batchCountProblem(count) {
+export function batchCountProblem(count: number): string | null {
   if (!Number.isSafeInteger(count) || count < 1) return "Choose at least one image.";
   if (count > MAX_BATCH_IMAGES) return `Process at most ${MAX_BATCH_IMAGES} images in one batch.`;
   return null;
