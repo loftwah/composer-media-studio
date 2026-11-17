@@ -1,7 +1,7 @@
 // MIT. Synthetic image fixtures for the local image-tool tests. Nothing here
 // is a real photograph; the fixtures only exercise parsers and byte rewriting.
 
-import { crc32 } from "../../src/frontend/image-zip.mjs";
+import { crc32 } from "../../src/frontend/image-zip.ts";
 
 export function bytes(...values) {
   return Uint8Array.from(values.flat());

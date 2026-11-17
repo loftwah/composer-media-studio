@@ -2,7 +2,7 @@
 // the JPEG, PNG and WebP bytes this workbench accepts. Parsing is deliberately
 // conservative: an unreadable EXIF block is reported as present, not as absent.
 
-import { crc32 } from "./image-zip.mjs";
+import { crc32 } from "./image-zip.ts";
 
 export class ImageMetadataError extends Error {
   constructor(message) {

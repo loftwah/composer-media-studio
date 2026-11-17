@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { createZip, crc32, ZIP_MIME } from "../src/frontend/image-zip.mjs";
+import { createZip, crc32, ZIP_MIME } from "../src/frontend/image-zip.ts";
 
 function view(bytes) {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
