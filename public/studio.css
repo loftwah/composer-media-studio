@@ -356,49 +356,9 @@ dialog h2 { margin: 0; }
   }
 }
 
-.share-portfolio { width: min(var(--max), 100%); margin-inline: auto; padding: clamp(1rem, 4vw, 3rem); }
-.share-intro { max-width: 48rem; padding-block: 1rem 1.75rem; }
-.share-intro p { max-width: 58ch; color: var(--ink-soft); }
-.share-story { display:grid; grid-template-columns:minmax(0, .8fr) minmax(0, 1.4fr); gap:clamp(1.5rem,4vw,3rem); align-items:center; padding:clamp(1.25rem,3vw,2rem); margin-bottom:2rem; background:var(--paper-deep); border:1px solid var(--line); border-radius:12px; }
-.share-story-copy h2 { margin:.35rem 0 .75rem; }
-.share-story-copy p { color:var(--ink-soft); }
-.share-story-copy .share-story-kicker { color:var(--accent); font-size:.78rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
-.share-story video { display:block; width:100%; aspect-ratio:16 / 9; background:#111; border-radius:8px; }
-@media (max-width: 720px) { .share-story { grid-template-columns:1fr; } }
-.share-films { border-block: 1px solid var(--line); padding: 1.5rem 0 2rem; margin-bottom: 2rem; }
-.share-films > p { color: var(--ink-soft); }
-.share-film-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
-.share-film-grid figure { margin: 0; min-width: 0; }
-.share-film-grid video { display: block; width: 100%; height: clamp(240px, 34vw, 460px); object-fit: contain; background: #111; }
-.film-placeholder { display:flex; flex-direction:column; justify-content:center; align-items:flex-start; gap:1rem; width:100%; height:clamp(240px,34vw,460px); padding:clamp(1.4rem,3vw,2.5rem); border:1px solid var(--line); border-radius:10px; background:var(--paper-deep); color:var(--ink); text-decoration:none; }
-.film-placeholder:hover { border-color:var(--accent); }
-.film-placeholder:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
-.film-placeholder-kind { font-size:.8rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-soft); }
-.film-placeholder > strong { font-family:var(--display); font-size:clamp(1.35rem,2.3vw,2rem); line-height:1.14; overflow-wrap:anywhere; }
-.film-placeholder-action { display:flex; align-items:center; gap:.55rem; font-weight:700; }
-.film-play-icon { width:2rem; height:2rem; border-radius:50%; background:var(--ink); color:var(--paper); display:grid; place-items:center; }
-.film-placeholder-note { font-size:.8rem; color:var(--muted); }
-.share-film-grid figcaption { padding-top: .75rem; }
-.share-film-grid figcaption p { color: var(--ink-soft); margin: .4rem 0; overflow-wrap: anywhere; }
-@media (max-width: 720px) { .share-film-grid { grid-template-columns: 1fr; } }
-.share-filters { display: flex; align-items: end; gap: .75rem; flex-wrap: wrap; margin-bottom: 2rem; }
-.share-filters label { display: grid; gap: .3rem; }
-.share-filters label:first-child { flex: 1 1 15rem; }
-.share-prints { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1.75rem 1.25rem; list-style: none; padding: 0; }
-.share-prints a { display: grid; align-content: start; gap: .2rem; color: var(--ink); text-decoration: none; }
-.share-prints a:hover strong { text-decoration: underline; text-underline-offset: .2em; }
-.share-prints img { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--paper-deep); }
-.share-prints a > span { margin-top: .4rem; color: var(--muted); font-size: .82rem; }
-.share-pagination { justify-content: space-between; margin-top: 2rem; }
-.share-detail { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: clamp(1rem, 4vw, 3rem); margin-top: 1.5rem; }
-.share-detail figure { margin: 0; }
-.share-detail img { display: block; width: 100%; height: auto; }
-.share-detail h2 { margin-top: 1.5rem; }
-.share-detail code { overflow-wrap: anywhere; }
 .share-import { margin: 1rem 0; }
 .share-import form { max-width: 40rem; margin-top: .75rem; }
 .share-import input[type="checkbox"] { width: auto; }
-@media (max-width: 720px) { .share-detail { grid-template-columns: 1fr; } }
 
 /* Public publication gallery */
 .public-gallery { width: min(100% - 3rem, 1280px); margin: 0 auto; padding: clamp(3rem, 7vw, 7rem) 0; }

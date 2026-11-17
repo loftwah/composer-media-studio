@@ -1,7 +1,8 @@
 // MIT. Server-rendered shells. The studio itself is progressive, same-origin JS.
 
 import { escapeHtml } from "./util.mjs";
-import { shareOrigin, shareProjectName, shareProjects, woodhouseUrl } from "./woodhouse-share.mjs";
+import { composerShare, composerShowcase } from "./composer-share.ts";
+import { woodhouseUrl } from "./woodhouse-share.mjs";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 
@@ -142,7 +143,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
     ${storyUrl ? `<a class="quiet" href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
     <a href="#/">Projects</a>
     ${session ? `<a href="/compare">Compare models</a>` : ""}
-    ${woodhouseShare ? '<a href="/portfolio">Share artwork</a>' : ""}
+    ${woodhouseShare ? `<a href="${composerShare}">Share artwork</a>` : ""}
     <a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener">Help</a>
     ${launcherHome ? `<div class="app-launcher">
       <button type="button" class="secondary apps-trigger" data-open-apps aria-controls="app-navigation" aria-label="Open apps" title="Apps and shortcuts (Ctrl/Cmd+K)" aria-haspopup="dialog"><span>Apps</span><kbd>Ctrl K</kbd></button>
@@ -154,7 +155,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
           <li data-destination data-local-launcher-group="studio"><a href="#/"><span>Studio projects<small>Private work in this studio</small></span></a></li>
           <li data-destination data-local-launcher-group="studio"><a href="/gallery"><span>Public gallery<small>Work published from studios</small></span></a></li>
           ${session ? '<li data-destination data-local-launcher-group="studio"><a href="/compare"><span>Compare models<small>Saved takes for the same job</small></span></a></li>' : ""}
-          ${woodhouseShare ? '<li data-destination data-local-launcher-group="studio"><a href="/portfolio"><span>Share artwork<small>Woodhouse Share originals</small></span></a></li>' : ""}
+          ${woodhouseShare ? `<li data-destination data-local-launcher-group="studio"><a href="${composerShare}"><span>Share artwork<small>App Composer Share originals</small></span></a></li>` : ""}
           <li data-destination data-local-launcher-group="studio"><a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener"><span>Help<small>Studio guides and limits</small></span></a></li>
           <li data-destination data-local-launcher-group="studio" data-keywords="image editor image workbench resize crop convert rotate batch export"><a href="/tools/images"><span>Edit images<small>Image tools: resize, crop, convert and batch-export local images</small></span></a></li>
         </ul>
@@ -252,7 +253,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
       <p class="small" role="status" id="login-status"></p>
     </form>
     ${bridged ? "</details>" : ""}
-    ${woodhouseShare ? '<p><a href="/portfolio">Browse artwork from Woodhouse Share</a></p>' : ""}
+    ${woodhouseShare ? `<p><a href="${composerShare}">Browse Share artwork</a></p>` : ""}
     <p><a href="/tools/images">Resize, crop and convert images</a> · <a href="/tools/audio-trim">Trim a song</a> · <a href="/tools/video-clip">Clip and frame a video</a> · <a href="/tools/add-music">Add music</a> · no sign-in needed</p>
     <p class="small">Your media stays in this studio. The owner passphrase is separate from your App Composer password.</p>
   </main>
@@ -526,124 +527,16 @@ export function helpPage({ composerOrigin = null, storyUrl = null } = {}) {
 </html>`;
 }
 
-function shareLink(url, label) {
-  const href = woodhouseUrl(url);
-  return href ? `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>` : "";
-}
-
-function sharePreview(asset, large = false) {
-  const href = woodhouseUrl(large ? asset.previewUrl : asset.thumbnailUrl);
-  return href
-    ? `<img src="${escapeHtml(href)}" alt="${escapeHtml(asset.alt || asset.title)}"
-          ${large ? "" : 'loading="lazy"'} decoding="async">`
-    : "";
-}
-
-function shareCard(asset, context) {
-  const detail = new URLSearchParams(context);
-  detail.set("asset", asset.id);
-  return `<li id="artwork-${escapeHtml(asset.id)}"><a href="/portfolio?${escapeHtml(detail)}">
-    ${sharePreview(asset)}<span>${escapeHtml(shareProjectName(asset.project))}</span>
-    <strong>${escapeHtml(asset.title)}</strong>
-  </a></li>`;
-}
-
-function shareDetail(asset, context) {
-  const query = context.toString();
-  const back = `/portfolio${query ? `?${query}` : ""}#artwork-${encodeURIComponent(asset.id)}`;
-  return `<div class="row"><a class="button secondary" href="${escapeHtml(back)}">← Back to artwork</a><a href="/portfolio?project=${encodeURIComponent(asset.project)}">More from ${escapeHtml(shareProjectName(asset.project))}</a></div>
-    <div class="share-detail">
-      <figure>${sharePreview(asset, true)}</figure>
-      <section>
-        <h1>${escapeHtml(asset.title)}</h1>
-        <p>${escapeHtml(asset.description)}</p>
-        <p class="small">${escapeHtml(asset.kind)} · ${escapeHtml(asset.credit)}</p>
-        <div class="row">
-          ${shareLink(asset.original?.url, "Open original")}
-          ${shareLink(asset.sourceUrl, "Source notes")}
-          ${shareLink(asset.shareUrl, "Woodhouse gallery")}
-        </div>
-        <h2>Use in a project</h2>
-        <p><a href="/studio">Open Studio</a>, choose your project, then open Library → Import from Woodhouse Share. Search for the exact title “${escapeHtml(asset.title)}”, select the matching artwork and confirm you have permission to reuse it before importing. The source notes above show the original and its credit.</p>
-        <p>If the search does not find it, paste this asset ID as a fallback: <code>${escapeHtml(asset.id)}</code></p>
-        ${asset.formats?.length ? `<h2>Formats</h2><ul>${asset.formats.map((format) => `<li>${shareLink(format.url, format.label)}</li>`).join("")}</ul>` : ""}
-        ${asset.versions?.length ? `<h2>Versions</h2><ul>${asset.versions.map((version) => `<li>${shareLink(version.url, version.label)} · ${escapeHtml(version.note)} ${shareLink(version.sourceUrl, "Source")}</li>`).join("")}</ul>` : ""}
-        ${asset.kitUrl ? shareLink(asset.kitUrl, "Open social kit") : ""}
-      </section>
-    </div>`;
-}
-
-function showcaseFilm(film) {
-  const slug = encodeURIComponent(film.slug);
-  const title = escapeHtml(film.title);
-  const duration = Number(film.duration_ms) > 0 ? `${(film.duration_ms / 1000).toFixed(0)} sec` : "Video";
-  // The chosen poster is the owner's artwork. Its derived preview is that same
-  // picture scaled down, so it may stand in; a video frame may not. Until the
-  // poster preview exists, the full poster stays exactly as it was.
-  const posterPreview = Boolean(film.poster_asset_id) && Boolean(Number(film.has_poster_preview));
-  const poster = posterPreview ? `/p/${slug}/poster-preview` : `/p/${slug}/poster`;
-  const size = posterPreview && Number.isSafeInteger(film.preview_w) && film.preview_w > 0 && Number.isSafeInteger(film.preview_h) && film.preview_h > 0
-    ? ` width="${film.preview_w}" height="${film.preview_h}"`
-    : "";
-  const preview = film.poster_asset_id
-    ? `<video controls playsinline preload="none" poster="${poster}"${size} aria-label="${title}"><source src="/p/${slug}/media" type="${escapeHtml(film.mime)}"><a href="/p/${slug}">Open ${title}</a></video>`
-    : `<a class="film-placeholder" href="/p/${slug}" aria-label="Open ${title}"><span class="film-placeholder-kind">${escapeHtml(duration)} · Published film</span><strong>${title}</strong><span class="film-placeholder-action"><span class="film-play-icon" aria-hidden="true"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M7 4.5v11l8-5.5z" fill="currentColor"/></svg></span>Open film</span><span class="film-placeholder-note">No preview still provided</span></a>`;
-  return `<figure>${preview}<figcaption><strong>${title}</strong><p>${escapeHtml(film.description || "")}</p><a href="/p/${slug}">Open the published piece</a></figcaption></figure>`;
-}
-
 function publicStudioHeader({ sourceArtwork = false, active }) {
   return `<header class="site-header">
     <a class="wordmark" href="/" aria-label="Media Studio home">${mark}<span>Media Studio</span></a>
     <nav class="header-nav" aria-label="Main navigation">
       <a href="/gallery"${active === "gallery" ? ' aria-current="page"' : ""}>Gallery</a>
-      ${sourceArtwork ? `<a href="/portfolio"${active === "artwork" ? ' aria-current="page"' : ""}>Source artwork</a>` : ""}
+      ${sourceArtwork ? `<a href="${composerShare}">Source artwork</a>` : ""}
       <a class="button secondary" href="/studio">Open Studio</a>
       <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
     </nav>
   </header>`;
-}
-
-export function woodhouseGallery({ asset, assets = [], query = "", project = "", after, nextAfter, error, films = [] }) {
-  const filters = new URLSearchParams();
-  if (query) filters.set("q", query);
-  if (project) filters.set("project", project);
-  const firstPage = filters.toString() ? "/portfolio?" + filters : "/portfolio";
-  if (after) filters.set("after", after);
-  const context = new URLSearchParams(filters);
-  if (nextAfter) filters.set("after", nextAfter);
-  return `${head({
-    title: asset ? `${asset.title} — Artwork from Woodhouse Share` : "Artwork from Woodhouse Share — Media Studio",
-    description: "Browse the public Woodhouse Share artwork catalogue, originals and versions.",
-  })}
-<body>
-<a class="skip" href="#main">Skip to content</a>
-${publicStudioHeader({ sourceArtwork: true, active: "artwork" })}
-<main id="main" class="share-portfolio">
-${error ? `<h1>Share artwork</h1><p role="status">${escapeHtml(error)}</p><p><a href="/portfolio">Browse the catalogue</a> · <a href="${shareOrigin}/share/">Open Woodhouse Share</a></p>`
-  : asset ? shareDetail(asset, context)
-  : `<section class="share-intro">
-      <h1>Artwork from Woodhouse Share</h1>
-      <p>Browse public artwork, production captures and alternate editions. Each entry links to its original, credit and source notes.</p>
-      <a href="${shareOrigin}/share/">Open Woodhouse Share ↗</a>
-    </section>
-    ${!query && !project && !after ? `<section class="share-story" aria-labelledby="share-story-title"><div class="share-story-copy"><p class="share-story-kicker">A short Studio story · 31 sec</p><h2 id="share-story-title">From artwork to motion</h2><p>Follow a real visit to the public Studio gallery, see a commissioned illustration used in a local LDraw preview, and watch a separate Studio-generated motion study.</p><p class="small">Silent film. Public gallery recording, local LDraw preview and generated motion are labelled in the film; it does not show the Studio creation process.</p></div><video controls playsinline preload="none" poster="/films/artwork-to-motion-poster.webp" aria-label="From artwork to motion, a silent Media Studio story"><source src="/films/artwork-to-motion.mp4" type="video/mp4"><a href="/films/artwork-to-motion.mp4">Download the film</a></video></section>` : ""}
-    ${films.length ? `<section class="share-films" aria-labelledby="share-films-title"><h2 id="share-films-title">Made in Media Studio</h2><p>Watch published work and follow each piece to its source and details.</p><div class="share-film-grid">${films.map(showcaseFilm).join("")}</div></section>` : ""}
-    <form class="share-filters" action="/portfolio" method="get" role="search">
-      <label>Search artwork <input name="q" type="search" maxlength="100" value="${escapeHtml(query)}"></label>
-      <label>Project <select name="project">
-        <option value="">All projects</option>
-        ${Object.entries(shareProjects).map(([key, label]) => `<option value="${key}"${key === project ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}
-      </select></label>
-      <button class="button" type="submit">Search</button>
-    </form>
-    ${assets.length ? `<ul class="share-prints">${assets.map((item) => shareCard(item, context)).join("")}</ul>` : '<p>No artwork matches these filters. Try another project or search.</p>'}
-    ${after || nextAfter ? `<nav class="row share-pagination" aria-label="Artwork pages">
-      ${after ? `<a href="${escapeHtml(firstPage)}">First page</a>` : ""}
-      ${nextAfter ? `<a class="button secondary" href="/portfolio?${escapeHtml(filters)}">Next page →</a>` : ""}
-    </nav>` : ""}`}
-</main>
-</body>
-</html>`;
 }
 
 // The gallery uses listed publications; the home fallback uses only configured public films.
@@ -739,7 +632,7 @@ export function publicGallery({ items = [], featured = [], hasMore = false, tota
 <body><a class="skip" href="#main">Skip to content</a>${publicStudioHeader({ sourceArtwork: woodhouseShare, active: home ? undefined : "gallery" })}
 <main id="main" class="public-gallery${home ? "" : " public-gallery--catalogue"}"><section class="gallery-intro${heroArtwork ? " gallery-intro--art" : ""}"><div class="gallery-intro-copy"><h1>${home ? "Made to be seen." : "Media Studio gallery"}</h1><p>${home ? "Explore work made and kept in Media Studio." : "Watch films, see images and listen to audio published from Media Studio."}</p>${home ? `<div class="gallery-actions"><a class="button" href="/gallery">Explore the gallery →</a>${buildUrl ? `<a class="button secondary" href="${escapeHtml(buildUrl)}">Build your own studio</a>` : ""}<a href="/tools/images">Image Tools →</a>${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story →</a>` : ""}</div>` : ""}</div>${heroArtwork}</section>
 <section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${home ? "" : `<p class="gallery-count" id="gallery-results" tabindex="-1" data-total="${total}">${countText}</p>`}${items.length ? `<ul class="gallery-grid">${cards}</ul>` : hasFilters ? '<p>No published work matches these filters. <a href="/gallery">Clear filters</a></p>' : '<p>No work has been added to the public gallery yet.</p>'}
-${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(galleryPageHref({ query, project, kind, capability, order }, page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(galleryPageHref({ query, project, kind, capability, order }, page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? '<p><a href="/portfolio">See more featured films and artwork →</a></p>' : ""}</section>` : ""}</main></body></html>`;
+${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(galleryPageHref({ query, project, kind, capability, order }, page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(galleryPageHref({ query, project, kind, capability, order }, page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? `<p><a href="${composerShowcase}">See more featured films →</a></p>` : ""}</section>` : ""}</main></body></html>`;
 }
 
 /**

@@ -73,7 +73,7 @@ test("the gallery leads with a curated film and keeps its full browse path", () 
     woodhouseShare: true,
   });
   assert.match(html, /href="\/gallery" aria-current="page">Gallery/);
-  assert.match(html, /href="\/portfolio">Source artwork/);
+  assert.match(html, /href="https:\/\/composer\.loftwah\.com\/share">Source artwork/);
   assert.match(html, /class="gallery-hero-art" href="\/p\/film"/);
   assert.match(html, /Watch film →/);
   assert.ok(html.indexOf("A finished film") < html.indexOf("An image"));

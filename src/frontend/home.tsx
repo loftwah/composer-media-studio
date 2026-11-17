@@ -1,3 +1,4 @@
+import { composerShare, composerShowcase } from "../lib/composer-share.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { HomeProps, ProjectSummaryV1 } from "./contracts";
@@ -156,7 +157,7 @@ function Home({
               <p>Published work, with the story behind each piece.</p>
             </div>
             {woodhouseShare && (
-              <a href="/portfolio">Explore published work →</a>
+              <a href={composerShowcase}>Explore published work →</a>
             )}
           </div>
           <div className="creative-film-grid">
@@ -204,7 +205,7 @@ function Home({
         </div>
         <div className="creative-path-links">
           {woodhouseShare && (
-            <a className="button secondary" href="/portfolio">
+            <a className="button secondary" href={composerShare}>
               Browse Share artwork
             </a>
           )}

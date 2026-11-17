@@ -1,3 +1,4 @@
+import { composerShare } from "../lib/composer-share.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { useEffect, useRef, useState } from "react";
@@ -154,7 +155,7 @@ function ShareImport({ projectId }: { projectId: string }) {
 
   return <details className="share-import" data-project-id={projectId}><summary>Import from Woodhouse Share</summary>
     <form className="stack" data-form="woodhouse-import">
-      <p className="small">Search public Share artwork, or paste an asset ID from <a href="/portfolio" target="_blank" rel="noopener noreferrer">Share artwork</a>. The original and its source credit are saved to this project.</p>
+      <p className="small">Search public Share artwork, or paste an asset ID from <a href={composerShare} target="_blank" rel="noopener noreferrer">Share artwork</a>. The original and its source credit are saved to this project.</p>
       <div className="share-search">
         <label className="sr-only" htmlFor="share-search-query">Search Woodhouse Share</label>
         <input id="share-search-query" ref={queryRef} type="search" placeholder="Search Share titles…" maxLength={100} readOnly={state === "loading"} onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void search(); } }} />
@@ -179,7 +180,7 @@ function ShareImport({ projectId }: { projectId: string }) {
         </ul>}
       </div>
       {chosen && <p className="small" role="status">
-        Selected {chosen.title}. <a href={`/portfolio?asset=${encodeURIComponent(chosen.id)}`} target="_blank" rel="noopener noreferrer">View original and credits</a>
+        Selected {chosen.title}. <a href={`${composerShare}/artwork/${encodeURIComponent(chosen.id)}`} target="_blank" rel="noopener noreferrer">View original and credits</a>
       </p>}
       <label>Share asset ID <input name="assetId" ref={idRef} onChange={() => setChosen(null)} required maxLength={128} pattern="[a-z0-9][a-z0-9\-]{0,127}" /></label>
       <label><span><input name="reuseConfirmed" ref={reuseRef} type="checkbox" required /> I have permission to reuse this original.</span></label>

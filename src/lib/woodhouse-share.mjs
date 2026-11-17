@@ -5,24 +5,6 @@ export const shareOrigin = "https://woodhouse.loftwah.com";
 export const shareApi = shareOrigin + "/api/v1/assets";
 const MAX_CATALOGUE_BYTES = 256 * 1024;
 const identifier = /^[a-z0-9][a-z0-9-]{0,127}$/;
-const projects = {
-  "app-composer": "App Composer",
-  "asset-hunter": "Asset Hunter",
-  bubbles: "Bubbles",
-  fighter: "Fighter",
-  foilbury: "Foilbury",
-  liferaft: "Liferaft",
-  loftwahfm: "LoftwahFM",
-  max: "MAX",
-  pirates: "Pirates",
-  "protocol-11": "Protocol 11",
-  shoalshot: "SHOALSHOT",
-  "social-club": "Social Club",
-  woodhouse: "Woodhouse",
-};
-export const shareProjects = projects;
-export const shareProjectName = (key) => Object.hasOwn(projects, key) ? projects[key] : key;
-
 export function woodhouseUrl(value) {
   try {
     const url = new URL(value);

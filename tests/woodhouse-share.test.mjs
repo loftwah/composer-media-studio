@@ -4,7 +4,6 @@ import worker from "../src/worker.mjs";
 import { createSession } from "../src/lib/auth.mjs";
 import { sha256Hex } from "../src/lib/util.mjs";
 import { PNG_1x1, setup, addAsset } from "./harness.mjs";
-import { woodhouseGallery } from "../src/lib/ui.mjs";
 
 test("publication text edits preserve public identity and require scoped publish access", async (t) => {
   const { env, project } = await setup();
@@ -42,69 +41,34 @@ test("publication text edits preserve public identity and require scoped publish
   assert.equal((await patch(owner, { ...edit, expectedTitle:row.title, expectedDescription:row.description })).status, 404);
 });
 
-test("artwork links retain the current search and page when returning to the catalogue", () => {
-  const asset = { id: "first-print", title: "Print", project: "fighter" };
-  const context = { query: "ring & bell", project: "fighter", after: "earlier-print" };
-  const gallery = woodhouseGallery({ assets: [asset], ...context });
-  assert.match(gallery, /<a class="button secondary" href="\/studio">Open Studio<\/a>/);
-  assert.match(gallery, /q=ring\+%26\+bell&amp;project=fighter&amp;after=earlier-print&amp;asset=first-print/);
-  const detail = woodhouseGallery({ asset, ...context });
-  assert.match(detail, /<a class="button secondary" href="\/studio">Open Studio<\/a>/);
-  assert.match(detail, /href="\/portfolio\?q=ring\+%26\+bell&amp;project=fighter&amp;after=earlier-print#artwork-first-print"/);
-  assert.match(woodhouseGallery({ asset }), /href="\/portfolio#artwork-first-print"/);
+test("old Portfolio bookmarks redirect to Composer without loading the catalogue", async (t) => {
+  const { env } = await setup();
+  env.WOODHOUSE_SHARE = "true";
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("Unexpected catalogue fetch"); });
+  const read = (path, method = "GET") => worker.fetch(new Request(`https://studio.test${path}`, { method }), env);
+  for (const [path, target] of [
+    ["/portfolio", "/share"],
+    ["/portfolio/?q=ring+%26+bell&project=fighter&after=first-print", "/share?art=ring+%26+bell&project=fighter&after=first-print"],
+    ["/portfolio?asset=first-print&q=ring&project=fighter&unknown=value", "/share/artwork/first-print?art=ring&project=fighter"],
+    ["/portfolio?project=..&after=bad%2Fcursor", "/share"],
+  ]) {
+    const response = await read(path);
+    assert.equal(response.status, 308);
+    assert.equal(response.headers.get("location"), `https://composer.loftwah.com${target}`);
+  }
+  assert.equal((await read("/portfolio", "HEAD")).status, 308);
+  assert.equal((await read("/portfolio", "POST")).status, 405);
+  assert.equal((await read("/portfolio?asset=..%2F%2Fevil.example")).status, 400);
+  assert.equal(fetch.mock.callCount(), 0);
 });
 
-test("public artwork detail hands creators off to the current Studio search flow", () => {
-  const asset = { id: "first-print", title: "Workshop <print>", project: "fighter", credit: "Woodhouse · first-party art" };
-  const detail = woodhouseGallery({ asset });
-  assert.match(detail, /<a href="\/studio">Open Studio<\/a>/);
-  assert.match(detail, /choose your project, then open Library → Import from Woodhouse Share/);
-  assert.match(detail, /Search for the exact title “Workshop &lt;print&gt;”/);
-  assert.match(detail, /confirm you have permission to reuse it before importing/);
-  assert.match(detail, /paste this asset ID as a fallback: <code>first-print<\/code>/);
-  assert.doesNotMatch(detail, /enter this asset ID/);
-});
-
-test("portfolio film cards use the poster-derived preview and keep the full poster as the fallback", () => {
-  const base = { description: "A saved clip.", mime: "video/mp4", duration_ms: 4200 };
-  const html = woodhouseGallery({
-    films: [
-      { ...base, slug: "chosen-poster", title: "Chosen <poster>", poster_asset_id: "poster_one", has_poster_preview: 1, preview_w: 720, preview_h: 960 },
-      { ...base, slug: "unpreviewed", title: "Unpreviewed", poster_asset_id: "poster_two" },
-      { ...base, slug: "odd-size", title: "Odd size", poster_asset_id: "poster_three", has_poster_preview: 1, preview_w: 720.5, preview_h: 0 },
-      { ...base, slug: "not-previewed", title: "Not previewed", poster_asset_id: "poster_four", has_poster_preview: "0", preview_w: 720, preview_h: 960 },
-      { ...base, slug: "no-poster", title: "No poster" },
-    ],
-  });
-  // A chosen poster preview is the owner's own artwork, scaled down and sized.
-  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/chosen-poster\/poster-preview" width="720" height="960" aria-label="Chosen &lt;poster&gt;">/);
-  assert.match(html, /<source src="\/p\/chosen-poster\/media" type="video\/mp4">/);
-  assert.doesNotMatch(html, /poster="\/p\/chosen-poster\/poster"/);
-  assert.match(html, /<a href="\/p\/chosen-poster">Open the published piece<\/a>/);
-  // Without the stored preview the full poster stays, and no unverified box is applied.
-  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/unpreviewed\/poster" aria-label="Unpreviewed">/);
-  assert.match(html, /<source src="\/p\/unpreviewed\/media" type="video\/mp4">/);
-  assert.doesNotMatch(html, /\/p\/unpreviewed\/poster-preview/);
-  assert.doesNotMatch(html, /poster="\/p\/unpreviewed\/poster" width=/);
-  // An unsafe preview size keeps the preview route but reserves no box.
-  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/odd-size\/poster-preview" aria-label="Odd size">/);
-  // A non-numeric flag is not a preview: the full poster is still correct.
-  assert.match(html, /<video controls playsinline preload="none" poster="\/p\/not-previewed\/poster" aria-label="Not previewed">/);
-  assert.doesNotMatch(html, /\/p\/not-previewed\/poster-preview/);
-  // A film with no chosen poster keeps the existing placeholder and downloads nothing.
-  assert.match(html, /class="film-placeholder" href="\/p\/no-poster"/);
-  assert.doesNotMatch(html, /\/p\/no-poster\/(?:poster|media|poster-preview)/);
-});
-
-test("showcase lists only currently published live videos and honours withdrawal", async (t) => {
+test("the Composer film feed preserves explicit selection and honours visibility and withdrawal", async () => {
   const { env, project } = await setup();
   env.WOODHOUSE_SHARE = "true";
-  env.PUBLIC_SHOWCASE_SLUGS = "example-film";
+  env.PUBLIC_SHOWCASE_SLUGS = "example-film, example-film";
   const asset = await addAsset(env, project, { id: "asset_film", kind: "video" });
-  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at) VALUES(?1,?2,?3,?4,?5,?6,1,1)")
+  await env.DB.prepare("INSERT INTO publications(id,project_id,asset_id,slug,title,description,asset_revision,created_at,listed) VALUES(?1,?2,?3,?4,?5,?6,1,1,0)")
     .bind("pub_film", project.id, asset.id, "example-film", "A real film", "A saved clip.").run();
-  t.mock.method(globalThis, "fetch", async () => Response.json({ version: 1, assets: [], nextAfter: null }));
-  const read = () => worker.fetch(new Request("https://studio.test/portfolio"), env);
   const readFeed = async () => {
     const response = await worker.fetch(new Request("https://studio.test/share-films.json"), env);
     assert.equal(response.headers.get("cache-control"), "no-store");
@@ -113,23 +77,7 @@ test("showcase lists only currently published live videos and honours withdrawal
   assert.deepEqual(await readFeed(), { version: 1, films: [{ slug: "example-film", title: "A real film" }] });
   await env.DB.prepare("UPDATE publications SET hidden=1 WHERE id=?1").bind("pub_film").run();
   assert.deepEqual((await readFeed()).films, []);
-  await env.DB.prepare("UPDATE publications SET hidden=0 WHERE id=?1").bind("pub_film").run();
-  const visible = await read();
-  assert.equal(visible.headers.get("cache-control"), "no-store");
-  const withoutPoster = await visible.text();
-  assert.match(withoutPoster, /class="film-placeholder"/);
-  assert.match(withoutPoster, /No preview still provided/);
-  assert.match(withoutPoster, /href="\/p\/example-film"/);
-  assert.doesNotMatch(withoutPoster, /\/p\/example-film\/(?:media|poster)/);
-  const poster = await addAsset(env, project, { id: "asset_public_poster", kind: "image" });
-  await env.DB.prepare("UPDATE publications SET poster_asset_id=?2 WHERE id=?1").bind("pub_film", poster.id).run();
-  const withPoster = await (await read()).text();
-  assert.match(withPoster, /poster="\/p\/example-film\/poster"/);
-  assert.match(withPoster, /preload="none"/);
-  await env.DB.prepare("UPDATE assets SET deleted_at=1 WHERE id=?1").bind(poster.id).run();
-  assert.match(await (await read()).text(), /class="film-placeholder"/);
-  await env.DB.prepare("UPDATE publications SET revoked_at=1 WHERE id=?1").bind("pub_film").run();
-  assert.doesNotMatch(await (await read()).text(), /example-film/);
+  await env.DB.prepare("UPDATE publications SET hidden=0, revoked_at=1 WHERE id=?1").bind("pub_film").run();
   assert.deepEqual((await readFeed()).films, []);
 });
 
@@ -208,7 +156,7 @@ test("home examples include only configured, live published videos and explicit 
   assert.equal(without.showcase[0].hasPoster, false);
 });
 
-test("Share browsing and imports preserve source boundaries and deduplicate concurrent saves", async (t) => {
+test("Share imports preserve source boundaries and deduplicate concurrent saves", async (t) => {
   const { env, project } = await setup();
   env.WOODHOUSE_SHARE = "true";
   const origin = "https://woodhouse.loftwah.com";
@@ -231,14 +179,6 @@ test("Share browsing and imports preserve source boundaries and deduplicate conc
     if (String(url).endsWith("/first-print")) return Response.json({ version: 1, asset });
     return Response.json({ version: 1, assets: [asset], nextAfter: "second-print" });
   });
-  const gallery = await worker.fetch(new Request("https://studio.test/portfolio?project=app-composer"), env);
-  assert.equal(gallery.status, 200);
-  assert.match(gallery.headers.get("content-security-policy"), /img-src [^;]*woodhouse\.loftwah\.com/);
-  const html = await gallery.text();
-  assert.match(html, /Workshop &lt;print&gt;/);
-  assert.match(html, /project=app-composer&amp;after=second-print/);
-  assert.doesNotMatch(html, /<print>/);
-
   const cookie = "studio_session=" + await createSession(env);
   const path = `https://studio.test/api/projects/${project.id}/assets/woodhouse`;
   const submit = (data, authenticated = true) => worker.fetch(new Request(path, {
@@ -248,7 +188,7 @@ test("Share browsing and imports preserve source boundaries and deduplicate conc
   }), env);
   assert.equal((await submit({ assetId: asset.id, reuseConfirmed: true }, false)).status, 401);
   assert.equal((await submit({ assetId: asset.id })).status, 400);
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 0);
 
   const payload = { assetId: asset.id, reuseConfirmed: true };
   const results = await Promise.all([submit(payload), submit(payload)]);

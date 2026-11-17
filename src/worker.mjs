@@ -75,7 +75,8 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.mjs";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
-import { shell, loginPage, publicPage, notFoundPage, helpPage, woodhouseGallery, audioTrimPage, videoClipPage, addMusicPage, imagesPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
+import { composerShare } from "./lib/composer-share.ts";
+import { shell, loginPage, publicPage, notFoundPage, helpPage, audioTrimPage, videoClipPage, addMusicPage, imagesPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
@@ -301,24 +302,15 @@ function generationView(generation, extra = {}) {
 // These films were explicitly selected for the Portfolio showcase. The
 // showcase is independent of a film's inclusion in the general Gallery.
 async function shareShowcaseFilms(env) {
-  const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 24);
-  const films = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,a.width,a.height,a.duration_ms,
-    d.publication_id AS poster_preview_id,d.width AS poster_preview_width,d.height AS poster_preview_height,
-    t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height
-    FROM publications p JOIN assets a ON a.id=p.asset_id
-    LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
-    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster' AND d.source_sha256=poster.sha256
-    LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
-    WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
-  return films.filter(Boolean).map((film) => {
-    const { poster_preview_id, poster_preview_width, poster_preview_height, thumb_id, thumb_width, thumb_height, ...rest } = film;
-    return {
-      ...rest,
-      has_poster_preview: poster_preview_id ? 1 : 0,
-      preview_w: poster_preview_width ?? thumb_width ?? null,
-      preview_h: poster_preview_height ?? thumb_height ?? null,
-    };
-  });
+  const slugs = [...new Set(String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",")
+    .map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)))].slice(0, 24);
+  if (!slugs.length) return [];
+  const films = await env.DB.prepare(`SELECT p.slug,p.title
+    FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
+    WHERE p.slug IN (${slugs.map(() => "?").join(",")}) AND p.revoked_at IS NULL
+      AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(...slugs).all();
+  const bySlug = new Map(films.results.map((film) => [film.slug, film]));
+  return slugs.flatMap((slug) => bySlug.has(slug) ? [bySlug.get(slug)] : []);
 }
 
 // Only explicitly configured, still-published films are safe for the home gallery.
@@ -2501,27 +2493,23 @@ async function handlePublic(request, env, url) {
   if (path === "/login") return handleLogin(request, env);
   if (path === "/share-films.json" && env.WOODHOUSE_SHARE === "true") {
     if (request.method !== "GET" && request.method !== "HEAD") throw new HttpError(405, "Method not allowed", "method_not_allowed");
-    const films = (await shareShowcaseFilms(env)).map(({ slug, title }) => ({ slug, title }));
+    const films = await shareShowcaseFilms(env);
     return json({ version: 1, films }, 200, { "cache-control": "no-store" });
   }
   if (path.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true") {
-    let view;
-    let status = 200;
-    try {
-      const assetId = url.searchParams.get("asset");
-      view = assetId ? { asset: await shareAsset(assetId), query: url.searchParams.get("q") ?? "", project: url.searchParams.get("project") ?? "", after: url.searchParams.get("after") ?? "" } : await sharePage(url.searchParams);
-      if (!assetId && !url.searchParams.get("q") && !url.searchParams.get("project") && !url.searchParams.get("after")) {
-        view.films = await shareShowcaseFilms(env);
-      }
-    } catch (error) {
-      status = error instanceof HttpError ? error.status : 503;
-      if (status === 503) console.warn("Woodhouse catalogue request failed", error.message);
-      view = { error: error instanceof HttpError ? error.message : "Woodhouse Share is unavailable. Try again in a moment." };
+    if (request.method !== "GET" && request.method !== "HEAD")
+      throw new HttpError(405, "Method not allowed", "method_not_allowed");
+    const assetId = url.searchParams.get("asset");
+    const validId = /^[a-z0-9][a-z0-9-]{0,127}$/;
+    if (assetId && !validId.test(assetId)) throw new HttpError(400, "Enter a valid Share asset ID.");
+    const target = new URL(assetId ? `${composerShare}/artwork/${assetId}` : composerShare);
+    const query = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
+    if (query) target.searchParams.set("art", query);
+    for (const name of ["project", "after"]) {
+      const value = url.searchParams.get(name);
+      if (value && validId.test(value)) target.searchParams.set(name, value);
     }
-    return new Response(woodhouseGallery(view), {
-      status,
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": status === 200 && !view.films?.length ? "public, max-age=60" : "no-store" },
-    });
+    return Response.redirect(target, 308);
   }
   if (path === "/tools/add-music") {
     return new Response(addMusicPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
@@ -3048,7 +3036,7 @@ export default {
       const pagePath = url.pathname.replace(/\/+$/, "") || "/";
       const studioShell = (pagePath === "/" || pagePath === "/studio") &&
         response.headers.get("cache-control") === "private, no-store";
-      const shareImages = env.WOODHOUSE_SHARE === "true" && (pagePath === "/portfolio" || studioShell);
+      const shareImages = env.WOODHOUSE_SHARE === "true" && studioShell;
       return securityHeaders(response, shareImages, { noReferrer: reviewPath });
     } catch (error) {
       if (error instanceof PortableError)
