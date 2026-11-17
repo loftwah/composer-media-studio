@@ -1049,7 +1049,6 @@ function Images() {
     const currentRevision = ++revision.current;
     setAdding(true);
     setRejections([]);
-    clearBatchExports();
     const available = Math.max(0, MAX_BATCH_IMAGES - items.length);
     if (!available) {
       setMessage(`This batch already has ${MAX_BATCH_IMAGES} images. Remove one before adding another.`);
@@ -1092,6 +1091,9 @@ function Images() {
         if (pixelProblem) throw new Error(pixelProblem);
         const sourceHash = await sha256Hex(bytes);
         if (currentRevision !== revision.current) break;
+        // Accepted images invalidate the finished exports once, at the first
+        // addition; refused files leave the existing batch exports intact.
+        if (!added) clearBatchExports();
         const url = trackUrl(file);
         const item: WorkItem = {
           id: crypto.randomUUID(),
