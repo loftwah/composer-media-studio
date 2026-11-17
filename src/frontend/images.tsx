@@ -2248,7 +2248,15 @@ function Images() {
           </p>
           {targetProblem && <p className="image-plan is-error" role="alert">{targetProblem}</p>}
           <div className="image-control-actions">
-            <button type="button" disabled={running || socialBusy || adding || sheetBusy || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems([selected])}>
+            <button
+              type="button"
+              disabled={socialBusy || adding || sheetBusy || !plan?.ok || Boolean(targetProblem)}
+              aria-disabled={running}
+              onClick={() => {
+                if (running) return;
+                void runItems([selected]);
+              }}
+            >
               {selected.status === "working" ? "Processing…" : "Make this image"}
             </button>
             {selected.result && <a className="button secondary" href="#image-downloads">Go to downloads</a>}
