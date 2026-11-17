@@ -1,5 +1,5 @@
 import { ALL_FORMATS, BlobSource, Input } from "mediabunny";
-import { localAudioFits, trimWavFits, MAX_LOCAL_AUDIO_SECONDS, MAX_LOCAL_PCM_BYTES, MAX_TRIM_SECONDS, DEFAULT_TRIM_SECONDS } from "./local-audio-limits.mjs";
+import { localAudioFits, trimWavFits, MAX_LOCAL_AUDIO_SECONDS, MAX_LOCAL_PCM_BYTES, MAX_TRIM_SECONDS, DEFAULT_TRIM_SECONDS } from "./local-audio-limits.ts";
 import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";

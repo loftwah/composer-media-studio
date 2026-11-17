@@ -1,4 +1,4 @@
-import { localAudioFits, MAX_LOCAL_AUDIO_SECONDS, MAX_LOCAL_PCM_BYTES } from "./local-audio-limits.mjs";
+import { localAudioFits, MAX_LOCAL_AUDIO_SECONDS, MAX_LOCAL_PCM_BYTES } from "./local-audio-limits.ts";
 import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import { encodeWav } from "../../public/wav.js";

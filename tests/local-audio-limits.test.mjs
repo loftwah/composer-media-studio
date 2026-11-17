@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {localAudioFits,trimWavFits} from '../src/frontend/local-audio-limits.mjs';
+import {localAudioFits,trimWavFits} from '../src/frontend/local-audio-limits.ts';
 test('five-minute stereo sources fit only within the device PCM budget',()=>{
  const source={seconds:267.574,channels:2,sourceRate:48000,deviceRate:48000};
  assert.equal(localAudioFits(source),true);
