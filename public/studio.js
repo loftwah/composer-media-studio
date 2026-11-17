@@ -921,7 +921,7 @@ function libraryView() {
       <details class="share-import" data-project-id="${esc(state.projectId)}">
         <summary>Import from Woodhouse Share</summary>
         <form class="stack" data-form="woodhouse-import">
-          <p class="small">Find the asset ID in <a href="/portfolio" target="_blank" rel="noopener">Share artwork</a>. The original and source credit are saved to this project.</p>
+          <p class="small">Find the asset ID in <a href="https://composer.loftwah.com/share" target="_blank" rel="noopener">Share artwork</a>. The original and source credit are saved to this project.</p>
           <label>Share asset ID <input name="assetId" required maxlength="128" pattern="[a-z0-9][a-z0-9\\-]{0,127}"></label>
           <label><span><input name="reuseConfirmed" type="checkbox" required> I have permission to reuse this original.</span></label>
           <div><button class="button secondary" type="submit">Import original</button></div>
