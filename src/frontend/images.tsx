@@ -804,6 +804,11 @@ function Images() {
   const currentSettingsKey = settingsKey(settings, activeTrim);
   const freshResult = selected?.result?.settingsKey === currentSettingsKey;
   const outputHash = selected?.result?.sha256;
+  const canCopyPng =
+    typeof window !== "undefined" &&
+    typeof window.ClipboardItem === "function" &&
+    typeof navigator !== "undefined" &&
+    typeof navigator.clipboard?.write === "function";
   const keptArea = plan?.ok ? keptAreaPolygon(plan) : null;
   const keepFull =
     keptArea && selected
@@ -1496,6 +1501,19 @@ function Images() {
       );
     } catch {
       report(fallback ?? `Could not copy automatically. Select the ${label} value and copy it.`);
+    }
+  }
+
+  async function copyResultPng(item: WorkItem): Promise<void> {
+    const result = item.result;
+    if (!result || result.mime !== "image/png") return;
+    const hash = result.sha256;
+    try {
+      const png = new window.ClipboardItem({ "image/png": result.blob });
+      await navigator.clipboard.write([png]);
+      setOutputCopy({ hash, message: "PNG copied." });
+    } catch {
+      setOutputCopy({ hash, message: "Could not copy the PNG. Use Download PNG instead." });
     }
   }
 
@@ -2283,6 +2301,15 @@ function Images() {
               >
                 Download {selected.result.mime.replace("image/", "").toUpperCase()}
               </a>
+              {selected.result.mime === "image/png" && canCopyPng && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => void copyResultPng(selected)}
+                >
+                  Copy PNG
+                </button>
+              )}
               <a
                 className="button secondary"
                 href={imageReceiptHref}
