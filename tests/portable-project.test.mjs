@@ -12,7 +12,7 @@ import { createSongPlan, listSongPlans, updateSongPlan } from '../src/lib/song-p
 import { saveSubject, listSubjects } from '../src/lib/subjects.mjs';
 import { createComposition } from '../src/lib/jobs.mjs';
 import { createPromoBrief } from '../src/lib/promo-briefs.mjs';
-import { createFootagePlan, listFootagePlans } from '../src/lib/footage-plans.mjs';
+import { createFootagePlan, listFootagePlans } from '../src/lib/footage-plans.ts';
 import {
   MAX_PORTABLE_ASSET_BYTES,
   PORTABLE_FORMAT,
