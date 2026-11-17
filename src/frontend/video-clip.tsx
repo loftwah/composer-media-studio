@@ -29,6 +29,7 @@ function VideoClip() {
   const [shape, setShape] = useState<Shape>("portrait");
   const [quality, setQuality] = useState<Quality>("standard");
   const [fit, setFit] = useState<Fit>("contain");
+  const [previewFraming, setPreviewFraming] = useState(false);
   const [mute, setMute] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -108,9 +109,23 @@ function VideoClip() {
     } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
     finally { active.current = null; input.dispose(); setBusy(false); }
   }
+  // The preview sizes this same native player to the encoded frame: the actual
+  // output pixels where they fit, scaled down only for the existing 42rem width
+  // and 32rem height bounds. Toggling only changes element attributes, so the
+  // source, controls and playback position stay exactly as they are.
+  const [outWidth, outHeight] = sizes[quality][shape];
+  const previewStyle = {
+    width: `min(${outWidth}px, 100%, ${Math.min(42, (32 * outWidth) / outHeight)}rem)`,
+    maxHeight: "32rem",
+    aspectRatio: `${outWidth} / ${outHeight}`,
+    objectFit: fit,
+    background: "#000",
+  };
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Clip and frame a video</h1><p>Choose a short video, set its in and out points and save a new MP4. Editing happens on this device without sign-in or generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2><label className="trim-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing} onChange={e => void choose(e.target.files?.[0])}/></label><p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
-      {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p><video className="video-tool-player" src={source} controls playsInline aria-label="Original video"/>
+      {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p>
+      <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
+      <video className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}/>
       <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));change();}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));change();}}/></label>
       <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);change();}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing} onChange={e => {setQuality(e.target.value as Quality);change();}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);change();}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);change();}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
