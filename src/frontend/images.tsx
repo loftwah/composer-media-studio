@@ -42,7 +42,7 @@ import {
   buildImageSnippets,
   type SnippetKind,
   type SnippetResult,
-} from "./image-snippets.mjs";
+} from "./image-snippets.ts";
 import {
   MAX_PALETTE_COLOURS,
   PALETTE_WORKING_EDGE,

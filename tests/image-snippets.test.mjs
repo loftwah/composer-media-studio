@@ -9,7 +9,7 @@ import {
   buildImageSnippets,
   bytesToBase64,
   escapeSnippetText,
-} from "../src/frontend/image-snippets.mjs";
+} from "../src/frontend/image-snippets.ts";
 
 const PNG_BYTES = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13]);
 
@@ -84,6 +84,12 @@ test("filenames cannot inject markup into the snippet", () => {
     height: 10,
   });
   assert.match(brackets.snippets.markdown, /^!\[shot\\\]one\\\[two\.png\]\(data:/);
+  const backslash = buildImageSnippets({
+    bytes: PNG_BYTES,
+    mime: "image/png",
+    filename: String.raw`proof\image.png`,
+  });
+  assert.ok(backslash.snippets.markdown.startsWith(String.raw`![proof\\image.png](data:`));
 });
 
 test("large results warn and oversized ones are refused with a reason", () => {
