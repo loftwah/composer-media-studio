@@ -122,6 +122,20 @@ The isolated Chrome workbench processes the selected images and saves its
 native contact sheet PNG. The report includes the source hashes, dimensions
 and output SHA-256.
 
+## Cover an area of an explicit local PNG
+
+With the frontend built, select one PNG, an unused destination, and a rectangle
+in whole pixels measured from the top left of the image.
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-cover-area.mjs --source ./source.png --output ./redacted.png \
+  --left 64 --top 64 --width 100 --height 80
+```
+
+The isolated Chrome workbench saves a separate PNG with an opaque black rectangle.
+The report records both file hashes, pixel dimensions and rectangle coordinates.
+
 ## Migrations
 
 `0003_audio_and_assembly.sql` widens the saved media kinds to include audio and adds compositions. SQLite cannot widen a `CHECK` constraint in place, so the two tables that enumerate kinds are rebuilt with every existing row copied; no data is dropped. Apply it with `pnpm migrate:remote` before deploying the worker that needs it.

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
+import { link, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import { MAX_IMAGE_INPUT_BYTES } from "../src/frontend/image-limits.ts";
@@ -11,6 +12,19 @@ const workbench = '<!doctype html><title>Image Tools replay</title><div id="imag
 
 export function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** Write PNG bytes to a new path: stage beside the destination, then link exclusively. */
+export async function saveNewPng(output, bytes) {
+  const destination = resolve(output);
+  const stage = await mkdtemp(join(dirname(destination), ".studio-local-png-"));
+  try {
+    const file = join(stage, "output.png");
+    await writeFile(file, bytes);
+    await link(file, destination);
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
 }
 
 async function readSelection(path, limit) {
