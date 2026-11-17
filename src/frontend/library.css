@@ -69,3 +69,10 @@
 .library-preview-build-body > :first-child { margin-top:.7rem; }
 .library-preview-build-body p { margin:0; }
 .library-preview-build-body strong { font-variant-numeric:tabular-nums; }
+
+/* Project-scoped Woodhouse Share picker: native controls, bounded result list. */
+.share-search { display:grid; gap:.5rem; }
+.share-search input[type="search"] { min-width:min(280px,60vw); }
+.share-hits { list-style:none; margin:0; padding:0; display:grid; gap:.35rem; max-height:15rem; overflow:auto; }
+.share-hit { display:block; width:100%; text-align:left; overflow-wrap:anywhere; }
+.share-hit[aria-pressed="true"] { border-color:var(--accent); }

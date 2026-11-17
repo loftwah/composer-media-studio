@@ -3,6 +3,7 @@ import { HttpError } from "./util.mjs";
 
 export const shareOrigin = "https://woodhouse.loftwah.com";
 export const shareApi = shareOrigin + "/api/v1/assets";
+const MAX_CATALOGUE_BYTES = 256 * 1024;
 const identifier = /^[a-z0-9][a-z0-9-]{0,127}$/;
 const projects = {
   "app-composer": "App Composer",
@@ -40,7 +41,19 @@ async function requestCatalogue(url, timeout = 8000) {
   const response = await shareFetch(url, timeout);
   if (response.status === 404) throw new HttpError(404, "This artwork is no longer listed in Woodhouse Share.");
   if (!response.ok) throw new Error(`Share catalogue returned HTTP ${response.status}`);
-  const data = await response.json();
+  if (!response.body || Number(response.headers.get("content-length")) > MAX_CATALOGUE_BYTES) {
+    await response.body?.cancel();
+    throw new Error("Share catalogue response is too large");
+  }
+  let size = 0;
+  const bounded = response.body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      size += chunk.byteLength;
+      if (size > MAX_CATALOGUE_BYTES) controller.error(new Error("Share catalogue response is too large"));
+      else controller.enqueue(chunk);
+    },
+  }));
+  const data = await new Response(bounded).json();
   if (data.version !== 1) throw new Error("Unexpected Share catalogue version");
   return data;
 }
@@ -54,19 +67,19 @@ export async function shareAsset(assetId, timeout = 8000) {
   return asset;
 }
 
-export async function sharePage(params) {
+export async function sharePage(params, limit = 24) {
   const query = (params.get("q") ?? "").trim().slice(0, 100);
   const project = params.get("project") ?? "";
   const after = params.get("after") ?? "";
   const url = new URL(shareApi);
-  url.searchParams.set("limit", "24");
+  url.searchParams.set("limit", String(limit));
   if (query) url.searchParams.set("q", query);
   if (identifier.test(project)) url.searchParams.set("project", project);
   if (identifier.test(after)) url.searchParams.set("after", after);
   const data = await requestCatalogue(url.href);
   return {
     query, project, after,
-    assets: data.assets.filter((asset) => asset.visibility === "public" && identifier.test(asset.id)),
+    assets: data.assets.slice(0, limit).filter((asset) => asset?.visibility === "public" && typeof asset.id === "string" && identifier.test(asset.id)),
     nextAfter: identifier.test(data.nextAfter ?? "") ? data.nextAfter : null,
   };
 }
