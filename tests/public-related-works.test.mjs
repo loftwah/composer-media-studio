@@ -120,6 +120,6 @@ test("no eligible related work omits the section, and related links stay canonic
   assert.match(withRelated, /<section class="public-related"[\s\S]*?href="\/p\/second-work"/);
   assert.doesNotMatch((withRelated.match(/<section class="public-related"[\s\S]*?<\/section>/) ?? [""])[0], /back=/);
   // Existing back/filter and canonical copy behaviour is untouched.
-  assert.match(withRelated, /href="https:\/\/studio\.test\/gallery\?project=alpha&amp;page=2"/);
+  assert.match(withRelated, /href="https:\/\/studio\.test\/gallery\?project=alpha&amp;page=2#gallery-results"/);
   assert.match(withRelated, /data-copy-url="https:\/\/studio\.test\/p\/current"/);
 });
