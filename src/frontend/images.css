@@ -611,6 +611,33 @@
   box-shadow: inset 3px 0 0 var(--teal);
 }
 
+.image-list-main {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.image-list-override {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 36px;
+  font-size: 0.8rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.image-list-override input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+.image-list-override:has(input:disabled) {
+  cursor: not-allowed;
+  color: var(--muted);
+}
+
 .image-list-select {
   display: grid;
   gap: 0.2rem;
