@@ -11,7 +11,7 @@ import {
   money,
   verdict,
   weakness,
-} from "../src/lib/comparisons.mjs";
+} from "../src/lib/comparisons.ts";
 
 const models = {
   "still-a": { id: "still-a", label: "Still A", kind: "image", references: 0, costMicro: 1000, costBasis: "estimate" },
@@ -169,7 +169,7 @@ test('a comparison with a reported charge has no charge weakness', () => {
 });
 
 test('takes made from different briefs are not presented as a comparison', async () => {
-  const { likeForLike } = await import("../src/lib/comparisons.mjs");
+  const { likeForLike } = await import("../src/lib/comparisons.ts");
   const split = likeForLike([
     { model: "motion-a", briefKey: "aaaa1111", prompt: "slow push in", settings: { aspect: "from-image", durationSeconds: 6 } },
     { model: "motion-b", briefKey: "bbbb2222", prompt: "gentle parallax left", settings: { aspect: "from-image", durationSeconds: 6 } },
@@ -181,7 +181,7 @@ test('takes made from different briefs are not presented as a comparison', async
 });
 
 test('the largest like-for-like group becomes the comparison', async () => {
-  const { likeForLike } = await import("../src/lib/comparisons.mjs");
+  const { likeForLike } = await import("../src/lib/comparisons.ts");
   const split = likeForLike([
     { model: "a", briefKey: "same" },
     { model: "b", briefKey: "same" },
@@ -193,7 +193,7 @@ test('the largest like-for-like group becomes the comparison', async () => {
 });
 
 test('a brief fingerprint ignores case and spacing but not settings', async () => {
-  const { toEntry } = await import("../src/lib/comparisons.mjs");
+  const { toEntry } = await import("../src/lib/comparisons.ts");
   const one = toEntry({ id: "g1", model: "m", kind: "video", request_json: '{"prompt":"Slow  push IN","durationSeconds":6}' }, "motion");
   const two = toEntry({ id: "g2", model: "m", kind: "video", request_json: '{"prompt":"slow push in","durationSeconds":6}' }, "motion");
   const three = toEntry({ id: "g3", model: "m", kind: "video", request_json: '{"prompt":"slow push in","durationSeconds":10}' }, "motion");
