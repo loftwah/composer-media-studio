@@ -12,7 +12,7 @@
 // unlisted or withdrawn.
 
 import { HttpError, id, now, safeJson } from "./util.mjs";
-import { deletePublicationDerivatives } from "./publication-derivatives.mjs";
+import { deletePublicationDerivatives } from "./publication-derivatives.ts";
 
 export const MAX_BULK_PUBLICATIONS = 100;
 export const BULK_ACTIONS = Object.freeze(["publish", "unlist", "withdraw"]);
