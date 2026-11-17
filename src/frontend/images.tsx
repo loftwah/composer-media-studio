@@ -97,7 +97,7 @@ import {
   type SocialKitFormat,
 } from "./image-social-kit.ts";
 import { LocalImport } from "./local-import";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./audio-trim.css";
 import "./images.css";
@@ -786,7 +786,7 @@ function Images() {
   const [picked, setPicked] = useState<PickedColour | null>(null);
   const [pickMessage, setPickMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
-  const [outputCopy, setOutputCopy] = useState<{ hash: string; message: string } | null>(null);
+  const [outputCopy, setOutputCopy] = useState<{ key: string; message: string } | null>(null);
   const [snippets, setSnippets] = useState<SnippetState | null>(null);
   const [snippetKind, setSnippetKind] = useState<SnippetKind>("dataUri");
   const [snippetBusy, setSnippetBusy] = useState(false);
@@ -811,6 +811,8 @@ function Images() {
   const eyedropperRef = useRef<HTMLImageElement | null>(null);
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragIdRef = useRef("");
+  const latestOutputCopy = useRef(0);
+  const currentOutputKey = useRef("");
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const socialReady = selected?.source.mime === "image/png";
@@ -833,6 +835,12 @@ function Images() {
   const currentSettingsKey = settingsKey(selectedSettings, activeTrim);
   const freshResult = selected?.result?.settingsKey === currentSettingsKey;
   const outputHash = selected?.result?.sha256;
+  // Copy status belongs to one exact finished result, so selecting another row
+  // or regenerating never shows an earlier result's message.
+  const outputResultKey = selected?.result?.url ?? "";
+  useLayoutEffect(() => {
+    currentOutputKey.current = outputResultKey;
+  }, [outputResultKey]);
   const canCopyPng =
     typeof window !== "undefined" &&
     typeof window.ClipboardItem === "function" &&
@@ -1642,16 +1650,26 @@ function Images() {
     }
   }
 
+  // Both controls report in one place. An older write cannot replace the
+  // latest feedback, and a new rendered blob has its own object URL.
+  function copyAttemptFor(key: string): (message: string) => void {
+    const attempt = ++latestOutputCopy.current;
+    return (message) => {
+      if (attempt === latestOutputCopy.current && key === currentOutputKey.current)
+        setOutputCopy({ key, message });
+    };
+  }
+
   async function copyResultPng(item: WorkItem): Promise<void> {
     const result = item.result;
     if (!result || result.mime !== "image/png") return;
-    const hash = result.sha256;
+    const report = copyAttemptFor(result.url);
     try {
       const png = new window.ClipboardItem({ "image/png": result.blob });
       await navigator.clipboard.write([png]);
-      setOutputCopy({ hash, message: "PNG copied." });
+      report("PNG copied.");
     } catch {
-      setOutputCopy({ hash, message: "Could not copy the PNG. Use Download PNG instead." });
+      report("Could not copy the PNG. Use Download PNG instead.");
     }
   }
 
@@ -2476,17 +2494,20 @@ function Images() {
                 <button
                   type="button"
                   className="button secondary"
-                  onClick={() => void copyValue("output SHA-256", outputHash, {
-                    echo: false,
-                    fallback: "Copy unavailable. Download the image receipt to get the full hash.",
-                    report: (message) => setOutputCopy({ hash: outputHash, message }),
-                  })}
+                  onClick={() => {
+                    const report = copyAttemptFor(outputResultKey);
+                    void copyValue("output SHA-256", outputHash, {
+                      echo: false,
+                      fallback: "Copy unavailable. Download the image receipt to get the full hash.",
+                      report,
+                    });
+                  }}
                 >
                   Copy output SHA-256
                 </button>
               )}
               <p className="trim-note" role="status">
-                {outputCopy?.hash === outputHash ? outputCopy?.message : ""}
+                {outputCopy?.key === outputResultKey ? outputCopy?.message : ""}
               </p>
               <p className="trim-note">
                 Keep the hashes and settings for this finished image. Later
