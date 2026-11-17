@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { builtinRecipes, renderPrompt } from '../src/lib/recipes.mjs';
+import { builtinRecipes, renderPrompt } from '../src/lib/recipes.ts';
 import { getModel, runImage } from '../src/lib/providers.mjs';
 
 test('starting recipes permit lettering without removing other creative constraints', () => {

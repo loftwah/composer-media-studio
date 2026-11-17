@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { builtinRecipes, projectRecipes } from '../src/lib/recipes.mjs';
+import { builtinRecipes, projectRecipes } from '../src/lib/recipes.ts';
 import { publicModels } from '../src/lib/providers.mjs';
 import { recipeModelSettings } from '../public/recipe-selection.js';
 
