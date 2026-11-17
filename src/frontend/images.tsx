@@ -77,7 +77,7 @@ import {
   type ImageMetadataSummary,
   type StripResult,
 } from "./image-metadata.mjs";
-import { createZip, ZIP_MIME } from "./image-zip.mjs";
+import { createZip, ZIP_MIME } from "./image-zip.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
 import { SOCIAL_SIZES, socialKitSettings } from "./image-social-kit.ts";
 import { LocalImport } from "./local-import";

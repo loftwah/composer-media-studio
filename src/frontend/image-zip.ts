@@ -5,6 +5,24 @@ import { MAX_ZIP_BYTES, MAX_ZIP_ENTRIES } from "./image-limits.ts";
 
 export const ZIP_MIME = "application/zip";
 
+export type ZipEntryInput = {
+  name: string;
+  data: Uint8Array | ArrayBuffer | ArrayBufferView | string;
+  date?: Date;
+};
+
+export type ZipResult =
+  | { ok: true; bytes: Uint8Array; entries: string[] }
+  | { ok: false; error: string };
+
+type PreparedEntry = {
+  nameBytes: Uint8Array;
+  data: Uint8Array;
+  crc: number;
+  dosTime: number;
+  dosDate: number;
+};
+
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
   for (let n = 0; n < 256; n += 1) {
@@ -17,7 +35,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export function crc32(bytes, seed = 0) {
+export function crc32(bytes: Uint8Array, seed = 0): number {
   if (!(bytes instanceof Uint8Array)) throw new TypeError("crc32 expects bytes");
   let crc = (seed ^ 0xffffffff) >>> 0;
   for (let index = 0; index < bytes.length; index += 1) {
@@ -26,7 +44,7 @@ export function crc32(bytes, seed = 0) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function dosDateTime(date) {
+function dosDateTime(date: Date | undefined): { dosTime: number; dosDate: number } {
   const value = date instanceof Date && Number.isFinite(date.getTime()) ? date : new Date();
   const year = Math.min(2107, Math.max(1980, value.getFullYear()));
   const dosTime =
@@ -40,7 +58,7 @@ function dosDateTime(date) {
   return { dosTime, dosDate };
 }
 
-function toBytes(value) {
+function toBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value))
@@ -49,7 +67,7 @@ function toBytes(value) {
   throw new TypeError("ZIP entries must be bytes or text");
 }
 
-function truncateUtf8(text, maxBytes) {
+function truncateUtf8(text: string, maxBytes: number): string {
   if (new TextEncoder().encode(text).length <= maxBytes) return text;
   let out = "";
   for (const character of text) {
@@ -59,7 +77,7 @@ function truncateUtf8(text, maxBytes) {
   return out;
 }
 
-function sanitiseName(name, index) {
+function sanitiseName(name: unknown, index: number): string {
   const raw = String(name ?? "").replaceAll("\\", "/").split("/").pop() ?? "";
   let base = raw
     .normalize("NFC")
@@ -80,8 +98,8 @@ function sanitiseName(name, index) {
   return base || `image-${index + 1}.bin`;
 }
 
-function uniqueName(name, used) {
-  const key = (value) => value.toLocaleLowerCase("en-US");
+function uniqueName(name: string, used: Set<string>): string {
+  const key = (value: string): string => value.toLocaleLowerCase("en-US");
   if (!used.has(key(name))) {
     used.add(key(name));
     return name;
@@ -103,12 +121,19 @@ function uniqueName(name, used) {
  * Build a valid store-only ZIP. `entries` is [{ name, data, date? }].
  * Repeated or dangerous names are reduced to unique flat basenames.
  */
-export function createZip(entries, { date = new Date(), maxEntries = MAX_ZIP_ENTRIES, maxTotalBytes = MAX_ZIP_BYTES } = {}) {
+export function createZip(
+  entries: ZipEntryInput[],
+  {
+    date = new Date(),
+    maxEntries = MAX_ZIP_ENTRIES,
+    maxTotalBytes = MAX_ZIP_BYTES,
+  }: { date?: Date; maxEntries?: number; maxTotalBytes?: number } = {},
+): ZipResult {
   if (!Array.isArray(entries)) throw new TypeError("createZip expects an entry list");
   if (entries.length > maxEntries)
     return { ok: false, error: `ZIP export supports at most ${maxEntries} entries.` };
-  const prepared = [];
-  const used = new Set();
+  const prepared: PreparedEntry[] = [];
+  const used = new Set<string>();
   let total = 0;
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
@@ -134,7 +159,7 @@ export function createZip(entries, { date = new Date(), maxEntries = MAX_ZIP_ENT
   const bytes = new Uint8Array(size);
   const view = new DataView(bytes.buffer);
   let offset = 0;
-  const localOffsets = [];
+  const localOffsets: number[] = [];
   for (const entry of prepared) {
     localOffsets.push(offset);
     view.setUint32(offset, 0x04034b50, true);

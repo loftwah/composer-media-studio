@@ -16,7 +16,7 @@ import {
   MAX_ZIP_ENTRIES,
 } from "../src/frontend/image-limits.ts";
 import { buildImageReceipt, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.ts";
-import { createZip } from "../src/frontend/image-zip.mjs";
+import { createZip } from "../src/frontend/image-zip.ts";
 
 const BASE = {
   resizeMode: "max-long-edge",
