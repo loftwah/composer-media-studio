@@ -81,6 +81,12 @@ test("public video reserves its known frame without applying it to audio or unkn
   assert.doesNotMatch(audio, /media-video|aspect-ratio:auto/);
 });
 
+test("public work detail starts with the shared skip link and focuses the existing main", () => {
+  const html = published();
+  assert.match(html, /<body>\s*<a class="skip" href="#main">Skip to content<\/a>\s*<header class="site-header public-piece-header">/);
+  assert.ok(html.includes('<main class="public-page" id="main" data-public-piece tabindex="-1">'), "the skip target is the existing main and natively focusable");
+});
+
 test("public work detail exposes a keyboard-reachable Copy link bound to the canonical URL with an honest fallback", () => {
   const canonical = `${origin}/p/${slug}`;
   const html = published();
