@@ -20,11 +20,11 @@ export function ClipPoster({ src, filename }: { src: string; filename: string })
     if (!context) { setMessage("This browser cannot capture a frame. You can still save the MP4."); return; }
     const at = player.currentTime, token = ++sequence.current;
     try {
-      context.drawImage(player, 0, 0); setPoster(""); setWorking(true); setMessage("Preparing the PNG on this device…");
+      context.drawImage(player, 0, 0); setWorking(true); setMessage("Preparing the PNG on this device…");
       canvas.toBlob(blob => {
         if (token !== sequence.current) return;
         setWorking(false);
-        if (!blob || blob.type !== "image/png") { setMessage("This browser could not make a PNG. Your MP4 is unchanged."); return; }
+        if (!blob || blob.type !== "image/png") { setMessage(poster ? "This browser could not make a PNG for the new frame. You can still save the previous poster." : "This browser could not make a PNG. Your MP4 is unchanged."); return; }
         setPoster(URL.createObjectURL(blob)); setTime(at); setMessage("Poster ready. Save it on this device.");
       }, "image/png");
     } catch { setWorking(false); setMessage("This browser could not capture the frame. Your MP4 is unchanged."); }
