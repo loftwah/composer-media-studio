@@ -7,6 +7,7 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import { MAX_IMAGE_INPUT_BYTES } from "../src/frontend/image-limits.mjs";
 import { sniffLocalImage } from "../src/frontend/image-metadata.mjs";
 import { IMAGE_RECEIPT_SCHEMA, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.ts";
+import { SOCIAL_SIZES } from "../src/frontend/image-social-kit.ts";
 
 const origin = "http://127.0.0.1";
 const workbench = '<!doctype html><title>Image Tools replay</title><div id="images"></div><script type="module" src="/images.js"></script>';
@@ -29,16 +30,43 @@ async function readSelection(path, limit) {
   }
 }
 
-async function download(page, name) {
-  const link = page.getByRole("link", {name, exact: true});
+async function downloadLink(page, link) {
   await link.waitFor();
   const [result] = await Promise.all([page.waitForEvent("download"), link.click()]);
   return buffer(await result.createReadStream());
 }
 
+async function download(page, name) {
+  return downloadLink(page, page.getByRole("link", {name, exact: true}));
+}
+
+function assertSocialReproducible(expected, actual, size) {
+  const settings = actual.transform.settings;
+  const differences = Object.keys(settings)
+    .filter(key => !isDeepStrictEqual(expected.transform?.settings?.[key], settings[key]))
+    .map(key => `settings.${key}`);
+  if (!isDeepStrictEqual(expected.transform?.plan, actual.transform.plan))
+    differences.push("transform plan");
+  if (expected.output?.width !== size.width || expected.output?.height !== size.height ||
+      expected.output?.mime !== "image/webp")
+    differences.push("output dimensions or format");
+  assert(
+    differences.length === 0,
+    `The default social kit could not reproduce this receipt. Check: ${differences.join(", ")}.`,
+  );
+}
+
 async function main() {
-  const { values } = parseArgs({ options: { source: {type: "string"}, receipt: {type: "string"} } });
+  const { values } = parseArgs({
+    options: {
+      source: {type: "string"},
+      receipt: {type: "string"},
+      size: {type: "string"},
+    },
+  });
   assert(values.source && values.receipt, "Supply an explicit --source <PNG> and --receipt <JSON>.");
+  const size = values.size ? SOCIAL_SIZES.find((candidate) => candidate.key === values.size) : null;
+  assert(!values.size || size, `Select one social size: ${SOCIAL_SIZES.map((candidate) => candidate.key).join(", ")}.`);
   const [source, receiptBytes] = await Promise.all([
     readSelection(values.source, MAX_IMAGE_INPUT_BYTES),
     readSelection(values.receipt, 16 * 1024),
@@ -68,15 +96,35 @@ async function main() {
     });
     await page.goto(origin);
     await page.locator(".image-drop input[type=file]").setInputFiles({name: "source.png", mimeType: "image/png", buffer: source});
-    await page.getByRole("button", {name: "Apply Web-ready image", exact: true}).click();
-    await page.getByRole("button", {name: "Make this image", exact: true}).click();
-    const actual = JSON.parse((await download(page, "Download image receipt (.json)")).toString("utf8"));
-    const exported = await download(page, "Download WEBP");
-    assert(isDeepStrictEqual(actual, expected), "The Web-ready preset did not reproduce the selected receipt.");
+    let actual;
+    let exported;
+    if (size) {
+      // Leave the controls at their page defaults: the shipped social kit is
+      // the only transform this replay is allowed to exercise.
+      await page.getByRole("button", {name: "Make 4 social sizes", exact: true}).click();
+      const row = page.locator(".image-social-list li").filter({hasText: size.label});
+      await row.waitFor();
+      actual = JSON.parse((await downloadLink(page, row.locator('a[download$="-receipt.json"]'))).toString("utf8"));
+      exported = await downloadLink(page, row.locator('a[download$=".webp"]'));
+      assertSocialReproducible(expected, actual, size);
+      assert(isDeepStrictEqual(actual, expected), "The default social kit did not reproduce the selected receipt.");
+    } else {
+      await page.getByRole("button", {name: "Apply Web-ready image", exact: true}).click();
+      await page.getByRole("button", {name: "Make this image", exact: true}).click();
+      actual = JSON.parse((await download(page, "Download image receipt (.json)")).toString("utf8"));
+      exported = await download(page, "Download WEBP");
+      assert(isDeepStrictEqual(actual, expected), "The Web-ready preset did not reproduce the selected receipt.");
+    }
     assert.equal(exported.length, expected.output.bytes);
     assert.equal(digest(exported), expected.output.sha256);
     assert.equal(blocked, 0, "The workbench tried to access an unexpected resource.");
-    console.log(JSON.stringify({browser: browser.version(), output: actual.output, source: actual.source, networkRequestsPassedThrough: 0}));
+    console.log(JSON.stringify({
+      browser: browser.version(),
+      ...(size ? { mode: `social:${size.key}` } : {}),
+      output: actual.output,
+      source: actual.source,
+      networkRequestsPassedThrough: 0,
+    }));
   } finally {
     await browser.close();
   }
