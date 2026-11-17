@@ -73,6 +73,17 @@ Before an upload, the Library hashes the file in the browser and asks `POST /api
 
 This slice is deliberately read-only. Reclaiming storage remains a separate, explicitly approved follow-up with its own dependency and tombstone checks; there is no auto-purge in this report.
 
+## Replay a Web-ready image receipt locally
+
+Use this tool with an explicitly selected PNG and its downloaded Image Tools v1 receipt from **Apply Web-ready image**. Build the frontend with `pnpm build:frontend`. Use an installed Google Chrome and a local Playwright installation:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/replay-web-ready-image.mjs --source ./source.png --receipt ./studio-image-receipt.json
+```
+
+The script passes the selected PNG to the existing browser workbench and matches the downloaded receipt and WebP bytes. It serves the built workbench assets in the isolated Chrome session and blocks other requests. Exact output may depend on the Chrome encoder version. The script reports a mismatch and opens no Studio account or workspace.
+
 ## Migrations
 
 `0003_audio_and_assembly.sql` widens the saved media kinds to include audio and adds compositions. SQLite cannot widen a `CHECK` constraint in place, so the two tables that enumerate kinds are rebuilt with every existing row copied; no data is dropped. Apply it with `pnpm migrate:remote` before deploying the worker that needs it.
