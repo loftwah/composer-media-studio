@@ -105,6 +105,15 @@ test("showcase lists only currently published live videos and honours withdrawal
     .bind("pub_film", project.id, asset.id, "example-film", "A real film", "A saved clip.").run();
   t.mock.method(globalThis, "fetch", async () => Response.json({ version: 1, assets: [], nextAfter: null }));
   const read = () => worker.fetch(new Request("https://studio.test/portfolio"), env);
+  const readFeed = async () => {
+    const response = await worker.fetch(new Request("https://studio.test/share-films.json"), env);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    return response.json();
+  };
+  assert.deepEqual(await readFeed(), { version: 1, films: [{ slug: "example-film", title: "A real film" }] });
+  await env.DB.prepare("UPDATE publications SET hidden=1 WHERE id=?1").bind("pub_film").run();
+  assert.deepEqual((await readFeed()).films, []);
+  await env.DB.prepare("UPDATE publications SET hidden=0 WHERE id=?1").bind("pub_film").run();
   const visible = await read();
   assert.equal(visible.headers.get("cache-control"), "no-store");
   const withoutPoster = await visible.text();
@@ -121,6 +130,7 @@ test("showcase lists only currently published live videos and honours withdrawal
   assert.match(await (await read()).text(), /class="film-placeholder"/);
   await env.DB.prepare("UPDATE publications SET revoked_at=1 WHERE id=?1").bind("pub_film").run();
   assert.doesNotMatch(await (await read()).text(), /example-film/);
+  assert.deepEqual((await readFeed()).films, []);
 });
 
 test("home examples include only configured, live published videos and explicit posters", async () => {
