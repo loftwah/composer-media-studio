@@ -140,26 +140,58 @@ function AddMusic() {
   const [offset,setOffset] = useState(0), [volume,setVolume] = useState(80), [originalVolume,setOriginalVolume] = useState(0), [fadeIn,setFadeIn] = useState(0), [fadeOut,setFadeOut] = useState(0), [busy,setBusy] = useState<"preview" | "export" | null>(null), [message,setMessage] = useState("");
   const [quality, setQuality] = useState<"standard" | "hd">("standard");
   const [importing, setImporting] = useState(false);
+  const [checkingMusic, setCheckingMusic] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [preview, setPreview] = useState("");
   const sourceVideo = useRef<HTMLVideoElement>(null), sourceMusic = useRef<HTMLAudioElement>(null), previewPlayer = useRef<HTMLAudioElement>(null), resultPlayer = useRef<HTMLVideoElement>(null);
   const previewAction = useRef<HTMLButtonElement>(null);
   const exportAction = useRef<HTMLButtonElement>(null);
+  const musicChooser = useRef<HTMLInputElement>(null);
   function pauseOthers(active?: HTMLMediaElement | null) { for (const player of [sourceVideo.current, sourceMusic.current, previewPlayer.current, resultPlayer.current]) if (player && player !== active) player.pause(); }
   function clearOutputs() { pauseOthers(); setPreview(""); setResult(""); setResultBlob(null); }
   const controller = useRef<AbortController | null>(null);
+  const musicCheck = useRef(0), musicAbort = useRef<AbortController | null>(null);
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (musicUrl) URL.revokeObjectURL(musicUrl); }, [musicUrl]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
-  useEffect(() => () => controller.current?.abort(), []);
-  function choose(file: File | undefined, kind: "video" | "music") {
-    clearOutputs(); setMessage("");
-    if (kind === "video") { setVideo(file ?? null); setVideoUrl(file ? URL.createObjectURL(file) : ""); }
-    else { setMusic(file ?? null); setMusicUrl(file ? URL.createObjectURL(file) : ""); }
+  useEffect(() => () => { musicCheck.current++; musicAbort.current?.abort(); controller.current?.abort(); }, []);
+  // A replacement audio only becomes the current track after it proves readable.
+  // Refusing or interrupting the check leaves the previous track, settings,
+  // preview and finished export untouched.
+  function refuseMusic(text: string, retained: boolean) {
+    setCheckingMusic(false);
+    setMessage(retained ? `${text} Your current music, settings, preview and finished export are unchanged.` : text);
+    if (musicChooser.current) musicChooser.current.value = "";
+    const activeElement = document.activeElement;
+    if (musicChooser.current && (!activeElement || activeElement === document.body || activeElement === musicChooser.current)) musicChooser.current.focus();
+  }
+  async function choose(file: File | undefined, kind: "video" | "music") {
+    if (kind === "video") {
+      clearOutputs(); setMessage("");
+      setVideo(file ?? null); setVideoUrl(file ? URL.createObjectURL(file) : "");
+      return;
+    }
+    if (!file || busy || importing) return;
+    const retained = music !== null, revision = ++musicCheck.current;
+    musicAbort.current?.abort(); musicAbort.current = null;
+    if (!file.size || file.size > MAX_AUDIO_BYTES) { refuseMusic("Choose audio under 16 MB.", retained); return; }
+    const abort = new AbortController(); musicAbort.current = abort;
+    setCheckingMusic(true); setMessage("Checking the selected audio on this device…");
+    try {
+      await checkMusicDuration(file, abort.signal);
+      if (revision !== musicCheck.current) return;
+      clearOutputs();
+      setMusic(file); setMusicUrl(URL.createObjectURL(file));
+      setMessage("");
+    } catch (error) {
+      if (revision !== musicCheck.current) return;
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      refuseMusic(error instanceof Error ? error.message : "Could not open this audio.", retained);
+    } finally { if (revision === musicCheck.current) { musicAbort.current = null; setCheckingMusic(false); } }
   }
   async function run(mode: "preview" | "export") {
-    if (!video || !music || busy || controller.current) return;
+    if (!video || !music || busy || controller.current || musicAbort.current || importing) return;
     // A finished mix stays committed until a repeat actually succeeds, so a
     // cancelled or failed repeat leaves the previous preview, film and exact download intact.
     const abort = new AbortController(); controller.current = abort; pauseOthers(); setBusy(mode);
@@ -179,13 +211,13 @@ function AddMusic() {
       (busy === "preview" ? previewAction : exportAction).current?.focus();
     }
   }
-  const canRun = Boolean(video && music && !importing);
+  const canRun = Boolean(video && music && !importing && !checkingMusic);
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Add music to a video</h1><p>Make a new MP4 from your own video and music on this device, without sign-in or paid generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="inputs-title"><h2 id="inputs-title">Choose your files</h2>
       <label className="trim-file">Video<input type="file" accept="video/mp4,video/webm" disabled={busy !== null || importing} onChange={e => choose(e.target.files?.[0],"video")}/></label>
       <p className="trim-note">Up to 60 seconds and 128 MB. Original sound is off by default. Raise its volume below to keep it under your music.</p>
       {video && <><p><strong>{video.name}</strong></p><video ref={sourceVideo} onPlay={()=>pauseOthers(sourceVideo.current)} className="video-tool-player" src={videoUrl} controls playsInline aria-label="Original video"/></>}
-      <label className="trim-file">Music or spoken audio<input type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing} onChange={e => choose(e.target.files?.[0],"music")}/></label>
+      <label className="trim-file">Music or spoken audio<input ref={musicChooser} type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing} aria-busy={checkingMusic || undefined} onChange={e => void choose(e.target.files?.[0],"music")}/></label>
       <p className="trim-note">Use audio you have permission to use, up to 5 minutes and 16 MB; decoded audio must fit within 128 MiB on this device. If the selected audio ends early, any enabled original sound continues.</p>
       {music && <><p><strong>{music.name}</strong></p><audio ref={sourceMusic} onPlay={()=>pauseOthers(sourceMusic.current)} controls src={musicUrl} aria-label="Original music"/></>}
       <div className="trim-fields"><label>Music start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label></div>
@@ -199,7 +231,7 @@ function AddMusic() {
         {busy && <button type="button" className="secondary" onClick={event => cancelRun(event.currentTarget)}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
       </div>
       {preview && <div className="trim-result"><h2>Audio-only mix preview</h2><p className="trim-note">This is the sound mix, without video. Play the original video above to compare. The MP4 uses AAC encoding, so it may sound slightly different.</p><audio ref={previewPlayer} onPlay={()=>pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/></div>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <div inert={busy !== null || undefined}><LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/></div>}</div>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <div inert={busy !== null || checkingMusic || undefined}><LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/></div>}</div>}
     </section></main>;
 }
 export function mountAddMusic(container: HTMLElement) { createRoot(container).render(<AddMusic/>); }
