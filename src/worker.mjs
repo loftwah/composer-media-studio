@@ -80,7 +80,7 @@ import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } from "./lib/publication-policy.mjs";
 import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.mjs";
-import { PUBLIC_CACHE_SECONDS, publicOrigin, publicSitemap, robotsTxt } from "./lib/sitemap.mjs";
+import { PUBLIC_CACHE_SECONDS, publicOrigin, publicSitemap, robotsTxt } from "./lib/sitemap.ts";
 import { checkPublicImage } from "./lib/public-image-privacy.mjs";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.mjs";

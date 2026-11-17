@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 import worker from "../src/worker.mjs";
 import { createSession } from "../src/lib/auth.mjs";
-import { PUBLIC_CACHE_SECONDS } from "../src/lib/sitemap.mjs";
+import { PUBLIC_CACHE_SECONDS } from "../src/lib/sitemap.ts";
 import { PNG_1x1, setup } from "./harness.mjs";
 
 const base = "https://studio.test";

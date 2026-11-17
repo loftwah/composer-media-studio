@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import worker from "../src/worker.mjs";
-import { SITEMAP_LIMIT, PUBLIC_CACHE_SECONDS } from "../src/lib/sitemap.mjs";
+import { SITEMAP_LIMIT, PUBLIC_CACHE_SECONDS } from "../src/lib/sitemap.ts";
 import { setup } from "./harness.mjs";
 
 const base = "https://studio.test";
