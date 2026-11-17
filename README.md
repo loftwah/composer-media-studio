@@ -152,6 +152,21 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 The isolated Chrome workbench saves a separate PNG with an opaque black rectangle.
 The report records both file hashes, pixel dimensions and rectangle coordinates.
 
+## Trim transparent edges from an explicit local PNG
+
+Build the frontend, select the exact source and choose a new output path.
+
+```sh
+pnpm build:frontend
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-trim-transparent.mjs --source ./original.png --output ./trimmed.png
+```
+
+The command uses **Trim transparent edges** in the isolated Image Tools workbench.
+It downloads the PNG and verifies its exact bounds, size and hashes from the
+native image receipt. It refuses a source without removable padding and leaves
+any existing output path alone. The selected file stays local.
+
 ## Migrations
 
 `0003_audio_and_assembly.sql` widens the saved media kinds to include audio and adds compositions. SQLite cannot widen a `CHECK` constraint in place, so the two tables that enumerate kinds are rebuilt with every existing row copied; no data is dropped. Apply it with `pnpm migrate:remote` before deploying the worker that needs it.
