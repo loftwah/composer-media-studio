@@ -217,7 +217,7 @@ function scaleToLongEdge(cropWidth, cropHeight, longEdge) {
 
 /**
  * Plan one local transform. `resize` is either:
- *   { mode: "long-edge", longEdge }
+ *   { mode: "long-edge", longEdge, shrinkOnly? }
  *   { mode: "exact", width, height }
  * `cropAspect` is a positive aspect ratio, or null for no crop.
  * `cropAnchor` positions that crop when it is smaller than the source.
@@ -305,7 +305,10 @@ export function planImageTransform({
       return { ok: false, error: "Choose a whole-number long edge." };
     if (resize.longEdge > maxDimension)
       return { ok: false, error: `Keep the output at or below ${maxDimension} px per side.` };
-    output = scaleToLongEdge(crop.width, crop.height, resize.longEdge);
+    const longEdge = resize.shrinkOnly
+      ? Math.min(resize.longEdge, Math.max(crop.width, crop.height))
+      : resize.longEdge;
+    output = scaleToLongEdge(crop.width, crop.height, longEdge);
   } else if (resize?.mode === "exact") {
     if (!positiveInteger(resize.width) || !positiveInteger(resize.height))
       return { ok: false, error: "Choose whole-number output width and height." };
@@ -584,7 +587,7 @@ export function describeTransform({
   if (trimmed) parts.push("trim transparent edges");
   if (resample === "nearest") parts.push("nearest-neighbour");
   if (adjustments) parts.push(adjustments);
-  if (resize?.mode === "long-edge") parts.push(`long edge ${resize.longEdge}px`);
+  if (resize?.mode === "long-edge") parts.push(`${resize.shrinkOnly ? "maximum long edge" : "long edge"} ${resize.longEdge}px`);
   if (resize?.mode === "exact") parts.push(`exact ${resize.width}×${resize.height}px`);
   parts.push(`${String(format).toUpperCase()}${quality !== null && format !== "png" ? ` q${Math.round(quality * 100)}` : ""}`);
   parts.push(metadata);
