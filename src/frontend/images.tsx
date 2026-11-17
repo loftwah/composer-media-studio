@@ -780,7 +780,7 @@ function Images() {
   const addingRef = useRef(false);
   const runningRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const focusPickerAfterClear = useRef(false);
+  const focusPickerAfterRemoval = useRef(false);
   const eyedropperRef = useRef<HTMLImageElement | null>(null);
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragIdRef = useRef("");
@@ -940,8 +940,8 @@ function Images() {
   }, [selected?.result?.url]);
 
   useEffect(() => {
-    if (items.length || !focusPickerAfterClear.current) return;
-    focusPickerAfterClear.current = false;
+    if (!focusPickerAfterRemoval.current) return;
+    focusPickerAfterRemoval.current = false;
     fileInputRef.current?.focus();
   }, [items.length]);
 
@@ -1067,6 +1067,7 @@ function Images() {
 
   function removeItem(item: WorkItem): void {
     if (running) return;
+    focusPickerAfterRemoval.current = true;
     clearZip();
     releaseItem(item);
     setItems((previous) => previous.filter((candidate) => candidate.id !== item.id));
@@ -1085,7 +1086,7 @@ function Images() {
   }
 
   function resetAll(): void {
-    focusPickerAfterClear.current = true;
+    focusPickerAfterRemoval.current = true;
     revision.current += 1;
     stripRevision.current += 1;
     batchController.current?.abort();
