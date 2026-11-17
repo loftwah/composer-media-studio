@@ -1123,14 +1123,14 @@ function Images() {
   function removeItem(item: WorkItem): void {
     if (running) return;
     const index = items.findIndex((candidate) => candidate.id === item.id);
-    const next = items[index + 1] ?? items[index - 1];
-    focusAfterRemoval.current = next ? { kind: "row", id: next.id } : { kind: "picker" };
+    // One surviving neighbour keeps focus and the preview on the same row.
+    const neighbour = items[index + 1] ?? items[index - 1] ?? null;
+    focusAfterRemoval.current = neighbour ? { kind: "row", id: neighbour.id } : { kind: "picker" };
     clearBatchExports();
     releaseItem(item);
     setItems((previous) => previous.filter((candidate) => candidate.id !== item.id));
     if (selectedId === item.id) {
-      const next = items.find((candidate) => candidate.id !== item.id);
-      setSelectedId(next?.id ?? "");
+      setSelectedId(neighbour?.id ?? "");
       clearSocial();
       setTrim(null);
       setTrimMessage("");
