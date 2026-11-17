@@ -1526,7 +1526,6 @@ function Images() {
     const trimSnapshot = trim;
     const controller = new AbortController();
     socialController.current = controller;
-    releaseSocial();
     setSocialBusy(true);
     setMessage(`Making four ${formatLabelForMime(mimeForExport(format))} sizes from the selected PNG…`);
     const outputs: SocialOutput[] = [];
@@ -1561,6 +1560,8 @@ function Images() {
           receipt,
           receiptHref: `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(receipt))}`,
         };
+        // The first completed size replaces the previous run.
+        if (outputs.length === 0) releaseSocial();
         outputs.push(output);
         setSocialOutputs([...outputs]);
         setMessage(`Made ${outputs.length} of ${SOCIAL_SIZES.length} sizes on this device.`);
@@ -1598,8 +1599,17 @@ function Images() {
         for (const output of outputs) releaseUrl(output.url);
         return;
       }
-      if (isAbort(error)) setMessage("Stopped the social kit.");
-      else setMessage(error instanceof Error ? error.message : "Could not make the social kit.");
+      if (isAbort(error)) {
+        const keptPrevious = outputs.length === 0 && (
+          socialOutputs.some(output => urls.current.has(output.url)) ||
+          (socialZip && urls.current.has(socialZip.url))
+        );
+        setMessage(keptPrevious
+          ? "Stopped the social kit. The previous downloads are still available."
+          : "Stopped the social kit.");
+      } else {
+        setMessage(error instanceof Error ? error.message : "Could not make the social kit.");
+      }
     } finally {
       if (isCurrent()) {
         socialController.current = null;
