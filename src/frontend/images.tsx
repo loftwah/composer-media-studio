@@ -1788,6 +1788,7 @@ function Images() {
             Try the sample
           </button>
           {selected && <a className="button secondary" href="#image-output-plan">Go to image output</a>}
+          {items.length > 1 && <a className="button secondary" href="#image-batch">Go to batch</a>}
           {items.length > 0 && (
             <button type="button" className="quiet" onClick={resetAll} disabled={running || adding}>
               Clear all
@@ -2697,7 +2698,7 @@ function Images() {
         </section>
       )}
 
-      <section className="trim-work image-batch" aria-labelledby="image-batch-heading">
+      <section id="image-batch" tabIndex={-1} className="trim-work image-batch" aria-labelledby="image-batch-heading">
         <div className="image-section-head">
           <h2 id="image-batch-heading">Batch</h2>
           <span>{items.length} image{items.length === 1 ? "" : "s"} · sequential</span>
@@ -2708,11 +2709,11 @@ function Images() {
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
           <button type="button" className="secondary" disabled={running || socialBusy || zipBusy || !doneItems.length} onClick={() => void makeZip()}>
-            {zipBusy ? "Building ZIP…" : `Download ZIP${doneItems.length ? ` (${doneItems.length})` : ""}`}
+            {zipBusy ? "Preparing ZIP…" : `Prepare ZIP${doneItems.length ? ` (${doneItems.length})` : ""}`}
           </button>
           {zipUrl && (
             <a className="button secondary" href={zipUrl} download={`media-studio-images-${doneItems.length}.zip`}>
-              Save ZIP · {formatBytes(zipBytes)}
+              Download ZIP · {formatBytes(zipBytes)}
             </a>
           )}
         </div>
