@@ -93,6 +93,17 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 
 This uses the same isolated page and renderer. It drives the shipped social kit with default controls, downloads the chosen size's WebP and receipt, and fails with the exact differing settings when the receipt asks for something the default social kit cannot reproduce. Without `--size`, the original Web-ready replay is unchanged.
 
+## Replay a palette JSON export locally
+
+Use this tool with an explicitly selected PNG and its downloaded Image Tools palette JSON from **Download palette (.json)**. It uses the same isolated workbench and explicit local file selection as the receipt replay:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/replay-palette-json.mjs --source ./source.png --palette ./studio-palette.json
+```
+
+The script uses **Extract palette** and compares the complete v1 JSON export, including the swatch order. The report includes a digest of the selected PNG and a separate digest of the downloaded palette. The palette format itself carries swatches and units. Use the same build and Chrome version for an exact replay.
+
 ## Migrations
 
 `0003_audio_and_assembly.sql` widens the saved media kinds to include audio and adds compositions. SQLite cannot widen a `CHECK` constraint in place, so the two tables that enumerate kinds are rebuilt with every existing row copied; no data is dropped. Apply it with `pnpm migrate:remote` before deploying the worker that needs it.
