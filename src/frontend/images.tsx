@@ -19,7 +19,7 @@ import {
   type ImageCrop,
   type ResizePlan,
   type TransformPlan,
-} from "./image-ops.mjs";
+} from "./image-ops.ts";
 import {
   ADJUSTMENT_KEYS,
   ADJUSTMENT_LABELS,

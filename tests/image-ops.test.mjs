@@ -20,7 +20,7 @@ import {
   searchTargetQuality,
   straightenGeometry,
   targetSizeProblem,
-} from "../src/frontend/image-ops.mjs";
+} from "../src/frontend/image-ops.ts";
 
 test("rotation swaps dimensions only for odd quarter turns", () => {
   assert.deepEqual(rotatedDimensions(4000, 3000, 0), { width: 4000, height: 3000 });

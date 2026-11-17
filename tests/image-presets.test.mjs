@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planImageTransform } from "../src/frontend/image-ops.mjs";
+import { planImageTransform } from "../src/frontend/image-ops.ts";
 
 test("maximum long edge applies to each source and to the crop", () => {
   const resize = { mode: "long-edge", longEdge: 1600, shrinkOnly: true };

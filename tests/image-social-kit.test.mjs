@@ -9,7 +9,7 @@ import {
   SOCIAL_SIZES,
   socialKitSettings,
 } from "../src/frontend/image-social-kit.ts";
-import { CROP_ASPECTS, extensionForImageMime, mimeForExport } from "../src/frontend/image-ops.mjs";
+import { CROP_ASPECTS, extensionForImageMime, mimeForExport } from "../src/frontend/image-ops.ts";
 import {
   MAX_DECODED_PIXELS,
   MAX_IMAGE_OUTPUT_DIMENSION,
