@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { MAX_IMAGE_INPUT_BYTES } from "../src/frontend/image-limits.mjs";
 import { sniffLocalImage } from "../src/frontend/image-metadata.mjs";
-import { IMAGE_RECEIPT_SCHEMA, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.mjs";
+import { IMAGE_RECEIPT_SCHEMA, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.ts";
 
 const origin = "http://127.0.0.1";
 const workbench = '<!doctype html><title>Image Tools replay</title><div id="images"></div><script type="module" src="/images.js"></script>';

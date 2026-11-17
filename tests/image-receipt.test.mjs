@@ -5,7 +5,7 @@ import {
   IMAGE_RECEIPT_SCHEMA,
   IMAGE_RECEIPT_VERSION,
   buildImageReceipt,
-} from "../src/frontend/image-receipt.mjs";
+} from "../src/frontend/image-receipt.ts";
 
 const SOURCE_HASH = "b".repeat(64);
 

@@ -12,9 +12,33 @@ const SETTINGS = [
   "resizeMode", "longEdge", "exactWidth", "exactHeight", "cropAspect",
   "cropAnchor", "rotate", "flipH", "flipV", "straighten", "resample",
   "adjust", "format", "quality", "targetKiB", "matte",
-];
+] as const;
 
-export function buildImageReceipt({ sourceHash, result }) {
+type ReceiptSettings = Record<(typeof SETTINGS)[number], unknown>;
+
+export type ImageReceiptInput = {
+  sourceHash: string;
+  result: {
+    plan: object;
+    settings: ReceiptSettings;
+    width: number;
+    height: number;
+    mime: string;
+    bytes: number;
+    sha256: string;
+  };
+};
+
+export type ImageReceipt = {
+  schema: string;
+  version: number;
+  note: string;
+  source: { sha256: string };
+  transform: { plan: object; settings: object };
+  output: { width: number; height: number; mime: string; bytes: number; sha256: string };
+};
+
+export function buildImageReceipt({ sourceHash, result }: ImageReceiptInput): ImageReceipt {
   return {
     schema: IMAGE_RECEIPT_SCHEMA,
     version: IMAGE_RECEIPT_VERSION,

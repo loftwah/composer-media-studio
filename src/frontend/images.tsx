@@ -78,7 +78,7 @@ import {
   type StripResult,
 } from "./image-metadata.mjs";
 import { createZip, ZIP_MIME } from "./image-zip.mjs";
-import { buildImageReceipt } from "./image-receipt.mjs";
+import { buildImageReceipt } from "./image-receipt.ts";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
