@@ -64,6 +64,7 @@ the work:
 | Image receipt | A v1 JSON download carries the source and output SHA-256, dimensions, MIME, byte count and saved transform settings. Later control edits keep the completed receipt intact. | [Live #196 check](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6937400509), [receipt tests](../tests/image-receipt.test.mjs) |
 | Local Web-ready replay | Isolated Chrome uses the existing Image Tools workbench with one explicitly selected PNG and its matching v1 receipt. The same Moss input reproduced the exact WebP bytes and receipt without network access from the page. | [#199 verification](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6938232520), [local command](../scripts/replay-web-ready-image.mjs) |
 | Social sizes | One PNG yields four exact WebP sizes with individual v1 receipts. The owned Moss result decoded with transparency and matched by hash at desktop and phone widths. | [Live #204 check](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6938735525) |
+| Local palette JSON replay | Isolated Chrome uses the existing workbench with one explicitly selected PNG and its matching palette JSON. **Extract palette** must reproduce the same format, version, units and swatches in order. The source SHA-256 is computed separately from the PNG because the palette document does not encode source identity. | [local command](../scripts/replay-palette-json.mjs) |
 
 ## Safety and bounds shipped by this slice
 
