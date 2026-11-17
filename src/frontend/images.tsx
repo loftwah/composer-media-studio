@@ -79,8 +79,11 @@ import {
 } from "./image-metadata.ts";
 import {
   CONTACT_SHEET_MIN_IMAGES,
+  CONTACT_SHEET_TILE,
+  contactSheetDocument,
   contactSheetLayout,
   contactSheetPlacement,
+  type ContactSheetTile,
 } from "./image-contact-sheet.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import {
@@ -213,7 +216,7 @@ type Rejection = { name: string; message: string };
 
 type RemovalFocus = { kind: "row"; id: string } | { kind: "picker" };
 
-type ContactSheet = { url: string; count: number; width: number; height: number };
+type ContactSheet = { url: string; layoutUrl: string; count: number; width: number; height: number };
 
 const DEFAULT_SETTINGS: Settings = {
   resizeMode: "long-edge",
@@ -949,6 +952,7 @@ function Images() {
     setBatchMessage(nextMessage);
     releaseUrl(zipUrl);
     releaseUrl(contactSheet?.url);
+    releaseUrl(contactSheet?.layoutUrl);
     setZipUrl("");
     setZipBytes(0);
     setContactSheet(null);
@@ -1400,8 +1404,8 @@ function Images() {
   }
 
   async function makeContactSheet(): Promise<void> {
-    const results = doneItems.flatMap(item => item.result ? [item.result] : []);
-    const layout = contactSheetLayout(results.length);
+    const entries = doneItems.flatMap(item => item.result ? [{ item, result: item.result }] : []);
+    const layout = contactSheetLayout(entries.length);
     if (!layout || batchExport || addingRef.current || runningRef.current || socialController.current) return;
 
     const attempt = batchExportRevision.current;
@@ -1410,23 +1414,48 @@ function Images() {
     const canvas = document.createElement("canvas");
     canvas.width = layout.width;
     canvas.height = layout.height;
+    const tiles: ContactSheetTile[] = [];
     try {
       const context = canvas.getContext("2d");
       if (!context) throw new Error("This browser could not make the contact sheet.");
-      for (const [index, result] of results.entries()) {
+      for (const [index, { item, result }] of entries.entries()) {
         const bitmap = await createImageBitmap(result.blob);
         try {
           if (attempt !== batchExportRevision.current) return;
           const tile = contactSheetPlacement(layout, index, bitmap.width, bitmap.height);
           context.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height);
+          tiles.push({
+            index,
+            rect: tile,
+            source: {
+              sha256: item.sourceHash,
+              width: item.source.orientedWidth,
+              height: item.source.orientedHeight,
+              mime: item.source.mime,
+            },
+            output: {
+              sha256: result.sha256,
+              width: bitmap.width,
+              height: bitmap.height,
+              mime: result.mime,
+              bytes: result.bytes,
+            },
+          });
         } finally {
           bitmap.close();
         }
       }
       const blob = await canvasToBlob(canvas, "image/png");
       if (attempt !== batchExportRevision.current) return;
+      const sheetHash = await sha256Hex(await blob.arrayBuffer());
+      if (attempt !== batchExportRevision.current) return;
+      const layoutDocument = contactSheetDocument(layout, { sha256: sheetHash, bytes: blob.size }, tiles);
+      const layoutBlob = new Blob([JSON.stringify(layoutDocument)], { type: "application/json" });
+      const url = trackUrl(blob);
+      const layoutUrl = trackUrl(layoutBlob);
       releaseUrl(contactSheet?.url);
-      setContactSheet({ url: trackUrl(blob), count: layout.count, width: layout.width, height: layout.height });
+      releaseUrl(contactSheet?.layoutUrl);
+      setContactSheet({ url, layoutUrl, count: layout.count, width: layout.width, height: layout.height });
       setBatchMessage(`Contact sheet ready: ${layout.count} images · ${layout.width} × ${layout.height} px.`);
     } catch (error) {
       if (attempt === batchExportRevision.current) {
@@ -2968,20 +2997,30 @@ function Images() {
             {sheetBusy ? "Making contact sheet…" : "Make contact sheet"}
           </button>
           {contactSheet && (
-            <a className="button secondary" href={contactSheet.url} download={`media-studio-contact-sheet-${contactSheet.count}.png`}>
-              Download contact sheet PNG
-            </a>
+            <>
+              <a className="button secondary" href={contactSheet.url} download={`media-studio-contact-sheet-${contactSheet.count}.png`}>
+                Download contact sheet PNG
+              </a>
+              <a className="button secondary" href={contactSheet.layoutUrl} download={`media-studio-contact-sheet-${contactSheet.count}.json`}>
+                Download layout JSON
+              </a>
+            </>
           )}
         </div>
         <p className="image-status" role="status" aria-live="polite">{batchMessage}</p>
         {contactSheet && (
-          <img
-            className="image-contact-sheet"
-            src={contactSheet.url}
-            width={contactSheet.width}
-            height={contactSheet.height}
-            alt={`Contact sheet of ${contactSheet.count} completed images`}
-          />
+          <>
+            <img
+              className="image-contact-sheet"
+              src={contactSheet.url}
+              width={contactSheet.width}
+              height={contactSheet.height}
+              alt={`Contact sheet of ${contactSheet.count} completed images`}
+            />
+            <p className="trim-note">
+              The layout uses {CONTACT_SHEET_TILE} px transparent tiles in batch order.
+            </p>
+          </>
         )}
         {running && (
           <div className="image-progress">
