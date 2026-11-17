@@ -76,7 +76,7 @@ import {
   stripImageMetadata,
   type ImageMetadataSummary,
   type StripResult,
-} from "./image-metadata.mjs";
+} from "./image-metadata.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
 import {

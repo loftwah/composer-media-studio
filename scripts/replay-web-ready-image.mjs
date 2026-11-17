@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { IMAGE_RECEIPT_SCHEMA, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.ts";
-import { sniffLocalImage } from "../src/frontend/image-metadata.mjs";
+import { sniffLocalImage } from "../src/frontend/image-metadata.ts";
 import { mimeForExport } from "../src/frontend/image-ops.ts";
 import { SOCIAL_KIT_FORMATS, SOCIAL_SIZES } from "../src/frontend/image-social-kit.ts";
 import { digest, downloadLink, readLocalJson, readLocalPng, runLocalImages } from "./local-image-workbench.mjs";
