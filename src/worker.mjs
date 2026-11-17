@@ -670,6 +670,10 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/^\/api\/studio\//.test(path)) action = "admin";
   if (/^\/api\/projects\/[a-z0-9_]+\/storage-report$/.test(path)) action = "admin";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/assets\/(preflight|reuse)$/.test(path)) action = "read";
+  // Share search is read-only on the wire, but it belongs to the same owner
+  // import capability as the POST: require the actual edit role so a read-only
+  // session or a scoped agent cannot browse the Share catalogue either.
+  if (/^\/api\/projects\/[a-z0-9_]+\/assets\/woodhouse$/.test(path)) action = "edit";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/scene-proposal\/preview$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/shot-diagnosis$/.test(path)) action = "read";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/song-plans\/[a-z0-9_]+\/director$/.test(path)) action = "edit";
@@ -1078,6 +1082,25 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       if (existing) return json({ asset: assetView(existing) });
       return storeAsset(env, project, track.bytes, {
         mime: "audio/mpeg", title: track.title, caption: track.source, importId, hash,
+      });
+    }
+
+    if (rest === "assets/woodhouse" && method === "GET" && env.WOODHOUSE_SHARE === "true") {
+      const query = url.searchParams.get("q")?.trim() ?? "";
+      if (!query || query.length > 100 || url.searchParams.size !== 1)
+        throw new HttpError(400, "Enter one artwork query of up to 100 characters.");
+      let page;
+      try {
+        page = await sharePage(new URLSearchParams({ q: query }), 8);
+      } catch {
+        throw new HttpError(502, "Woodhouse Share is unavailable. Try again in a moment.");
+      }
+      return json({
+        readOnly: true,
+        assets: page.assets.flatMap(({ id, title, project: shareProject }) =>
+          typeof title === "string" && title.length <= 200 && typeof shareProject === "string" && shareProject.length <= 128
+            ? [{ id, title, project: shareProject }]
+            : []),
       });
     }
 

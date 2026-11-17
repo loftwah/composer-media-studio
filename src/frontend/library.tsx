@@ -1,6 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AssembleProps, CreateProps, HistoryProps, LibraryProps, MediaAssetV1, PublishProps, SettingsProps, ViewerProps } from "./contracts";
 import { CreateWorkbench } from "./create";
 import { FootageRestyle } from "./footage-restyle";
@@ -59,6 +59,114 @@ function AssetCard({ asset, comparing, selected, full, previewToken }: { asset: 
     {comparing && asset.kind === "image" && <button type="button" className="secondary compare-select" data-action="compare-toggle" data-id={asset.id} aria-pressed={selected} aria-label={`${selected ? "Remove" : "Select"} ${asset.title} ${selected ? "from" : "for"} comparison`} disabled={full && !selected}>{selected ? "Selected" : "Compare"}</button>}
     <button type="button" data-action="open-asset" data-id={asset.id}>Open</button>
   </article>;
+}
+
+type ShareHit = { id: string; title: string; project: string };
+
+/**
+ * Owner-only import from Woodhouse Share. Searching is a single read-only GET
+ * that never saves an asset: it only fills the manual ID once an artwork is
+ * chosen. The existing reuse checkbox and the exact original import route
+ * still gate the write, so confirming reuse rights cannot be skipped.
+ */
+function ShareImport({ projectId }: { projectId: string }) {
+  const queryRef = useRef<HTMLInputElement>(null);
+  const idRef = useRef<HTMLInputElement>(null);
+  const reuseRef = useRef<HTMLInputElement>(null);
+  const activeSearch = useRef<AbortController | null>(null);
+  const [query, setQuery] = useState("");
+  const [state, setState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [hits, setHits] = useState<ShareHit[]>([]);
+  const [chosen, setChosen] = useState<ShareHit | null>(null);
+  useEffect(() => () => activeSearch.current?.abort(), []);
+
+  function clearSelection() {
+    if (idRef.current) idRef.current.value = "";
+    if (reuseRef.current) reuseRef.current.checked = false;
+    setChosen(null);
+  }
+
+  async function search() {
+    if (activeSearch.current) return;
+    const q = (queryRef.current?.value ?? "").trim();
+    if (!q) { queryRef.current?.focus(); return; }
+    const request = new AbortController();
+    activeSearch.current = request;
+    clearSelection();
+    setQuery(q);
+    setHits([]);
+    setState("loading");
+    try {
+      const params = new URLSearchParams({ q });
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/assets/woodhouse?${params}`, {
+        credentials: "same-origin",
+        signal: request.signal,
+      });
+      if (!response.ok) throw new Error("Search failed");
+      const data = await response.json() as { assets: ShareHit[] };
+      if (!Array.isArray(data.assets)) throw new Error("Invalid search response");
+      if (!request.signal.aborted) {
+        setHits(data.assets);
+        setState("ready");
+      }
+    } catch {
+      if (!request.signal.aborted) setState("error");
+    } finally {
+      if (activeSearch.current === request) activeSearch.current = null;
+    }
+  }
+
+  function clear() {
+    activeSearch.current?.abort();
+    activeSearch.current = null;
+    if (queryRef.current) queryRef.current.value = "";
+    clearSelection();
+    setQuery("");
+    setHits([]);
+    setState("idle");
+    queryRef.current?.focus();
+  }
+
+  function choose(hit: ShareHit) {
+    if (idRef.current) idRef.current.value = hit.id;
+    if (reuseRef.current) reuseRef.current.checked = false;
+    setChosen(hit);
+  }
+
+  return <details className="share-import" data-project-id={projectId}><summary>Import from Woodhouse Share</summary>
+    <form className="stack" data-form="woodhouse-import">
+      <p className="small">Search public Share artwork, or paste an asset ID from <a href="/portfolio" target="_blank" rel="noopener noreferrer">Share artwork</a>. The original and its source credit are saved to this project.</p>
+      <div className="share-search">
+        <label className="sr-only" htmlFor="share-search-query">Search Woodhouse Share</label>
+        <input id="share-search-query" ref={queryRef} type="search" placeholder="Search Share titles…" maxLength={100} readOnly={state === "loading"} onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void search(); } }} />
+        <div className="row">
+          <button type="button" className="secondary" onClick={() => void search()} aria-disabled={state === "loading"}>{state === "loading" ? "Searching…" : "Search Share"}</button>
+          <button type="button" className="quiet" onClick={clear} disabled={state === "idle" && !query && !chosen}>Clear</button>
+        </div>
+        {state === "loading" && <p role="status">Searching Woodhouse Share…</p>}
+        {state === "error" && <p role="alert">Share search could not be reached. Try again, or paste an asset ID below.</p>}
+        {state === "ready" && hits.length === 0 && <p role="status">No public artwork matches “{query}”. You can still paste an asset ID below.</p>}
+        {state === "ready" && hits.length > 0 && <ul className="share-hits" aria-label="Share artwork results">
+          {hits.map(hit => <li key={hit.id}>
+            <button type="button" className="quiet share-hit" aria-pressed={chosen?.id === hit.id} onClick={() => choose(hit)}>
+              <strong>{hit.title || hit.id}</strong>
+              {hit.project && <span className="small"> · {hit.project}</span>}
+              {chosen?.id === hit.id && <span className="small"> · Selected</span>}
+            </button>
+          </li>)}
+        </ul>}
+      </div>
+      {chosen && <p className="small" role="status">
+        Selected {chosen.title}. <a href={`/portfolio?asset=${encodeURIComponent(chosen.id)}`} target="_blank" rel="noopener noreferrer">View original and credits</a>
+      </p>}
+      <label>Share asset ID <input name="assetId" ref={idRef} onChange={() => {
+        setChosen(null);
+        if (reuseRef.current) reuseRef.current.checked = false;
+      }} required maxLength={128} pattern="[a-z0-9][a-z0-9\-]{0,127}" /></label>
+      <label><span><input name="reuseConfirmed" ref={reuseRef} type="checkbox" required /> I have permission to reuse this original.</span></label>
+      <div><button className="button secondary" type="submit">Import original</button></div>
+    </form>
+  </details>;
 }
 
 type PreviewBackfill = { processed: number; remaining: number; failed: number };
@@ -123,7 +231,7 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
     {assets.length === 0 && <div className="card"><h2>Nothing here yet.</h2><p>Upload a photo or a clip to start the library. You can generate new stills once uploads work.</p><button type="button" className="button" data-action="tab" data-tab="create">Make the first image</button></div>}
     {assets.length > 0 && visible.length === 0 && <p className="notice">No media matches that search or filter. <button type="button" className="quiet" data-action="clear-library">Clear search and filters</button></p>}
     <div className="asset-grid">{visible.map(asset => <AssetCard key={asset.id} asset={asset} comparing={comparing} selected={compareIds.includes(asset.id)} full={compareIds.length >= 2} previewToken={previewToken}/>)}</div>
-    {canImportShare && <details className="share-import" data-project-id={projectId}><summary>Import from Woodhouse Share</summary><form className="stack" data-form="woodhouse-import"><p className="small">Find the asset ID in <a href="/portfolio" target="_blank" rel="noopener noreferrer">Share artwork</a>. The original and source credit are saved to this project.</p><label>Share asset ID <input name="assetId" required maxLength={128} pattern="[a-z0-9][a-z0-9\-]{0,127}" /></label><label><span><input name="reuseConfirmed" type="checkbox" required /> I have permission to reuse this original.</span></label><div><button className="button secondary" type="submit">Import original</button></div></form></details>}
+    {canImportShare && <ShareImport key={projectId} projectId={projectId}/>}
     <div className="dropzone library-dropzone" id="dropzone"><p><strong>Drop files here</strong> or use Upload media.</p><p className="small">JPEG, PNG, WebP, MP4, WebM, WAV, MP3 or M4A. Images and audio up to 32 MB, video up to 64 MB.</p></div>
   </div>;
 }

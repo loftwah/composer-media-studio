@@ -254,6 +254,58 @@ test("Share browsing and imports preserve source boundaries and deduplicate conc
   assert.ok(requests.every((url) => url.startsWith(origin + "/")));
 });
 
+test("Share search is a bounded, read-only GET behind the real edit role", async (t) => {
+  const { env, project } = await setup();
+  env.WOODHOUSE_SHARE = "true";
+  env.COMPOSER_ORIGIN = "https://composer.test";
+  env.BRIDGE_SECRET = "fixture-bridge-secret-at-least-32-bytes";
+  const origin = "https://woodhouse.loftwah.com";
+  const publicAsset = { id: "foilbury-print", title: "Foilbury <print>", project: "foilbury", visibility: "public" };
+  const privateAsset = { id: "hidden-print", title: "Hidden", project: "foilbury", visibility: "private" };
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).startsWith(env.COMPOSER_ORIGIN)) {
+      const claim = JSON.parse(options.body);
+      return Response.json({ ok: true, actor: claim.actor, workspace: claim.workspace, actions: claim.actions });
+    }
+    calls.push({ url: String(url), options });
+    assert.equal(options.redirect, "manual");
+    return Response.json({ version: 1, assets: [publicAsset, privateAsset], nextAfter: null });
+  });
+  const cookie = async (actions) => "studio_session=" + await createSession(env, {
+    mode: "bridge", actor: "fixture", workspace: "fixture", project: project.id, actions,
+  });
+  const path = `https://studio.test/api/projects/${project.id}/assets/woodhouse`;
+  const get = (auth, query = "") => worker.fetch(new Request(path + query, { headers: auth ? { cookie: auth } : {} }), env);
+
+  // This capability needs the actual edit role, even though the wire read is a GET.
+  assert.equal((await get(null)).status, 401);
+  assert.equal((await get(await cookie(["read"]))).status, 403);
+  assert.equal(calls.length, 0);
+
+  const editor = await cookie(["read", "edit"]);
+  assert.equal((await get(editor, `?q=${"x".repeat(101)}`)).status, 400);
+  assert.equal((await get(editor, "?q=foilbury&q=other")).status, 400);
+  assert.equal(calls.length, 0);
+  const response = await get(editor, "?q=foilbury");
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.readOnly, true);
+  assert.deepEqual(data.assets, [{ id: "foilbury-print", title: "Foilbury <print>", project: "foilbury" }]);
+  assert.equal(calls.length, 1);
+  const upstream = new URL(calls[0].url);
+  assert.equal(upstream.origin, origin);
+  assert.equal(upstream.pathname, "/api/v1/assets");
+  assert.equal(upstream.searchParams.get("q"), "foilbury");
+  assert.equal(upstream.searchParams.get("limit"), "8");
+  assert.equal(upstream.searchParams.has("after"), false);
+  assert.equal(env.MEDIA.objects.size, 0, "a GET never stores an asset");
+
+  // Without the opt-in flag the route is not served at all.
+  env.WOODHOUSE_SHARE = "false";
+  assert.equal((await get(await cookie(["read", "edit"]), "?q=foilbury")).status, 404);
+});
+
 test("public gallery requires explicit listing and honors removal, deletion and withdrawal", async () => {
   const { env, project } = await setup();
   const image = await addAsset(env, project, { id: "asset_gallery_image", kind: "image" });
