@@ -513,8 +513,8 @@ function shareDetail(asset, context) {
           ${shareLink(asset.shareUrl, "Woodhouse gallery")}
         </div>
         <h2>Use in a project</h2>
-        <p>Confirm reuse rights in the source notes. In your Studio project, open Library → Import from Woodhouse Share and enter this asset ID.</p>
-        <p><code>${escapeHtml(asset.id)}</code></p>
+        <p><a href="/studio">Open Studio</a>, choose your project, then open Library → Import from Woodhouse Share. Search for the exact title “${escapeHtml(asset.title)}”, select the matching artwork and confirm you have permission to reuse it before importing. The source notes above show the original and its credit.</p>
+        <p>If the search does not find it, paste this asset ID as a fallback: <code>${escapeHtml(asset.id)}</code></p>
         ${asset.formats?.length ? `<h2>Formats</h2><ul>${asset.formats.map((format) => `<li>${shareLink(format.url, format.label)}</li>`).join("")}</ul>` : ""}
         ${asset.versions?.length ? `<h2>Versions</h2><ul>${asset.versions.map((version) => `<li>${shareLink(version.url, version.label)} · ${escapeHtml(version.note)} ${shareLink(version.sourceUrl, "Source")}</li>`).join("")}</ul>` : ""}
         ${asset.kitUrl ? shareLink(asset.kitUrl, "Open social kit") : ""}
