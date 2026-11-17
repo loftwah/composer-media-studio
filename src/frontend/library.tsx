@@ -61,7 +61,26 @@ function AssetCard({ asset, comparing, selected, full, previewToken }: { asset: 
   </article>;
 }
 
-type ShareHit = { id: string; title: string; project: string };
+type ShareHit = { id: string; title: string; project: string; thumbnailUrl?: string };
+
+/**
+ * A Share hit may carry a public thumbnail from the fixed Share origin, already
+ * validated by the server. Painting it is purely decorative: the loading and
+ * no-image states never gate choosing the hit or resetting the reuse checkbox.
+ */
+function ShareThumb({ url }: { url?: string }) {
+  return <span className="share-thumb" aria-hidden="true">
+    {url && <img
+      key={url}
+      src={url}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={(event) => { event.currentTarget.hidden = true; }}
+    />}
+  </span>;
+}
 
 /**
  * Project-scoped import from Woodhouse Share. Searching is a single read-only GET
@@ -149,9 +168,12 @@ function ShareImport({ projectId }: { projectId: string }) {
         {state === "ready" && hits.length > 0 && <ul className="share-hits" aria-label="Share artwork results">
           {hits.map(hit => <li key={hit.id}>
             <button type="button" className="quiet share-hit" aria-pressed={chosen?.id === hit.id} onClick={() => choose(hit)}>
-              <strong>{hit.title || hit.id}</strong>
-              {hit.project && <span className="small"> · {hit.project}</span>}
-              {chosen?.id === hit.id && <span className="small"> · Selected</span>}
+              <ShareThumb url={hit.thumbnailUrl} />
+              <span className="share-hit-text">
+                <strong>{hit.title || hit.id}</strong>
+                {hit.project && <span className="small"> · {hit.project}</span>}
+                {chosen?.id === hit.id && <span className="small"> · Selected</span>}
+              </span>
             </button>
           </li>)}
         </ul>}
