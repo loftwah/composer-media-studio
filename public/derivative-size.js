@@ -1,5 +1,5 @@
-// The vanilla studio imports this file directly. Keep it in step with the
-// tested source in src/frontend/derivative-size.mjs.
+// The browser captures one preview per published page. A 720px long edge is
+// enough for a gallery card on a 2x phone screen without shipping the original.
 export const DERIVATIVE_LONG_EDGE = 720;
 
 /** Scale a source frame down to the preview edge, preserving its aspect. */
