@@ -2116,6 +2116,7 @@ function Images() {
             <button type="button" disabled={running || socialBusy || adding || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems([selected])}>
               {selected.status === "working" ? "Processing…" : "Make this image"}
             </button>
+            {selected.result && <a className="button secondary" href="#image-downloads">Go to downloads</a>}
             {selected.status === "error" && (
               <button type="button" className="secondary" disabled={running} onClick={() => void runItems([selected])}>Retry</button>
             )}
@@ -2219,7 +2220,7 @@ function Images() {
             )}
           </div>
           {selected.result && (
-            <div className="image-result">
+            <div id="image-downloads" tabIndex={-1} className="image-result">
               <p>
                 <strong>Your result</strong> · SHA-256 <code title={selected.result.sha256}>{shortHash(selected.result.sha256)}</code> · original unchanged.
               </p>
