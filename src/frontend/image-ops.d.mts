@@ -28,7 +28,7 @@ export const CROP_ANCHOR_LABELS: Readonly<Record<CropAnchorKey, string>>;
 export function isCropAnchor(value: unknown): value is CropAnchorKey;
 
 export type ResizePlan =
-  | { mode: "long-edge"; longEdge: number }
+  | { mode: "long-edge"; longEdge: number; shrinkOnly?: boolean }
   | { mode: "exact"; width: number; height: number };
 
 export type ImageCrop = { x: number; y: number; width: number; height: number };

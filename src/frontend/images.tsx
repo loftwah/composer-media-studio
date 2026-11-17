@@ -85,7 +85,7 @@ import "./audio-trim.css";
 import "./images.css";
 
 type ExportFormat = "png" | "jpeg" | "webp";
-type ResizeMode = "long-edge" | "exact";
+type ResizeMode = "long-edge" | "max-long-edge" | "exact";
 type ResampleMode = "smooth" | "nearest";
 type PreviewBackdrop = "checkerboard" | "white" | "black";
 type ItemStatus = "ready" | "working" | "done" | "error" | "cancelled";
@@ -197,6 +197,9 @@ const DEFAULT_SETTINGS: Settings = {
   matte: "#ffffff",
 };
 
+const WEB_READY_LONG_EDGE = 1600;
+const WEB_READY_QUALITY = 0.82;
+
 const FORMATS: Array<{ value: ExportFormat; label: string; mime: string }> = [
   { value: "png", label: "PNG · lossless", mime: "image/png" },
   { value: "jpeg", label: "JPEG · smaller", mime: "image/jpeg" },
@@ -248,7 +251,11 @@ function targetBytesFor(settings: Settings): number | null {
 function resizeFor(settings: Settings): ResizePlan {
   if (settings.resizeMode === "exact")
     return { mode: "exact", width: settings.exactWidth, height: settings.exactHeight };
-  return { mode: "long-edge", longEdge: settings.longEdge };
+  return {
+    mode: "long-edge",
+    longEdge: settings.longEdge,
+    shrinkOnly: settings.resizeMode === "max-long-edge",
+  };
 }
 
 function makePlan(
@@ -1223,6 +1230,19 @@ function Images() {
     }));
   }
 
+  function applyWebReady(): void {
+    if (!selected || running) return;
+    setSettings((previous) => ({
+      ...previous,
+      resizeMode: "max-long-edge",
+      longEdge: WEB_READY_LONG_EDGE,
+      format: "webp",
+      quality: WEB_READY_QUALITY,
+      targetKiB: null,
+    }));
+    setMessage("Web-ready settings applied. Choose Make this image to render.");
+  }
+
   function selectItem(id: string): void {
     setSelectedId(id);
     setTrim(null);
@@ -1643,15 +1663,35 @@ function Images() {
           </dl>
 
           <fieldset className="image-controls">
+            <legend>Web-ready image</legend>
+            <div className="image-control-actions">
+              <button
+                type="button"
+                className="secondary"
+                disabled={running}
+                aria-describedby="image-web-ready-note"
+                onClick={applyWebReady}
+              >
+                Apply Web-ready image
+              </button>
+            </div>
+            <p className="trim-note" id="image-web-ready-note">
+              Set WebP at {Math.round(WEB_READY_QUALITY * 100)}% quality and cap the longest side at {WEB_READY_LONG_EDGE} px.
+              The preset keeps transparency and your edits. It only shrinks images.
+            </p>
+          </fieldset>
+
+          <fieldset className="image-controls">
             <legend>Resize and crop</legend>
             <label>Resize by
               <select value={settings.resizeMode} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, resizeMode: event.target.value as ResizeMode }))}>
                 <option value="long-edge">Long edge</option>
+                <option value="max-long-edge">Maximum long edge</option>
                 <option value="exact">Exact width and height</option>
               </select>
             </label>
-            {settings.resizeMode === "long-edge" ? (
-              <label>Long edge (px)
+            {settings.resizeMode !== "exact" ? (
+              <label>{settings.resizeMode === "max-long-edge" ? "Maximum long edge (px)" : "Long edge (px)"}
                 <input type="number" min="1" max="8192" step="1" value={Number.isFinite(settings.longEdge) ? settings.longEdge : ""} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, longEdge: event.target.value === "" ? Number.NaN : Number(event.target.value) }))} />
               </label>
             ) : (
