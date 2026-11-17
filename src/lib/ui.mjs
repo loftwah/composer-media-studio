@@ -397,6 +397,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
       : ""}<script src="/public-piece.js" defer></script>${structuredData}`,
   })}
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <header class="site-header public-piece-header">
   <a class="wordmark" href="${escapeHtml(origin)}/" aria-label="Media Studio home">${mark}<span>Media Studio</span>${brandByline()}</a>
   <nav class="header-nav" aria-label="Published piece">
@@ -406,7 +407,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false" hidden>Dark</button>
   </nav>
 </header>
-<main class="public-page" id="main" data-public-piece>
+<main class="public-page" id="main" data-public-piece tabindex="-1">
   <p class="eyebrow">Published from Media Studio</p>
   <h1>${escapeHtml(title)}</h1>
   ${description ? `<p class="lede">${linkPublicDescription(description)}</p>` : ""}
