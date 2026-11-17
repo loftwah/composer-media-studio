@@ -78,6 +78,7 @@ import {
   type StripResult,
 } from "./image-metadata.mjs";
 import { createZip, ZIP_MIME } from "./image-zip.mjs";
+import { buildImageReceipt } from "./image-receipt.mjs";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -828,6 +829,15 @@ function Images() {
           })}.`
         : `Local metadata-only pass. Source: ${selected.file.name.slice(0, 80)} (sha256 ${selected.sourceHash}). Pixels copied without re-encoding; removable metadata was stripped.`
       : "";
+  // The receipt is a snapshot of the finished render, built from the stored
+  // result and source hash only. Live editor controls are never an input, so
+  // changing them later cannot rewrite this result or its receipt.
+  const imageReceipt = selected?.result
+    ? buildImageReceipt({ sourceHash: selected.sourceHash, result: selected.result })
+    : null;
+  const imageReceiptHref = imageReceipt
+    ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(imageReceipt))}`
+    : "";
 
   function trackUrl(blob: Blob): string {
     const url = URL.createObjectURL(blob);
@@ -2018,6 +2028,17 @@ function Images() {
               >
                 Download {selected.result.mime.replace("image/", "").toUpperCase()}
               </a>
+              <a
+                className="button secondary"
+                href={imageReceiptHref}
+                download="studio-image-receipt.json"
+              >
+                Download image receipt (.json)
+              </a>
+              <p className="trim-note">
+                Keep the hashes and settings for this finished image. Later
+                edits to the controls leave this receipt tied to the download.
+              </p>
             </div>
           )}
           {selected.error && <p className="notice warn" role="alert">{selected.error}</p>}
