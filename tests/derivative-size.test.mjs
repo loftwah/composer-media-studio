@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { DERIVATIVE_LONG_EDGE, derivativeSize } from "../src/frontend/derivative-size.mjs";
-import { derivativeSize as browserDerivativeSize } from "../public/derivative-size.js";
+import { DERIVATIVE_LONG_EDGE, derivativeSize } from "../public/derivative-size.js";
 
 test("a preview keeps the source aspect at a 720px long edge", () => {
   assert.equal(DERIVATIVE_LONG_EDGE, 720);
@@ -33,15 +32,11 @@ test("small frames are not upscaled and bad dimensions are refused", () => {
   assert.deepEqual(derivativeSize(1000, 500, 100), { width: 100, height: 50 });
 });
 
-test("the served browser helper matches the tested source", () => {
-  for (const [width, height] of [
-    [1920, 1080],
-    [1080, 1920],
-    [801, 800],
-    [400, 300],
-    [1, 1],
-    [0, 10],
-  ]) {
-    assert.deepEqual(browserDerivativeSize(width, height), derivativeSize(width, height), `${width}x${height}`);
-  }
+test("native preview and poster sizes keep the public helper's existing contract", () => {
+  assert.deepEqual(derivativeSize(1920, 1080), { width: 720, height: 405 });
+  assert.deepEqual(derivativeSize(1080, 1920), { width: 405, height: 720 });
+  assert.deepEqual(derivativeSize(801, 800), { width: 720, height: 719 });
+  assert.deepEqual(derivativeSize(1, 1), { width: 1, height: 1 });
+  assert.equal(derivativeSize(0, 10), null);
+  assert.deepEqual(derivativeSize(1920, 1080, 1024), { width: 1024, height: 576 });
 });
