@@ -152,6 +152,8 @@ The Apps launcher is the locally committed Composer distribution and source at A
 
 ## Ownership boundaries
 
+See the [source map](docs/studio-architecture.md) for the Worker, Image Tools, agent and publication boundaries.
+
 - A standalone studio uses one owner passphrase and an HttpOnly signed session. There is no multi-tenant registration.
 - An installation opened from App Composer accepts a short-lived signed handoff naming the current actor, workspace, selected project and read/edit/generate/publish/admin actions. Privileged actions re-check the current Composer grant on the server; a revoked member stops the next dispatch. The Composer cookies and provider keys never reach this origin.
 - Media bytes live in the studio's R2 bucket; metadata in its D1 database. Darkroom may only read a live image in the same project. The Studio indexes the exact original from the operation’s fixed private R2 key. The copy with embedded prompts is never stored; originals with unverified metadata or signatures stay private.
