@@ -37,6 +37,11 @@ pnpm run deploy --migrate
 once, deploys with the commit baked in, then reads `/healthz` and `/build.json`
 and fails if the live revision is not the released commit.
 
+After upload, both endpoints can briefly serve the previous revision. The
+guard makes up to 12 read attempts five seconds apart, with a three-second
+timeout per request. It returns on the first exact match from both endpoints
+and exits nonzero if the window expires.
+
 Each release carries one monotonic run ID from before `pnpm check` to exact live
 revision identity. It writes a redacted `release-timing/v1` receipt under ignored
 `.release/timing/` and prints total, target and limit. **Exactly 300,000 ms is a

@@ -1,7 +1,16 @@
 // MIT. Read-only verification while a newly uploaded Worker propagates.
+// Allow a previous release to age out after upload, while requiring both endpoints.
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function verifyLiveRelease({ origin, expected, fetchImpl = fetch, sleep = wait, attempts = 8, intervalMs = 1000, requestTimeoutMs = 3000 }) {
+export async function verifyLiveRelease({
+  origin,
+  expected,
+  fetchImpl = fetch,
+  sleep = wait,
+  attempts = 12,
+  intervalMs = 5_000,
+  requestTimeoutMs = 3000,
+}) {
   async function read(path) {
     try {
       const response = await fetchImpl(`${origin}${path}`, {
