@@ -347,7 +347,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
     kind: isVideo ? "video.other" : isAudio ? "music.song" : "website",
     extra: `${listed ? "" : '<meta name="robots" content="noindex">'}${isVideo
       ? `<meta property="og:video" content="${escapeHtml(origin + media)}"><meta property="og:video:type" content="${escapeHtml(mime)}">${durationMs ? `<meta property="video:duration" content="${Math.round(durationMs / 1000)}">` : ""}`
-      : ""}`,
+      : ""}<script src="/public-piece.js" defer></script>`,
   })}
 <body>
 <header class="site-header public-piece-header">
@@ -359,7 +359,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
     <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false" hidden>Dark</button>
   </nav>
 </header>
-<main class="public-page" id="main">
+<main class="public-page" id="main" data-public-piece>
   <p class="eyebrow">Published from Media Studio</p>
   <h1>${escapeHtml(title)}</h1>
   ${description ? `<p class="lede">${linkPublicDescription(description)}</p>` : ""}
@@ -375,9 +375,14 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
     </div>
     <figcaption class="caption">
       <span>${escapeHtml(facts)}</span>
-      <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
+      <span class="row">
+        <button type="button" class="button secondary" data-copy-link data-copy-url="${escapeHtml(url)}" hidden>Copy link</button>
+        <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
+      </span>
     </figcaption>
   </figure>
+  <span class="small" role="status" data-copy-status></span>
+  <input class="copy-link-field" type="text" readonly aria-label="Link to this page" value="${escapeHtml(url)}" data-copy-field hidden>
   ${sourceCredits ? `<section class="public-credits" aria-labelledby="credits-title"><h2 id="credits-title">Source and credit</h2><ul>${sourceCredits}</ul>${tablerLicense}</section>` : ""}
   <p class="small">A deliberately published piece. Private projects, other media, masks and prompts stay in the studio. Withdrawing this page stops new visits here; copies someone already downloaded cannot be recalled.</p>
   ${

@@ -81,6 +81,29 @@ test("public video reserves its known frame without applying it to audio or unkn
   assert.doesNotMatch(audio, /media-video|aspect-ratio:auto/);
 });
 
+test("public work detail exposes a keyboard-reachable Copy link bound to the canonical URL with an honest fallback", () => {
+  const canonical = `${origin}/p/${slug}`;
+  const html = published();
+  assert.ok(html.includes('<button type="button" class="button secondary" data-copy-link'), "Copy link is a native, focusable button");
+  assert.ok(html.includes(`data-copy-url="${canonical}"`), "Copy link carries the canonical URL");
+  assert.ok(html.includes(`<link rel="canonical" href="${canonical}">`), "the copied value is the canonical URL");
+  assert.ok(html.includes(`<meta property="og:url" content="${canonical}">`), "og:url matches the copied value");
+  assert.ok(html.includes('role="status" data-copy-status></span>'), "status region exists before an announcement");
+  assert.ok(html.includes(`aria-label="Link to this page" value="${canonical}" data-copy-field hidden`), "manual-copy field holds the canonical URL");
+  assert.ok(html.includes('src="/public-piece.js" defer'), "the local, no-network handler is loaded");
+  assert.doesNotMatch(html, /onclick=|navigator\./, "no inline scripting or network calls in the page");
+});
+
+test("unlisted work keeps noindex while its Copy link still uses the canonical URL", () => {
+  const canonical = `${origin}/p/${slug}`;
+  const unlisted = published({ listed: false });
+  assert.match(unlisted, /<meta name="robots" content="noindex">/);
+  assert.ok(unlisted.includes(`data-copy-url="${canonical}"`));
+  const listed = published({ listed: true });
+  assert.doesNotMatch(listed, /<meta name="robots" content="noindex">/);
+  assert.ok(listed.includes(`data-copy-url="${canonical}"`));
+});
+
 test("public destinations accept plain HTTPS links and fail closed", () => {
   assert.equal(
     publicDestination("https://composer.loftwah.com/init?start=media-studio"),
@@ -226,7 +249,8 @@ test("a published still gives a signed-out visitor the build journey", () => {
   assert.match(html, /href="https:\/\/media\.loftwah\.com\/gallery">← Back to gallery<\/a>/);
   assert.doesNotMatch(html, /visit the studio/);
   assert.match(html, /<script src="\/theme\.js" defer><\/script>/);
-  assert.doesNotMatch(html, /<script(?! src="\/theme\.js" defer><\/script>)/);
+  assert.match(html, /<script src="\/public-piece\.js" defer><\/script>/);
+  assert.doesNotMatch(html, /<script(?! src="\/(?:theme|public-piece)\.js" defer><\/script>)/);
   assert.match(html, /class="quiet theme-toggle"[^>]* hidden>/);
   assert.match(html, /Download image/);
 });
