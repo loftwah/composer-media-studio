@@ -8,7 +8,7 @@ import { test } from "node:test";
 import worker from "../src/worker.mjs";
 import { createSession } from "../src/lib/auth.mjs";
 import { addAsset, jpeg, setup } from "./harness.mjs";
-import { storeAssetPreview } from "../src/lib/asset-previews.mjs";
+import { storeAssetPreview } from "../src/lib/asset-previews.ts";
 
 const base = "https://studio.test";
 const MAX = 1024 * 1024;

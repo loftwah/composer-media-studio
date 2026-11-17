@@ -10,22 +10,107 @@
 
 import { HttpError, sha256Hex } from "./util.mjs";
 import { inspectDerivative } from "./publication-derivatives.ts";
-import { renderPreview } from "./preview-rendition.ts";
+import { renderPreview, type PreviewEnv, type RenderedPreview } from "./preview-rendition.ts";
+
+// Narrow structural seams. Only the binding members and row fields this module
+// touches are described: no Cloudflare types are imported, and every annotation
+// here is erased at runtime. Callers keep passing the same Worker env and asset
+// rows they always did.
+interface PreviewStatement {
+  bind(...values: unknown[]): {
+    first<Row>(): Promise<Row | null>;
+    all<Row>(): Promise<{ results: Row[] }>;
+    run(): Promise<unknown>;
+  };
+}
+
+interface PreviewObject {
+  body: ReadableStream<Uint8Array>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+interface AssetPreviewEnv {
+  DB: {
+    prepare(query: string): PreviewStatement;
+  };
+  MEDIA: {
+    put(
+      key: string,
+      value: Uint8Array,
+      options: {
+        httpMetadata?: { contentType?: string };
+        customMetadata?: Record<string, string>;
+      },
+    ): Promise<unknown>;
+    get(key: string): Promise<PreviewObject | null>;
+    delete(key: string): Promise<unknown>;
+  };
+  // Consumed only by renderPreview, which owns the Images binding.
+  IMAGES: PreviewEnv["IMAGES"];
+}
+
+/** The asset columns a preview is derived from, as the library row stores them. */
+interface PreviewAsset {
+  id: string;
+  project_id: string;
+  kind: string;
+  r2_key: string;
+  width: number | null;
+  height: number | null;
+  sha256: string;
+  deleted_at?: number | null;
+}
+
+/** The subset `storeAssetPreview` compares against the asset's own bytes. */
+interface ExistingPreview {
+  asset_id: string;
+  bytes: number;
+  width: number;
+  height: number;
+  sha256: string;
+  source_sha256: string;
+}
+
+/** A whole `asset_previews` row, as read back for serving. */
+interface AssetPreviewRow {
+  asset_id: string;
+  project_id: string;
+  r2_key: string;
+  mime: string;
+  bytes: number;
+  width: number;
+  height: number;
+  sha256: string;
+  source_sha256: string;
+  created_at: number;
+}
+
+export interface StoredAssetPreview {
+  assetId: string;
+  bytes: number;
+  width: number;
+  height: number;
+  sha256: string;
+  unchanged: boolean;
+}
+
+export type ServedAssetPreview = AssetPreviewRow & { object: PreviewObject };
 
 /** Only a stored still can be previewed; a film's frame needs a different job. */
 const PREVIEWABLE_KIND = "image";
 
-export function assetPreviewKey(projectId, assetId) {
+export function assetPreviewKey(projectId: string, assetId: string): string {
   return `projects/${projectId}/asset-previews/${assetId}.webp`;
 }
 
 /**
  * Render and store one preview. Re-running with the same source bytes is a
  * no-op so a backfill can be repeated safely.
- *
- * @returns {Promise<{assetId: string, bytes: number, width: number, height: number, sha256: string, unchanged: boolean}>}
  */
-export async function storeAssetPreview(env, asset) {
+export async function storeAssetPreview(
+  env: AssetPreviewEnv,
+  asset: PreviewAsset | null | undefined,
+): Promise<StoredAssetPreview> {
   if (!asset?.id) throw new HttpError(400, "Choose an asset to preview", "invalid");
   if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
   if (asset.kind !== PREVIEWABLE_KIND)
@@ -34,7 +119,7 @@ export async function storeAssetPreview(env, asset) {
     "SELECT asset_id,bytes,width,height,sha256,source_sha256 FROM asset_previews WHERE asset_id=?1",
   )
     .bind(asset.id)
-    .first();
+    .first<ExistingPreview>();
   if (current && current.source_sha256 === asset.sha256)
     return {
       assetId: asset.id,
@@ -48,7 +133,10 @@ export async function storeAssetPreview(env, asset) {
   const object = await env.MEDIA.get(asset.r2_key);
   if (!object) throw new HttpError(410, "The stored bytes are unavailable", "unavailable");
   const source = new Uint8Array(await object.arrayBuffer());
-  const rendered = await renderPreview(env, source, { width: asset.width, height: asset.height });
+  const rendered = await renderPreview(env, source, {
+    width: asset.width ?? undefined,
+    height: asset.height ?? undefined,
+  });
   await writeAssetPreview(env, asset, rendered, current);
   return {
     assetId: asset.id,
@@ -64,7 +152,12 @@ export async function storeAssetPreview(env, asset) {
  * Store the bytes first, then point D1 at them. Shared by the server rendition
  * and by the owner's browser upload, so one row shape serves both.
  */
-async function writeAssetPreview(env, asset, rendered, current) {
+async function writeAssetPreview(
+  env: AssetPreviewEnv,
+  asset: PreviewAsset,
+  rendered: RenderedPreview,
+  current: ExistingPreview | null,
+): Promise<void> {
   const key = assetPreviewKey(asset.project_id, asset.id);
   await env.MEDIA.put(key, rendered.bytes, {
     httpMetadata: { contentType: rendered.mime },
@@ -111,7 +204,11 @@ async function writeAssetPreview(env, asset, rendered, current) {
  * server rendition; the browser path is the same artwork, scaled down once, and
  * is validated exactly like an uploaded still.
  */
-export async function storeAssetPreviewUpload(env, asset, bytes) {
+export async function storeAssetPreviewUpload(
+  env: AssetPreviewEnv,
+  asset: PreviewAsset | null | undefined,
+  bytes: Uint8Array,
+): Promise<StoredAssetPreview> {
   if (!asset?.id) throw new HttpError(400, "Choose an asset to preview", "invalid");
   if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
   if (asset.kind !== PREVIEWABLE_KIND)
@@ -121,8 +218,8 @@ export async function storeAssetPreviewUpload(env, asset, bytes) {
     "SELECT asset_id,bytes,width,height,sha256,source_sha256 FROM asset_previews WHERE asset_id=?1",
   )
     .bind(asset.id)
-    .first();
-  const rendered = {
+    .first<ExistingPreview>();
+  const rendered: RenderedPreview = {
     bytes,
     mime: inspected.mime,
     width: inspected.width,
@@ -141,12 +238,15 @@ export async function storeAssetPreviewUpload(env, asset, bytes) {
 }
 
 /** Return a stored preview and its object, or null when there is nothing to serve. */
-export async function readAssetPreview(env, assetId) {
+export async function readAssetPreview(
+  env: AssetPreviewEnv,
+  assetId: string,
+): Promise<ServedAssetPreview | null> {
   const row = await env.DB.prepare(
     "SELECT asset_id,project_id,r2_key,mime,bytes,width,height,sha256,source_sha256,created_at FROM asset_previews WHERE asset_id=?1",
   )
     .bind(assetId)
-    .first();
+    .first<AssetPreviewRow>();
   if (!row) return null;
   const object = await env.MEDIA.get(row.r2_key);
   if (!object) return null;
@@ -158,7 +258,10 @@ export async function readAssetPreview(env, assetId) {
  * publication derivatives use. Rows go even if R2 refuses: an orphaned object is
  * preferable to a preview outliving its asset.
  */
-export async function deleteAssetPreviews(env, assetIds) {
+export async function deleteAssetPreviews(
+  env: AssetPreviewEnv,
+  assetIds: readonly unknown[],
+): Promise<void> {
   const ids = [...new Set(assetIds.filter((value) => typeof value === "string" && value))];
   for (let start = 0; start < ids.length; start += 90) {
     const chunk = ids.slice(start, start + 90);
@@ -167,12 +270,12 @@ export async function deleteAssetPreviews(env, assetIds) {
       `SELECT r2_key FROM asset_previews WHERE asset_id IN (${placeholders})`,
     )
       .bind(...chunk)
-      .all();
+      .all<{ r2_key: string }>();
     for (const row of rows.results) {
       try {
         await env.MEDIA.delete(row.r2_key);
       } catch (error) {
-        console.warn("Could not delete an asset preview", row.r2_key, error?.message);
+        console.warn("Could not delete an asset preview", row.r2_key, (error as { message?: string } | undefined)?.message);
       }
     }
     await env.DB.prepare(`DELETE FROM asset_previews WHERE asset_id IN (${placeholders})`)
