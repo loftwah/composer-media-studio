@@ -803,6 +803,7 @@ function Images() {
   const runningRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
+  const processAllRef = useRef<HTMLButtonElement | null>(null);
   const focusAfterRemoval = useRef<RemovalFocus | null>(null);
   const eyedropperRef = useRef<HTMLImageElement | null>(null);
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1268,10 +1269,15 @@ function Images() {
     setBatch({ total: list.length, completed: processed, current: "" });
   }
 
-  function cancelBatch(): void {
+  function cancelBatch(trigger: HTMLButtonElement): void {
     const attempt = batchController.current;
     if (!attempt) return;
     attempt.controller.abort();
+    if (document.activeElement === trigger) {
+      const next = processAllRef.current;
+      if (next && !next.disabled) next.focus();
+      else trigger.closest<HTMLElement>("#image-batch")?.focus();
+    }
     attempt.report("Stopping after the image currently being encoded. Completed results will remain available.");
   }
 
@@ -2864,10 +2870,19 @@ function Images() {
           <p className="trim-note">Batch output size: {batchTargetProblem}</p>
         )}
         <div className="image-control-actions">
-          <button type="button" disabled={running || socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(batchTargetProblem)} onClick={() => void runItems(items, setBatchMessage)}>
+          <button
+            type="button"
+            ref={processAllRef}
+            disabled={socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(batchTargetProblem)}
+            aria-disabled={running}
+            onClick={() => {
+              if (running) return;
+              void runItems(items, setBatchMessage);
+            }}
+          >
             Process all {items.length || ""} with these settings
           </button>
-          {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
+          {running && <button type="button" className="secondary" onClick={(event) => cancelBatch(event.currentTarget)}>Cancel batch</button>}
           <button
             type="button"
             className="secondary"
