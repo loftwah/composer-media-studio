@@ -65,3 +65,17 @@ test('the hero asks for its bytes first while every gallery card stays lazy', ()
   assert.ok(gridCards.every((tag) => /loading="lazy"/.test(tag) && !/fetchpriority="high"/.test(tag)), gridCards.join('\n'));
   assert.doesNotMatch(publicGallery({ items }), /fetchpriority="high"/);
 });
+
+test("the gallery leads with a curated film and keeps its full browse path", () => {
+  const html = publicGallery({
+    items: [{ slug: "image", kind: "image", title: "An image" }],
+    featured: [{ slug: "film", title: "A finished film", hasPoster: true }],
+    woodhouseShare: true,
+  });
+  assert.match(html, /href="\/gallery" aria-current="page">Gallery/);
+  assert.match(html, /href="\/portfolio">Source artwork/);
+  assert.match(html, /class="gallery-hero-art" href="\/p\/film"/);
+  assert.match(html, /Watch film →/);
+  assert.ok(html.indexOf("A finished film") < html.indexOf("An image"));
+  assert.match(html, /id="gallery-results"/);
+});

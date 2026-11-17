@@ -299,7 +299,7 @@ function generationView(generation, extra = {}) {
 }
 
 // Only explicitly configured, still-published films are safe for the home gallery.
-async function homeShowcase(env) {
+async function homeShowcase(env, { listedOnly = false } = {}) {
   const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 8);
   const rows = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,
     d.publication_id AS poster_preview_id,d.width AS poster_preview_width,d.height AS poster_preview_height,
@@ -308,7 +308,8 @@ async function homeShowcase(env) {
     LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
     LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster' AND d.source_sha256=poster.sha256
     LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
-    WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
+    WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'
+      ${listedOnly ? 'AND p.listed=1' : ''}`).bind(value).first()));
   return rows.filter(Boolean).slice(0, 3).map((row) => ({
     slug: row.slug,
     title: row.title,
@@ -2563,8 +2564,12 @@ async function handlePublic(request, env, url) {
     const requestedCapability = url.searchParams.get("capability") ?? "";
     const capability = ["original", "variation", "refinement", "assembled"].includes(requestedCapability) ? requestedCapability : "";
     const order = url.searchParams.get("order") === "oldest" ? "oldest" : "newest";
-    const catalogue = await publicCatalogue(env, page, 24, { query, kind, order, project, capability });
-    return new Response(publicGallery({ ...catalogue, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
+    const showFeatured = page === 1 && order === "newest" && !query && !kind && !project && !capability;
+    const [catalogue, featured] = await Promise.all([
+      publicCatalogue(env, page, 24, { query, kind, order, project, capability }),
+      showFeatured ? homeShowcase(env, { listedOnly: true }) : [],
+    ]);
+    return new Response(publicGallery({ ...catalogue, featured, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
   }
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {

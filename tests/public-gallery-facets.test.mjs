@@ -518,3 +518,21 @@ test("the catalogue query count is fixed and does not grow with cards or pages",
   await (await get(env, "/gallery")).text();
   assert.ok(statements <= 4, `unfiltered gallery used ${statements} statements`);
 });
+
+test("a gallery feature stops featuring a film when it is unlisted", async () => {
+  const { env } = await setup();
+  const project = await addProject(env, { id: "prj_feature", name: "Film Studio", slug: "film-studio" });
+  const poster = await addPlainAsset(env, project, { id: "feature_poster" });
+  const { publicationId } = await addWork(env, project, {
+    id: "feature_film", slug: "feature-film", kind: "video", posterAssetId: poster.id,
+  });
+  env.PUBLIC_SHOWCASE_SLUGS = "feature-film";
+  const featured = await (await get(env, "/gallery")).text();
+  assert.match(featured, /class="gallery-hero-art" href="\/p\/feature-film"/);
+  const filtered = await (await get(env, "/gallery?kind=video")).text();
+  assert.doesNotMatch(filtered, /gallery-hero-art/);
+  assert.match(filtered, /feature-film/);
+  await env.DB.prepare("UPDATE publications SET listed=0 WHERE id=?1").bind(publicationId).run();
+  const unlisted = await (await get(env, "/gallery")).text();
+  assert.doesNotMatch(unlisted, /feature-film/);
+});
