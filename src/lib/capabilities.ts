@@ -3,6 +3,7 @@
 // inference, changes a default, spends money or writes a GitHub issue.
 
 import { imageAspects, models, publicModels, publicRetiredModels } from "./providers.mjs";
+import type { CatalogueModel, PublicModelRecord, RetiredModelRecord } from "./providers.mjs";
 import { DARKROOM_VERSION } from "./darkroom.mjs";
 
 export const CAPABILITIES_CONTRACT = "media-studio-capabilities";
@@ -18,33 +19,173 @@ const CLOUDFLARE_DOCS = "https://developers.cloudflare.com/workers-ai/models";
 const FAL_MODELS = "https://fal.ai/api/models";
 const MODELS_DEV = "https://models.dev/api.json";
 
+/** The public facts read from a Workers AI model page. */
+export interface CloudflareModelFacts {
+  retirementDate: string | null;
+  pricing: string | null;
+  beta: boolean;
+  title: string | null;
+}
+
+/** The public facts read from one fal model-search result. */
+export interface FalModelFacts {
+  id: string | null;
+  deprecated: boolean;
+  removed: boolean;
+  status: string | null;
+  pricing: string;
+  updatedAt: string | null;
+}
+
+export type SourceStatus = "ok" | "unavailable";
+
+/** One provider page or model-search check, as stored in the manifest. */
+export interface CapabilitySource {
+  model: string;
+  endpoint: string;
+  provider: string;
+  source: string;
+  status: SourceStatus;
+  detail: string | null;
+  checkedAt: string | null;
+  retirementDate: string | null;
+  pricing: string | null;
+  deprecated?: boolean;
+  removed?: boolean;
+  updatedAt?: string | null;
+}
+
+/** The models.dev provider-count check; it names no model. */
+export interface ModelsDevCheck {
+  model?: undefined;
+  source: string;
+  status: SourceStatus;
+  detail: string;
+  checkedAt: string;
+  providers?: string[];
+}
+
+export type ManifestSource = CapabilitySource | ModelsDevCheck;
+
+export type AlertKind = "schema" | "retirement" | "pricing";
+export type AlertSeverity = "high" | "medium";
+
+/** One stable, de-duplicated migration item. */
+export interface CapabilityAlert {
+  id: string;
+  kind: AlertKind;
+  severity: AlertSeverity;
+  model: string;
+  label: string;
+  source: string;
+  retirementDate?: string | null;
+  previous?: string;
+  current?: string;
+  message: string;
+  action: string;
+  firstSeenAt: string | null;
+  checkedAt: string | null;
+}
+
+export interface CapabilityAdapters {
+  workersAi: string;
+  fal: string;
+  darkroom: string;
+}
+
+export interface CapabilityManifest {
+  contract: string;
+  version: number;
+  checkedAt: string | null;
+  lastGoodAt: string | null;
+  models: Array<PublicModelRecord & { status: "enabled" }>;
+  retired: RetiredModelRecord[];
+  frames: string[];
+  adapters: CapabilityAdapters;
+  sources: ManifestSource[];
+  alerts: CapabilityAlert[];
+}
+
+export interface CapabilityManifestInput {
+  checkedAt?: string | null;
+  lastGoodAt?: string | null;
+  alerts?: CapabilityAlert[];
+  sources?: ManifestSource[];
+}
+
+/** The stored freshness record. It names no model and never spends. */
+export interface CapabilityRefreshState {
+  checkedAt: string;
+  outcome: "complete" | "partial";
+  lastGoodAt: string | null;
+  nextDueAt: string;
+  openAlerts: number;
+  failures: number;
+  modelCalls: number;
+  issuesWritten: number;
+}
+
+export type CapabilityRefreshResult =
+  | { skipped: true; reason: "not-due"; state: CapabilityRefreshState }
+  | { skipped: false; manifest: CapabilityManifest; state: CapabilityRefreshState };
+
+export type FetchLike = (
+  url: string,
+  init: { headers: Record<string, string>; signal: AbortSignal },
+) => Promise<Response>;
+
+/** The narrow R2 surface this lane reads and writes. */
+export interface CapabilityBucketObject {
+  arrayBuffer?: () => Promise<ArrayBuffer>;
+  body?: ReadableStream<Uint8Array> | null;
+}
+
+export interface CapabilityBucket {
+  get(key: string): Promise<CapabilityBucketObject | null>;
+  put(
+    key: string,
+    value: Uint8Array,
+    options: { httpMetadata: { contentType: string; cacheControl: string } },
+  ): Promise<unknown>;
+}
+
+export interface CapabilityEnv {
+  MEDIA: CapabilityBucket;
+}
+
+export interface CapabilityRefreshOptions {
+  now?: number;
+  fetchImpl?: FetchLike;
+  force?: boolean;
+}
+
 /** One stable, de-duplicated migration item. The id never changes for the same
  * model and problem, so a daily refresh updates rather than duplicates it. */
-export function alertKey(kind, model, detail = "") {
+export function alertKey(kind: string, model: string, detail = ""): string {
   return `${kind}:${model}${detail ? `:${detail}` : ""}`;
 }
 
-function iso(value) {
+function iso(value: number): string {
   return new Date(value).toISOString();
 }
 
-function dateValue(text) {
+function dateValue(text: unknown): string | null {
   const match = String(text ?? "").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!match) return null;
   const [, month, day, year] = match;
   return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
 }
 
-function boundedText(value) {
+function boundedText(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
-function cloudflareSlug(endpoint) {
+function cloudflareSlug(endpoint: string): string | undefined {
   return endpoint.split("/").pop();
 }
 
 /** Read the public model page's retirement and price facts. */
-export function parseCloudflareModelPage(markdown) {
+export function parseCloudflareModelPage(markdown: unknown): CloudflareModelFacts {
   const text = String(markdown ?? "");
   const planned = /Planned\s+Deprecation\s*\|\s*([0-9/]+)/i.exec(text);
   const pricing = /Unit\s+Pricing\s*\|\s*([^\n]+)/i.exec(text);
@@ -58,19 +199,35 @@ export function parseCloudflareModelPage(markdown) {
 }
 
 /** Read the public fal model search result. */
-export function parseFalModel(item) {
+export function parseFalModel(item: unknown): FalModelFacts | null {
   if (!item || typeof item !== "object") return null;
+  const record = item as Record<string, unknown>;
   return {
-    id: typeof item.id === "string" ? item.id : null,
-    deprecated: item.deprecated === true,
-    removed: item.removed === true,
-    status: typeof item.status === "string" ? item.status : null,
-    pricing: boundedText(item.pricingInfoOverride),
-    updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : null,
+    id: typeof record.id === "string" ? record.id : null,
+    deprecated: record.deprecated === true,
+    removed: record.removed === true,
+    status: typeof record.status === "string" ? record.status : null,
+    pricing: boundedText(record.pricingInfoOverride),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
   };
 }
 
-function sourceRecord(model, source, status, detail, extra = {}) {
+interface SourceRecordExtra {
+  checkedAt?: string | null;
+  retirementDate?: string | null;
+  pricing?: string | null;
+  deprecated?: boolean;
+  removed?: boolean;
+  updatedAt?: string | null;
+}
+
+function sourceRecord(
+  model: CatalogueModel,
+  source: string,
+  status: SourceStatus,
+  detail: unknown,
+  extra: SourceRecordExtra = {},
+): CapabilitySource {
   return {
     model: model.id,
     endpoint: model.endpoint,
@@ -84,12 +241,12 @@ function sourceRecord(model, source, status, detail, extra = {}) {
   };
 }
 
-async function readBounded(response) {
+async function readBounded(response: Response): Promise<string> {
   const text = await response.text();
   return text.length > MAX_SOURCE_BYTES ? text.slice(0, MAX_SOURCE_BYTES) : text;
 }
 
-async function fetchText(fetchImpl, url) {
+async function fetchText(fetchImpl: FetchLike, url: string): Promise<string> {
   const response = await fetchImpl(url, {
     headers: { accept: "text/markdown, application/json;q=0.9, */*;q=0.8" },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -98,7 +255,7 @@ async function fetchText(fetchImpl, url) {
   return readBounded(response);
 }
 
-async function checkCloudflare(fetchImpl, model, checkedAt) {
+async function checkCloudflare(fetchImpl: FetchLike, model: CatalogueModel, checkedAt: string): Promise<CapabilitySource> {
   const slug = cloudflareSlug(model.endpoint);
   const source = `${CLOUDFLARE_DOCS}/${slug}/index.md`;
   try {
@@ -114,21 +271,24 @@ async function checkCloudflare(fetchImpl, model, checkedAt) {
   }
 }
 
-export function falModelMatches(endpoint, item) {
-  if (!item || typeof item.id !== "string") return false;
-  return item.id === endpoint || item.id === endpoint.replace(/^fal-ai\//, "");
+export function falModelMatches(endpoint: string, item: unknown): boolean {
+  const candidate = item as { id?: unknown } | null | undefined;
+  if (!candidate || typeof candidate.id !== "string") return false;
+  return candidate.id === endpoint || candidate.id === endpoint.replace(/^fal-ai\//, "");
 }
 
-async function checkFal(fetchImpl, model, checkedAt) {
+async function checkFal(fetchImpl: FetchLike, model: CatalogueModel, checkedAt: string): Promise<CapabilitySource> {
   const source = `${FAL_MODELS}?keywords=${encodeURIComponent(model.endpoint)}`;
   try {
     const text = await fetchText(fetchImpl, source);
-    const payload = JSON.parse(text);
-    const item = Array.isArray(payload?.items)
-      ? payload.items.find((candidate) => falModelMatches(model.endpoint, candidate))
+    const payload = JSON.parse(text) as unknown;
+    const items = (payload as { items?: unknown } | null)?.items;
+    const item = Array.isArray(items)
+      ? items.find((candidate) => falModelMatches(model.endpoint, candidate))
       : null;
     if (!item) throw new Error("The exact endpoint was not returned by model search");
-    const parsed = parseFalModel(item);
+    // The match above only succeeds for an object carrying a string id.
+    const parsed = parseFalModel(item)!;
     return sourceRecord(model, source, "ok", parsed.status, {
       checkedAt,
       retirementDate: parsed.deprecated || parsed.removed ? "withdrawn" : null,
@@ -142,11 +302,11 @@ async function checkFal(fetchImpl, model, checkedAt) {
   }
 }
 
-async function checkModelsDev(fetchImpl, checkedAt) {
+async function checkModelsDev(fetchImpl: FetchLike, checkedAt: string): Promise<ModelsDevCheck> {
   try {
     const text = await fetchText(fetchImpl, MODELS_DEV);
-    const payload = JSON.parse(text);
-    const providers = Object.keys(payload ?? {});
+    const payload = JSON.parse(text) as unknown;
+    const providers = Object.keys((payload ?? {}) as object);
     return {
       source: MODELS_DEV,
       status: "ok",
@@ -169,9 +329,12 @@ const WITHDRAWN = new Set(["deprecated", "removed", "unavailable"]);
 
 /** Turn fresh source records into stable, actionable items. A change is only
  * proposed; no production default is updated by this function. */
-export function buildAlerts(sources, previousSources = []) {
-  const prior = new Map(previousSources.map((source) => [`${source.model}:${source.source}`, source]));
-  const alerts = [];
+export function buildAlerts(
+  sources: readonly CapabilitySource[],
+  previousSources: readonly (CapabilitySource & { alertFirstSeenAt?: string | null })[] = [],
+): CapabilityAlert[] {
+  const prior = new Map(previousSources.map((source) => [`${source.model}:${source.source}`, source] as const));
+  const alerts: CapabilityAlert[] = [];
   for (const source of sources) {
     if (!source.model) continue;
     const model = models[source.model];
@@ -240,17 +403,23 @@ export function buildAlerts(sources, previousSources = []) {
     }
   }
   // One item per stable id; keep the earliest first-seen time.
-  const deduped = new Map();
+  const deduped = new Map<string, CapabilityAlert>();
   for (const alert of alerts) {
     const existing = deduped.get(alert.id);
     if (!existing) deduped.set(alert.id, alert);
-    else if (existing.firstSeenAt > alert.firstSeenAt) deduped.set(alert.id, { ...alert, firstSeenAt: existing.firstSeenAt });
+    // Both timestamps are ISO strings on the refresh path.
+    else if (existing.firstSeenAt! > alert.firstSeenAt!) deduped.set(alert.id, { ...alert, firstSeenAt: existing.firstSeenAt });
   }
   return [...deduped.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export function capabilityManifest({ checkedAt = null, lastGoodAt = null, alerts = [], sources = [] } = {}) {
-  const enabled = publicModels().map((model) => ({ ...model, status: "enabled" }));
+export function capabilityManifest({
+  checkedAt = null,
+  lastGoodAt = null,
+  alerts = [],
+  sources = [],
+}: CapabilityManifestInput = {}): CapabilityManifest {
+  const enabled: Array<PublicModelRecord & { status: "enabled" }> = publicModels().map((model) => ({ ...model, status: "enabled" }));
   return {
     contract: CAPABILITIES_CONTRACT,
     version: CAPABILITIES_VERSION,
@@ -269,42 +438,50 @@ export function capabilityManifest({ checkedAt = null, lastGoodAt = null, alerts
   };
 }
 
-async function readJson(bucket, key) {
+async function readJson(bucket: CapabilityBucket, key: string): Promise<unknown> {
   const object = await bucket.get(key);
   if (!object) return null;
   try {
     const text = typeof object.arrayBuffer === "function"
       ? new TextDecoder().decode(await object.arrayBuffer())
       : await new Response(object.body).text();
-    return JSON.parse(text);
+    return JSON.parse(text) as unknown;
   } catch {
     return null;
   }
 }
 
-async function writeJson(bucket, key, value) {
+async function writeJson(bucket: CapabilityBucket, key: string, value: unknown): Promise<void> {
   await bucket.put(key, new TextEncoder().encode(JSON.stringify(value, null, 2)), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" },
   });
 }
 
-export async function readCapabilityManifest(env) {
-  return (await readJson(env.MEDIA, CAPABILITIES_KEY)) ?? capabilityManifest();
+/** The bucket holds JSON this module wrote. It is returned as-is; the in-code
+ * manifest is used only when the object is missing or unreadable. */
+export async function readCapabilityManifest(env: CapabilityEnv): Promise<CapabilityManifest> {
+  return ((await readJson(env.MEDIA, CAPABILITIES_KEY)) ?? capabilityManifest()) as CapabilityManifest;
 }
 
-export async function readCapabilityState(env) {
-  return (await readJson(env.MEDIA, CAPABILITIES_STATE_KEY)) ?? null;
+export async function readCapabilityState(env: CapabilityEnv): Promise<CapabilityRefreshState | null> {
+  return ((await readJson(env.MEDIA, CAPABILITIES_STATE_KEY)) as CapabilityRefreshState | null) ?? null;
 }
 
 /** Run one bounded, read-only check. The previous manifest is the fallback. */
-export async function refreshCapabilities(env, { now = Date.now(), fetchImpl = fetch, force = false } = {}) {
+export async function refreshCapabilities(
+  env: CapabilityEnv,
+  { now = Date.now(), fetchImpl = fetch, force = false }: CapabilityRefreshOptions = {},
+): Promise<CapabilityRefreshResult> {
   const state = await readCapabilityState(env);
   if (!force && state?.nextDueAt && Date.parse(state.nextDueAt) > now) {
     return { skipped: true, reason: "not-due", state };
   }
-  const previous = (await readJson(env.MEDIA, CAPABILITIES_KEY)) ?? capabilityManifest();
-  const previousAlerts = Array.isArray(previous.alerts) ? previous.alerts : [];
-  const previousSources = (Array.isArray(previous.sources) ? previous.sources : []).map((source) => ({
+  const previous = ((await readJson(env.MEDIA, CAPABILITIES_KEY)) ?? capabilityManifest()) as CapabilityManifest;
+  const previousAlerts: CapabilityAlert[] = Array.isArray(previous.alerts) ? previous.alerts : [];
+  // The stored list may also hold the models.dev check; it names no model and is
+  // skipped by buildAlerts, exactly as before.
+  const storedSources = (Array.isArray(previous.sources) ? previous.sources : []) as CapabilitySource[];
+  const previousSources = storedSources.map((source) => ({
     ...source,
     alertFirstSeenAt:
       previousAlerts.find((alert) => alert.model === source.model && alert.source === source.source)?.firstSeenAt ?? null,
@@ -317,19 +494,19 @@ export async function refreshCapabilities(env, { now = Date.now(), fetchImpl = f
     ...fal.map((model) => checkFal(fetchImpl, model, checkedAt)),
     checkModelsDev(fetchImpl, checkedAt),
   ]);
-  const sources = results.filter((result) => result.model);
-  const modelsDev = results.find((result) => !result.model);
+  const sources = results.filter((result) => result.model) as CapabilitySource[];
+  const modelsDev = results.find((result) => !result.model) as ModelsDevCheck | undefined;
   const alerts = buildAlerts(sources, previousSources);
   const complete = sources.every((source) => source.status === "ok") && modelsDev?.status === "ok";
   const manifest = capabilityManifest({
     checkedAt,
     lastGoodAt: complete ? checkedAt : previous.lastGoodAt ?? null,
     alerts,
-    sources: [...sources, modelsDev].filter(Boolean),
+    sources: [...sources, modelsDev].filter(Boolean) as ManifestSource[],
   });
   await writeJson(env.MEDIA, CAPABILITIES_KEY, manifest);
   if (complete) await writeJson(env.MEDIA, CAPABILITIES_LAST_GOOD_KEY, manifest);
-  const next = {
+  const next: CapabilityRefreshState = {
     checkedAt,
     outcome: complete ? "complete" : "partial",
     lastGoodAt: manifest.lastGoodAt,
@@ -344,7 +521,10 @@ export async function refreshCapabilities(env, { now = Date.now(), fetchImpl = f
 }
 
 /** The every-minute cron calls this; it does real work at most once a day. */
-export async function refreshCapabilitiesIfDue(env, options = {}) {
+export async function refreshCapabilitiesIfDue(
+  env: CapabilityEnv,
+  options: CapabilityRefreshOptions = {},
+): Promise<CapabilityRefreshResult> {
   return refreshCapabilities(env, options);
 }
 

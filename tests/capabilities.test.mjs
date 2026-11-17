@@ -12,7 +12,7 @@ import {
   parseCloudflareModelPage,
   parseFalModel,
   refreshCapabilities,
-} from "../src/lib/capabilities.mjs";
+} from "../src/lib/capabilities.ts";
 import { FakeBucket } from "./harness.mjs";
 
 test("a public Workers AI page exposes its retirement date and price", () => {
