@@ -21,7 +21,7 @@ Projects, uploads, thumbnails, the viewer, search and filters, renaming, downloa
 - **Limits and honest refusals:** SVG, HTML and other active content are refused, as are HEIC/HEIF, AVIF, GIF and unsupported containers in this slice. Corrupt or malformed files fail before processing. Object URLs and bitmaps are released on remove, clear and page unmount. There is no server upload on the local path.
 - **Explicit Studio import only:** a result can be imported only after checking a signed-in Studio session, choosing an existing project and clicking upload. The caption records the source filename, source SHA-256 and transform settings, including crop position and adjustment values. The result becomes a new private library asset; nothing is published automatically.
 
-The workbench is part of [issue #183](https://github.com/loftwah/composer-media-studio/issues/183). Perceptual compression presets, palette import, alpha-edge fringe inspection, sprite-sheet assembly, local background removal, provider upscale, redaction, GIF, PDF, HTML-to-image, captions and Launch Kit handoffs are not shipped by this page. See [the coverage matrix](docs/image-tools-coverage.md) for the exact shipped, delegated and deferred state. Older local tools remain at `/tools/audio-trim`, `/tools/video-clip` and `/tools/add-music`.
+The workbench is part of [issue #183](https://github.com/loftwah/composer-media-studio/issues/183). Perceptual compression presets, palette import, alpha-edge fringe inspection, sprite-sheet assembly, local background removal, provider upscale, redaction, GIF, PDF, HTML-to-image and captions remain open or delegated. The palette action opens the Launch Kit importer for the JSON you download. See [the coverage matrix](docs/image-tools-coverage.md) for the exact shipped, delegated and deferred state. Older local tools remain at `/tools/audio-trim`, `/tools/video-clip` and `/tools/add-music`.
 
 ## Generation
 
@@ -106,6 +106,21 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 ```
 
 The script uses **Extract palette** and compares the complete v1 JSON export, including the swatch order. The report includes a digest of the selected PNG and a separate digest of the downloaded palette. The palette format itself carries swatches and units. Use the same build and Chrome version for an exact replay.
+
+## Make a contact sheet from explicit local files
+
+Build the frontend with `pnpm build:frontend`. Repeat `--source` for two to
+twenty PNGs in the order you want them on the sheet. Choose an unused
+`--output` path for the result.
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-contact-sheet.mjs --source ./first.png --source ./next.png --output ./contact-sheet.png
+```
+
+The isolated Chrome workbench processes the selected images and saves its
+native contact sheet PNG. The report includes the source hashes, dimensions
+and output SHA-256.
 
 ## Migrations
 
