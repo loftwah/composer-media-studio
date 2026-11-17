@@ -257,6 +257,38 @@ test("gallery facets expose only listed projects and capabilities, and every fil
   assert.match(noMatch, /No published work matches these filters\./);
 });
 
+test("an empty audio facet names the gap and links to the signed-out trim tool", async () => {
+  const { env } = await setup();
+  const audio = await (await get(env, "/gallery?kind=audio")).text();
+  assert.match(audio, /data-total="0">0 works</);
+  assert.match(audio, /No audio work has been published to the gallery yet\./);
+  assert.match(audio, /href="\/tools\/audio-trim"/);
+  assert.doesNotMatch(audio, /No published work matches these filters/);
+
+  // Audio with any other filter, or another page, stays a generic empty result.
+  for (const path of ["/gallery?kind=audio&q=song", "/gallery?kind=audio&page=2"]) {
+    const html = await (await get(env, path)).text();
+    assert.match(html, /No published work matches these filters\./);
+    assert.doesNotMatch(html, /No audio work has been published/);
+    assert.doesNotMatch(html, /tools\/audio-trim/);
+  }
+
+  // A capability filter is still a filter even when the audio facet is empty.
+  const { env: facets } = await facetFixture();
+  const capability = await (await get(facets, "/gallery?kind=audio&capability=assembled")).text();
+  assert.match(capability, /data-total="0">0 works</);
+  assert.match(capability, /No published work matches these filters\./);
+  assert.doesNotMatch(capability, /tools\/audio-trim/);
+
+  const unfiltered = await (await get(env, "/gallery")).text();
+  assert.match(unfiltered, /No work has been added to the public gallery yet\./);
+  assert.doesNotMatch(unfiltered, /tools\/audio-trim/);
+
+  const video = await (await get(env, "/gallery?kind=video")).text();
+  assert.match(video, /No published work matches these filters\./);
+  assert.doesNotMatch(video, /tools\/audio-trim/);
+});
+
 test("unknown facet values fall back to the unfiltered gallery instead of failing", async () => {
   const { env } = await facetFixture();
   const response = await get(env, "/gallery?project=no-such-project&kind=gif&capability=base&order=sideways&page=0");
