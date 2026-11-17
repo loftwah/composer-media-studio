@@ -116,7 +116,7 @@ export function ImageCover({ source, encodePng }: Props) {
         )}
       </div>
       <div className="image-control-actions">
-        <button type="button" className="secondary" disabled={!region || busy} onClick={() => void make()}>
+        <button type="button" className="secondary" disabled={!region} aria-disabled={busy} onClick={() => void make()}>
           {busy ? "Making redacted PNG…" : "Make redacted PNG"}
         </button>
         {output && <a className="button secondary" href={output} download="media-studio-redacted.png">Download redacted PNG</a>}
