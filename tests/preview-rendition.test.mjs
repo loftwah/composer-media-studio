@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { MAX_PREVIEW_EDGE, previewDimensions, renderPreview } from "../src/lib/preview-rendition.mjs";
+import { MAX_PREVIEW_EDGE, previewDimensions, renderPreview } from "../src/lib/preview-rendition.ts";
 import { PNG_1x1 } from "./harness.mjs";
 
 /** A 30-byte VP8X WebP header for the given size; enough to read it back. */

@@ -11,7 +11,7 @@
 //     so a 3 MB original is not the first paint of a film page. The full poster
 //     stays the share image and the download.
 
-import { renderPreview, type RenderedPreview } from "./preview-rendition.mjs";
+import { renderPreview, type PreviewEnv, type RenderedPreview } from "./preview-rendition.ts";
 import { HttpError, extensionFor, imageSize, sha256Hex, sniffMedia } from "./util.mjs";
 
 // Narrow structural seams. Only the binding members and row fields this module
@@ -41,7 +41,7 @@ interface DerivativeEnv {
     delete(key: string): Promise<unknown>;
   };
   // Consumed only by renderPreview, which owns the Images binding.
-  IMAGES: unknown;
+  IMAGES: PreviewEnv["IMAGES"];
 }
 
 interface DerivativeRow {
