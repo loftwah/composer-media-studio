@@ -10,7 +10,7 @@ import {
   normaliseAdjustments,
   presetAdjustments,
   presetIdFor,
-} from "../src/frontend/image-adjust.mjs";
+} from "../src/frontend/image-adjust.ts";
 
 function pixels(...values) {
   return new Uint8ClampedArray(values);

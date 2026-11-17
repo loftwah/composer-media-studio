@@ -2,7 +2,26 @@
 // These functions read and write decoded RGBA bytes only, so the browser path
 // and the Node tests use the same arithmetic. Alpha is never changed.
 
-export const ADJUSTMENT_KEYS = Object.freeze([
+export type AdjustmentKey = "exposure" | "contrast" | "saturation" | "temperature";
+
+export type Adjustments = Record<AdjustmentKey, number>;
+
+export type AdjustmentPreset = {
+  id: string;
+  label: string;
+  adjustments: Adjustments;
+};
+
+export type AdjustResult =
+  | {
+      ok: true;
+      pixels: Uint8ClampedArray;
+      neutral: boolean;
+      changed: number;
+    }
+  | { ok: false; error: string };
+
+export const ADJUSTMENT_KEYS: ReadonlyArray<AdjustmentKey> = Object.freeze([
   "exposure",
   "contrast",
   "saturation",
@@ -11,14 +30,14 @@ export const ADJUSTMENT_KEYS = Object.freeze([
 
 export const ADJUSTMENT_RANGE = 100;
 
-export const ADJUSTMENT_LABELS = Object.freeze({
+export const ADJUSTMENT_LABELS: Readonly<Record<AdjustmentKey, string>> = Object.freeze({
   exposure: "Exposure",
   contrast: "Contrast",
   saturation: "Saturation",
   temperature: "Temperature",
 });
 
-export const DEFAULT_ADJUSTMENTS = Object.freeze({
+export const DEFAULT_ADJUSTMENTS: Readonly<Adjustments> = Object.freeze({
   exposure: 0,
   contrast: 0,
   saturation: 0,
@@ -29,7 +48,7 @@ export const DEFAULT_ADJUSTMENTS = Object.freeze({
  * Filter presets are just named adjustment values, so there is one code path
  * and the exported caption can describe the real numbers rather than a name.
  */
-export const ADJUSTMENT_PRESETS = Object.freeze([
+export const ADJUSTMENT_PRESETS: ReadonlyArray<AdjustmentPreset> = Object.freeze([
   {
     id: "none",
     label: "No preset",
@@ -70,7 +89,7 @@ const LUMA_RED = 0.2126;
 const LUMA_GREEN = 0.7152;
 const LUMA_BLUE = 0.0722;
 
-function clampUnit(value) {
+function clampUnit(value: unknown): number {
   const number = Math.round(Number(value));
   if (!Number.isFinite(number)) return 0;
   return number < -ADJUSTMENT_RANGE
@@ -80,18 +99,18 @@ function clampUnit(value) {
       : number;
 }
 
-function isPositiveInteger(value) {
-  return Number.isSafeInteger(value) && value > 0;
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function clampByte(value) {
+function clampByte(value: number): number {
   const number = Math.round(value);
   if (!Number.isFinite(number)) return 0;
   return number < 0 ? 0 : number > 255 ? 255 : number;
 }
 
 /** Whole-number adjustments inside the documented ±100 range. */
-export function normaliseAdjustments(input = {}) {
+export function normaliseAdjustments(input: Partial<Adjustments> | null = {}): Adjustments {
   return {
     exposure: clampUnit(input?.exposure),
     contrast: clampUnit(input?.contrast),
@@ -100,13 +119,13 @@ export function normaliseAdjustments(input = {}) {
   };
 }
 
-export function adjustmentsAreNeutral(adjustments = {}) {
+export function adjustmentsAreNeutral(adjustments: Partial<Adjustments> | null = {}): boolean {
   const normalised = normaliseAdjustments(adjustments);
   return ADJUSTMENT_KEYS.every((key) => normalised[key] === 0);
 }
 
 /** The preset whose values exactly match, or `custom`, or `none`. */
-export function presetIdFor(adjustments = {}) {
+export function presetIdFor(adjustments: Partial<Adjustments> | null = {}): string {
   const normalised = normaliseAdjustments(adjustments);
   const match = ADJUSTMENT_PRESETS.find((preset) =>
     ADJUSTMENT_KEYS.every((key) => preset.adjustments[key] === normalised[key]),
@@ -114,14 +133,14 @@ export function presetIdFor(adjustments = {}) {
   return match ? match.id : "custom";
 }
 
-export function presetAdjustments(id) {
+export function presetAdjustments(id: string): Adjustments {
   const preset = ADJUSTMENT_PRESETS.find((candidate) => candidate.id === id);
   if (!preset) return { ...DEFAULT_ADJUSTMENTS };
   return { ...preset.adjustments };
 }
 
 /** A caption fragment naming the real numbers, or an empty string. */
-export function describeAdjustments(adjustments = {}) {
+export function describeAdjustments(adjustments: Partial<Adjustments> | null = {}): string {
   const normalised = normaliseAdjustments(adjustments);
   const parts = ADJUSTMENT_KEYS.filter((key) => normalised[key] !== 0).map(
     (key) => `${key} ${normalised[key] > 0 ? "+" : ""}${normalised[key]}`,
@@ -138,7 +157,18 @@ export function describeAdjustments(adjustments = {}) {
  * double the memory a batch already holds. `changed` counts the pixels whose
  * visible colour actually moved.
  */
-export function adjustPixels(pixels, { width, height, adjustments } = {}) {
+export function adjustPixels(
+  pixels: Uint8ClampedArray,
+  {
+    width,
+    height,
+    adjustments,
+  }: {
+    width: number;
+    height: number;
+    adjustments?: Partial<Adjustments> | null;
+  } = { width: 0, height: 0 },
+): AdjustResult {
   if (!pixels || typeof pixels.length !== "number")
     return { ok: false, error: "The decoded pixels are not readable." };
   if (!isPositiveInteger(width) || !isPositiveInteger(height))

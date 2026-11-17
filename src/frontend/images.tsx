@@ -34,7 +34,7 @@ import {
   presetIdFor,
   type AdjustmentKey,
   type Adjustments,
-} from "./image-adjust.mjs";
+} from "./image-adjust.ts";
 import {
   MAX_SNIPPET_BYTES,
   SNIPPET_KINDS,
