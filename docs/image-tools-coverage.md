@@ -68,6 +68,7 @@ the work:
 | Local palette JSON replay | Isolated Chrome uses the existing workbench with one explicitly selected PNG and its matching palette JSON. **Extract palette** must reproduce the same format, version, units and swatches in order. The source SHA-256 is computed separately from the PNG because the palette document does not encode source identity. | [local command](../scripts/replay-palette-json.mjs) |
 | Local contact sheet | Select two to twenty local PNGs explicitly in order. Isolated Chrome uses the same Image Tools process and contact-sheet controls to save a native PNG to a new path. The selected Studio sample produced the same 480 × 240 PNG bytes as the public workbench. | [Local command](../scripts/local-contact-sheet.mjs) |
 | Local area cover | Select a PNG, rectangle and new output path. Isolated Chrome uses the same Image Tools control. The selected Studio sample produced the same 1400 × 900 PNG bytes as the public workbench with a 100 × 80 opaque rectangle. | [Local command](../scripts/local-cover-area.mjs) |
+| Local metadata strip | Select one PNG and a new output path. The script calls the same lossless metadata rewrite directly, keeps the ICC profile by default, and refuses an unverified copy. A harmless comment added to the Studio sample was removed with identical native browser and CLI PNG bytes. | [Local command](../scripts/local-metadata-strip.mjs) |
 
 ## Safety and bounds shipped by this slice
 
