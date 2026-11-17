@@ -76,8 +76,16 @@ STUDIO_FIRST_EDIT_AT=2026-11-17T01:23:45.000Z pnpm deploy
 
 Once the exact live source matches, the private receipt records that timestamp
 and `firstEditToLiveIdentityMs`, the UTC gap before the guard plus the monotonic
-guard interval. The watchdog still classifies the guard interval against the
-strict 300,000 ms limit. Invalid, future or unverified values are ignored.
+guard interval; it never changes the guard total or status. The watchdog still
+classifies the guard interval against the strict 300,000 ms limit. Invalid,
+future or unverified values are ignored.
+
+When that first-edit → exact-live span reaches **300,000 ms** with a fast guard,
+the same deduplicated GitHub adapter and pending path file a separate
+`delivery-sla` issue for the pre-guard lead time. A run that already breached the
+guard alert is not reported twice, and only a later measured compliant span
+counts as recovery for that issue. Only the derived duration reaches GitHub; the
+raw timestamp stays in the private receipt.
 
 ## Darkroom
 
