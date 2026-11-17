@@ -759,6 +759,7 @@ function Images() {
   const [message, setMessage] = useState("");
   const [rejections, setRejections] = useState<Rejection[]>([]);
   const [adding, setAdding] = useState(false);
+  const [sampleBusy, setSampleBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [running, setRunning] = useState(false);
   const [batch, setBatch] = useState({ total: 0, completed: 0, current: "" });
@@ -800,6 +801,8 @@ function Images() {
   const didInitSettings = useRef(false);
   const addFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
   const addingRef = useRef(false);
+  const sampleBusyRef = useRef(false);
+  const sampleRunRef = useRef(0);
   const runningRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -1105,18 +1108,40 @@ function Images() {
   addFilesRef.current = addFiles;
 
   async function addSample(): Promise<void> {
+    // One encode per press: a held Enter key or a slow PNG encoder must not
+    // queue a second sample behind the first. The revision check keeps a
+    // finished encode from appending after Clear all or another intake.
+    if (
+      sampleBusyRef.current ||
+      addingRef.current ||
+      runningRef.current ||
+      socialController.current ||
+      items.length >= MAX_BATCH_IMAGES
+    )
+      return;
+    sampleBusyRef.current = true;
+    const run = ++sampleRunRef.current;
+    setSampleBusy(true);
+    const token = revision.current;
+    setMessage("Making the sample on this device…");
     const canvas = document.createElement("canvas");
     canvas.width = 1400;
     canvas.height = 900;
-    drawSample(canvas);
     try {
+      drawSample(canvas);
       const blob = await canvasToBlob(canvas, "image/png");
+      if (token !== revision.current || runningRef.current || socialController.current) return;
       await addFiles([new File([blob], "studio-image-sample.png", { type: "image/png" })]);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not make the sample.");
+      if (token === revision.current)
+        setMessage(error instanceof Error ? error.message : "Could not make the sample.");
     } finally {
       canvas.width = 0;
       canvas.height = 0;
+      if (sampleRunRef.current === run) {
+        sampleBusyRef.current = false;
+        setSampleBusy(false);
+      }
     }
   }
 
@@ -1149,6 +1174,9 @@ function Images() {
     batchController.current?.controller.abort();
     socialController.current?.abort();
     addingRef.current = false;
+    sampleRunRef.current += 1;
+    sampleBusyRef.current = false;
+    setSampleBusy(false);
     runningRef.current = false;
     for (const url of urls.current) URL.revokeObjectURL(url);
     urls.current.clear();
@@ -1921,7 +1949,13 @@ function Images() {
           />
         </label>
         <div className="image-source-actions">
-          <button type="button" className="secondary" onClick={() => void addSample()} disabled={adding || running || items.length >= MAX_BATCH_IMAGES}>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => void addSample()}
+            disabled={running || items.length >= MAX_BATCH_IMAGES}
+            aria-disabled={adding || sampleBusy}
+          >
             Try the sample
           </button>
           {selected && <a className="button secondary" href="#image-output-plan">Go to image output</a>}
