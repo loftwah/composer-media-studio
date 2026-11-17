@@ -749,7 +749,7 @@ function Images() {
   const [zipUrl, setZipUrl] = useState("");
   const [zipBytes, setZipBytes] = useState(0);
   const [zipBusy, setZipBusy] = useState(false);
-  const [zipMessage, setZipMessage] = useState("");
+  const [batchMessage, setBatchMessage] = useState("");
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
   const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
   const [socialBusy, setSocialBusy] = useState(false);
@@ -775,7 +775,7 @@ function Images() {
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
   const zipRevision = useRef(0);
-  const batchController = useRef<AbortController | null>(null);
+  const batchController = useRef<{ controller: AbortController; report: (message: string) => void } | null>(null);
   const socialController = useRef<AbortController | null>(null);
   const stripRevision = useRef(0);
   const didInitSettings = useRef(false);
@@ -899,7 +899,7 @@ function Images() {
 
   function clearZip(): void {
     zipRevision.current += 1;
-    setZipMessage(zipBusy ? "The batch changed. Prepare the ZIP again." : "");
+    setBatchMessage(zipBusy ? "The batch changed. Prepare the ZIP again." : "");
     if (!zipUrl) return;
     releaseUrl(zipUrl);
     setZipUrl("");
@@ -923,7 +923,7 @@ function Images() {
       revision.current += 1;
       stripRevision.current += 1;
       zipRevision.current += 1;
-      batchController.current?.abort();
+      batchController.current?.controller.abort();
       socialController.current?.abort();
       socialController.current = null;
       for (const url of urls.current) URL.revokeObjectURL(url);
@@ -1101,7 +1101,7 @@ function Images() {
     focusPickerAfterRemoval.current = true;
     revision.current += 1;
     stripRevision.current += 1;
-    batchController.current?.abort();
+    batchController.current?.controller.abort();
     socialController.current?.abort();
     addingRef.current = false;
     runningRef.current = false;
@@ -1128,13 +1128,13 @@ function Images() {
     didInitSettings.current = false;
   }
 
-  async function runItems(list: WorkItem[]): Promise<void> {
+  async function runItems(list: WorkItem[], report: (message: string) => void = setMessage): Promise<void> {
     if (!list.length || runningRef.current || socialController.current) return;
     runningRef.current = true;
     const snapshot = { ...settings };
     const trimSnapshot = trim;
     const controller = new AbortController();
-    batchController.current = controller;
+    batchController.current = { controller, report };
     setRunning(true);
     clearZip();
     setBatch({ total: list.length, completed: 0, current: list[0]?.file.name ?? "" });
@@ -1213,16 +1213,17 @@ function Images() {
     runningRef.current = false;
     setRunning(false);
     const stopped = cancelled ? " Batch stopped; completed downloads are kept." : "";
-    setMessage(
+    report(
       `${completed} image${completed === 1 ? "" : "s"} processed${failed ? `, ${failed} failed` : ""}.${stopped} Nothing was uploaded.`,
     );
     setBatch({ total: list.length, completed: processed, current: "" });
   }
 
   function cancelBatch(): void {
-    if (!batchController.current) return;
-    batchController.current.abort();
-    setMessage("Stopping after the image currently being encoded. Completed results will remain available.");
+    const attempt = batchController.current;
+    if (!attempt) return;
+    attempt.controller.abort();
+    attempt.report("Stopping after the image currently being encoded. Completed results will remain available.");
   }
 
   async function stripSelected(): Promise<void> {
@@ -1274,7 +1275,7 @@ function Images() {
     if (!doneItems.length || zipBusy || addingRef.current || runningRef.current || socialController.current) return;
     const zipAttempt = zipRevision.current;
     setZipBusy(true);
-    setZipMessage("Preparing the ZIP on this device…");
+    setBatchMessage("Preparing the ZIP on this device…");
     try {
       const entries: Array<{ name: string; data: Uint8Array }> = [];
       let total = 0;
@@ -1297,10 +1298,10 @@ function Images() {
       if (zipUrl) releaseUrl(zipUrl);
       setZipUrl(url);
       setZipBytes(blob.size);
-      setZipMessage(`ZIP ready: ${entries.length} image${entries.length === 1 ? "" : "s"}, ${formatBytes(blob.size)}.`);
+      setBatchMessage(`ZIP ready: ${entries.length} image${entries.length === 1 ? "" : "s"}, ${formatBytes(blob.size)}.`);
     } catch (error) {
       if (zipAttempt === zipRevision.current) {
-        setZipMessage(error instanceof Error ? error.message : "Could not build the ZIP.");
+        setBatchMessage(error instanceof Error ? error.message : "Could not build the ZIP.");
       }
     } finally {
       setZipBusy(false);
@@ -2740,7 +2741,7 @@ function Images() {
           <span>{items.length} image{items.length === 1 ? "" : "s"} · sequential</span>
         </div>
         <div className="image-control-actions">
-          <button type="button" disabled={running || socialBusy || adding || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items)}>
+          <button type="button" disabled={running || socialBusy || adding || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items, setBatchMessage)}>
             Process all {items.length || ""} with these settings
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
@@ -2753,7 +2754,7 @@ function Images() {
             </a>
           )}
         </div>
-        <p className="image-status" role="status" aria-live="polite">{zipMessage}</p>
+        <p className="image-status" role="status" aria-live="polite">{batchMessage}</p>
         {running && (
           <div className="image-progress">
             <progress value={batch.completed} max={batch.total || 1} aria-label="Batch progress" />
