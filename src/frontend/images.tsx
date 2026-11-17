@@ -818,6 +818,8 @@ function Images() {
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragIdRef = useRef("");
   const latestOutputCopy = useRef(0);
+  const latestSnippetCopy = useRef(0);
+  const snippetField = useRef<HTMLTextAreaElement>(null);
   const currentOutputKey = useRef("");
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
@@ -1693,7 +1695,7 @@ function Images() {
       fallback,
       report = setCopyMessage,
     }: { echo?: boolean; fallback?: string; report?: (message: string) => void } = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await navigator.clipboard.writeText(value);
       report(
@@ -1701,8 +1703,10 @@ function Images() {
           ? `Copied ${label}: ${value}`
           : `Copied ${label} (${value.length.toLocaleString()} characters).`,
       );
+      return true;
     } catch {
       report(fallback ?? `Could not copy automatically. Select the ${label} value and copy it.`);
+      return false;
     }
   }
 
@@ -1729,8 +1733,24 @@ function Images() {
     }
   }
 
+  async function copySnippet(button: HTMLButtonElement): Promise<void> {
+    const field = snippetField.current;
+    if (!field) return;
+    const text = field.value;
+    const attempt = ++latestSnippetCopy.current;
+    const stillCurrent = () =>
+      attempt === latestSnippetCopy.current && field.isConnected && field.value === text;
+    const copied = await copyValue(SNIPPET_LABELS[snippetKind], text, {
+      echo: false,
+      fallback: "Clipboard unavailable. Copy from the text field or download the snippet.",
+      report: message => { if (stillCurrent()) setSnippetMessage(message); },
+    });
+    if (!copied && stillCurrent() && document.activeElement === button) field.focus();
+  }
+
   async function buildSnippets(): Promise<void> {
     if (!selected?.result || snippetBusy || running) return;
+    latestSnippetCopy.current += 1;
     const item = selected;
     const result = item.result;
     if (!result) return;
@@ -2855,7 +2875,12 @@ function Images() {
                     type="button"
                     className={kind === snippetKind ? "secondary image-copy" : "quiet image-copy"}
                     aria-pressed={kind === snippetKind}
-                    onClick={() => setSnippetKind(kind)}
+                    onClick={() => {
+                      if (kind === snippetKind) return;
+                      latestSnippetCopy.current += 1;
+                      setSnippetKind(kind);
+                      setSnippetMessage("");
+                    }}
                   >
                     {SNIPPET_LABELS[kind]}
                   </button>
@@ -2873,6 +2898,7 @@ function Images() {
                   readOnly
                   rows={6}
                   spellCheck={false}
+                  ref={snippetField}
                   value={snippetText}
                   onFocus={(event) => event.currentTarget.select()}
                 />
@@ -2881,7 +2907,7 @@ function Images() {
                 <button
                   type="button"
                   className="quiet image-copy"
-                  onClick={() => void copyValue(SNIPPET_LABELS[snippetKind], snippetText)}
+                  onClick={(event) => void copySnippet(event.currentTarget)}
                 >
                   Copy {SNIPPET_LABELS[snippetKind]}
                 </button>
