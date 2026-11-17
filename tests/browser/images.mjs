@@ -315,7 +315,7 @@ try {
   await page.getByLabel("Crop aspect").selectOption("original");
   await page.getByLabel("Long edge (px)").fill("200");
   await page.getByLabel("Preset").selectOption("warm");
-  await page.getByLabel("Format").selectOption("jpeg");
+  await page.getByRole("group", { name: "Output" }).getByLabel("Format").selectOption("jpeg");
   await page.getByLabel("Matte colour for transparency").fill("#00ff00");
   await page.getByRole("button", { name: "Make this image" }).click();
   await page.getByRole("link", { name: /^Download JPEG$/ }).waitFor({ timeout: 30_000 });
@@ -358,7 +358,7 @@ try {
   );
   record("the warm preset is stated in the JPEG caption", /temperature \+32/.test(jpeg.caption ?? ""), jpeg.caption);
 
-  await page.getByLabel("Format").selectOption("webp");
+  await page.getByRole("group", { name: "Output" }).getByLabel("Format").selectOption("webp");
   await page.getByRole("button", { name: "Make this image" }).click();
   const webpOutcome = await page
     .waitForFunction(
