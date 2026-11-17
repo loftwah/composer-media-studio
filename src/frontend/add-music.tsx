@@ -160,8 +160,9 @@ function AddMusic() {
   }
   async function run(mode: "preview" | "export") {
     if (!video || !music || busy || controller.current) return;
+    // A finished mix stays committed until a repeat actually succeeds, so a
+    // cancelled or failed repeat leaves the previous preview, film and exact download intact.
     const abort = new AbortController(); controller.current = abort; pauseOthers(); setBusy(mode);
-    if (mode === "preview") setPreview(""); else { setResult(""); setResultBlob(null); }
     setMessage("Checking files on this device…");
     try {
       const blob = await makeFilm(video,music,offset,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",quality,abort.signal,setMessage); check(abort.signal);
@@ -198,7 +199,7 @@ function AddMusic() {
         {busy && <button type="button" className="secondary" onClick={event => cancelRun(event.currentTarget)}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
       </div>
       {preview && <div className="trim-result"><h2>Audio-only mix preview</h2><p className="trim-note">This is the sound mix, without video. Play the original video above to compare. The MP4 uses AAC encoding, so it may sound slightly different.</p><audio ref={previewPlayer} onPlay={()=>pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/></div>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/>}</div>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <div inert={busy !== null || undefined}><LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/></div>}</div>}
     </section></main>;
 }
 export function mountAddMusic(container: HTMLElement) { createRoot(container).render(<AddMusic/>); }
