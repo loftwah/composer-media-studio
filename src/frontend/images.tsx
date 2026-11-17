@@ -205,6 +205,8 @@ type WorkItem = {
 
 type Rejection = { name: string; message: string };
 
+type RemovalFocus = { kind: "row"; id: string } | { kind: "picker" };
+
 type ContactSheet = { url: string; count: number; width: number; height: number };
 
 const DEFAULT_SETTINGS: Settings = {
@@ -794,7 +796,8 @@ function Images() {
   const addingRef = useRef(false);
   const runningRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const focusPickerAfterRemoval = useRef(false);
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const focusAfterRemoval = useRef<RemovalFocus | null>(null);
   const eyedropperRef = useRef<HTMLImageElement | null>(null);
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragIdRef = useRef("");
@@ -966,9 +969,15 @@ function Images() {
   }, [selected?.result?.url]);
 
   useEffect(() => {
-    if (!focusPickerAfterRemoval.current) return;
-    focusPickerAfterRemoval.current = false;
-    fileInputRef.current?.focus();
+    const pending = focusAfterRemoval.current;
+    if (!pending) return;
+    focusAfterRemoval.current = null;
+    if (pending.kind === "picker") {
+      fileInputRef.current?.focus();
+      return;
+    }
+    const row = listRef.current?.querySelector<HTMLButtonElement>(`[data-image-row="${pending.id}"]`);
+    (row ?? fileInputRef.current)?.focus();
   }, [items.length]);
 
   useEffect(() => {
@@ -1093,7 +1102,9 @@ function Images() {
 
   function removeItem(item: WorkItem): void {
     if (running) return;
-    focusPickerAfterRemoval.current = true;
+    const index = items.findIndex((candidate) => candidate.id === item.id);
+    const next = items[index + 1] ?? items[index - 1];
+    focusAfterRemoval.current = next ? { kind: "row", id: next.id } : { kind: "picker" };
     clearBatchExports();
     releaseItem(item);
     setItems((previous) => previous.filter((candidate) => candidate.id !== item.id));
@@ -1112,7 +1123,7 @@ function Images() {
   }
 
   function resetAll(): void {
-    focusPickerAfterRemoval.current = true;
+    focusAfterRemoval.current = { kind: "picker" };
     revision.current += 1;
     stripRevision.current += 1;
     batchController.current?.controller.abort();
@@ -2846,7 +2857,7 @@ function Images() {
           </div>
         )}
         {items.length > 0 && (
-          <ul className="image-list">
+          <ul className="image-list" ref={listRef}>
             {items.map((item, index) => (
               <li
                 className={item.id === selectedId ? "is-selected" : ""}
@@ -2863,7 +2874,13 @@ function Images() {
                   dropItem(item.id);
                 }}
               >
-                <button type="button" className="image-list-select" onClick={() => selectItem(item.id)} aria-pressed={item.id === selectedId}>
+                <button
+                  type="button"
+                  className="image-list-select"
+                  data-image-row={item.id}
+                  onClick={() => selectItem(item.id)}
+                  aria-pressed={item.id === selectedId}
+                >
                   <span className="image-list-name">{item.file.name}</span>
                   <span className="image-list-meta">
                     {item.source.orientedWidth} × {item.source.orientedHeight} · {formatBytes(item.file.size)} · {item.status}
