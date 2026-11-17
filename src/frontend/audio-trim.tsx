@@ -105,7 +105,17 @@ function AudioTrim() {
   return <main className="trim-page" id="main">
     <header><a href="/">← Media Studio</a><h1>Trim a song</h1><p>Choose a short audio file, mark the part you want and save a WAV. Your source stays on this device; you can choose to upload the finished clip to Studio.</p></header>
     <section className="trim-work" aria-labelledby="source-heading"><h2 id="source-heading">Your audio</h2>
-      <label className="trim-file">Choose audio<input type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={importing || busy} onChange={e => void choose(e.target.files?.[0])} /></label>
+      <label className="trim-file">
+        Choose audio
+        <input
+          type="file"
+          accept="audio/*,.mp3,.wav,.m4a"
+          disabled={importing}
+          aria-disabled={busy}
+          onClick={event => { if (busy) event.preventDefault(); }}
+          onChange={event => { if (!busy && !importing) void choose(event.currentTarget.files?.[0]); }}
+        />
+      </label>
       <p className="trim-note">Sources up to 16 MB and 5 minutes, mono or stereo. Make a WAV of up to 3 minutes and 64 MiB; high-rate audio may need a shorter selection. Longer sources start with a 60-second selection. Decoded audio must fit within 128 MiB on this device; browser support varies.</p>
       {file && buffer && <><p><strong>{file.name}</strong> · {buffer.duration.toFixed(2)} seconds</p><canvas ref={canvas} width="800" height="110" className="trim-wave" aria-label="Waveform of the original audio" role="img"/><audio controls src={sourceUrl} aria-label="Original audio" />
         <div className="trim-fields">
