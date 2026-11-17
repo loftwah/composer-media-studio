@@ -104,6 +104,11 @@ test("the make-image button keeps keyboard focus while the canvas encodes", () =
   assert.match(workbench, /disabled=\{socialBusy \|\| adding \|\| sheetBusy \|\| !plan\?\.ok \|\| Boolean\(targetProblem\)\}\s+aria-disabled=\{running\}\s+onClick=\{\(\) => \{\s+if \(running\) return;\s+void runItems\(\[selected\]\);/);
 });
 
+test("the contact-sheet button keeps keyboard focus while its canvas encodes", () => {
+  assert.match(workbench, /disabled=\{running \|\| socialBusy \|\| adding \|\| zipBusy \|\| doneItems\.length < CONTACT_SHEET_MIN_IMAGES\}\s+aria-disabled=\{sheetBusy\}\s+onClick=\{\(\) => \{\s+if \(sheetBusy\) return;\s+void makeContactSheet\(\);/);
+  assert.match(workbench, /if \(!layout \|\| batchExport \|\| addingRef\.current \|\| runningRef\.current \|\| socialController\.current\) return;/);
+});
+
 test("the metadata strip button keeps keyboard focus while the bytes load", () => {
   assert.match(workbench, /disabled=\{running\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
   assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running\) return;/);
