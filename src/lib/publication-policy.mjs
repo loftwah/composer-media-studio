@@ -1,6 +1,6 @@
 // Explicit first-party publication policy. Never infer rights from an asset's source.
 import { HttpError, id, now, slug } from "./util.mjs";
-import { verifiedShareCredit } from "./publication-attribution.mjs";
+import { verifiedShareCredit } from "./publication-attribution.ts";
 import { checkPublicImage } from "./public-image-privacy.mjs";
 
 export function installationAllows(env, projectId) {

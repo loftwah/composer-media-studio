@@ -2,9 +2,26 @@
 import { shareApi, shareAsset, shareOriginal, woodhouseUrl } from "./woodhouse-share.mjs";
 import { sha256Hex } from "./util.mjs";
 
+// Narrow structural seams only: a saved caption/hash pair goes in, and the same
+// one-item credit array (or null) comes back. Every annotation here is erased at
+// runtime, so no validation, author, claim or default is added.
+interface VerificationReference {
+  caption?: unknown;
+  sha256?: unknown;
+}
+
+interface VerifiedShareCredit {
+  id: string;
+  credit: string;
+  sourceUrl: string | null;
+  reuse: "unconfirmed";
+  catalogueUrl: string;
+  tablerMit: boolean;
+}
+
 // Known source credit forms reviewed for the first-party catalogue. Unknown
 // third-party credits fail closed until their licence obligations are handled.
-const credits = new Set([
+const credits = new Set<string>([
   "Pirates promotional preparation · original OpenAI image_gen illustration and editable typography; not original-game art",
   "Woodhouse · Codex ImageGen poster and original product mark",
   "Woodhouse · GPT Image 2.6 via Fal",
@@ -14,7 +31,7 @@ const credits = new Set([
   "Woodhouse · new generated promotional illustration; built-in Codex image_gen; conceptual discovery instrument",
 ]);
 
-export async function verifiedShareCredit(reference) {
+export async function verifiedShareCredit(reference: VerificationReference): Promise<VerifiedShareCredit[] | null> {
   const anchor = String(reference.caption ?? "").split("\n", 1)[0];
   if (!anchor.startsWith(`${shareApi}/`)) return null;
   const shareId = anchor.slice(shareApi.length + 1);
