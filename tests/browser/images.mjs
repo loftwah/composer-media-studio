@@ -595,6 +595,43 @@ try {
   }));
   record("390 px has no horizontal overflow or controls outside the viewport", phone.scrollWidth === phone.innerWidth && phone.controlsOutside.length === 0, phone);
 
+  await page.getByRole("button", { name: "Clear all", exact: true }).click();
+  const sampleButton = page.getByRole("button", { name: "Try the sample", exact: true });
+  await sampleButton.click();
+  await sampleButton.click();
+  const batchSection = page.getByRole("region", { name: "Batch", exact: true });
+  await batchSection.getByRole("button", { name: "Process all 2 with these settings", exact: true }).click();
+  const prepare = batchSection.getByRole("button", { name: "Prepare ZIP (2)", exact: true });
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll("#image-batch button")).some(
+      (button) => button.textContent === "Prepare ZIP (2)" && !button.disabled,
+    ),
+  );
+  await page.evaluate(() => {
+    const read = Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer = function () {
+      const blob = this;
+      Blob.prototype.arrayBuffer = read;
+      return new Promise((resolve, reject) => {
+        window.resumeZipRead = () => read.call(blob).then(resolve, reject);
+      });
+    };
+  });
+  await prepare.click();
+  await page.waitForFunction(() => Boolean(window.resumeZipRead));
+  await batchSection.getByRole("button", { name: "Remove", exact: true }).last().click();
+  await page.evaluate(() => { window.resumeZipRead(); });
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll("#image-batch button")).some(
+      (button) => button.textContent === "Prepare ZIP (1)" && !button.disabled,
+    ),
+  );
+  const archive = batchSection.getByRole("link", { name: /^Download ZIP/ });
+  record("removing an image while preparing a ZIP discards that archive", await archive.count() === 0);
+  await batchSection.getByRole("button", { name: "Prepare ZIP (1)", exact: true }).click();
+  await archive.waitFor();
+  record("a new ZIP is available for the current single image", await archive.getAttribute("download") === "media-studio-images-1.zip");
+
   const external = receipt.requests.filter(
     (request) => !request.endsWith("/check.html") && !request.includes(ORIGIN),
   );
