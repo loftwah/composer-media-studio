@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { isDeepStrictEqual, parseArgs } from "node:util";
-import { MAX_PALETTE_COLOURS, paletteToJson } from "../src/frontend/image-colour.mjs";
+import { MAX_PALETTE_COLOURS, paletteToJson } from "../src/frontend/image-colour.ts";
 import { digest, downloadLink, readLocalJson, readLocalPng, runLocalImages } from "./local-image-workbench.mjs";
 
 async function main() {

@@ -15,7 +15,7 @@ import {
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
-} from "../src/frontend/image-colour.mjs";
+} from "../src/frontend/image-colour.ts";
 
 function makePixels(width, height, paint) {
   const pixels = new Uint8ClampedArray(width * height * 4);
