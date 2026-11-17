@@ -84,6 +84,15 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 
 The script passes the selected PNG to the existing browser workbench and matches the downloaded receipt and WebP bytes. It serves the built workbench assets in the isolated Chrome session and blocks other requests. Exact output may depend on the Chrome encoder version. The script reports a mismatch and opens no Studio account or workspace.
 
+To verify one output of the four-size **Social sizes** kit, add `--size square|portrait|story|landscape` with that size's receipt:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/replay-web-ready-image.mjs --source ./source.png --receipt ./moss-story-receipt.json --size story
+```
+
+This uses the same isolated page and renderer. It drives the shipped social kit with default controls, downloads the chosen size's WebP and receipt, and fails with the exact differing settings when the receipt asks for something the default social kit cannot reproduce. Without `--size`, the original Web-ready replay is unchanged.
+
 ## Migrations
 
 `0003_audio_and_assembly.sql` widens the saved media kinds to include audio and adds compositions. SQLite cannot widen a `CHECK` constraint in place, so the two tables that enumerate kinds are rebuilt with every existing row copied; no data is dropped. Apply it with `pnpm migrate:remote` before deploying the worker that needs it.
