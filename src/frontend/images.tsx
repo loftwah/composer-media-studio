@@ -78,7 +78,8 @@ import {
   type StripResult,
 } from "./image-metadata.mjs";
 import { createZip, ZIP_MIME } from "./image-zip.mjs";
-import { buildImageReceipt } from "./image-receipt.ts";
+import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
+import { SOCIAL_SIZES, socialKitSettings } from "./image-social-kit.ts";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -128,6 +129,20 @@ type RenderedImage = {
   trimmed: boolean;
   adjustChanged: number;
   target: { requestedBytes: number; met: boolean } | null;
+};
+
+type SocialOutput = {
+  key: string;
+  label: string;
+  width: number;
+  height: number;
+  mime: string;
+  bytes: number;
+  sha256: string;
+  blob: Blob;
+  url: string;
+  receipt: ImageReceipt;
+  receiptHref: string;
 };
 
 type TrimState = {
@@ -724,6 +739,9 @@ function Images() {
   const [zipUrl, setZipUrl] = useState("");
   const [zipBytes, setZipBytes] = useState(0);
   const [zipBusy, setZipBusy] = useState(false);
+  const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
+  const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
+  const [socialBusy, setSocialBusy] = useState(false);
   const [stripBusy, setStripBusy] = useState(false);
   const [removeIcc, setRemoveIcc] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -744,6 +762,7 @@ function Images() {
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
   const batchController = useRef<AbortController | null>(null);
+  const socialController = useRef<AbortController | null>(null);
   const stripRevision = useRef(0);
   const didInitSettings = useRef(false);
   const addFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
@@ -754,6 +773,7 @@ function Images() {
   const dragIdRef = useRef("");
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
+  const socialReady = selected?.source.mime === "image/png";
   const activeTrim =
     selected &&
     trim &&
@@ -862,11 +882,25 @@ function Images() {
     setZipBytes(0);
   }
 
+  function releaseSocial(): void {
+    for (const output of socialOutputs) releaseUrl(output.url);
+    if (socialZip) releaseUrl(socialZip.url);
+    setSocialOutputs([]);
+    setSocialZip(null);
+  }
+
+  function clearSocial(): void {
+    socialController.current?.abort();
+    releaseSocial();
+  }
+
   useEffect(() => {
     return () => {
       revision.current += 1;
       stripRevision.current += 1;
       batchController.current?.abort();
+      socialController.current?.abort();
+      socialController.current = null;
       for (const url of urls.current) URL.revokeObjectURL(url);
       urls.current.clear();
       if (pickCanvasRef.current) {
@@ -906,7 +940,7 @@ function Images() {
   }, []);
 
   async function addFiles(files: File[]): Promise<void> {
-    if (!files.length || addingRef.current || runningRef.current) return;
+    if (!files.length || addingRef.current || runningRef.current || socialController.current) return;
     addingRef.current = true;
     const currentRevision = ++revision.current;
     setAdding(true);
@@ -1020,6 +1054,7 @@ function Images() {
     if (selectedId === item.id) {
       const next = items.find((candidate) => candidate.id !== item.id);
       setSelectedId(next?.id ?? "");
+      clearSocial();
       setTrim(null);
       setTrimMessage("");
       setPalette(null);
@@ -1034,6 +1069,7 @@ function Images() {
     revision.current += 1;
     stripRevision.current += 1;
     batchController.current?.abort();
+    socialController.current?.abort();
     addingRef.current = false;
     runningRef.current = false;
     for (const url of urls.current) URL.revokeObjectURL(url);
@@ -1054,11 +1090,13 @@ function Images() {
     setBatch({ total: 0, completed: 0, current: "" });
     setZipUrl("");
     setZipBytes(0);
+    setSocialOutputs([]);
+    setSocialZip(null);
     didInitSettings.current = false;
   }
 
   async function runItems(list: WorkItem[]): Promise<void> {
-    if (!list.length || runningRef.current) return;
+    if (!list.length || runningRef.current || socialController.current) return;
     runningRef.current = true;
     const snapshot = { ...settings };
     const trimSnapshot = trim;
@@ -1200,7 +1238,7 @@ function Images() {
   }
 
   async function makeZip(): Promise<void> {
-    if (!doneItems.length || zipBusy) return;
+    if (!doneItems.length || zipBusy || socialController.current) return;
     setZipBusy(true);
     setMessage("Building the ZIP on this device…");
     try {
@@ -1241,7 +1279,7 @@ function Images() {
   }
 
   function applyWebReady(): void {
-    if (!selected || running) return;
+    if (!selected || runningRef.current || socialController.current) return;
     setSettings((previous) => ({
       ...previous,
       resizeMode: "max-long-edge",
@@ -1253,7 +1291,100 @@ function Images() {
     setMessage("Web-ready settings applied. Choose Make this image to render.");
   }
 
+  async function makeSocialKit(): Promise<void> {
+    if (!selected || runningRef.current || socialController.current || zipBusy || addingRef.current) return;
+    if (selected.source.mime !== "image/png") return;
+    const item = selected;
+    const snapshot = { ...settings };
+    const trimSnapshot = trim;
+    const controller = new AbortController();
+    socialController.current = controller;
+    releaseSocial();
+    setSocialBusy(true);
+    setMessage("Making four sizes from the selected PNG…");
+    const outputs: SocialOutput[] = [];
+    const isCurrent = () => socialController.current === controller;
+    const alive = () => isCurrent() && !controller.signal.aborted;
+    try {
+      for (const size of SOCIAL_SIZES) {
+        if (!alive()) throw abortError();
+        const cropRect =
+          trimSnapshot &&
+          snapshot.straighten === 0 &&
+          trimSnapshot.itemId === item.id &&
+          trimSnapshot.rotate === snapshot.rotate &&
+          trimSnapshot.flipH === snapshot.flipH &&
+          trimSnapshot.flipV === snapshot.flipV
+            ? trimSnapshot.rect
+            : null;
+        const sizeSettings = socialKitSettings(snapshot, size, WEB_READY_QUALITY);
+        const rendered = await renderImage(item, sizeSettings, controller.signal, cropRect);
+        if (!alive()) throw abortError();
+        const receipt = buildImageReceipt({ sourceHash: item.sourceHash, result: rendered });
+        const output: SocialOutput = {
+          key: size.key,
+          label: size.label,
+          width: rendered.width,
+          height: rendered.height,
+          mime: rendered.mime,
+          bytes: rendered.bytes,
+          sha256: rendered.sha256,
+          blob: rendered.blob,
+          url: trackUrl(rendered.blob),
+          receipt,
+          receiptHref: `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(receipt))}`,
+        };
+        outputs.push(output);
+        setSocialOutputs([...outputs]);
+        setMessage(`Made ${outputs.length} of ${SOCIAL_SIZES.length} sizes on this device.`);
+      }
+      if (!alive()) throw abortError();
+      const stem = safeStem(item.file.name);
+      const entries: Array<{ name: string; data: Uint8Array }> = [];
+      let total = 0;
+      for (const output of outputs) {
+        if (!alive()) throw abortError();
+        const bytes = new Uint8Array(await output.blob.arrayBuffer());
+        total += bytes.length;
+        if (total > MAX_ZIP_BYTES)
+          throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
+        entries.push({ name: `${stem}-${output.key}-${output.width}x${output.height}.webp`, data: bytes });
+        const receiptBytes = new TextEncoder().encode(JSON.stringify(output.receipt, null, 2));
+        total += receiptBytes.length;
+        if (total > MAX_ZIP_BYTES)
+          throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
+        entries.push({ name: `${stem}-${output.key}-receipt.json`, data: receiptBytes });
+      }
+      if (!alive()) throw abortError();
+      const zip = createZip(entries, { date: new Date() });
+      if (!zip.ok) throw new Error(zip.error);
+      const zipBlob = blobFromBytes(zip.bytes, ZIP_MIME);
+      setSocialZip({ url: trackUrl(zipBlob), bytes: zipBlob.size });
+      setMessage(
+        `Social kit ready: ${outputs.length} WebP sizes with per-size receipts, ${formatBytes(zipBlob.size)} total.`,
+      );
+    } catch (error) {
+      if (!isCurrent()) {
+        for (const output of outputs) releaseUrl(output.url);
+        return;
+      }
+      if (isAbort(error)) setMessage("Stopped the social kit.");
+      else setMessage(error instanceof Error ? error.message : "Could not make the social kit.");
+    } finally {
+      if (isCurrent()) {
+        socialController.current = null;
+        setSocialBusy(false);
+      }
+    }
+  }
+
+  function cancelSocialKit(): void {
+    socialController.current?.abort();
+    setMessage("Stopping after the current size. Completed sizes keep their downloads.");
+  }
+
   function selectItem(id: string): void {
+    if (id !== selectedId) clearSocial();
     setSelectedId(id);
     setTrim(null);
     setTrimMessage("");
@@ -1678,7 +1809,7 @@ function Images() {
               <button
                 type="button"
                 className="secondary"
-                disabled={running}
+                disabled={running || socialBusy}
                 aria-describedby="image-web-ready-note"
                 onClick={applyWebReady}
               >
@@ -1690,6 +1821,58 @@ function Images() {
               The preset keeps transparency and your edits. It only shrinks images.
             </p>
           </fieldset>
+
+          <fieldset className="image-controls">
+            <legend>Social sizes</legend>
+            <div className="image-control-actions">
+              <button
+                type="button"
+                className="secondary"
+                disabled={running || socialBusy || zipBusy || adding || !socialReady}
+                aria-describedby="image-social-kit-note"
+                onClick={() => void makeSocialKit()}
+              >
+                {socialBusy ? "Making sizes…" : "Make 4 social sizes"}
+              </button>
+              {socialBusy && (
+                <button type="button" className="quiet" onClick={cancelSocialKit}>
+                  Cancel kit
+                </button>
+              )}
+            </div>
+            <p className="trim-note" id="image-social-kit-note">
+              One selected PNG becomes WebP at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
+              1080 × 1920 (9:16) and 1920 × 1080 (16:9) with {Math.round(WEB_READY_QUALITY * 100)}% quality.
+              Smaller crops can be enlarged to fit. The ZIP includes one receipt for each size.
+            </p>
+            {!socialReady && <p className="notice calm">Choose a PNG to make this kit.</p>}
+          </fieldset>
+
+          {socialOutputs.length > 0 && (
+            <div className="image-result" aria-live="polite">
+              <ul className="image-social-list">
+                {socialOutputs.map((output) => (
+                  <li key={output.key}>
+                    <a href={output.url} download={`${safeStem(selected.file.name)}-${output.key}-${output.width}x${output.height}.webp`}>
+                      {output.label} · {output.width} × {output.height}
+                    </a>{" "}
+                    <span className="small">{formatBytes(output.bytes)} · sha256 {shortHash(output.sha256)}</span>{" "}
+                    <a href={output.receiptHref} download={`${safeStem(selected.file.name)}-${output.key}-receipt.json`}>receipt</a>
+                  </li>
+                ))}
+              </ul>
+              {socialZip && (
+                <a
+                  className="button"
+                  href={socialZip.url}
+                  download={`${safeStem(selected.file.name)}-social-kit.zip`}
+                >
+                  Download ZIP · {formatBytes(socialZip.bytes)}
+                </a>
+              )}
+              {!socialZip && socialBusy && <p className="small">Building the ZIP on this device…</p>}
+            </div>
+          )}
 
           <fieldset className="image-controls">
             <legend>Resize and crop</legend>
@@ -1876,7 +2059,7 @@ function Images() {
           </p>
           {targetProblem && <p className="image-plan is-error" role="alert">{targetProblem}</p>}
           <div className="image-control-actions">
-            <button type="button" disabled={running || adding || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems([selected])}>
+            <button type="button" disabled={running || socialBusy || adding || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems([selected])}>
               {selected.status === "working" ? "Processing…" : "Make this image"}
             </button>
             {selected.status === "error" && (
@@ -2442,11 +2625,11 @@ function Images() {
           <span>{items.length} image{items.length === 1 ? "" : "s"} · sequential</span>
         </div>
         <div className="image-control-actions">
-          <button type="button" disabled={running || adding || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items)}>
+          <button type="button" disabled={running || socialBusy || adding || !items.length || !plan?.ok || Boolean(targetProblem)} onClick={() => void runItems(items)}>
             Process all {items.length || ""} with these settings
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
-          <button type="button" className="secondary" disabled={running || zipBusy || !doneItems.length} onClick={() => void makeZip()}>
+          <button type="button" className="secondary" disabled={running || socialBusy || zipBusy || !doneItems.length} onClick={() => void makeZip()}>
             {zipBusy ? "Building ZIP…" : `Download ZIP${doneItems.length ? ` (${doneItems.length})` : ""}`}
           </button>
           {zipUrl && (
