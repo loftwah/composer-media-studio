@@ -749,6 +749,7 @@ function Images() {
   const [zipUrl, setZipUrl] = useState("");
   const [zipBytes, setZipBytes] = useState(0);
   const [zipBusy, setZipBusy] = useState(false);
+  const [zipMessage, setZipMessage] = useState("");
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
   const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
   const [socialBusy, setSocialBusy] = useState(false);
@@ -773,6 +774,7 @@ function Images() {
   const [snippetUrl, setSnippetUrl] = useState<{ kind: SnippetKind; url: string } | null>(null);
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
+  const zipRevision = useRef(0);
   const batchController = useRef<AbortController | null>(null);
   const socialController = useRef<AbortController | null>(null);
   const stripRevision = useRef(0);
@@ -891,6 +893,8 @@ function Images() {
   }
 
   function clearZip(): void {
+    zipRevision.current += 1;
+    setZipMessage(zipBusy ? "The batch changed. Prepare the ZIP again." : "");
     if (!zipUrl) return;
     releaseUrl(zipUrl);
     setZipUrl("");
@@ -913,6 +917,7 @@ function Images() {
     return () => {
       revision.current += 1;
       stripRevision.current += 1;
+      zipRevision.current += 1;
       batchController.current?.abort();
       socialController.current?.abort();
       socialController.current = null;
@@ -1261,15 +1266,17 @@ function Images() {
   }
 
   async function makeZip(): Promise<void> {
-    if (!doneItems.length || zipBusy || socialController.current) return;
+    if (!doneItems.length || zipBusy || addingRef.current || runningRef.current || socialController.current) return;
+    const zipAttempt = zipRevision.current;
     setZipBusy(true);
-    setMessage("Building the ZIP on this device…");
+    setZipMessage("Preparing the ZIP on this device…");
     try {
       const entries: Array<{ name: string; data: Uint8Array }> = [];
       let total = 0;
       for (const item of doneItems) {
         if (!item.result) continue;
         const bytes = new Uint8Array(await item.result.blob.arrayBuffer());
+        if (zipAttempt !== zipRevision.current) return;
         total += bytes.length;
         if (total > MAX_ZIP_BYTES)
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download images separately instead.`);
@@ -1285,9 +1292,11 @@ function Images() {
       if (zipUrl) releaseUrl(zipUrl);
       setZipUrl(url);
       setZipBytes(blob.size);
-      setMessage(`ZIP ready: ${entries.length} image${entries.length === 1 ? "" : "s"}, ${formatBytes(blob.size)}.`);
+      setZipMessage(`ZIP ready: ${entries.length} image${entries.length === 1 ? "" : "s"}, ${formatBytes(blob.size)}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not build the ZIP.");
+      if (zipAttempt === zipRevision.current) {
+        setZipMessage(error instanceof Error ? error.message : "Could not build the ZIP.");
+      }
     } finally {
       setZipBusy(false);
     }
@@ -2708,7 +2717,7 @@ function Images() {
             Process all {items.length || ""} with these settings
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
-          <button type="button" className="secondary" disabled={running || socialBusy || zipBusy || !doneItems.length} onClick={() => void makeZip()}>
+          <button type="button" className="secondary" disabled={running || socialBusy || adding || zipBusy || !doneItems.length} onClick={() => void makeZip()}>
             {zipBusy ? "Preparing ZIP…" : `Prepare ZIP${doneItems.length ? ` (${doneItems.length})` : ""}`}
           </button>
           {zipUrl && (
@@ -2717,6 +2726,7 @@ function Images() {
             </a>
           )}
         </div>
+        <p className="image-status" role="status" aria-live="polite">{zipMessage}</p>
         {running && (
           <div className="image-progress">
             <progress value={batch.completed} max={batch.total || 1} aria-label="Batch progress" />
