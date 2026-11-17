@@ -1,5 +1,5 @@
 // Only public catalogue data, independently checked against saved input bytes.
-import { shareApi, shareAsset, shareOriginal, woodhouseUrl } from "./woodhouse-share.mjs";
+import { shareApi, shareAsset, shareOriginal, woodhouseUrl } from "./woodhouse-share.ts";
 import { sha256Hex } from "./util.mjs";
 
 // Narrow structural seams only: a saved caption/hash pair goes in, and the same

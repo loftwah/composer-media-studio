@@ -74,7 +74,7 @@ import { models, publicModels, publicRetiredModels, retiredModels, getModel, val
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.ts";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.mjs";
-import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.mjs";
+import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.ts";
 import { composerShare } from "./lib/composer-share.ts";
 import { shell, loginPage, publicPage, notFoundPage, helpPage, audioTrimPage, videoClipPage, addMusicPage, imagesPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
