@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
-import { createSongPlan, updateSongPlan, updateSongCaptions } from '../src/lib/song-plans.mjs';
+import { createSongPlan, updateSongPlan, updateSongCaptions } from '../src/lib/song-plans.ts';
 import { createComposition, createRender, completeFromWebhook, loadGeneration } from '../src/lib/jobs.mjs';
 import { measureFootageSource } from '../src/lib/footage-preflight.mjs';
 import { sha256Hex, sniffMedia, videoInfo } from '../src/lib/util.mjs';

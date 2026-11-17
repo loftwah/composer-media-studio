@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {parseCaptionFile} from '../src/frontend/caption-import.ts';
-import {setup,addAsset} from './harness.mjs';import {createSongPlan,updateSongCaptions,exportSongCaptions} from '../src/lib/song-plans.mjs';
+import {setup,addAsset} from './harness.mjs';import {createSongPlan,updateSongCaptions,exportSongCaptions} from '../src/lib/song-plans.ts';
 test('parses SRT and WebVTT relative to the selected song segment without guessing speakers',()=>{
  const srt='1\r\n00:00:00,500 --> 00:00:01,500\r\nDean: Hello\r\nworld\r\n\r\n2\r\n00:00:02,000 --> 00:00:03,000\r\nA &lt; B';
  const result=parseCaptionFile(srt,10000,20000);assert.deepEqual(result,[{startMs:10500,endMs:11500,text:'Dean: Hello world',speaker:''},{startMs:12000,endMs:13000,text:'A < B',speaker:''}]);

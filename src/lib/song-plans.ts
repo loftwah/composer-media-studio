@@ -1,44 +1,169 @@
 // MIT. Durable, project-scoped editorial planning; no provider calls or spend.
 import { HttpError, id, now, safeJson, sha256Hex, text } from './util.mjs';
-import { readSongPlanPack } from './song-plan-pack.mjs';
+import { readSongPlanPack, type PortableSongPlan } from './song-plan-pack.mjs';
 
-const fail = (message) => { throw new HttpError(400, message, 'invalid_song_plan'); };
-const integer = (value, label) => {
+// Narrow structural seams for the D1 binding and the saved rows: only the
+// members this module calls and the columns it reads are described. No
+// Cloudflare types are imported and every annotation here is erased at runtime.
+interface SongPlanStatement {
+  bind(...values: unknown[]): SongPlanStatement;
+  first<T>(): Promise<T | null>;
+  all<T>(): Promise<{ results: T[] }>;
+  run(): Promise<unknown>;
+}
+export interface SongPlanEnv {
+  DB: { prepare(query: string): SongPlanStatement };
+}
+export interface SongPlanProject { id: string }
+export interface SongAssetRow {
+  kind: string;
+  sha256: string;
+  duration_ms: number | null;
+  id: string;
+}
+export interface SongPlanRow {
+  id: string;
+  project_id: string;
+  song_asset_id: string;
+  song_sha256: string;
+  spec_json: string;
+  revision: number;
+  created_at: number;
+  updated_at: number;
+}
+export interface ReviewedReference {
+  id: string;
+  sha256: string | null;
+}
+export interface SubjectOrigin {
+  subjectId: string;
+  revision: number;
+  name: string;
+}
+export type SongAspect = '16:9' | '9:16' | '1:1';
+export interface SongPlanScene {
+  id: string;
+  startMs: number;
+  endMs: number;
+  direction: string;
+  referenceAssetId: string | null;
+  selectedTakeId: string | null;
+  subjectOrigin?: SubjectOrigin;
+}
+export interface CaptionCue {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  speaker: string;
+}
+export interface Captions {
+  source: 'owner_supplied';
+  rightsConfirmed: true;
+  cues: CaptionCue[];
+}
+export interface SongPlanSpec {
+  title: string;
+  treatment: string;
+  aspect: SongAspect;
+  startMs: number;
+  endMs: number;
+  rightsConfirmed: true;
+  scenes: SongPlanScene[];
+  /** Absent until captions are first saved. */
+  captions?: Captions | null;
+}
+export interface SongPlanView extends SongPlanSpec {
+  id: string;
+  projectId: string;
+  songAssetId: string;
+  songSha256: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface SongPlanRevisionView extends SongPlanView {
+  revisionDigest: string;
+}
+/** The plan fields a create or replace request may carry, after validation. */
+export interface SongPlanDraft {
+  title: string;
+  treatment?: string | null;
+  aspect: SongAspect;
+  startMs: number;
+  endMs: number;
+  scenes: SongPlanScene[];
+}
+export interface CreateSongPlanInput extends SongPlanDraft {
+  rightsConfirmed?: boolean;
+  songAssetId: string;
+  sceneCount: number;
+}
+export interface UpdateSongPlanInput extends SongPlanDraft {
+  expectedRevision: number;
+}
+export interface ImportSongPlanInput {
+  confirm: boolean;
+  songRightsConfirmed: boolean;
+  lyricsRightsConfirmed?: boolean;
+  songAssetId: string;
+  pack: unknown;
+}
+export interface CaptionCueInput {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  speaker?: string | null;
+}
+export interface CaptionDraft {
+  source: string;
+  rightsConfirmed: unknown;
+  cues: CaptionCueInput[];
+}
+export interface CaptionSaveInput {
+  expectedRevision: number;
+  rightsConfirmed?: boolean;
+  cues: CaptionCueInput[];
+}
+
+const fail: (message: string) => never = (message) => { throw new HttpError(400, message, 'invalid_song_plan'); };
+const integer = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value)) fail(`${label} must be an integer number of milliseconds`);
-  return value;
+  return value as number;
 };
-async function asset(env, project, assetId, kind) {
-  const row = await env.DB.prepare('SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND deleted_at IS NULL').bind(assetId, project.id).first();
+async function asset(env: SongPlanEnv, project: SongPlanProject, assetId: string, kind: string): Promise<SongAssetRow> {
+  const row = await env.DB.prepare('SELECT * FROM assets WHERE id=?1 AND project_id=?2 AND deleted_at IS NULL').bind(assetId, project.id).first<SongAssetRow>();
   if (!row || row.kind !== kind) fail(`Choose a saved ${kind} asset from this project`);
   return row;
 }
-export function viewSongPlan(row) {
-  return { id: row.id, projectId: row.project_id, songAssetId: row.song_asset_id, songSha256: row.song_sha256, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, ...safeJson(row.spec_json, {}) };
+export function viewSongPlan(row: SongPlanRow): SongPlanView {
+  return { id: row.id, projectId: row.project_id, songAssetId: row.song_asset_id, songSha256: row.song_sha256, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, ...(safeJson(row.spec_json, {}) as SongPlanSpec) };
 }
 /** A revision identity that binds the integer revision to the exact saved
  * spec, so the workbench, the Director and MCP can prove they read the same
  * bytes rather than merely the same revision number. */
-export async function songPlanRevisionDigest(row, spec = safeJson(row.spec_json, {})) {
+export async function songPlanRevisionDigest(row: SongPlanRow, spec: unknown = safeJson(row.spec_json, {})): Promise<string> {
   const identity = JSON.stringify({ format: 'media-studio.song-plan-revision/v1', planId: row.id, revision: row.revision, spec });
   return sha256Hex(new TextEncoder().encode(identity));
 }
 /** The async view carries the revision digest; `viewSongPlan` stays sync for
  * callers that only need the saved fields. */
-export async function songPlanView(row) {
+export async function songPlanView(row: SongPlanRow): Promise<SongPlanRevisionView> {
   return { ...viewSongPlan(row), revisionDigest: await songPlanRevisionDigest(row) };
 }
-async function validateSpec(env, project, song, input, previousScenes = [], newOrigins = []) {
+async function validateSpec(env: SongPlanEnv, project: SongPlanProject, song: SongAssetRow, input: SongPlanDraft, previousScenes: readonly SongPlanScene[] = [], newOrigins: SubjectOrigin[] = []): Promise<SongPlanSpec> {
   const startMs = integer(input.startMs, 'Start');
   const endMs = integer(input.endMs, 'End');
-  if (startMs < 0 || endMs > song.duration_ms || endMs - startMs > 60000 || endMs - startMs < 2000) fail('Choose a 2–60 second segment within the saved song');
+  if (startMs < 0 || endMs > (song.duration_ms as number) || endMs - startMs > 60000 || endMs - startMs < 2000) fail('Choose a 2–60 second segment within the saved song');
   const title = text(input.title, 80, 'Plan title');
   const treatment = text(input.treatment ?? '', 1200, 'Treatment', { required: false });
   const aspect = input.aspect;
   if (!['16:9', '9:16', '1:1'].includes(aspect)) fail('Choose a supported aspect ratio');
   if (!Array.isArray(input.scenes) || input.scenes.length < 2 || input.scenes.length > 6) fail('A plan needs two to six scenes');
   let cursor = startMs;
-  const seen = new Set();
-  const scenes = [];
+  const seen = new Set<string>();
+  const scenes: SongPlanScene[] = [];
   for (const entry of input.scenes) {
     if (!entry || typeof entry !== 'object' || !/^[a-z0-9_]{4,80}$/.test(entry.id ?? '') || seen.has(entry.id)) fail('Each scene needs a unique stable ID');
     seen.add(entry.id);
@@ -52,14 +177,14 @@ async function validateSpec(env, project, song, input, previousScenes = [], newO
     if (selectedTakeId) await asset(env, project, selectedTakeId, 'video');
     const previous = previousScenes.find(scene => scene.id === entry.id)?.subjectOrigin ?? null;
     const requested = Object.hasOwn(entry, 'subjectOrigin') ? entry.subjectOrigin : previous;
-    let subjectOrigin = null;
+    let subjectOrigin: SubjectOrigin | null = null;
     if (requested !== null && requested !== undefined) {
       if (!requested || typeof requested !== 'object' || Array.isArray(requested) || Object.keys(requested).some(key => !['subjectId','revision','name'].includes(key)) || !/^sub_[a-z0-9_]{1,80}$/.test(requested.subjectId ?? '') || !Number.isSafeInteger(requested.revision) || requested.revision < 1) fail('Choose a valid subject version');
       if (previous && requested.subjectId === previous.subjectId && requested.revision === previous.revision) subjectOrigin = previous;
       else {
-        const source = await env.DB.prepare(`SELECT s.spec_json FROM subject_versions s JOIN assets a ON a.id=s.reference_asset_id AND a.project_id=s.project_id AND a.kind='image' AND a.deleted_at IS NULL AND a.sha256=s.reference_sha256 WHERE s.subject_id=?1 AND s.project_id=?2 AND s.revision=?3`).bind(requested.subjectId,project.id,requested.revision).first();
+        const source = await env.DB.prepare(`SELECT s.spec_json FROM subject_versions s JOIN assets a ON a.id=s.reference_asset_id AND a.project_id=s.project_id AND a.kind='image' AND a.deleted_at IS NULL AND a.sha256=s.reference_sha256 WHERE s.subject_id=?1 AND s.project_id=?2 AND s.revision=?3`).bind(requested.subjectId,project.id,requested.revision).first<{ spec_json: string }>();
         if (!source) fail('Choose an available subject version from this project');
-        const name = safeJson(source.spec_json, {}).name;
+        const name = (safeJson(source.spec_json, {}) as { name?: unknown }).name;
         if (typeof name !== 'string' || !name) fail('The subject version is invalid');
         subjectOrigin = { subjectId: requested.subjectId, revision: requested.revision, name };
         newOrigins.push(subjectOrigin);
@@ -71,10 +196,10 @@ async function validateSpec(env, project, song, input, previousScenes = [], newO
   if (cursor !== endMs) fail('Scenes must cover the whole chosen segment');
   return { title, treatment, aspect, startMs, endMs, rightsConfirmed: true, scenes };
 }
-export async function createSongPlan(env, project, input) {
+export async function createSongPlan(env: SongPlanEnv, project: SongPlanProject, input: CreateSongPlanInput): Promise<SongPlanRevisionView> {
   if (input.rightsConfirmed !== true) fail('Confirm you own the song or have permission to use it');
   const song = await asset(env, project, input.songAssetId, 'audio');
-  if (!Number.isSafeInteger(song.duration_ms) || song.duration_ms <= 0 || !song.sha256) fail('The song needs a measured duration and fingerprint');
+  if (!Number.isSafeInteger(song.duration_ms) || (song.duration_ms as number) <= 0 || !song.sha256) fail('The song needs a measured duration and fingerprint');
   const startMs = integer(input.startMs, 'Start');
   const endMs = integer(input.endMs, 'End');
   const count = input.sceneCount;
@@ -86,39 +211,39 @@ export async function createSongPlan(env, project, input) {
   return songPlanView({ id: planId, project_id: project.id, song_asset_id: song.id, song_sha256: song.sha256, spec_json: JSON.stringify(spec), revision: 1, created_at: timestamp, updated_at: timestamp });
 }
 // A new private plan is inserted only if the explicitly selected matching song is still live.
-export async function importSongPlan(env, project, input) {
+export async function importSongPlan(env: SongPlanEnv, project: SongPlanProject, input: ImportSongPlanInput): Promise<SongPlanRevisionView> {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key=>!['confirm','songRightsConfirmed','lyricsRightsConfirmed','songAssetId','pack'].includes(key)) || typeof input.songAssetId !== 'string' || !/^asset_[a-z0-9_]{1,80}$/.test(input.songAssetId) || input.confirm !== true || input.songRightsConfirmed !== true) fail('Review the plan and confirm permission to use the selected song');
-  let pack; try { pack = readSongPlanPack(input.pack); } catch { fail('This is not a supported portable song plan'); }
+  let pack: PortableSongPlan; try { pack = readSongPlanPack(input.pack); } catch { fail('This is not a supported portable song plan'); }
   if (pack.plan.captions.length && input.lyricsRightsConfirmed !== true) fail('Confirm permission to use the supplied captions');
   const song = await asset(env, project, input.songAssetId, 'audio');
   if (!song.sha256 || song.sha256.toLowerCase() !== pack.songSha256.toLowerCase()) fail('Choose the same saved song as the portable plan');
-  if (!Number.isSafeInteger(song.duration_ms) || song.duration_ms < pack.plan.endMs) fail('The chosen song is too short for this plan');
+  if (!Number.isSafeInteger(song.duration_ms) || (song.duration_ms as number) < pack.plan.endMs) fail('The chosen song is too short for this plan');
   const scenes=pack.plan.scenes.map(s=>({id:id('scn'),startMs:s.startMs,endMs:s.endMs,direction:s.direction,referenceAssetId:null,selectedTakeId:null}));
   const spec=await validateSpec(env,project,song,{...pack.plan,scenes});
   if(pack.plan.captions.length) { const prefix=id('cue'); spec.captions=validateCaptions({source:'owner_supplied',rightsConfirmed:true,cues:pack.plan.captions.map((c,i)=>({...c,id:`${prefix}_${String(i).padStart(3,'0')}`}))},spec.startMs,spec.endMs); }
   const stamp=now(),planId=id('plan');
   const saved=await env.DB.prepare(`INSERT INTO song_plans(id,project_id,song_asset_id,song_sha256,spec_json,revision,created_at,updated_at)
-    SELECT ?1,?2,?3,?4,?5,1,?6,?6 WHERE EXISTS (SELECT 1 FROM assets WHERE id=?3 AND project_id=?2 AND kind='audio' AND deleted_at IS NULL AND sha256=?4 AND duration_ms=?7) RETURNING *`).bind(planId,project.id,song.id,song.sha256,JSON.stringify(spec),stamp,song.duration_ms).first();
+    SELECT ?1,?2,?3,?4,?5,1,?6,?6 WHERE EXISTS (SELECT 1 FROM assets WHERE id=?3 AND project_id=?2 AND kind='audio' AND deleted_at IS NULL AND sha256=?4 AND duration_ms=?7) RETURNING *`).bind(planId,project.id,song.id,song.sha256,JSON.stringify(spec),stamp,song.duration_ms).first<SongPlanRow>();
   if(!saved) throw new HttpError(409,'The selected song changed. Review the import again.','song_changed');
   return songPlanView(saved);
 }
-export async function listSongPlans(env, project) {
-  const rows = await env.DB.prepare('SELECT * FROM song_plans WHERE project_id=?1 ORDER BY updated_at DESC').bind(project.id).all();
+export async function listSongPlans(env: SongPlanEnv, project: SongPlanProject): Promise<SongPlanRevisionView[]> {
+  const rows = await env.DB.prepare('SELECT * FROM song_plans WHERE project_id=?1 ORDER BY updated_at DESC').bind(project.id).all<SongPlanRow>();
   return Promise.all(rows.results.map(songPlanView));
 }
-export async function updateSongPlan(env, project, planId, input, { reviewedReferences = null } = {}) {
+export async function updateSongPlan(env: SongPlanEnv, project: SongPlanProject, planId: string, input: UpdateSongPlanInput, { reviewedReferences = null }: { reviewedReferences?: ReviewedReference[] | null } = {}): Promise<SongPlanRevisionView> {
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) fail('Provide the revision you last read');
-  const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first();
+  const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first<SongPlanRow>();
   if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
   if (row.revision !== input.expectedRevision) throw new HttpError(409, `This plan changed to revision ${row.revision}. Reload it before applying your edit. Nothing was saved.`, 'revision_conflict');
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
-  const previousSpec = safeJson(row.spec_json, {}), newOrigins = [];
+  const previousSpec = safeJson(row.spec_json, {}) as SongPlanSpec, newOrigins: SubjectOrigin[] = [];
   const spec = await validateSpec(env, project, song, input, previousSpec.scenes ?? [], newOrigins);
   const existingCaptions = previousSpec.captions;
   if (existingCaptions) spec.captions = validateCaptions(existingCaptions, spec.startMs, spec.endMs);
   let sql='UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5';
-  const args=[JSON.stringify(spec),now(),planId,project.id,input.expectedRevision];
+  const args: unknown[] =[JSON.stringify(spec),now(),planId,project.id,input.expectedRevision];
   if (reviewedReferences) {
     sql += ' AND EXISTS (SELECT 1 FROM assets WHERE id=?6 AND project_id=?4 AND sha256=?7 AND deleted_at IS NULL)'; args.push(song.id,song.sha256);
     for (const reference of reviewedReferences) { const n=args.length+1; sql += ` AND EXISTS (SELECT 1 FROM assets WHERE id=?${n} AND project_id=?4 AND kind=\'image\' AND sha256 IS ?${n+1} AND deleted_at IS NULL)`; args.push(reference.id,reference.sha256); }
@@ -128,18 +253,18 @@ export async function updateSongPlan(env, project, planId, input, { reviewedRefe
     sql += ` AND EXISTS (SELECT 1 FROM subject_versions s JOIN assets a ON a.id=s.reference_asset_id AND a.project_id=s.project_id AND a.kind='image' AND a.deleted_at IS NULL AND a.sha256=s.reference_sha256 WHERE s.subject_id=?${n} AND s.project_id=?4 AND s.revision=?${n+1})`;
     args.push(origin.subjectId,origin.revision);
   }
-  const updated = await env.DB.prepare(sql+' RETURNING *').bind(...args).first();
+  const updated = await env.DB.prepare(sql+' RETURNING *').bind(...args).first<SongPlanRow>();
   if (!updated) throw new HttpError(409, 'This plan changed while you were saving. Reload it and apply your edit again. Nothing was overwritten.', 'revision_conflict');
   return songPlanView(updated);
 }
 
 // Caption timing is in source-song milliseconds. Export shifts it to the
 // chosen segment's zero point; no external transcription service is used.
-function validateCaptions(captions, startMs, endMs) {
+function validateCaptions(captions: CaptionDraft | null | undefined, startMs: number, endMs: number): Captions | null {
   if (!captions) return null;
   if (captions.source !== 'owner_supplied' || captions.rightsConfirmed !== true || !Array.isArray(captions.cues) || captions.cues.length > 100) fail('Confirm permission for the supplied lyrics and provide at most 100 cues');
-  const seen = new Set();
-  const cues = captions.cues.map((cue) => {
+  const seen = new Set<string>();
+  const cues = captions.cues.map((cue): CaptionCue => {
     if (!cue || !/^[a-z0-9_]{4,80}$/.test(cue.id ?? '') || seen.has(cue.id)) fail('Each caption needs a unique stable ID');
     seen.add(cue.id);
     const from = integer(cue.startMs, 'Caption start'), to = integer(cue.endMs, 'Caption end');
@@ -151,37 +276,37 @@ function validateCaptions(captions, startMs, endMs) {
   }).sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.id.localeCompare(b.id));
   return { source: 'owner_supplied', rightsConfirmed: true, cues };
 }
-async function planRow(env, project, planId) {
-  const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first();
+async function planRow(env: SongPlanEnv, project: SongPlanProject, planId: string): Promise<SongPlanRow> {
+  const row = await env.DB.prepare('SELECT * FROM song_plans WHERE id=?1 AND project_id=?2').bind(planId, project.id).first<SongPlanRow>();
   if (!row) throw new HttpError(404, 'Song plan not found', 'not_found');
   return row;
 }
-export async function updateSongCaptions(env, project, planId, input) {
+export async function updateSongCaptions(env: SongPlanEnv, project: SongPlanProject, planId: string, input: CaptionSaveInput): Promise<SongPlanRevisionView> {
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) fail('Provide the revision you last read');
   const row = await planRow(env, project, planId);
   if (row.revision !== input.expectedRevision) throw new HttpError(409, `This plan changed to revision ${row.revision}. Reload it before applying your edit. Nothing was saved.`, 'revision_conflict');
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
-  const spec = safeJson(row.spec_json, {});
+  const spec = safeJson(row.spec_json, {}) as SongPlanSpec;
   spec.captions = validateCaptions({ source: 'owner_supplied', rightsConfirmed: input.rightsConfirmed, cues: input.cues }, spec.startMs, spec.endMs);
-  const updated = await env.DB.prepare('UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5 RETURNING *').bind(JSON.stringify(spec), now(), planId, project.id, input.expectedRevision).first();
+  const updated = await env.DB.prepare('UPDATE song_plans SET spec_json=?1, revision=revision+1, updated_at=?2 WHERE id=?3 AND project_id=?4 AND revision=?5 RETURNING *').bind(JSON.stringify(spec), now(), planId, project.id, input.expectedRevision).first<SongPlanRow>();
   if (!updated) throw new HttpError(409, 'This plan changed while you were saving. Reload it and apply your edit again. Nothing was overwritten.', 'revision_conflict');
   return songPlanView(updated);
 }
 // WebVTT parses character references; SRT readers such as FFmpeg show them
 // literally. Keep ordinary ampersands in SRT while still neutralising markup.
-const escapeCaption = (value, format) => (format === 'vtt' ? value.replaceAll('&', '&amp;') : value).replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-function stamp(ms, format) {
+const escapeCaption = (value: string, format: 'srt' | 'vtt'): string => (format === 'vtt' ? value.replaceAll('&', '&amp;') : value).replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+function stamp(ms: number, format: 'srt' | 'vtt'): string {
   const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60, fraction = ms % 1000;
-  const two = n => String(n).padStart(2, '0');
+  const two: (n: number) => string = n => String(n).padStart(2, '0');
   return `${two(h)}:${two(m)}:${two(s)}${format === 'srt' ? ',' : '.'}${String(fraction).padStart(3, '0')}`;
 }
-export async function exportSongCaptions(env, project, planId, format) {
+export async function exportSongCaptions(env: SongPlanEnv, project: SongPlanProject, planId: string, format: 'srt' | 'vtt'): Promise<{ format: 'srt' | 'vtt'; content: string; revision: number }> {
   if (!['srt', 'vtt'].includes(format)) fail('Choose SRT or WebVTT');
   const row = await planRow(env, project, planId);
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
-  const spec = safeJson(row.spec_json, {});
+  const spec = safeJson(row.spec_json, {}) as SongPlanSpec;
   const captions = validateCaptions(spec.captions, spec.startMs, spec.endMs);
   if (!captions || !captions.cues.length) throw new HttpError(404, 'This plan has no saved captions', 'not_found');
   const blocks = captions.cues.map((cue, i) => `${format === 'srt' ? i + 1 : cue.id}\n${stamp(cue.startMs-spec.startMs, format)} --> ${stamp(cue.endMs-spec.startMs, format)}\n${cue.speaker ? escapeCaption(cue.speaker, format) + ': ' : ''}${escapeCaption(cue.text, format)}\n`).join('\n');

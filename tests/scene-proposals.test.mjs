@@ -1,5 +1,5 @@
 import { test } from 'node:test'; import assert from 'node:assert/strict';
-import worker from '../src/worker.mjs'; import {createSession} from '../src/lib/auth.mjs'; import {createSongPlan,updateSongPlan,updateSongCaptions,listSongPlans} from '../src/lib/song-plans.mjs'; import {setup,addAsset} from './harness.mjs';
+import worker from '../src/worker.mjs'; import {createSession} from '../src/lib/auth.mjs'; import {createSongPlan,updateSongPlan,updateSongCaptions,listSongPlans} from '../src/lib/song-plans.ts'; import {setup,addAsset} from './harness.mjs';
 async function fixture(){
  const {env,project}=await setup(); await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:30000}); await addAsset(env,project,{id:'asset_image1',kind:'image'}); await addAsset(env,project,{id:'asset_take01',kind:'video'});
  let plan=await createSongPlan(env,project,{songAssetId:'asset_song1',rightsConfirmed:true,title:'Fictional',aspect:'16:9',startMs:0,endMs:12000,sceneCount:3});

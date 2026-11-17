@@ -6,7 +6,7 @@
 // bounded request with no retries.
 import { HttpError, money, safeJson, text } from './util.mjs';
 import { previewSceneProposal } from './scene-proposals.mjs';
-import { songPlanRevisionDigest, viewSongPlan } from './song-plans.mjs';
+import { songPlanRevisionDigest, viewSongPlan } from './song-plans.ts';
 
 export const DIRECTOR_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const MAX_REQUEST = 1200;

@@ -44,7 +44,7 @@ import {
 import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
 import { previewSceneProposal, applySceneProposal } from "./lib/scene-proposals.mjs";
 import { proposeSceneDirection, diagnoseShots } from "./lib/director.mjs";
-import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.mjs";
+import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.ts";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.mjs";
 import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
 import {
