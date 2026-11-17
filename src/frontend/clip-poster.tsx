@@ -1,4 +1,4 @@
-import { clipPosterError } from "./clip-poster-eligibility.mjs";
+import { clipPosterError } from "./clip-poster-eligibility.ts";
 import { useEffect, useRef, useState } from "react";
 
 /** Capture a still from the finished local MP4; never sends or changes its source. */
