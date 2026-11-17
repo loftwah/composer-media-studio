@@ -7,7 +7,140 @@ import {
   MAX_IMAGE_OUTPUT_DIMENSION,
 } from "./image-limits.ts";
 
-export const CROP_ASPECTS = Object.freeze({
+export type CropAspectKey =
+  | "original"
+  | "square"
+  | "portrait"
+  | "portraitTall"
+  | "landscape"
+  | "wide"
+  | "tall"
+  | "photo";
+
+export type CropAnchorKey =
+  | "centre"
+  | "top"
+  | "bottom"
+  | "left"
+  | "right"
+  | "topLeft"
+  | "topRight"
+  | "bottomLeft"
+  | "bottomRight";
+
+export type ResizePlan =
+  | { mode: "long-edge"; longEdge: number; shrinkOnly?: boolean }
+  | { mode: "exact"; width: number; height: number };
+
+export type ImageCrop = { x: number; y: number; width: number; height: number };
+
+export type StraightenPlan = {
+  angle: number;
+  boundingWidth: number;
+  boundingHeight: number;
+  width: number;
+  height: number;
+  offset: { x: number; y: number };
+};
+
+export type StraightenGeometry = {
+  angle: number;
+  radians: number;
+  cos: number;
+  sin: number;
+  width: number;
+  height: number;
+  boundingWidth: number;
+  boundingHeight: number;
+  crop: ImageCrop;
+};
+
+export type TransformPlan =
+  | {
+      ok: true;
+      sourceWidth: number;
+      sourceHeight: number;
+      rotate: number;
+      flipH: boolean;
+      flipV: boolean;
+      rotatedWidth: number;
+      rotatedHeight: number;
+      straighten: StraightenPlan | null;
+      crop: ImageCrop;
+      outputWidth: number;
+      outputHeight: number;
+      scaleX: number;
+      scaleY: number;
+      aspectDistorted: boolean;
+      upscaled: boolean;
+    }
+  | { ok: false; error: string };
+
+type SuccessfulTransformPlan = Extract<TransformPlan, { ok: true }>;
+
+export type KeptArea = {
+  points: Array<{ x: number; y: number }>;
+  area: number;
+};
+
+export type TargetSearchResult =
+  | {
+      ok: true;
+      met: boolean;
+      quality: number;
+      bytes: number;
+      blob: Blob;
+      attempts: number;
+      targetBytes: number;
+      overBy?: number;
+    }
+  | { ok: false; error: string };
+
+type Point = { x: number; y: number };
+type Dimensions = { width: number; height: number };
+
+type TransformInput = {
+  sourceWidth?: number;
+  sourceHeight?: number;
+  rotate?: number;
+  flipH?: boolean;
+  flipV?: boolean;
+  straighten?: number;
+  cropAspect?: number | null;
+  cropAnchor?: CropAnchorKey;
+  cropRect?: ImageCrop | null;
+  resize?: ResizePlan;
+  maxPixels?: number;
+  maxDimension?: number;
+};
+
+type DescribeInput = {
+  rotate?: number;
+  flipH?: boolean;
+  flipV?: boolean;
+  straighten?: number;
+  cropAspect?: CropAspectKey | number | null;
+  cropAnchor?: CropAnchorKey;
+  trimmed?: boolean;
+  resize?: ResizePlan | null;
+  resample?: "smooth" | "nearest";
+  adjustments?: string;
+  format?: string;
+  quality?: number | null;
+  metadata?: string;
+};
+
+type TargetSearchInput = {
+  targetBytes?: number;
+  encode?: (quality: number) => Promise<Blob>;
+  minQuality?: number;
+  maxQuality?: number;
+  attempts?: number;
+};
+
+type MeasuredEncode = { quality: number; bytes: number; blob: Blob };
+
+export const CROP_ASPECTS: Readonly<Record<CropAspectKey, number | null>> = Object.freeze({
   original: null,
   square: 1,
   portrait: 4 / 5,
@@ -18,7 +151,7 @@ export const CROP_ASPECTS = Object.freeze({
   photo: 3 / 2,
 });
 
-export const CROP_ASPECT_LABELS = Object.freeze({
+export const CROP_ASPECT_LABELS: Readonly<Record<CropAspectKey, string>> = Object.freeze({
   original: "Original aspect",
   square: "1:1 square",
   portrait: "4:5 portrait",
@@ -30,7 +163,7 @@ export const CROP_ASPECT_LABELS = Object.freeze({
 });
 
 /** Where the aspect crop is taken from, so a face or subject is not cut off. */
-export const CROP_ANCHOR_LABELS = Object.freeze({
+export const CROP_ANCHOR_LABELS: Readonly<Record<CropAnchorKey, string>> = Object.freeze({
   centre: "Centre",
   top: "Top",
   bottom: "Bottom",
@@ -42,7 +175,7 @@ export const CROP_ANCHOR_LABELS = Object.freeze({
   bottomRight: "Bottom right",
 });
 
-const CROP_ANCHOR_WORDS = Object.freeze({
+const CROP_ANCHOR_WORDS: Readonly<Record<CropAnchorKey, string>> = Object.freeze({
   centre: "centre",
   top: "top",
   bottom: "bottom",
@@ -54,15 +187,15 @@ const CROP_ANCHOR_WORDS = Object.freeze({
   bottomRight: "bottom-right",
 });
 
-export function isCropAnchor(value) {
+export function isCropAnchor(value: unknown): value is CropAnchorKey {
   return (
     typeof value === "string" &&
     Object.prototype.hasOwnProperty.call(CROP_ANCHOR_LABELS, value)
   );
 }
 
-function positiveInteger(value) {
-  return Number.isSafeInteger(value) && value > 0;
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 export const MAX_STRAIGHTEN_DEGREES = 45;
@@ -73,7 +206,7 @@ export const STRAIGHTEN_INSET_PX = 1;
  * A usable straighten angle in degrees, rounded to 0.1°. Positive turns
  * clockwise. `null` means the value cannot be used; 0 means no straightening.
  */
-export function normaliseStraighten(value) {
+export function normaliseStraighten(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   if (Math.abs(value) > MAX_STRAIGHTEN_DEGREES) return null;
   const rounded = Math.round(value * 10) / 10;
@@ -88,12 +221,12 @@ export function normaliseStraighten(value) {
  * the renderer and the visible keep overlay use the same numbers.
  */
 export function straightenGeometry(
-  width,
-  height,
-  degrees,
-  aspect = null,
-  inset = STRAIGHTEN_INSET_PX,
-) {
+  width: number,
+  height: number,
+  degrees: number,
+  aspect: number | null | undefined = null,
+  inset: number = STRAIGHTEN_INSET_PX,
+): StraightenGeometry | null {
   if (!positiveInteger(width) || !positiveInteger(height)) return null;
   const angle = normaliseStraighten(degrees);
   if (angle === null || angle === 0) return null;
@@ -140,7 +273,11 @@ export function straightenGeometry(
 }
 
 /** canvas dimensions after a clockwise quarter-turn count. */
-export function rotatedDimensions(width, height, rotate = 0) {
+export function rotatedDimensions(
+  width: number,
+  height: number,
+  rotate: number = 0,
+): Dimensions | null {
   if (!positiveInteger(width) || !positiveInteger(height)) return null;
   if (!Number.isInteger(rotate) || rotate < 0 || rotate > 3) return null;
   return rotate % 2 === 1 ? { width: height, height: width } : { width, height };
@@ -150,7 +287,12 @@ export function rotatedDimensions(width, height, rotate = 0) {
  * The largest rectangle with the requested aspect ratio, positioned by anchor.
  * Rounded dimensions are clamped to the source and never leave a zero side.
  */
-export function anchoredCrop(width, height, aspect = null, anchor = "centre") {
+export function anchoredCrop(
+  width: number,
+  height: number,
+  aspect: number | null | undefined = null,
+  anchor: CropAnchorKey = "centre",
+): ImageCrop | null {
   if (!positiveInteger(width) || !positiveInteger(height)) return null;
   if (!isCropAnchor(anchor)) return null;
   if (aspect === null || aspect === undefined) return { x: 0, y: 0, width, height };
@@ -176,11 +318,19 @@ export function anchoredCrop(width, height, aspect = null, anchor = "centre") {
 }
 
 /** The centred rectangle, kept as the documented default behaviour. */
-export function centredCrop(width, height, aspect = null) {
+export function centredCrop(
+  width: number,
+  height: number,
+  aspect: number | null = null,
+): ImageCrop | null {
   return anchoredCrop(width, height, aspect, "centre");
 }
 
-function cropWithin(rect, aspect = null, anchor = "centre") {
+function cropWithin(
+  rect: ImageCrop,
+  aspect: number | null | undefined = null,
+  anchor: CropAnchorKey = "centre",
+): ImageCrop | null {
   if (aspect === null || aspect === undefined) return { ...rect };
   const inner = anchoredCrop(rect.width, rect.height, aspect, anchor);
   if (!inner) return null;
@@ -192,17 +342,22 @@ function cropWithin(rect, aspect = null, anchor = "centre") {
   };
 }
 
-function validCropRect(rect) {
+function validCropRect(rect: unknown): rect is ImageCrop {
+  if (!rect || typeof rect !== "object") return false;
+  const candidate = rect as Partial<ImageCrop>;
   return (
-    rect &&
-    Number.isSafeInteger(rect.x) &&
-    Number.isSafeInteger(rect.y) &&
-    positiveInteger(rect.width) &&
-    positiveInteger(rect.height)
+    Number.isSafeInteger(candidate.x) &&
+    Number.isSafeInteger(candidate.y) &&
+    positiveInteger(candidate.width) &&
+    positiveInteger(candidate.height)
   );
 }
 
-function scaleToLongEdge(cropWidth, cropHeight, longEdge) {
+function scaleToLongEdge(
+  cropWidth: number,
+  cropHeight: number,
+  longEdge: number,
+): Dimensions {
   if (cropWidth >= cropHeight) {
     return {
       width: longEdge,
@@ -239,7 +394,7 @@ export function planImageTransform({
   resize = { mode: "long-edge", longEdge: 2048 },
   maxPixels = MAX_DECODED_PIXELS,
   maxDimension = MAX_IMAGE_OUTPUT_DIMENSION,
-} = {}) {
+}: TransformInput = {}): TransformPlan {
   if (!positiveInteger(sourceWidth) || !positiveInteger(sourceHeight))
     return { ok: false, error: "The source dimensions are not usable." };
   if (!Number.isInteger(rotate) || rotate < 0 || rotate > 3)
@@ -299,7 +454,7 @@ export function planImageTransform({
   )
     return { ok: false, error: "The crop does not fit inside the source." };
 
-  let output;
+  let output: Dimensions;
   if (resize?.mode === "long-edge") {
     if (!positiveInteger(resize.longEdge))
       return { ok: false, error: "Choose a whole-number long edge." };
@@ -365,7 +520,7 @@ export function planImageTransform({
  * Map a point in the transformed stage back to the displayed (EXIF-oriented)
  * source image, undoing straightening, flips and quarter turns in that order.
  */
-function sourcePointForStage(plan, point) {
+function sourcePointForStage(plan: SuccessfulTransformPlan, point: Point): Point {
   let x = point.x;
   let y = point.y;
   if (plan.straighten) {
@@ -392,12 +547,12 @@ function sourcePointForStage(plan, point) {
  * visible overlay. `area` is in source pixels and matches the crop area, so a
  * zero-area or malformed plan cannot be presented as a real selection.
  */
-export function keptAreaPolygon(plan) {
+export function keptAreaPolygon(plan: TransformPlan): KeptArea | null {
   if (!plan || plan.ok !== true) return null;
   const crop = plan.crop;
   if (!validCropRect(crop)) return null;
   if (!positiveInteger(plan.sourceWidth) || !positiveInteger(plan.sourceHeight)) return null;
-  const corners = [
+  const corners: Point[] = [
     { x: crop.x, y: crop.y },
     { x: crop.x + crop.width, y: crop.y },
     { x: crop.x + crop.width, y: crop.y + crop.height },
@@ -421,7 +576,7 @@ export function keptAreaPolygon(plan) {
 
 export const DEFAULT_RESIZE_LONG_EDGE = 2048;
 
-export function defaultLongEdge(width, height) {
+export function defaultLongEdge(width: number, height: number): number {
   if (!positiveInteger(width) || !positiveInteger(height)) return DEFAULT_RESIZE_LONG_EDGE;
   return Math.max(1, Math.min(DEFAULT_RESIZE_LONG_EDGE, Math.max(width, height)));
 }
@@ -435,7 +590,10 @@ export const MIN_TARGET_BYTES = 1024;
  * A byte target is only an instruction for a lossy encoder. PNG is honest about
  * not having one, and the bounds match the export path.
  */
-export function targetSizeProblem(format, targetBytes) {
+export function targetSizeProblem(
+  format: string,
+  targetBytes: number | null | undefined,
+): string | null {
   if (targetBytes === null || targetBytes === undefined) return null;
   if (format === "png")
     return "PNG is lossless, so a byte target cannot be guaranteed. Lower the output width and height, or choose JPEG or WebP.";
@@ -446,7 +604,7 @@ export function targetSizeProblem(format, targetBytes) {
   return null;
 }
 
-function roundQuality(value) {
+function roundQuality(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
@@ -465,11 +623,16 @@ export async function searchTargetQuality({
   minQuality = TARGET_QUALITY_MIN,
   maxQuality = TARGET_QUALITY_MAX,
   attempts = TARGET_SEARCH_ATTEMPTS,
-} = {}) {
-  if (!Number.isSafeInteger(targetBytes) || targetBytes < MIN_TARGET_BYTES)
+}: TargetSearchInput = {}): Promise<TargetSearchResult> {
+  if (
+    typeof targetBytes !== "number" ||
+    !Number.isSafeInteger(targetBytes) ||
+    targetBytes < MIN_TARGET_BYTES
+  )
     return { ok: false, error: `Choose a target of at least ${MIN_TARGET_BYTES / 1024} KiB.` };
   if (typeof encode !== "function")
     return { ok: false, error: "This browser cannot encode a target-sized result." };
+  const encodeBlob = encode;
   if (
     !Number.isFinite(minQuality) ||
     !Number.isFinite(maxQuality) ||
@@ -482,9 +645,9 @@ export async function searchTargetQuality({
     return { ok: false, error: "The quality search must run between 2 and 12 attempts." };
 
   let used = 0;
-  async function attempt(quality) {
+  async function attempt(quality: number): Promise<MeasuredEncode> {
     const rounded = roundQuality(quality);
-    const blob = await encode(rounded);
+    const blob = await encodeBlob(rounded);
     used += 1;
     if (!blob || !Number.isFinite(blob.size) || blob.size < 1)
       throw new Error("The encoder returned no measurable image bytes.");
@@ -540,16 +703,19 @@ export async function searchTargetQuality({
 }
 
 /** Canvas sampling settings for the chosen resampler. */
-export function imageSmoothingFor(resample = "smooth") {
+export function imageSmoothingFor(resample: "smooth" | "nearest" = "smooth"): {
+  enabled: boolean;
+  quality: "low" | "high";
+} {
   return resample === "nearest"
     ? { enabled: false, quality: "low" }
     : { enabled: true, quality: "high" };
 }
 
-function cropAspectLabel(cropAspect) {
+function cropAspectLabel(cropAspect: CropAspectKey | number | null | undefined): string {
   if (typeof cropAspect === "string") return CROP_ASPECT_LABELS[cropAspect] ?? "aspect";
   const match = Object.entries(CROP_ASPECTS).find(([, value]) => value === cropAspect);
-  return match ? CROP_ASPECT_LABELS[match[0]] : "aspect";
+  return match ? CROP_ASPECT_LABELS[match[0] as CropAspectKey] : "aspect";
 }
 
 /** A deterministic caption fragment for an explicit Studio import. */
@@ -567,8 +733,8 @@ export function describeTransform({
   format = "png",
   quality = null,
   metadata = "re-encoded",
-} = {}) {
-  const parts = [];
+}: DescribeInput = {}): string {
+  const parts: string[] = [];
   if (rotate) parts.push(`rotate ${rotate * 90}°`);
   if (flipH) parts.push("flip horizontal");
   if (flipV) parts.push("flip vertical");
@@ -595,13 +761,13 @@ export function describeTransform({
 }
 
 /** Filename-safe extension for the output encoder. */
-export function extensionForImageMime(mime) {
+export function extensionForImageMime(mime: string): string {
   if (mime === "image/jpeg") return "jpg";
   if (mime === "image/webp") return "webp";
   return "png";
 }
 
-export function mimeForExport(format) {
+export function mimeForExport(format: string): string {
   if (format === "jpeg") return "image/jpeg";
   if (format === "webp") return "image/webp";
   return "image/png";
