@@ -361,7 +361,7 @@ const CAPABILITY_ORDER = ["original", "variation", "refinement", "assembled"];
 // same public boundary. `listed=1` is the deliberate listing decision: hidden,
 // unlisted, withdrawn and privately published rows never enter `works`.
 const publicWorksSql = `WITH works AS (
-  SELECT p.id,p.slug,p.title,p.description,p.created_at,a.kind,a.mime,a.width,a.height,
+  SELECT p.id,p.project_id,p.slug,p.title,p.description,p.created_at,a.kind,a.mime,a.width,a.height,
     pr.slug AS project_slug,pr.name AS project_name,
     poster.id AS poster_asset_id,poster.width AS poster_width,poster.height AS poster_height,
     t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height,
@@ -430,6 +430,28 @@ async function publicCatalogue(env, page = 1, limit = 24, { query = "", kind = "
     project: selectedProject,
     capability: selectedCapability,
   };
+}
+
+/**
+ * Up to three other listed, still-public works from the SAME project as the
+ * current page. This reuses the exact `works` public boundary above — listed,
+ * not hidden, not withdrawn and backed by a live asset — so an unlisted,
+ * private, withdrawn or deleted work can never enter, and a different project
+ * is excluded by its stored project id rather than a guessed relationship.
+ * One bounded query, deterministic newest-first order (id breaks ties), no
+ * facets. The caller checks that the current work is also listed.
+ */
+async function relatedWorks(env, projectId, excludeId) {
+  if (!projectId || !excludeId) return [];
+  const result = await env.DB.prepare(`${publicWorksSql}
+    SELECT slug,title,description,created_at,kind,mime,width,height,
+      thumb_id,thumb_width,thumb_height,poster_asset_id,poster_width,poster_height,
+      poster_preview_id,poster_preview_width,poster_preview_height
+    FROM works WHERE project_id=?1 AND id!=?2
+    ORDER BY created_at DESC, id DESC LIMIT 3`)
+    .bind(projectId, excludeId)
+    .all();
+  return result.results;
 }
 
 /** Every private route that names a project checks the same binding: the
@@ -2352,11 +2374,18 @@ async function handlePublic(request, env, url) {
         if (params.size) galleryBack += `?${params}`;
       }
     }
+    // Bounded, same-project public continuations. Uses the gallery's own public
+    // read boundary and card renderer; nothing is listed, published or changed.
+    const listed = Boolean(publication.listed) && !publication.hidden;
+    const related = listed
+      ? await relatedWorks(env, publication.project_id, publication.id)
+      : [];
     const html = publicPage({
       galleryBack,
+      related,
       title: publication.title,
       description: publication.description,
-      listed: Boolean(publication.listed) && !publication.hidden,
+      listed,
       attribution: safeJson(publication.attribution_json, []),
       kind: publication.asset_kind,
       mime: publication.asset_mime,

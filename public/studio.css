@@ -446,6 +446,11 @@ dialog h2 { margin: 0; }
 .public-credits { margin: 2rem 0; }
 .public-credits .licence-copy { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-width: 72ch; }
 
+/* A bounded continuation on a work page: same gallery cards, quieter frame. */
+.public-related { margin: 2.75rem 0 0; padding-top: 1.75rem; border-top: 1px solid var(--line); }
+.public-related h2 { margin-bottom: .3rem; }
+.public-related > .small { margin: 0 0 1.5rem; color: var(--muted); }
+
 .trim-preview { display:block; width:min(100%, 32rem); max-height:18rem; margin:0 auto 1rem; background:#111; object-fit:contain; }
 
 .gallery-controls { display:flex; flex-wrap:wrap; gap:.75rem; align-items:end; margin:0 0 2rem; }
