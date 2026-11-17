@@ -7,7 +7,7 @@ import {
   batchCountProblem,
   imageInputProblem,
   imagePixelProblem,
-} from "../src/frontend/image-limits.mjs";
+} from "../src/frontend/image-limits.ts";
 
 test("local image inputs are capped at 32 MiB and the accepted formats", () => {
   assert.equal(MAX_IMAGE_INPUT_BYTES, 32 * 1024 * 1024);

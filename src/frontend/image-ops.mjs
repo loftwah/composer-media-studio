@@ -5,7 +5,7 @@ import {
   MAX_DECODED_PIXELS,
   MAX_IMAGE_OUTPUT_BYTES,
   MAX_IMAGE_OUTPUT_DIMENSION,
-} from "./image-limits.mjs";
+} from "./image-limits.ts";
 
 export const CROP_ASPECTS = Object.freeze({
   original: null,
