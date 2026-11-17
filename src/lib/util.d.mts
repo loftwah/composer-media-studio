@@ -9,6 +9,19 @@ export class HttpError extends Error {
   constructor(status: number, message: string, code?: string);
 }
 
+export function id(prefix: string): string;
+
+export function now(): number;
+
+export function safeJson<T>(value: string, fallback: T): T;
+
+export function text(
+  value: unknown,
+  max: number,
+  label: string,
+  options?: { required?: boolean },
+): string;
+
 export function extensionFor(mime: string): string;
 
 export function escapeHtml(value: unknown): string;

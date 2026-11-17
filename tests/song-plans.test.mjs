@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSongPlan, listSongPlans, updateSongPlan } from '../src/lib/song-plans.mjs';
+import { createSongPlan, listSongPlans, updateSongPlan } from '../src/lib/song-plans.ts';
 import { setup, addAsset } from './harness.mjs';
 
 const input = { songAssetId:'asset_song1', rightsConfirmed:true, title:'A film', aspect:'16:9', startMs:1000, endMs:31000, sceneCount:4 };
@@ -41,7 +41,7 @@ test('simultaneous edits on the same revision admit only one writer', async () =
 });
 
 test('manual captions survive scene edits and export relative SRT and WebVTT without provider calls', async () => {
-  const { updateSongCaptions, exportSongCaptions } = await import('../src/lib/song-plans.mjs');
+  const { updateSongCaptions, exportSongCaptions } = await import('../src/lib/song-plans.ts');
   const {env,project}=await setup(); await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:40000});
   const plan=await createSongPlan(env,project,input);
   const captions=await updateSongCaptions(env,project,plan.id,{expectedRevision:1,rightsConfirmed:true,cues:[

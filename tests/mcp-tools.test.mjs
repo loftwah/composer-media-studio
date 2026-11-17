@@ -113,7 +113,7 @@ test('MCP footage cut maps use existing authorised project and cannot read anoth
 });
 
 test('MCP turns an authorised ready song plan into the same saved storyboard without spending', async () => {
-  const { createSongPlan, updateSongPlan } = await import('../src/lib/song-plans.mjs');
+  const { createSongPlan, updateSongPlan } = await import('../src/lib/song-plans.ts');
   const { env, project } = await setup();
   await addAsset(env, project, { id: 'asset_song1', kind: 'audio', durationMs: 20000 });
   for (let i = 1; i <= 4; i++) await addAsset(env, project, { id: `asset_take0${i}`, kind: 'video', durationMs: i === 1 ? 5200 : 5000 });
@@ -163,7 +163,7 @@ test('MCP scene proposal previews without mutation and applies only its exact sc
 });
 
 test('MCP preserves a private subject origin through explicit and legacy scene updates', async () => {
-  const { createSongPlan } = await import('../src/lib/song-plans.mjs');
+  const { createSongPlan } = await import('../src/lib/song-plans.ts');
   const { saveSubject } = await import('../src/lib/subjects.mjs');
   const {env,project}=await setup();
   await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:4000});
@@ -184,7 +184,7 @@ test('MCP preserves a private subject origin through explicit and legacy scene u
 });
 
 test('MCP applies the exact reviewed scene revision, reads it back and refuses a stale revision', async () => {
-  const { createSongPlan, updateSongPlan } = await import('../src/lib/song-plans.mjs');
+  const { createSongPlan, updateSongPlan } = await import('../src/lib/song-plans.ts');
   const { env, project } = await setup();
   await addAsset(env, project, { id: 'asset_song1', kind: 'audio', durationMs: 20000 });
   await addAsset(env, project, { id: 'asset_image1', kind: 'image' });

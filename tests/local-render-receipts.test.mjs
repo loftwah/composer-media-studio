@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
 import { createComposition } from '../src/lib/jobs.mjs';
-import { createSongPlan, updateSongPlan, updateSongCaptions } from '../src/lib/song-plans.mjs';
+import { createSongPlan, updateSongPlan, updateSongCaptions } from '../src/lib/song-plans.ts';
 import { setup, addAsset } from './harness.mjs';
 
 const sha='a'.repeat(64);

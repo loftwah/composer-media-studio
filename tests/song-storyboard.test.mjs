@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSongPlan, updateSongPlan } from '../src/lib/song-plans.mjs';
+import { createSongPlan, updateSongPlan } from '../src/lib/song-plans.ts';
 import { createStoryboardFromSongPlan, createRender, updateComposition } from '../src/lib/jobs.mjs';
 import { setup, addAsset } from './harness.mjs';
 

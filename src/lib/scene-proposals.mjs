@@ -1,6 +1,6 @@
 // Typed, project-scoped scene proposals. Preview is stateless and does not imply human approval.
 import { HttpError, sha256Hex, text } from './util.mjs';
-import { songPlanRevisionDigest, updateSongPlan, viewSongPlan } from './song-plans.mjs';
+import { songPlanRevisionDigest, updateSongPlan, viewSongPlan } from './song-plans.ts';
 
 const invalid = message => { throw new HttpError(400, message, 'invalid_proposal'); };
 const conflict = revision => {
