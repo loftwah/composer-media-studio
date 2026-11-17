@@ -86,6 +86,7 @@ import "./images.css";
 type ExportFormat = "png" | "jpeg" | "webp";
 type ResizeMode = "long-edge" | "exact";
 type ResampleMode = "smooth" | "nearest";
+type PreviewBackdrop = "checkerboard" | "white" | "black";
 type ItemStatus = "ready" | "working" | "done" | "error" | "cancelled";
 
 type Settings = {
@@ -704,6 +705,7 @@ function Images() {
   const [items, setItems] = useState<WorkItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [previewBackdrop, setPreviewBackdrop] = useState<PreviewBackdrop>("checkerboard");
   const [message, setMessage] = useState("");
   const [rejections, setRejections] = useState<Rejection[]>([]);
   const [adding, setAdding] = useState(false);
@@ -1021,6 +1023,7 @@ function Images() {
     setItems([]);
     setSelectedId("");
     setSettings(DEFAULT_SETTINGS);
+    setPreviewBackdrop("checkerboard");
     setTrim(null);
     setTrimMessage("");
     setPalette(null);
@@ -1891,6 +1894,28 @@ function Images() {
             </p>
           )}
 
+          {selected.result && selected.source.alpha && selected.result.mime !== "image/jpeg" && (
+            <fieldset className="image-controls">
+              <legend>Preview backdrop</legend>
+              <label>
+                Preview background
+                <select
+                  value={previewBackdrop}
+                  onChange={(event) => setPreviewBackdrop(event.target.value as PreviewBackdrop)}
+                  aria-describedby="image-backdrop-note"
+                >
+                  <option value="checkerboard">Checkerboard</option>
+                  <option value="white">White</option>
+                  <option value="black">Black</option>
+                </select>
+              </label>
+              <p className="trim-note" id="image-backdrop-note">
+                Use white or black to check for halos around transparent edges.
+                This changes the previews on screen. Your download stays the same.
+              </p>
+            </fieldset>
+          )}
+
           <div className="image-compare">
             <figure>
               <figcaption>Before · {selected.source.orientedWidth} × {selected.source.orientedHeight} · {formatBytes(selected.file.size)}</figcaption>
@@ -1901,7 +1926,7 @@ function Images() {
                 <figcaption>
                   After · {selected.result.width} × {selected.result.height} · {formatBytes(selected.result.bytes)} · {selected.result.mime}
                 </figcaption>
-                <img src={selected.result.url} alt={`Processed ${selected.file.name}`} />
+                <img src={selected.result.url} alt={`Processed ${selected.file.name}`} data-backdrop={previewBackdrop} />
               </figure>
             )}
           </div>
@@ -2068,6 +2093,7 @@ function Images() {
                       tabIndex={0}
                       width={selected.result.width}
                       height={selected.result.height}
+                      data-backdrop={previewBackdrop}
                       aria-describedby="image-eyedropper-help"
                       onPointerMove={(event) => {
                         if (event.pointerType === "mouse")
