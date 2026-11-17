@@ -96,7 +96,7 @@ test("crop position and embed code are wired as honest controls", () => {
 });
 
 test("the adjustment and snippet modules stay local and dependency-free", () => {
-  for (const file of ["image-adjust.ts", "image-snippets.mjs"]) {
+  for (const file of ["image-adjust.ts", "image-snippets.ts"]) {
     const source = readFileSync(new URL(`../src/frontend/${file}`, import.meta.url), "utf8");
     assert.doesNotMatch(source, /from "react"|fetch\(|XMLHttpRequest|import\(/, file);
     assert.doesNotMatch(source, /https?:\/\//, file);

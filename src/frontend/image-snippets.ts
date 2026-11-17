@@ -2,12 +2,32 @@
 // The snippets wrap the exact exported bytes in a data URI. They are not a
 // privacy feature: anyone holding the text holds the image.
 
+export type SnippetKind = "base64" | "dataUri" | "css" | "html" | "markdown";
+
+export type SnippetResult =
+  | {
+      ok: true;
+      mime: string;
+      bytes: number;
+      base64Length: number;
+      dataUriLength: number;
+      snippets: Record<SnippetKind, string>;
+      warning: string | null;
+    }
+  | { ok: false; error: string };
+
 export const MAX_SNIPPET_BYTES = 2 * 1024 * 1024;
 export const SNIPPET_WARN_BYTES = 128 * 1024;
 
-export const SNIPPET_KINDS = Object.freeze(["base64", "dataUri", "css", "html", "markdown"]);
+export const SNIPPET_KINDS: ReadonlyArray<SnippetKind> = Object.freeze([
+  "base64",
+  "dataUri",
+  "css",
+  "html",
+  "markdown",
+]);
 
-export const SNIPPET_LABELS = Object.freeze({
+export const SNIPPET_LABELS: Readonly<Record<SnippetKind, string>> = Object.freeze({
   base64: "Base64",
   dataUri: "Data URI",
   css: "CSS",
@@ -20,7 +40,7 @@ const SNIPPET_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const BASE64_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-const HTML_ESCAPES = Object.freeze({
+const HTML_ESCAPES: Readonly<Record<string, string>> = Object.freeze({
   "&": "&amp;",
   "<": "&lt;",
   ">": "&gt;",
@@ -29,15 +49,15 @@ const HTML_ESCAPES = Object.freeze({
 });
 
 /** The whole `<img>`/Markdown text is attribute-escaped, not sanitised HTML. */
-export function escapeSnippetText(value) {
+export function escapeSnippetText(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (character) => HTML_ESCAPES[character]);
 }
 
-function escapeMarkdownAlt(value) {
+function escapeMarkdownAlt(value: unknown): string {
   return String(value ?? "").replace(/[\\[\]]/g, (character) => `\\${character}`);
 }
 
-function safeClassName(filename) {
+function safeClassName(filename: unknown): string {
   const stem = String(filename ?? "")
     .replace(/\.[^.]+$/, "")
     .toLowerCase()
@@ -47,16 +67,16 @@ function safeClassName(filename) {
   return stem ? `image-${stem}` : "image";
 }
 
-function formatSnippetBytes(bytes) {
+function formatSnippetBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
 }
 
 /** Standard base64 with padding, built without Buffer or a Node-only path. */
-export function bytesToBase64(bytes) {
+export function bytesToBase64(bytes: Uint8Array): string {
   if (!bytes || typeof bytes.length !== "number") return "";
-  const chunks = [];
+  const chunks: string[] = [];
   let chunk = "";
   const length = bytes.length;
   for (let index = 0; index < length; index += 3) {
@@ -81,7 +101,7 @@ export function bytesToBase64(bytes) {
 }
 
 /** Decode base64 for verification; returns null for malformed input. */
-export function base64ToBytes(text) {
+export function base64ToBytes(text: string): Uint8Array | null {
   const value = String(text ?? "").replace(/\s+/g, "");
   if (!value) return new Uint8Array(0);
   if (value.length % 4 !== 0) return null;
@@ -108,11 +128,23 @@ export function base64ToBytes(text) {
  * encoded file, so the data URI and the download are the same pixels and the
  * same container.
  */
-export function buildImageSnippets({ bytes, mime, filename = "image", width = 0, height = 0 } = {}) {
+export function buildImageSnippets({
+  bytes,
+  mime,
+  filename = "image",
+  width = 0,
+  height = 0,
+}: {
+  bytes?: Uint8Array;
+  mime?: string;
+  filename?: string;
+  width?: number;
+  height?: number;
+} = {}): SnippetResult {
   if (!bytes || typeof bytes.length !== "number" || bytes.length < 1)
     return { ok: false, error: "There are no encoded bytes to embed." };
   if (mime === "image/jpg") mime = "image/jpeg";
-  if (!SNIPPET_MIMES.has(mime))
+  if (typeof mime !== "string" || !SNIPPET_MIMES.has(mime))
     return { ok: false, error: "Embed code is available for PNG, JPEG and WebP results only." };
   if (bytes.length > MAX_SNIPPET_BYTES)
     return {
