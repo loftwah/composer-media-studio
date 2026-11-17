@@ -19,7 +19,7 @@ async function main() {
 
   const report = await runLocalImages(source, async page => {
     await page.getByRole("button", { name: "Extract palette", exact: true }).click();
-    const bytes = await downloadLink(page, page.getByRole("link", { name: "Download palette (.json)", exact: true }));
+    const { bytes } = await downloadLink(page, page.getByRole("link", { name: "Download palette (.json)", exact: true }));
     const actual = JSON.parse(bytes.toString("utf8"));
     assert(isDeepStrictEqual(actual, expected), "The browser palette did not reproduce the selected JSON.");
     return {
