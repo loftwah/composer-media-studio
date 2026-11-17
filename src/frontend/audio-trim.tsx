@@ -23,6 +23,7 @@ function AudioTrim() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const chooser = useRef<HTMLInputElement>(null);
   const revision = useRef(0);
   useEffect(() => () => { if (sourceUrl) URL.revokeObjectURL(sourceUrl); }, [sourceUrl]);
   useEffect(() => () => { if (outputUrl) URL.revokeObjectURL(outputUrl); }, [outputUrl]);
@@ -42,13 +43,19 @@ function AudioTrim() {
       ctx.fillRect(x, height / 2 - peak * height / 2, 1, Math.max(1, peak * height));
     }
   }, [buffer]);
+  function refuse(text: string, retained: boolean) {
+    setMessage(retained ? `${text} Your current track is still ready.` : text);
+    const element = chooser.current;
+    const activeElement = document.activeElement;
+    if (element && (!activeElement || activeElement === document.body || activeElement === element)) element.focus();
+  }
   async function choose(next: File | undefined) {
-    const current = ++revision.current;
-    setFile(null); setBuffer(null); setSourceUrl(""); setOutputUrl(""); setOutputBlob(null); setMessage(""); setBusy(false);
+    if (busy || importing) return;
     if (!next) return;
-    if (next.size > MAX_BYTES) { setMessage("Choose a file under 16 MB."); return; }
-    const url = URL.createObjectURL(next);
-    setSourceUrl(url); setBusy(true);
+    const current = ++revision.current;
+    const retained = file !== null;
+    if (next.size > MAX_BYTES) { refuse("Choose a file under 16 MB.", retained); return; }
+    setBusy(true);
     try {
       const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(next) });
       let info: { seconds: number; channels: number; sourceRate: number };
@@ -68,13 +75,15 @@ function AudioTrim() {
         if (!Number.isFinite(decoded.duration) || decoded.duration <= 0 || decoded.duration > MAX_LOCAL_AUDIO_SECONDS || decoded.numberOfChannels > 2 || decoded.length * decoded.numberOfChannels * 4 > MAX_LOCAL_PCM_BYTES) throw new Error("The decoded audio exceeds this tool's local limits.");
       } finally { await context.close(); }
       if (current !== revision.current) return;
-      setFile(next); setBuffer(decoded); setStart(0); setEnd(decoded.duration > MAX_TRIM_SECONDS ? Math.min(decoded.duration, DEFAULT_TRIM_SECONDS) : decoded.duration); setFadeIn(0); setFadeOut(0);
+        setFile(next); setBuffer(decoded); setSourceUrl(URL.createObjectURL(next)); setStart(0); setEnd(decoded.duration > MAX_TRIM_SECONDS ? Math.min(decoded.duration, DEFAULT_TRIM_SECONDS) : decoded.duration); setFadeIn(0); setFadeOut(0); setOutputUrl(""); setOutputBlob(null);
       setMessage("Ready. Choose a start and end, then make your WAV.");
-    } catch (error) { if (current === revision.current) { setSourceUrl(""); setMessage(error instanceof Error ? error.message : "Could not open this file."); } }
+    } catch (error) {
+      if (current === revision.current) refuse(error instanceof Error ? error.message : "Could not open this file.", retained);
+    }
     finally { if (current === revision.current) setBusy(false); }
   }
   function makeClip() {
-    if (!buffer) return;
+    if (!buffer || busy) return;
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > buffer.duration || start >= end) { setMessage("Choose an end after the start and within the track."); return; }
     const length = end - start;
     if (length > MAX_TRIM_SECONDS) { setMessage("Choose a clip no longer than 3 minutes."); return; }
@@ -108,6 +117,7 @@ function AudioTrim() {
       <label className="trim-file">
         Choose audio
         <input
+          ref={chooser}
           type="file"
           accept="audio/*,.mp3,.wav,.m4a"
           disabled={importing}
@@ -119,13 +129,13 @@ function AudioTrim() {
       <p className="trim-note">Sources up to 16 MB and 5 minutes, mono or stereo. Make a WAV of up to 3 minutes and 64 MiB; high-rate audio may need a shorter selection. Longer sources start with a 60-second selection. Decoded audio must fit within 128 MiB on this device; browser support varies.</p>
       {file && buffer && <><p><strong>{file.name}</strong> · {buffer.duration.toFixed(2)} seconds</p><canvas ref={canvas} width="800" height="110" className="trim-wave" aria-label="Waveform of the original audio" role="img"/><audio controls src={sourceUrl} aria-label="Original audio" />
         <div className="trim-fields">
-          <label>Start (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" disabled={importing} value={Number.isNaN(start) ? "" : start} onChange={e => change(setStart,e.target.value)} /></label>
-          <label>End (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" disabled={importing} value={Number.isNaN(end) ? "" : end} onChange={e => change(setEnd,e.target.value)} /></label>
-          <label>Fade in (seconds)<input type="number" min="0" step="0.01" disabled={importing} value={Number.isNaN(fadeIn) ? "" : fadeIn} onChange={e => change(setFadeIn,e.target.value)} /></label>
-          <label>Fade out (seconds)<input type="number" min="0" step="0.01" disabled={importing} value={Number.isNaN(fadeOut) ? "" : fadeOut} onChange={e => change(setFadeOut,e.target.value)} /></label>
-        </div><button type="button" disabled={importing} onClick={makeClip}>Make WAV</button></>}
+          <label>Start (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" disabled={importing || busy} value={Number.isNaN(start) ? "" : start} onChange={e => change(setStart,e.target.value)} /></label>
+          <label>End (seconds)<input type="number" min="0" max={buffer.duration} step="0.01" disabled={importing || busy} value={Number.isNaN(end) ? "" : end} onChange={e => change(setEnd,e.target.value)} /></label>
+          <label>Fade in (seconds)<input type="number" min="0" step="0.01" disabled={importing || busy} value={Number.isNaN(fadeIn) ? "" : fadeIn} onChange={e => change(setFadeIn,e.target.value)} /></label>
+          <label>Fade out (seconds)<input type="number" min="0" step="0.01" disabled={importing || busy} value={Number.isNaN(fadeOut) ? "" : fadeOut} onChange={e => change(setFadeOut,e.target.value)} /></label>
+        </div><button type="button" disabled={importing || busy} onClick={makeClip}>Make WAV</button></>}
       <p role="status" aria-live="polite">{busy ? "Reading audio on this device…" : message}</p>
-      {outputUrl && <div className="trim-result"><h2>Your clip</h2><audio controls src={outputUrl} aria-label="Trimmed audio"/><a className="button" href={outputUrl} download={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`}>Save WAV</a><p className="trim-note">The original is unchanged.</p>{outputBlob && <LocalImport key={outputUrl} blob={outputBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`} operation="trim audio" format="wav" onBusyChange={setImporting}/>}</div>}
+      {outputUrl && <div className="trim-result" aria-busy={busy}><h2>Your clip</h2><audio controls src={outputUrl} aria-label="Trimmed audio"/><a className="button" href={outputUrl} download={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`}>Save WAV</a><p className="trim-note">The original is unchanged.</p>{outputBlob && <div inert={busy || undefined}><LocalImport key={outputUrl} blob={outputBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`} operation="trim audio" format="wav" onBusyChange={setImporting}/></div>}</div>}
     </section>
   </main>;
 }
