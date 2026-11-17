@@ -95,6 +95,11 @@ test("crop position and embed code are wired as honest controls", () => {
   assert.match(workbench, /draggable=\{!running\}/);
 });
 
+test("the embed-code button keeps keyboard focus while it is building", () => {
+  assert.match(workbench, /\n\s+disabled=\{running\}\n\s+aria-disabled=\{snippetBusy \|\| running\}/);
+  assert.match(workbench, /if \(!selected\?\.result \|\| snippetBusy \|\| running\) return;/);
+});
+
 test("the adjustment and snippet modules stay local and dependency-free", () => {
   for (const file of ["image-adjust.ts", "image-snippets.ts"]) {
     const source = readFileSync(new URL(`../src/frontend/${file}`, import.meta.url), "utf8");

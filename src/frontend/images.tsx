@@ -1573,7 +1573,7 @@ function Images() {
   }
 
   async function buildSnippets(): Promise<void> {
-    if (!selected?.result || snippetBusy) return;
+    if (!selected?.result || snippetBusy || running) return;
     const item = selected;
     const result = item.result;
     if (!result) return;
@@ -2645,7 +2645,8 @@ function Images() {
             <button
               type="button"
               className="secondary"
-              disabled={snippetBusy || running}
+              disabled={running}
+              aria-disabled={snippetBusy || running}
               aria-describedby="image-embed-note"
               onClick={() => void buildSnippets()}
             >
