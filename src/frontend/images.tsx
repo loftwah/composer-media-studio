@@ -79,7 +79,12 @@ import {
 } from "./image-metadata.mjs";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
-import { SOCIAL_SIZES, socialKitSettings } from "./image-social-kit.ts";
+import {
+  SOCIAL_KIT_FORMATS,
+  SOCIAL_SIZES,
+  socialKitSettings,
+  type SocialKitFormat,
+} from "./image-social-kit.ts";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -242,6 +247,11 @@ function formatBytes(bytes: number): string {
 
 function shortHash(hash: string): string {
   return hash ? `${hash.slice(0, 12)}…` : "—";
+}
+
+function formatLabelForMime(mime: string): string {
+  const extension = extensionForImageMime(mime);
+  return extension === "webp" ? "WebP" : extension.toUpperCase();
 }
 
 function safeStem(name: string): string {
@@ -742,6 +752,7 @@ function Images() {
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
   const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
   const [socialBusy, setSocialBusy] = useState(false);
+  const [socialFormat, setSocialFormat] = useState<SocialKitFormat>("webp");
   const [stripBusy, setStripBusy] = useState(false);
   const [removeIcc, setRemoveIcc] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -1296,12 +1307,13 @@ function Images() {
     if (selected.source.mime !== "image/png") return;
     const item = selected;
     const snapshot = { ...settings };
+    const format = socialFormat;
     const trimSnapshot = trim;
     const controller = new AbortController();
     socialController.current = controller;
     releaseSocial();
     setSocialBusy(true);
-    setMessage("Making four sizes from the selected PNG…");
+    setMessage(`Making four ${formatLabelForMime(mimeForExport(format))} sizes from the selected PNG…`);
     const outputs: SocialOutput[] = [];
     const isCurrent = () => socialController.current === controller;
     const alive = () => isCurrent() && !controller.signal.aborted;
@@ -1317,7 +1329,7 @@ function Images() {
           trimSnapshot.flipV === snapshot.flipV
             ? trimSnapshot.rect
             : null;
-        const sizeSettings = socialKitSettings(snapshot, size, WEB_READY_QUALITY);
+        const sizeSettings = socialKitSettings(snapshot, size, WEB_READY_QUALITY, format);
         const rendered = await renderImage(item, sizeSettings, controller.signal, cropRect);
         if (!alive()) throw abortError();
         const receipt = buildImageReceipt({ sourceHash: item.sourceHash, result: rendered });
@@ -1348,7 +1360,10 @@ function Images() {
         total += bytes.length;
         if (total > MAX_ZIP_BYTES)
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
-        entries.push({ name: `${stem}-${output.key}-${output.width}x${output.height}.webp`, data: bytes });
+        entries.push({
+          name: `${stem}-${output.key}-${output.width}x${output.height}.${extensionForImageMime(output.mime)}`,
+          data: bytes,
+        });
         const receiptBytes = new TextEncoder().encode(JSON.stringify(output.receipt, null, 2));
         total += receiptBytes.length;
         if (total > MAX_ZIP_BYTES)
@@ -1361,7 +1376,7 @@ function Images() {
       const zipBlob = blobFromBytes(zip.bytes, ZIP_MIME);
       setSocialZip({ url: trackUrl(zipBlob), bytes: zipBlob.size });
       setMessage(
-        `Social kit ready: ${outputs.length} WebP sizes with per-size receipts, ${formatBytes(zipBlob.size)} total.`,
+        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts, ${formatBytes(zipBlob.size)} total.`,
       );
     } catch (error) {
       if (!isCurrent()) {
@@ -1824,6 +1839,26 @@ function Images() {
 
           <fieldset className="image-controls">
             <legend>Social sizes</legend>
+            <label>Kit format
+              <select
+                value={socialFormat}
+                disabled={running || socialBusy || zipBusy || adding}
+                aria-describedby="image-social-kit-note"
+                onChange={(event) => {
+                  const next = SOCIAL_KIT_FORMATS.find((format) => format === event.target.value);
+                  if (!next || next === socialFormat) return;
+                  releaseSocial();
+                  setSocialFormat(next);
+                  setMessage("");
+                }}
+              >
+                {SOCIAL_KIT_FORMATS.map((value) => (
+                  <option key={value} value={value}>
+                    {value === "webp" ? "WebP · default, smaller files" : "PNG · lossless, larger files"}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="image-control-actions">
               <button
                 type="button"
@@ -1841,8 +1876,9 @@ function Images() {
               )}
             </div>
             <p className="trim-note" id="image-social-kit-note">
-              One selected PNG becomes WebP at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
-              1080 × 1920 (9:16) and 1920 × 1080 (16:9) with {Math.round(WEB_READY_QUALITY * 100)}% quality.
+              One selected PNG becomes {formatLabelForMime(mimeForExport(socialFormat))} at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
+              1080 × 1920 (9:16) and 1920 × 1080 (16:9)
+              {socialFormat === "webp" ? ` with ${Math.round(WEB_READY_QUALITY * 100)}% quality` : " at lossless quality"}.
               Smaller crops can be enlarged to fit. The ZIP includes one receipt for each size.
             </p>
             {!socialReady && <p className="notice calm">Choose a PNG to make this kit.</p>}
@@ -1853,7 +1889,7 @@ function Images() {
               <ul className="image-social-list">
                 {socialOutputs.map((output) => (
                   <li key={output.key}>
-                    <a href={output.url} download={`${safeStem(selected.file.name)}-${output.key}-${output.width}x${output.height}.webp`}>
+                    <a href={output.url} download={`${safeStem(selected.file.name)}-${output.key}-${output.width}x${output.height}.${extensionForImageMime(output.mime)}`}>
                       {output.label} · {output.width} × {output.height}
                     </a>{" "}
                     <span className="small">{formatBytes(output.bytes)} · sha256 {shortHash(output.sha256)}</span>{" "}

@@ -5,21 +5,32 @@ export const SOCIAL_SIZES = Object.freeze([
   Object.freeze({ key: "landscape", aspect: "wide", label: "16:9 landscape", width: 1920, height: 1080 } as const),
 ]);
 
+/** The four-size kit offers one explicit choice; WebP stays the default. */
+export const SOCIAL_KIT_FORMATS = Object.freeze(["webp", "png"] as const);
+export type SocialKitFormat = (typeof SOCIAL_KIT_FORMATS)[number];
+
 /**
  * Per-size editor settings. Crop position, rotation, straighten, resampling
  * and adjustments carry over from the current controls; only the aspect and
- * exact output size change, and the format is always alpha-safe WebP.
+ * exact output size change. The caller chooses an explicit alpha-safe output
+ * format, defaulting to WebP. PNG is a deliberate choice for browsers whose
+ * WebP encoder is absent or broken; there is no automatic fallback.
  */
 type SocialSize = (typeof SOCIAL_SIZES)[number];
 
-export function socialKitSettings<T extends object>(base: T, size: SocialSize, quality: number) {
+export function socialKitSettings<T extends object>(
+  base: T,
+  size: SocialSize,
+  quality: number,
+  format: SocialKitFormat = "webp",
+) {
   return {
     ...base,
     resizeMode: "exact" as const,
     exactWidth: size.width,
     exactHeight: size.height,
     cropAspect: size.aspect,
-    format: "webp" as const,
+    format,
     quality,
     targetKiB: null,
   };
