@@ -6,7 +6,7 @@ import {
   inspectImage,
   sniffLocalImage,
   stripImageMetadata,
-} from "../src/frontend/image-metadata.mjs";
+} from "../src/frontend/image-metadata.ts";
 import {
   heifFtyp,
   jpegFixture,

@@ -5,50 +5,169 @@
 import { crc32 } from "./image-zip.ts";
 
 export class ImageMetadataError extends Error {
-  constructor(message) {
+  constructor(message: string) {
     super(message);
     this.name = "ImageMetadataError";
   }
 }
 
-const SUPPORTED = new Set(["image/jpeg", "image/png", "image/webp"]);
-const HEIC_BRANDS = new Set(["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"]);
-const HEIF_BRANDS = new Set(["mif1", "msf1"]);
+export type ImageSniff = {
+  mime: string | null;
+  format: string | null;
+  supported: boolean;
+  activeContent: boolean;
+  reason: string | null;
+};
+
+export type ExifSummary = {
+  present: boolean;
+  bytes: number;
+  orientation: number | null;
+  camera: { make: string | null; model: string | null } | null;
+  gps: boolean;
+  dateTime: string | null;
+  entries: number;
+  error: string | null;
+};
+
+export type MetadataFlag = { present: boolean; bytes: number };
+export type TextMetadata = { present: boolean; count: number };
+export type OtherMetadata = {
+  present: boolean;
+  count: number;
+  labels: Array<{ label: string; count: number }>;
+};
+
+export type ImageMetadataSummary = {
+  mime: string;
+  format: "jpeg" | "png" | "webp";
+  width: number;
+  height: number;
+  orientation: number;
+  orientedWidth: number;
+  orientedHeight: number;
+  alpha: boolean;
+  exif: ExifSummary;
+  gps: boolean;
+  camera: { make: string | null; model: string | null } | null;
+  xmp: MetadataFlag;
+  icc: MetadataFlag;
+  text: TextMetadata;
+  other: OtherMetadata;
+  hasMetadata: boolean;
+  notes: string[];
+  bitDepth?: number;
+  colorType?: number;
+};
+
+export type StripResult = {
+  bytes: Uint8Array;
+  format: "jpeg" | "png" | "webp";
+  mime: string;
+  before: ImageMetadataSummary;
+  after: ImageMetadataSummary;
+  removed: string[];
+  changed: boolean;
+  keptOrientation: boolean;
+  warning: string | null;
+  verified: {
+    pixelsUnchanged: boolean;
+    dimensionsMatch: boolean;
+    metadataRemoved: boolean;
+    all: boolean;
+  };
+};
+
+// Internal, non-exported structure. The public ImageMetadataSummary above is
+// unchanged; the parser results carry the byte ranges the lossless stripper
+// needs. This is the only seam between inspection and rewriting.
+type JpegSegment = {
+  marker: number;
+  markerStart: number;
+  payloadStart: number;
+  payloadEnd: number;
+  end: number;
+};
+type Chunk = {
+  type: string;
+  chunkStart: number;
+  dataStart: number;
+  dataEnd: number;
+  chunkEnd: number;
+  length: number;
+};
+type JpegMetadata = ImageMetadataSummary & {
+  format: "jpeg";
+  scanStart: number;
+  segments: JpegSegment[];
+};
+type PngMetadata = ImageMetadataSummary & {
+  format: "png";
+  chunks: Chunk[];
+  trailing: number;
+};
+type WebpMetadata = ImageMetadataSummary & {
+  format: "webp";
+  chunks: Chunk[];
+  trailing: number;
+};
+type InternalMetadata = JpegMetadata | PngMetadata | WebpMetadata;
+type StripInternal = {
+  bytes: Uint8Array;
+  removed: string[];
+  keptOrientation: boolean;
+  pixelsUnchanged: boolean;
+};
+type IfdEntry = { tag: number; type: number; count: number; bytes: Uint8Array };
+type JpegCategory =
+  | "exif"
+  | "xmp"
+  | "other"
+  | "icc"
+  | "app0"
+  | "adobe"
+  | "comment"
+  | "image";
+type JpegClassification = { category: JpegCategory; label: string };
+
+const SUPPORTED = new Set<string>(["image/jpeg", "image/png", "image/webp"]);
+const HEIC_BRANDS = new Set<string>(["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"]);
+const HEIF_BRANDS = new Set<string>(["mif1", "msf1"]);
 const MAX_IFD_ENTRIES = 512;
 const MAX_TAG_BYTES = 1_000_000;
 
-function textAscii(bytes, start = 0, end = bytes.length) {
+function textAscii(bytes: Uint8Array, start = 0, end = bytes.length): string {
   let out = "";
   for (let index = start; index < end; index += 1) out += String.fromCharCode(bytes[index]);
   return out;
 }
 
-function u16be(bytes, offset) {
+function u16be(bytes: Uint8Array, offset: number): number {
   return (bytes[offset] << 8) | bytes[offset + 1];
 }
-function u32be(bytes, offset) {
+function u32be(bytes: Uint8Array, offset: number): number {
   return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
 }
-function u16le(bytes, offset) {
+function u16le(bytes: Uint8Array, offset: number): number {
   return bytes[offset] | (bytes[offset + 1] << 8);
 }
-function u32le(bytes, offset) {
+function u32le(bytes: Uint8Array, offset: number): number {
   return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0;
 }
-function u24le(bytes, offset) {
+function u24le(bytes: Uint8Array, offset: number): number {
   return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
 }
 
-function fail(message) {
+function fail(message: string): never {
   throw new ImageMetadataError(message);
 }
 
-function assertBounds(bytes, start, length, message) {
+function assertBounds(bytes: Uint8Array, start: number, length: number, message: string): void {
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(length) || start < 0 || length < 0 || start + length > bytes.length)
     fail(message);
 }
 
-function decodeAscii(bytes) {
+function decodeAscii(bytes: Uint8Array): string {
   let out = "";
   for (const byte of bytes) {
     if (byte === 0) break;
@@ -57,11 +176,11 @@ function decodeAscii(bytes) {
   return out.replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
-function brandsFrom(bytes) {
+function brandsFrom(bytes: Uint8Array): string[] {
   if (bytes.length < 12 || textAscii(bytes, 4, 8) !== "ftyp") return [];
   const declared = u32be(bytes, 0);
   const end = Math.min(bytes.length, declared >= 8 ? declared : bytes.length, 128);
-  const brands = [];
+  const brands: string[] = [];
   for (let offset = 8; offset + 4 <= end && brands.length < 32; offset += 4) brands.push(textAscii(bytes, offset, offset + 4));
   return brands;
 }
@@ -71,7 +190,7 @@ function brandsFrom(bytes) {
  * SVG/HTML are reported as active content; HEIC/HEIF are reported honestly as
  * images this slice does not decode rather than being mistaken for video.
  */
-export function sniffLocalImage(bytes) {
+export function sniffLocalImage(bytes: Uint8Array): ImageSniff {
   if (!(bytes instanceof Uint8Array) || bytes.length < 4)
     return { mime: null, format: null, supported: false, activeContent: false, reason: "That file is empty or too short." };
   const head = textAscii(bytes, 0, Math.min(bytes.length, 512)).replace(/^\uFEFF/, "").trimStart().toLowerCase();
@@ -99,12 +218,12 @@ export function sniffLocalImage(bytes) {
   return { mime: null, format: null, supported: false, activeContent: false, reason: "This is not a JPEG, PNG or WebP image." };
 }
 
-function orientationSize(width, height, orientation) {
+function orientationSize(width: number, height: number, orientation: number): { width: number; height: number } {
   const swap = orientation >= 5 && orientation <= 8;
   return { width: swap ? height : width, height: swap ? width : height };
 }
 
-function emptyExif(present = true) {
+function emptyExif(present = true): ExifSummary {
   return {
     present,
     bytes: 0,
@@ -117,7 +236,7 @@ function emptyExif(present = true) {
   };
 }
 
-function typeSize(type) {
+function typeSize(type: number): number {
   switch (type) {
     case 1:
     case 2:
@@ -140,14 +259,14 @@ function typeSize(type) {
   }
 }
 
-function readIfd(tiff, offset, little) {
-  const read16 = (at) => (little ? u16le(tiff, at) : u16be(tiff, at));
-  const read32 = (at) => (little ? u32le(tiff, at) : u32be(tiff, at));
+function readIfd(tiff: Uint8Array, offset: number, little: boolean): IfdEntry[] {
+  const read16 = (at: number): number => (little ? u16le(tiff, at) : u16be(tiff, at));
+  const read32 = (at: number): number => (little ? u32le(tiff, at) : u32be(tiff, at));
   if (offset < 8 || offset + 2 > tiff.length) fail("EXIF IFD is outside the block.");
   const count = read16(offset);
   if (count > MAX_IFD_ENTRIES) fail("EXIF IFD has too many entries.");
   if (offset + 2 + count * 12 > tiff.length) fail("EXIF IFD is truncated.");
-  const entries = [];
+  const entries: IfdEntry[] = [];
   for (let index = 0; index < count; index += 1) {
     const at = offset + 2 + index * 12;
     const tag = read16(at);
@@ -159,7 +278,7 @@ function readIfd(tiff, offset, little) {
       entries.push({ tag, type, count: items, bytes: new Uint8Array(0) });
       continue;
     }
-    let valueOffset;
+    let valueOffset: number;
     if (byteLength <= 4) valueOffset = at + 8;
     else valueOffset = read32(at + 8);
     if (valueOffset < 0 || valueOffset + byteLength > tiff.length) fail("EXIF value is outside the block.");
@@ -168,7 +287,7 @@ function readIfd(tiff, offset, little) {
   return entries;
 }
 
-function parseExifBytes(source) {
+function parseExifBytes(source: Uint8Array): ExifSummary {
   const result = emptyExif(true);
   try {
     let tiff = source;
@@ -178,17 +297,17 @@ function parseExifBytes(source) {
     const little = tiff[0] === 0x49 && tiff[1] === 0x49;
     const big = tiff[0] === 0x4d && tiff[1] === 0x4d;
     if (!little && !big) throw new Error("unknown TIFF byte order");
-    const read16 = (at) => (little ? u16le(tiff, at) : u16be(tiff, at));
-    const read32 = (at) => (little ? u32le(tiff, at) : u32be(tiff, at));
+    const read16 = (at: number): number => (little ? u16le(tiff, at) : u16be(tiff, at));
+    const read32 = (at: number): number => (little ? u32le(tiff, at) : u32be(tiff, at));
     if (read16(2) !== 42) throw new Error("not a TIFF header");
     const ifd0 = readIfd(tiff, read32(4), little);
     result.entries = ifd0.length;
     const byTag = new Map(ifd0.map((entry) => [entry.tag, entry]));
-    const asciiTag = (tag) => {
+    const asciiTag = (tag: number): string => {
       const entry = byTag.get(tag);
       return entry ? decodeAscii(entry.bytes) : "";
     };
-    const shortTag = (tag) => {
+    const shortTag = (tag: number): number | null => {
       const entry = byTag.get(tag);
       if (!entry || entry.bytes.length < 2) return null;
       return little ? u16le(entry.bytes, 0) : u16be(entry.bytes, 0);
@@ -220,11 +339,11 @@ function parseExifBytes(source) {
   return result;
 }
 
-function jpegSegments(bytes) {
+function jpegSegments(bytes: Uint8Array): { segments: JpegSegment[]; scanStart: number } {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) fail("That JPEG has no start marker.");
-  const segments = [];
+  const segments: JpegSegment[] = [];
   let offset = 2;
-  let scanStart = null;
+  let scanStart: number | null = null;
   while (offset + 1 < bytes.length) {
     if (bytes[offset] !== 0xff) fail("That JPEG is malformed or truncated.");
     const markerStart = offset;
@@ -250,7 +369,7 @@ function jpegSegments(bytes) {
   return { segments, scanStart };
 }
 
-function classifyJpegSegment(bytes, segment) {
+function classifyJpegSegment(bytes: Uint8Array, segment: JpegSegment): JpegClassification {
   const { marker, payloadStart, payloadEnd } = segment;
   const length = payloadEnd - payloadStart;
   if (marker >= 0xe0 && marker <= 0xef) {
@@ -271,15 +390,15 @@ function classifyJpegSegment(bytes, segment) {
   return { category: "image", label: "image data" };
 }
 
-function inspectJpeg(bytes) {
+function inspectJpeg(bytes: Uint8Array): JpegMetadata {
   const { segments, scanStart } = jpegSegments(bytes);
-  let width = null;
-  let height = null;
+  let width: number | null = null;
+  let height: number | null = null;
   let exif = emptyExif(false);
-  let xmp = { present: false, bytes: 0 };
-  let icc = { present: false, bytes: 0 };
-  let text = { present: false, count: 0 };
-  const other = [];
+  let xmp: MetadataFlag = { present: false, bytes: 0 };
+  let icc: MetadataFlag = { present: false, bytes: 0 };
+  let text: TextMetadata = { present: false, count: 0 };
+  const other: string[] = [];
   let hasExif = false;
   let hasXmp = false;
   let hasIcc = false;
@@ -309,7 +428,7 @@ function inspectJpeg(bytes) {
   if (!hasExif) exif = emptyExif(false);
   const orientation = exif.orientation ?? 1;
   const oriented = orientationSize(width, height, orientation);
-  const otherCounts = Object.entries(other.reduce((counts, label) => ({ ...counts, [label]: (counts[label] ?? 0) + 1 }), {}));
+  const otherCounts = Object.entries(other.reduce<Record<string, number>>((counts, label) => ({ ...counts, [label]: (counts[label] ?? 0) + 1 }), {}));
   return {
     mime: "image/jpeg",
     format: "jpeg",
@@ -337,9 +456,9 @@ function inspectJpeg(bytes) {
   };
 }
 
-function pngChunks(bytes) {
+function pngChunks(bytes: Uint8Array): { chunks: Chunk[]; trailing: number } {
   if (bytes.length < 8 || bytes[0] !== 0x89 || textAscii(bytes, 1, 4) !== "PNG") fail("That PNG has no signature.");
-  const chunks = [];
+  const chunks: Chunk[] = [];
   let offset = 8;
   let sawIhdr = false;
   let sawIend = false;
@@ -368,14 +487,14 @@ function pngChunks(bytes) {
   return { chunks, trailing: bytes.length - offset };
 }
 
-function pngTextKeyword(bytes, dataStart, dataEnd) {
+function pngTextKeyword(bytes: Uint8Array, dataStart: number, dataEnd: number): string {
   const limit = Math.min(dataEnd, dataStart + 80);
   let end = dataStart;
   while (end < limit && bytes[end] !== 0) end += 1;
   return textAscii(bytes, dataStart, end);
 }
 
-function inspectPng(bytes) {
+function inspectPng(bytes: Uint8Array): PngMetadata {
   const { chunks, trailing } = pngChunks(bytes);
   const ihdr = chunks[0];
   const width = u32be(bytes, ihdr.dataStart);
@@ -386,10 +505,10 @@ function inspectPng(bytes) {
   const alphaByType = colorType === 4 || colorType === 6;
   let alpha = alphaByType;
   let exif = emptyExif(false);
-  let xmp = { present: false, bytes: 0 };
-  let icc = { present: false, bytes: 0 };
-  let text = { present: false, count: 0 };
-  const other = [];
+  let xmp: MetadataFlag = { present: false, bytes: 0 };
+  let icc: MetadataFlag = { present: false, bytes: 0 };
+  let text: TextMetadata = { present: false, count: 0 };
+  const other: string[] = [];
   for (const chunk of chunks.slice(1)) {
     const data = bytes.subarray(chunk.dataStart, chunk.dataEnd);
     if (chunk.type === "eXIf") {
@@ -410,7 +529,7 @@ function inspectPng(bytes) {
   }
   const orientation = exif.orientation ?? 1;
   const oriented = orientationSize(width, height, orientation);
-  const otherCounts = Object.entries(other.reduce((counts, label) => ({ ...counts, [label]: (counts[label] ?? 0) + 1 }), {}));
+  const otherCounts = Object.entries(other.reduce<Record<string, number>>((counts, label) => ({ ...counts, [label]: (counts[label] ?? 0) + 1 }), {}));
   return {
     mime: "image/png",
     format: "png",
@@ -443,12 +562,12 @@ function inspectPng(bytes) {
   };
 }
 
-function webpChunks(bytes) {
+function webpChunks(bytes: Uint8Array): { chunks: Chunk[]; end: number; trailing: number } {
   if (bytes.length < 12 || textAscii(bytes, 0, 4) !== "RIFF" || textAscii(bytes, 8, 12) !== "WEBP") fail("That WebP has no RIFF header.");
   const riffSize = u32le(bytes, 4);
   if (riffSize + 8 > bytes.length) fail("That WebP is truncated.");
   const end = riffSize + 8;
-  const chunks = [];
+  const chunks: Chunk[] = [];
   let offset = 12;
   while (offset + 8 <= end) {
     const type = textAscii(bytes, offset, offset + 4);
@@ -464,11 +583,14 @@ function webpChunks(bytes) {
   return { chunks, end, trailing: bytes.length - end };
 }
 
-function webpDimensions(bytes, chunks) {
-  let width = null;
-  let height = null;
+function webpDimensions(
+  bytes: Uint8Array,
+  chunks: Chunk[],
+): { width: number; height: number; alpha: boolean; flags: number | null } {
+  let width: number | null = null;
+  let height: number | null = null;
   let alpha = false;
-  let flags = null;
+  let flags: number | null = null;
   for (const chunk of chunks) {
     if (chunk.type === "VP8X" && chunk.length >= 10) {
       flags = bytes[chunk.dataStart];
@@ -496,13 +618,13 @@ function webpDimensions(bytes, chunks) {
   return { width, height, alpha, flags };
 }
 
-function inspectWebp(bytes) {
+function inspectWebp(bytes: Uint8Array): WebpMetadata {
   const { chunks, trailing } = webpChunks(bytes);
   const { width, height, alpha } = webpDimensions(bytes, chunks);
   let exif = emptyExif(false);
-  let xmp = { present: false, bytes: 0 };
-  let icc = { present: false, bytes: 0 };
-  const other = [];
+  let xmp: MetadataFlag = { present: false, bytes: 0 };
+  let icc: MetadataFlag = { present: false, bytes: 0 };
+  const other: string[] = [];
   for (const chunk of chunks) {
     const data = bytes.subarray(chunk.dataStart, chunk.dataEnd);
     if (chunk.type === "EXIF") {
@@ -517,7 +639,7 @@ function inspectWebp(bytes) {
   }
   const orientation = exif.orientation ?? 1;
   const oriented = orientationSize(width, height, orientation);
-  const otherCounts = Object.entries(other.reduce((counts, label) => ({ ...counts, [label]: (counts[label] ?? 0) + 1 }), {}));
+  const otherCounts = Object.entries(other.reduce<Record<string, number>>((counts, label) => ({ ...counts, [label]: (counts[label] ?? 0) + 1 }), {}));
   return {
     mime: "image/webp",
     format: "webp",
@@ -548,7 +670,7 @@ function inspectWebp(bytes) {
   };
 }
 
-export function inspectImage(bytes) {
+function inspectImageInternal(bytes: Uint8Array): InternalMetadata {
   if (!(bytes instanceof Uint8Array)) throw new ImageMetadataError("Image bytes are required.");
   const sniffed = sniffLocalImage(bytes);
   if (!sniffed.supported) throw new ImageMetadataError(sniffed.reason ?? "This image format is not supported.");
@@ -557,14 +679,24 @@ export function inspectImage(bytes) {
   return inspectWebp(bytes);
 }
 
-function bytesEqual(left, right) {
+export function inspectImage(bytes: Uint8Array): ImageMetadataSummary {
+  return inspectImageInternal(bytes);
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
   if (left.length !== right.length) return false;
   for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
   return true;
 }
 
-function samePayloads(leftBytes, leftChunks, rightBytes, rightChunks, types) {
-  const pick = (bytes, chunks) =>
+function samePayloads(
+  leftBytes: Uint8Array,
+  leftChunks: Chunk[],
+  rightBytes: Uint8Array,
+  rightChunks: Chunk[],
+  types: string[],
+): boolean {
+  const pick = (bytes: Uint8Array, chunks: Chunk[]): Uint8Array[] =>
     chunks
       .filter((chunk) => types.includes(chunk.type))
       .map((chunk) => bytes.subarray(chunk.dataStart, chunk.dataEnd));
@@ -575,14 +707,14 @@ function samePayloads(leftBytes, leftChunks, rightBytes, rightChunks, types) {
   return true;
 }
 
-function jpegScanStartFor(bytes) {
+function jpegScanStartFor(bytes: Uint8Array): number {
   return jpegSegments(bytes).scanStart;
 }
 
 // Orientation is display-critical. Removing it from an otherwise lossless
 // metadata strip would rotate the picture, so a one-tag EXIF block is retained
 // when the source declared a non-default orientation.
-function minimalOrientationTiff(orientation) {
+function minimalOrientationTiff(orientation: number): Uint8Array {
   const output = new Uint8Array(26);
   output[0] = 0x49;
   output[1] = 0x49;
@@ -609,7 +741,7 @@ function minimalOrientationTiff(orientation) {
   return output;
 }
 
-function jpegApp1(tiff) {
+function jpegApp1(tiff: Uint8Array): Uint8Array {
   const payloadLength = 6 + tiff.length;
   const output = new Uint8Array(4 + payloadLength);
   output.set([0xff, 0xe1, ((payloadLength + 2) >>> 8) & 0xff, (payloadLength + 2) & 0xff], 0);
@@ -618,9 +750,9 @@ function jpegApp1(tiff) {
   return output;
 }
 
-const PNG_ORIENTATION_TIFF = (orientation) => minimalOrientationTiff(orientation);
+const PNG_ORIENTATION_TIFF = (orientation: number): Uint8Array => minimalOrientationTiff(orientation);
 
-function pngChunkBytes(type, data) {
+function pngChunkBytes(type: string, data: Uint8Array): Uint8Array {
   const typeBytes = new TextEncoder().encode(type);
   const output = new Uint8Array(4 + 4 + data.length + 4);
   const view = new DataView(output.buffer);
@@ -631,10 +763,12 @@ function pngChunkBytes(type, data) {
   return output;
 }
 
-function stripJpeg(bytes, before, keepColorProfile) {
+type KeptJpegSegment = { bytes: Uint8Array; app0: boolean };
+
+function stripJpeg(bytes: Uint8Array, before: JpegMetadata, keepColorProfile: boolean): StripInternal {
   const keepOrientation = before.orientation !== 1;
-  const kept = [];
-  const removed = [];
+  const kept: KeptJpegSegment[] = [];
+  const removed: string[] = [];
   for (const segment of before.segments) {
     const classification = classifyJpegSegment(bytes, segment);
     const remove =
@@ -652,7 +786,7 @@ function stripJpeg(bytes, before, keepColorProfile) {
       });
     }
   }
-  const pieces = [bytes.subarray(0, 2)];
+  const pieces: Uint8Array[] = [bytes.subarray(0, 2)];
   let inserted = false;
   if (keepOrientation && !kept.some((entry) => entry.app0)) {
     pieces.push(jpegApp1(minimalOrientationTiff(before.orientation)));
@@ -676,7 +810,7 @@ function stripJpeg(bytes, before, keepColorProfile) {
   };
 }
 
-const PNG_METADATA_CHUNKS = new Set([
+const PNG_METADATA_CHUNKS = new Set<string>([
   "eXIf",
   "tEXt",
   "zTXt",
@@ -691,10 +825,10 @@ const PNG_METADATA_CHUNKS = new Set([
   "sTER",
 ]);
 
-function stripPng(bytes, before, keepColorProfile) {
+function stripPng(bytes: Uint8Array, before: PngMetadata, keepColorProfile: boolean): StripInternal {
   const keepOrientation = before.orientation !== 1;
-  const pieces = [bytes.subarray(0, 8)];
-  const removed = [];
+  const pieces: Uint8Array[] = [bytes.subarray(0, 8)];
+  const removed: string[] = [];
   for (const chunk of before.chunks) {
     const remove =
       PNG_METADATA_CHUNKS.has(chunk.type) || (chunk.type === "iCCP" && !keepColorProfile);
@@ -717,10 +851,10 @@ function stripPng(bytes, before, keepColorProfile) {
   };
 }
 
-function stripWebp(bytes, before, keepColorProfile) {
+function stripWebp(bytes: Uint8Array, before: WebpMetadata, keepColorProfile: boolean): StripInternal {
   const keepOrientation = before.orientation !== 1;
-  const keep = [];
-  const removed = [];
+  const keep: Array<{ type: string; data: Uint8Array }> = [];
+  const removed: string[] = [];
   let removeIcc = false;
   let removeExif = false;
   let removeXmp = false;
@@ -796,7 +930,7 @@ function stripWebp(bytes, before, keepColorProfile) {
   return { bytes: output, removed, keptOrientation: keepOrientation, pixelsUnchanged: sameImageData };
 }
 
-function concat(pieces) {
+function concat(pieces: Uint8Array[]): Uint8Array {
   const total = pieces.reduce((size, piece) => size + piece.length, 0);
   const output = new Uint8Array(total);
   let offset = 0;
@@ -811,14 +945,17 @@ function concat(pieces) {
  * Remove metadata without re-encoding pixels. The optional ICC removal is the
  * only operation that can change how colours appear.
  */
-export function stripImageMetadata(bytes, { keepColorProfile = true } = {}) {
+export function stripImageMetadata(
+  bytes: Uint8Array,
+  { keepColorProfile = true }: { keepColorProfile?: boolean } = {},
+): StripResult {
   if (!(bytes instanceof Uint8Array)) throw new ImageMetadataError("Image bytes are required.");
-  const before = inspectImage(bytes);
-  let stripped;
+  const before = inspectImageInternal(bytes);
+  let stripped: StripInternal;
   if (before.format === "jpeg") stripped = stripJpeg(bytes, before, keepColorProfile);
   else if (before.format === "png") stripped = stripPng(bytes, before, keepColorProfile);
   else stripped = stripWebp(bytes, before, keepColorProfile);
-  const after = inspectImage(stripped.bytes);
+  const after = inspectImageInternal(stripped.bytes);
   const metadataRemoved =
     !after.xmp.present &&
     !after.text.present &&
@@ -827,7 +964,7 @@ export function stripImageMetadata(bytes, { keepColorProfile = true } = {}) {
     !after.exif.dateTime &&
     (!after.exif.present || (after.exif.entries <= 1 && !after.exif.error)) &&
     (keepColorProfile || !after.icc.present);
-  const warnings = [];
+  const warnings: string[] = [];
   if (!keepColorProfile)
     warnings.push("Removing the ICC colour profile can change how colours appear in other apps.");
   if (before.orientation !== 1 && !stripped.keptOrientation)
