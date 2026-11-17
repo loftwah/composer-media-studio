@@ -10,7 +10,7 @@ import {
   publicDestination,
   reuseStillFor,
   sharingDestinations,
-} from "../src/lib/sharing.mjs";
+} from "../src/lib/sharing.ts";
 
 const origin = "https://media.loftwah.com";
 const slug = "JYCl_dWcb2yqya6h";
