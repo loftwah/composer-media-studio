@@ -54,6 +54,17 @@ test("artwork links retain the current search and page when returning to the cat
   assert.match(woodhouseGallery({ asset }), /href="\/portfolio#artwork-first-print"/);
 });
 
+test("public artwork detail hands creators off to the current Studio search flow", () => {
+  const asset = { id: "first-print", title: "Workshop <print>", project: "fighter", credit: "Woodhouse · first-party art" };
+  const detail = woodhouseGallery({ asset });
+  assert.match(detail, /<a href="\/studio">Open Studio<\/a>/);
+  assert.match(detail, /choose your project, then open Library → Import from Woodhouse Share/);
+  assert.match(detail, /Search for the exact title “Workshop &lt;print&gt;”/);
+  assert.match(detail, /confirm you have permission to reuse it before importing/);
+  assert.match(detail, /paste this asset ID as a fallback: <code>first-print<\/code>/);
+  assert.doesNotMatch(detail, /enter this asset ID/);
+});
+
 test("portfolio film cards use the poster-derived preview and keep the full poster as the fallback", () => {
   const base = { description: "A saved clip.", mime: "video/mp4", duration_ms: 4200 };
   const html = woodhouseGallery({
