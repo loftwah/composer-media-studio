@@ -49,6 +49,7 @@ function VideoClip() {
     setChecking(false);
     setMessage(retained ? `${text} Your current video, settings and any finished clip are unchanged.` : text);
     const element = chooser.current;
+    if (element) element.value = "";
     const activeElement = document.activeElement;
     if (element && (!activeElement || activeElement === document.body || activeElement === element)) element.focus();
   }
