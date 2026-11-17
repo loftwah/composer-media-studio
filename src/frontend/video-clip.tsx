@@ -80,7 +80,9 @@ function VideoClip() {
   async function makeClip() {
     if (!file || busy || checking) return;
     if (![start,end].every(Number.isFinite) || start < 0 || end > duration || end <= start || end - start > MAX_CLIP_SECONDS) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
-    cancelRequested.current = false; setBusy(true); setResult(""); setResultBlob(null); setMessage("Checking this browser’s video and audio codecs…");
+    // A finished clip stays committed until a replacement actually succeeds, so a
+    // cancelled or failed repeat leaves the previous poster and exact download intact.
+    cancelRequested.current = false; setBusy(true); setMessage("Checking this browser’s video and audio codecs…");
     const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(file) });
     try {
       const video = await probeMediaTrack(() => input.getPrimaryVideoTrack(), "video");
@@ -112,7 +114,7 @@ function VideoClip() {
       <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);change();}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing} onChange={e => {setQuality(e.target.value as Quality);change();}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);change();}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);change();}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
       {!busy ? <button type="button" disabled={importing || checking} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>Your clip</h2><ClipPoster key={`poster:${result}`} src={result} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip`}/><a className="button" href={result} download={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`}>Save MP4</a>{resultBlob && <div inert={checking || undefined}><LocalImport key={`import:${result}`} blob={resultBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`} operation="clip and frame" onBusyChange={setImporting}/></div>}</div>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>Your clip</h2><ClipPoster key={`poster:${result}`} src={result} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip`}/><a className="button" href={result} download={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`}>Save MP4</a>{resultBlob && <div inert={checking || busy || undefined}><LocalImport key={`import:${result}`} blob={resultBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`} operation="clip and frame" onBusyChange={setImporting}/></div>}</div>}
     </section></main>;
 }
 export function mountVideoClip(container: HTMLElement) { createRoot(container).render(<VideoClip />); }
