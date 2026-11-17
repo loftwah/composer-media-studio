@@ -298,6 +298,29 @@ function generationView(generation, extra = {}) {
   };
 }
 
+// These films were explicitly selected for the Portfolio showcase. The
+// showcase is independent of a film's inclusion in the general Gallery.
+async function shareShowcaseFilms(env) {
+  const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 24);
+  const films = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,a.width,a.height,a.duration_ms,
+    d.publication_id AS poster_preview_id,d.width AS poster_preview_width,d.height AS poster_preview_height,
+    t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height
+    FROM publications p JOIN assets a ON a.id=p.asset_id
+    LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
+    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster' AND d.source_sha256=poster.sha256
+    LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
+    WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
+  return films.filter(Boolean).map((film) => {
+    const { poster_preview_id, poster_preview_width, poster_preview_height, thumb_id, thumb_width, thumb_height, ...rest } = film;
+    return {
+      ...rest,
+      has_poster_preview: poster_preview_id ? 1 : 0,
+      preview_w: poster_preview_width ?? thumb_width ?? null,
+      preview_h: poster_preview_height ?? thumb_height ?? null,
+    };
+  });
+}
+
 // Only explicitly configured, still-published films are safe for the home gallery.
 async function homeShowcase(env, { listedOnly = false } = {}) {
   const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 8);
@@ -2476,6 +2499,11 @@ async function handlePublic(request, env, url) {
   }
 
   if (path === "/login") return handleLogin(request, env);
+  if (path === "/share-films.json" && env.WOODHOUSE_SHARE === "true") {
+    if (request.method !== "GET" && request.method !== "HEAD") throw new HttpError(405, "Method not allowed", "method_not_allowed");
+    const films = (await shareShowcaseFilms(env)).map(({ slug, title }) => ({ slug, title }));
+    return json({ version: 1, films }, 200, { "cache-control": "no-store" });
+  }
   if (path.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true") {
     let view;
     let status = 200;
@@ -2483,24 +2511,7 @@ async function handlePublic(request, env, url) {
       const assetId = url.searchParams.get("asset");
       view = assetId ? { asset: await shareAsset(assetId), query: url.searchParams.get("q") ?? "", project: url.searchParams.get("project") ?? "", after: url.searchParams.get("after") ?? "" } : await sharePage(url.searchParams);
       if (!assetId && !url.searchParams.get("q") && !url.searchParams.get("project") && !url.searchParams.get("after")) {
-        const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 24);
-        const films = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,a.width,a.height,a.duration_ms,
-          d.publication_id AS poster_preview_id,d.width AS poster_preview_width,d.height AS poster_preview_height,
-          t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height
-          FROM publications p JOIN assets a ON a.id=p.asset_id
-          LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
-          LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster' AND d.source_sha256=poster.sha256
-          LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
-          WHERE p.slug=?1 AND p.revoked_at IS NULL AND a.deleted_at IS NULL AND a.kind='video'`).bind(value).first()));
-        view.films = films.filter(Boolean).map((film) => {
-          const { poster_preview_id, poster_preview_width, poster_preview_height, thumb_id, thumb_width, thumb_height, ...rest } = film;
-          return {
-            ...rest,
-            has_poster_preview: poster_preview_id ? 1 : 0,
-            preview_w: poster_preview_width ?? thumb_width ?? null,
-            preview_h: poster_preview_height ?? thumb_height ?? null,
-          };
-        });
+        view.films = await shareShowcaseFilms(env);
       }
     } catch (error) {
       status = error instanceof HttpError ? error.status : 503;
