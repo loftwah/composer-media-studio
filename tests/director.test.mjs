@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
 import { createSongPlan, updateSongPlan, updateSongCaptions, listSongPlans } from '../src/lib/song-plans.ts';
-import { DIRECTOR_MODEL, readDirectorChanges, readDirectorJson } from '../src/lib/director.mjs';
+import { DIRECTOR_MODEL, readDirectorChanges, readDirectorJson } from '../src/lib/director.ts';
 import { setup, addAsset } from './harness.mjs';
 
 async function fixture() {
