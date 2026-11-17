@@ -2868,7 +2868,16 @@ function Images() {
             Process all {items.length || ""} with these settings
           </button>
           {running && <button type="button" className="secondary" onClick={cancelBatch}>Cancel batch</button>}
-          <button type="button" className="secondary" disabled={running || socialBusy || adding || Boolean(batchExport) || !doneItems.length} onClick={() => void makeZip()}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={running || socialBusy || adding || sheetBusy || !doneItems.length}
+            aria-disabled={zipBusy}
+            onClick={() => {
+              if (zipBusy) return;
+              void makeZip();
+            }}
+          >
             {zipBusy ? "Preparing ZIP…" : `Prepare ZIP${doneItems.length ? ` (${doneItems.length})` : ""}`}
           </button>
           {zipUrl && (
