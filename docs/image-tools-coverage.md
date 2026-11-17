@@ -69,6 +69,7 @@ the work:
 | Local contact sheet | Select two to twenty local JPEG, PNG or WebP images explicitly in order, including mixed formats. Each file is sniffed from its bytes and given a synthetic name and matching MIME before isolated Chrome uses the same Image Tools process and contact-sheet controls to save a native PNG to a new path. A PNG, JPEG and WebP from the Studio sample, selected in that order, produced the same 720 × 240, 184,150-byte PNG in the public workbench and the local command. With `--include-layout`, the layout in the local receipt matched the browser JSON for two owned Fighter images: the same 480 × 240 PNG at 390 px and 1440 px viewports and through the local command, with identical `(24,0,192,240)` and `(264,0,192,240)` rectangles, source/output hashes and transparent padding. A keyboard reorder discarded both downloads and regenerated the JSON in the new order. | [Local command](../scripts/local-contact-sheet.mjs), [mixed-format check](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6948664651), [PR #307](https://github.com/loftwah/composer-media-studio/pull/307), [layout receipt](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6956059307), [PR #309](https://github.com/loftwah/composer-media-studio/pull/309), [reorder receipt](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6956296051) |
 | Local area cover | Select a PNG, rectangle and new output path. Isolated Chrome uses the same Image Tools control. The selected Studio sample produced the same 1400 × 900 PNG bytes as the public workbench with a 100 × 80 opaque rectangle. | [Local command](../scripts/local-cover-area.mjs) |
 | Local metadata strip | Select one JPEG, PNG or WebP image and a new output path. The script calls the same lossless metadata rewrite directly, keeps the ICC profile by default, retains a non-default orientation, and refuses an unverified copy. Native browser and CLI outputs matched byte for byte for the PNG sample and for the 320 × 206 JPEG and WebP samples; focused checks compare each format's CLI output with the direct rewrite result. | [Local command](../scripts/local-metadata-strip.mjs), [PNG parity](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6948005784), [JPEG and WebP parity](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6948506819) |
+| Local transparent-edge trim | Pass one explicit PNG and a new output path. The local command uses **Trim transparent edges** in isolated Chrome, exports at the measured trim size and verifies the native v1 receipt. The 1200 × 1200 Moss source trimmed to an identical 1130 × 1190 PNG with identical receipt at 390 px and 1440 px viewports and through the local command, which made zero pass-through requests. | [Local command](../scripts/local-trim-transparent.mjs), [PNG and receipt parity](https://github.com/loftwah/composer-media-studio/issues/183#issuecomment-6962094129) |
 
 ## Safety and bounds shipped by this slice
 
@@ -83,6 +84,9 @@ the work:
   before processing.
 - No external image fetch, no cross-origin canvas source and no server upload on
   the local path. Studio import is a separate, explicit, signed-in action.
+- The local trim command requires an explicit `--source`. An OS-denied read
+  stopped before writing any output. The separate in-process MCP check refused
+  an upload from a read-only grant.
 - Object URLs, canvases and ImageBitmaps are released on remove, clear and
   unmount. Batch work is sequential, not 20 synchronous decodes.
 
