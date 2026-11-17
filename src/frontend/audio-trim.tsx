@@ -46,6 +46,7 @@ function AudioTrim() {
   function refuse(text: string, retained: boolean) {
     setMessage(retained ? `${text} Your current track is still ready.` : text);
     const element = chooser.current;
+    if (element) element.value = "";
     const activeElement = document.activeElement;
     if (element && (!activeElement || activeElement === document.body || activeElement === element)) element.focus();
   }
