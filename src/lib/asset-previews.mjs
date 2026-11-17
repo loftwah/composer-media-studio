@@ -9,7 +9,7 @@
 // asset deletes its preview in the same erasure step.
 
 import { HttpError, sha256Hex } from "./util.mjs";
-import { inspectDerivative } from "./publication-derivatives.mjs";
+import { inspectDerivative } from "./publication-derivatives.ts";
 import { renderPreview } from "./preview-rendition.mjs";
 
 /** Only a stored still can be previewed; a film's frame needs a different job. */
