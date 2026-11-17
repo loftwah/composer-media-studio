@@ -41,7 +41,7 @@ import {
   reconcileGeneration,
   saveGeneration,
 } from "./lib/jobs.mjs";
-import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.mjs";
+import { createFootagePlan, listFootagePlans, updateFootagePlan } from "./lib/footage-plans.ts";
 import { previewSceneProposal, applySceneProposal } from "./lib/scene-proposals.mjs";
 import { proposeSceneDirection, diagnoseShots } from "./lib/director.mjs";
 import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.ts";

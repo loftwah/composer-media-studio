@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFootagePlan, listFootagePlans, updateFootagePlan } from '../src/lib/footage-plans.mjs';
+import { createFootagePlan, listFootagePlans, updateFootagePlan } from '../src/lib/footage-plans.ts';
 import { setup, addAsset } from './harness.mjs';
 const input = { sourceAssetId:'asset_source1', rightsConfirmed:true, title:'Fictional walkthrough', aspect:'16:9', sourceStartMs:1000, sourceEndMs:21000, sceneCount:4 };
 test('source cut map preserves footage and supports selective takes without provider activity', async () => {

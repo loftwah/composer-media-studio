@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
-import { createFootagePlan, updateFootagePlan } from '../src/lib/footage-plans.mjs';
+import { createFootagePlan, updateFootagePlan } from '../src/lib/footage-plans.ts';
 import { setup, addAsset } from './harness.mjs';
 const sha='a'.repeat(64);
 function box(name, payload) { const b=Buffer.alloc(8+payload.length); b.writeUInt32BE(b.length); b.write(name,4); payload.copy(b,8); return b; }
