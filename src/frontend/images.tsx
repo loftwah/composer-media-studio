@@ -1787,6 +1787,7 @@ function Images() {
           <button type="button" className="secondary" onClick={() => void addSample()} disabled={adding || running || items.length >= MAX_BATCH_IMAGES}>
             Try the sample
           </button>
+          {selected && <a className="button secondary" href="#image-output-plan">Go to image output</a>}
           {items.length > 0 && (
             <button type="button" className="quiet" onClick={resetAll} disabled={running || adding}>
               Clear all
@@ -2105,7 +2106,7 @@ function Images() {
             )}
           </fieldset>
 
-          <p className={`image-plan${plan && !plan.ok ? " is-error" : ""}`}>
+          <p id="image-output-plan" tabIndex={-1} className={`image-plan${plan && !plan.ok ? " is-error" : ""}`}>
             {plan?.ok
               ? `Planned result: ${plan.outputWidth} × ${plan.outputHeight} px${activeTrim ? ` · trimmed from ${plan.rotatedWidth} × ${plan.rotatedHeight} px` : ""}${plan.aspectDistorted ? " · exact dimensions change the aspect" : ""}${plan.upscaled ? " · enlarged by resampling; no detail is invented" : ""}.`
               : plan?.error ?? "Choose a usable size."}
