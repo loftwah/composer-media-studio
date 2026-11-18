@@ -5,6 +5,9 @@
 // A per-image long edge composes with that choice: a number resizes only that
 // image, and a blank value keeps the batch resize. A per-image crop aspect
 // likewise changes only that image; an undefined value keeps the batch crop.
+// A per-image crop position is used only while that image's effective aspect is
+// not Original, so an aspect-agnostic anchor can be kept without changing the
+// plan or receipt of an uncropped row.
 
 export type ExportFormat = "png" | "jpeg" | "webp";
 
@@ -14,6 +17,7 @@ type BatchExportSettings = {
   resizeMode: string;
   longEdge: number;
   cropAspect: string;
+  cropAnchor: string;
 };
 
 type EffectiveSettings<T extends BatchExportSettings> = Omit<
@@ -42,9 +46,10 @@ export function canExportImageAsPng(sourceMime: string, batchFormat: string): bo
  * invalid number is passed through unchanged so the existing whole-number long
  * edge check reports it.
  *
- * A defined crop aspect replaces the batch crop for one image. The batch crop
- * position still applies, so a single row can become square without changing
- * the other rows.
+ * A defined crop aspect replaces the batch crop for one image. A defined crop
+ * position replaces the batch position only when that effective aspect is not
+ * Original; otherwise the batch anchor is left untouched, so the row keeps its
+ * stored choice for a later crop without changing an uncropped result.
  */
 export function settingsForImage<T extends BatchExportSettings>(
   settings: T,
@@ -52,6 +57,7 @@ export function settingsForImage<T extends BatchExportSettings>(
   pngOverride: boolean,
   longEdgeOverride?: number,
   cropAspectOverride?: T["cropAspect"],
+  cropAnchorOverride?: T["cropAnchor"],
 ): EffectiveSettings<T> {
   let effective: EffectiveSettings<T> = settings;
   if (longEdgeOverride !== undefined) {
@@ -59,6 +65,9 @@ export function settingsForImage<T extends BatchExportSettings>(
   }
   if (cropAspectOverride !== undefined) {
     effective = { ...effective, cropAspect: cropAspectOverride };
+  }
+  if (cropAnchorOverride !== undefined && effective.cropAspect !== "original") {
+    effective = { ...effective, cropAnchor: cropAnchorOverride };
   }
   if (!pngOverride || !canExportImageAsPng(sourceMime, settings.format)) return effective;
   return { ...effective, format: "png", targetKiB: null };
