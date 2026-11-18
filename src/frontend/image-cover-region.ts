@@ -13,3 +13,38 @@ export function coverRegion(fields: CoverFields, imageWidth: number, imageHeight
       left + width > imageWidth || top + height > imageHeight) return null;
   return { left, top, width, height };
 }
+
+export const MAX_COVER_AREAS = 8;
+
+export type CoverAreaState = {
+  /** Retained areas plus a valid current area: the exact set painted once. */
+  regions: CoverRegion[];
+  current: CoverRegion | null;
+  /** The current input was edited but is not an accepted whole-pixel rectangle. */
+  pending: boolean;
+  canExport: boolean;
+  canRetain: boolean;
+};
+
+export const EMPTY_COVER_FIELDS: CoverFields = { left: "0", top: "0", width: "", height: "" };
+
+export function coverAreas(
+  fields: CoverFields,
+  retained: readonly CoverRegion[],
+  imageWidth: number,
+  imageHeight: number,
+): CoverAreaState {
+  const current = coverRegion(fields, imageWidth, imageHeight);
+  const edited = (Object.keys(EMPTY_COVER_FIELDS) as (keyof CoverFields)[]).some(
+    key => fields[key].trim() !== EMPTY_COVER_FIELDS[key],
+  );
+  const pending = edited && !current;
+  const regions = current ? [...retained, current] : [...retained];
+  return {
+    regions,
+    current,
+    pending,
+    canExport: !pending && regions.length >= 1 && regions.length <= MAX_COVER_AREAS,
+    canRetain: current !== null && retained.length < MAX_COVER_AREAS - 1,
+  };
+}
