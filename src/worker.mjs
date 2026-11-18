@@ -78,6 +78,7 @@ import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.ts";
 import { composerShare } from "./lib/composer-share.ts";
 import { shell, loginPage, publicPage, notFoundPage, helpPage, audioTrimPage, videoClipPage, addMusicPage, imagesPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
+import { PUBLIC_CAPTION_ROUTE, reviewedCaptionFor } from "./lib/public-captions.ts";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
@@ -2296,11 +2297,11 @@ async function handlePublic(request, env, url) {
     }
   }
 
-  const publicationMatch = path.match(/^\/p\/([A-Za-z0-9_-]+)(\/poster-preview|\/poster|\/download|\/media|\/thumb)?$/);
+  const publicationMatch = path.match(/^\/p\/([A-Za-z0-9_-]+)(\/poster-preview|\/poster|\/download|\/media|\/thumb|\/captions\.vtt)?$/);
   if (publicationMatch) {
     const [, publicSlug, extra] = publicationMatch;
     const publication = await env.DB.prepare(
-      `SELECT p.*, a.kind AS asset_kind, a.mime AS asset_mime, a.width, a.height, a.duration_ms, a.bytes, a.deleted_at AS asset_deleted
+      `SELECT p.*, a.kind AS asset_kind, a.mime AS asset_mime, a.width, a.height, a.duration_ms, a.bytes, a.sha256 AS asset_sha256, a.deleted_at AS asset_deleted
        FROM publications p JOIN assets a ON a.id=p.asset_id
        WHERE p.slug=?1 AND p.revoked_at IS NULL`,
     )
@@ -2311,6 +2312,21 @@ async function handlePublic(request, env, url) {
 
     if (extra === "/download") return servePublished(request, env, publication.asset_id, true);
     if (extra === "/media") return servePublished(request, env, publication.asset_id, false);
+    const caption = publication.asset_kind === "video"
+      ? reviewedCaptionFor(publicSlug, publication.asset_sha256)
+      : null;
+    if (extra === PUBLIC_CAPTION_ROUTE) {
+      if (!caption) throw new HttpError(404, "No captions for this page", "not_found");
+      if (request.method !== "GET" && request.method !== "HEAD")
+        throw new HttpError(405, "Method not allowed", "method_not_allowed");
+      return new Response(request.method === "HEAD" ? null : caption, {
+        headers: {
+          "content-type": "text/vtt; charset=utf-8",
+          "cache-control": "public, max-age=60",
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }
     if (extra === "/thumb") return servePublicationThumb(request, env, publication);
     if (extra === "/poster-preview") return servePosterPreview(request, env, publication);
     if (extra === "/poster") {
@@ -2416,6 +2432,7 @@ async function handlePublic(request, env, url) {
       bytes: publication.bytes,
       media: `/p/${publication.slug}/media`,
       download: `/p/${publication.slug}/download`,
+      captionSrc: caption ? `/p/${publicSlug}${PUBLIC_CAPTION_ROUTE}` : null,
       poster,
       videoPoster,
       posterMime: usablePoster?.mime ?? preview?.mime ?? null,
