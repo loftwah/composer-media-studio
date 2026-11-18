@@ -2369,6 +2369,23 @@ function Images() {
         )}
       </section>
 
+      <section className="trim-work" aria-labelledby="image-icon-kit-heading">
+        <h2 id="image-icon-kit-heading">Site icon kit</h2>
+        <p className="trim-note">
+          Download your finished image here, then choose it as artwork in Launch Kit
+          to make favicons, app icons and touch icons. Launch Kit opens in a new tab
+          and your file stays on this device.
+        </p>
+        <a
+          className="button secondary"
+          href="https://composer-launch-kit.loftwah.workers.dev/?operation=icons"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Make icons in Launch Kit
+        </a>
+      </section>
+
       {selected && (
         <section className="trim-work" aria-labelledby="image-edit-heading">
           <div className="image-section-head">
