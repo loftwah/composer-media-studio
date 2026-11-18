@@ -1235,6 +1235,8 @@ function Images() {
     sampleBusyRef.current = false;
     setSampleBusy(false);
     runningRef.current = false;
+    clearBatchExports();
+    setBatchMessage("");
     for (const url of urls.current) URL.revokeObjectURL(url);
     urls.current.clear();
     setItems([]);
@@ -1251,8 +1253,6 @@ function Images() {
     setMessage("Cleared. Nothing remains in this tab.");
     setRejections([]);
     setBatch({ total: 0, completed: 0, current: "" });
-    setZipUrl("");
-    setZipBytes(0);
     setSocialOutputs([]);
     setSocialZip(null);
     didInitSettings.current = false;
@@ -1266,7 +1266,8 @@ function Images() {
     const controller = new AbortController();
     batchController.current = { controller, report };
     setRunning(true);
-    clearBatchExports();
+    // Stop a ZIP still being written, but keep finished downloads until a row changes.
+    if (zipBusy) batchExportRevision.current += 1;
     setBatch({ total: list.length, completed: 0, current: list[0]?.file.name ?? "" });
     let completed = 0;
     let processed = 0;
@@ -1311,6 +1312,7 @@ function Images() {
           break;
         }
         const url = trackUrl(rendered.blob);
+        if (completed === 0) clearBatchExports();
         releaseUrl(item.result?.url);
         setItems((previous) =>
           previous.map((candidate) => {
