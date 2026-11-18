@@ -2,6 +2,17 @@
 
 .image-page {
   width: min(100% - 2rem, 78rem);
+  overflow-wrap: anywhere;
+}
+
+.image-page select {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.image-page :is(button, .button) {
+  max-inline-size: 100%;
+  white-space: normal;
 }
 
 .image-page header p {
@@ -151,6 +162,7 @@
 
 .image-controls {
   display: grid;
+  min-inline-size: 0;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
   gap: 0.9rem 1rem;
   border: 1px solid var(--line);
@@ -161,6 +173,7 @@
 }
 
 .image-controls legend {
+  max-inline-size: 100%;
   padding: 0 0.35rem;
   font-weight: 700;
 }
@@ -508,7 +521,7 @@
 
 .image-cover-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
   gap: 0.75rem;
   max-width: 27rem;
 }
