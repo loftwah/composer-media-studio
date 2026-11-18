@@ -619,8 +619,10 @@
 
 .image-list-override {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
   min-height: 36px;
   font-size: 0.8rem;
   color: var(--ink);
@@ -643,6 +645,19 @@
   min-height: 2.5rem;
   padding: 0.35rem 0.5rem;
   font-size: 1rem;
+}
+
+.image-list-override select {
+  width: auto;
+  min-width: 9rem;
+  max-width: 100%;
+  min-height: 2.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 1rem;
+}
+
+.image-list-override select:disabled {
+  cursor: not-allowed;
 }
 
 .image-list-override input[type="number"][aria-invalid="true"] {
