@@ -36,7 +36,7 @@ async function loadSaved(projectId: string, plan: Plan, scene: Scene, signal: Ab
   return validateExportSnapshot(plan, scene, current, Array.isArray(project.assets) ? project.assets : []);
 }
 
-export function FootageSceneExport({ projectId, plan, scene, index, disabled }: { projectId: string; plan: Plan; scene: Scene; index: number; disabled: boolean }) {
+export function FootageSceneExport({ projectId, plan, scene, index, disabled, onAssetSaved }: { projectId: string; plan: Plan; scene: Scene; index: number; disabled: boolean; onAssetSaved: (asset: MediaAssetV1) => void }) {
   const [frame, setFrame] = useState<Frame>('16:9'); const [fit, setFit] = useState<Fit>('contain'); const [quality, setQuality] = useState<Quality>('standard');
   const [busy, setBusy] = useState(false); const [status, setStatus] = useState(''); const [result, setResult] = useState(''); const [resultSettings, setResultSettings] = useState('');
   const task = useRef<AbortController | null>(null); const resultUrl = useRef('');
@@ -99,7 +99,7 @@ export function FootageSceneExport({ projectId, plan, scene, index, disabled }: 
       const form = new FormData(); form.set('file',new File([item.blob],`original-scene-${index+1}.mp4`,{type:'video/mp4'})); form.set('title',`Original scene ${index+1}`); form.set('footageExportReceiptId',item.receiptId!);
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/assets`,{method:'POST',credentials:'same-origin',body:form,signal:controller.signal});
       const data = await response.json(); if (!response.ok) throw new Error(data.error?.message || data.error || 'Could not save the clip.');
-      setSavedId(data.asset.id); setStatus('Saved privately to this studio with a source receipt.');
+      setSavedId(data.asset.id); onAssetSaved(data.asset); setStatus('Saved privately to this studio with a source receipt.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not save the clip. Try again.'); }
     finally { if (task.current === controller) {task.current=null;setBusy(false);} }
   };
