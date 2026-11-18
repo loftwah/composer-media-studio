@@ -2529,7 +2529,7 @@ function Images() {
             Try the sample
           </button>
           {selected && <a className="button secondary" href="#image-output-plan">Go to image output</a>}
-          {selected?.publicPoster && (
+          {socialReady && (
             <button type="button" className="button secondary" onClick={() => socialSizesRef.current?.focus()}>
               Go to social sizes
             </button>
