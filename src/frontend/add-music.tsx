@@ -145,13 +145,24 @@ function AddMusic() {
   const [checkingVideo, setCheckingVideo] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [preview, setPreview] = useState("");
+  // Settings recorded only when an export succeeds: proof of what the finished
+  // MP4 actually contains, not what the controls currently show.
+  const [applied, setApplied] = useState<string | null>(null);
   const sourceVideo = useRef<HTMLVideoElement>(null), sourceMusic = useRef<HTMLAudioElement>(null), previewPlayer = useRef<HTMLAudioElement>(null), resultPlayer = useRef<HTMLVideoElement>(null);
   const previewAction = useRef<HTMLButtonElement>(null);
   const exportAction = useRef<HTMLButtonElement>(null);
   const musicChooser = useRef<HTMLInputElement>(null);
   const videoChooser = useRef<HTMLInputElement>(null);
   function pauseOthers(active?: HTMLMediaElement | null) { for (const player of [sourceVideo.current, sourceMusic.current, previewPlayer.current, resultPlayer.current]) if (player && player !== active) player.pause(); }
-  function clearOutputs() { pauseOthers(); setPreview(""); setResult(""); setResultBlob(null); }
+  // The audio-only preview is transient and follows every edit; the finished MP4
+  // is a real export with its own download and Studio import, so it outlives
+  // draft edits. Only a successful replacement, or a valid new input, clears it.
+  // The draft key is compared with the recorded one on every render, so returning
+  // to the same settings drops the note.
+  const draft = [offset, volume, originalVolume, fadeIn, fadeOut, quality].join("|");
+  const previous = applied !== null && applied !== draft;
+  function clearPreview() { pauseOthers(); setPreview(""); }
+  function clearOutputs() { clearPreview(); setResult(""); setResultBlob(null); setApplied(null); }
   const controller = useRef<AbortController | null>(null);
   const musicAbort = useRef<AbortController | null>(null);
   const videoAbort = useRef<AbortController | null>(null);
@@ -166,7 +177,7 @@ function AddMusic() {
     const pending = isVideo ? videoAbort : musicAbort;
     const chooser = isVideo ? videoChooser : musicChooser;
     const setChecking = isVideo ? setCheckingVideo : setCheckingMusic;
-    const previous = isVideo ? video : music;
+    const previousSource = isVideo ? video : music;
     pending.current?.abort();
     const abort = new AbortController();
     pending.current = abort;
@@ -185,7 +196,7 @@ function AddMusic() {
     } catch (error) {
       if (pending.current !== abort || abort.signal.aborted) return;
       const message = error instanceof Error ? error.message : `Could not open this ${kind}.`;
-      setMessage(previous ? `${message} Your current sources, settings and completed outputs are unchanged.` : message);
+      setMessage(previousSource ? `${message} Your current sources, settings and completed outputs are unchanged.` : message);
       const input = chooser.current;
       if (input) {
         input.value = "";
@@ -207,8 +218,8 @@ function AddMusic() {
     setMessage("Checking files on this device…");
     try {
       const blob = await makeFilm(video,music,offset,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",quality,abort.signal,setMessage); check(abort.signal);
-      if (mode === "preview") { setPreview(URL.createObjectURL(blob)); setMessage("Audio-only mix preview ready. No video has been exported."); }
-      else { setResultBlob(blob); setResult(URL.createObjectURL(blob)); setMessage("Your film is ready to play and save."); }
+      if (mode === "preview") { setPreview(URL.createObjectURL(blob)); setMessage("Audio-only mix preview ready."); }
+      else { setResultBlob(blob); setResult(URL.createObjectURL(blob)); setApplied(draft); setMessage("Your film is ready to play and save."); }
     } catch (error) { setMessage(error instanceof Error && error.name === "AbortError" ? "Cancelled. Your originals are unchanged." : error instanceof Error ? error.message : "Could not prepare this on your device."); }
     finally { controller.current = null; setBusy(null); }
   }
@@ -229,10 +240,10 @@ function AddMusic() {
       <label className="trim-file">Music or spoken audio<input ref={musicChooser} type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing} aria-busy={checkingMusic || undefined} onChange={e => void choose(e.target.files?.[0],"audio")}/></label>
       <p className="trim-note">Use audio you have permission to use, up to 5 minutes and 16 MB; decoded audio must fit within 128 MiB on this device. If the selected audio ends early, any enabled original sound continues.</p>
       {music && <><p><strong>{music.name}</strong></p><audio ref={sourceMusic} onPlay={()=>pauseOthers(sourceMusic.current)} controls src={musicUrl} aria-label="Original music"/></>}
-      <div className="trim-fields"><label>Music start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label><label>Music fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearOutputs();}}/></label></div>
+      <div className="trim-fields"><label>Music start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Music volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Music fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Music fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label></div>
       <p className="trim-note">Fades apply to the added music only and must fit within the part used in the video.</p>
       <p className="trim-note">If your video has no original sound, only the chosen audio is added. Combining loud tracks can distort; lower the volumes and listen before saving.</p>
-      <label>Export quality<select value={quality} disabled={busy !== null || importing} onChange={e=>{setQuality(e.target.value as "standard" | "hd");clearOutputs();}}><option value="standard">Standard · smaller file</option><option value="hd">HD · 720p</option></select></label>
+      <label>Export quality<select value={quality} disabled={busy !== null || importing} onChange={e=>{setQuality(e.target.value as "standard" | "hd");clearPreview();}}><option value="standard">Standard · smaller file</option><option value="hd">HD · 720p</option></select></label>
       <p className="trim-note">HD takes longer and uses more memory. The original frame is fitted to your chosen size; bars may be added. Export uses H.264/AAC MP4 in a compatible browser.</p>
       <div className="video-tool-actions">
         <button type="button" className="secondary" ref={previewAction} disabled={!canRun || busy === "export"} aria-disabled={busy === "preview"} onClick={() => void run("preview")}>Preview mix (audio only)</button>
@@ -240,7 +251,7 @@ function AddMusic() {
         {busy && <button type="button" className="secondary" onClick={event => cancelRun(event.currentTarget)}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
       </div>
       {preview && <div className="trim-result"><h2>Audio-only mix preview</h2><p className="trim-note">This is the sound mix, without video. Play the original video above to compare. The MP4 uses AAC encoding, so it may sound slightly different.</p><audio ref={previewPlayer} onPlay={()=>pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/></div>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>Your film</h2><video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <div inert={busy !== null || checkingMusic || checkingVideo || undefined}><LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/></div>}</div>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>{previous ? "Previous export" : "Your film"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with music"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <div inert={busy !== null || checkingMusic || checkingVideo || undefined}><LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/></div>}</div>}
     </section></main>;
 }
 export function mountAddMusic(container: HTMLElement) { createRoot(container).render(<AddMusic/>); }
