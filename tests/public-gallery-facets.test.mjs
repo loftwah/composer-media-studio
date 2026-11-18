@@ -263,6 +263,7 @@ test("an empty audio facet names the gap and links to the signed-out trim tool",
   assert.match(audio, /data-total="0">0 works</);
   assert.match(audio, /No audio work has been published to the gallery yet\./);
   assert.match(audio, /href="\/tools\/audio-trim"/);
+  assert.match(audio, /<a href="\/gallery">Clear filters<\/a>/);
   assert.doesNotMatch(audio, /No published work matches these filters/);
 
   // Audio with any other filter, or another page, stays a generic empty result.
