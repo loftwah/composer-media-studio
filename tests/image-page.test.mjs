@@ -61,6 +61,10 @@ test("WebP choices follow the one-time probe while the byte-level MIME check sta
   assert.match(workbench, /if \(!sniffed\.supported \|\| sniffed\.mime !== mime\)/);
 });
 
+test("each social size shows the actual crop from its existing blob URL", () => {
+  assert.match(workbench, /<img\s+src=\{output\.url\}[^>]+className="image-social-thumb"[^>]*\/>\s*<div[^>]*>\s*<a href=\{output\.url\} download=/);
+});
+
 test("PNG states that a byte target is not achievable and offers resize guidance", () => {
   assert.match(workbench, /PNG is lossless, so a byte target is not achievable here/);
   assert.match(workbench, /Lower the output width and height, or choose JPEG/);
