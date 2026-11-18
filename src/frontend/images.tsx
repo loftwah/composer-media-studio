@@ -215,6 +215,8 @@ type WorkItem = {
   longEdgeOverride?: number;
   /** A reversible one-image crop aspect. Undefined follows the batch. */
   cropAspectOverride?: CropAspectKey;
+  /** A reversible one-image crop position. Undefined follows the batch. */
+  cropAnchorOverride?: CropAnchorKey;
 };
 
 type Rejection = { name: string; message: string };
@@ -854,6 +856,7 @@ function Images() {
         Boolean(selected.pngOverride),
         selected.longEdgeOverride,
         selected.cropAspectOverride,
+        selected.cropAnchorOverride,
       )
     : settings;
   const plan = selected ? makePlan(selected.source, selectedSettings, activeTrim) : null;
@@ -885,7 +888,8 @@ function Images() {
     (item) =>
       item.pngOverride ||
       item.longEdgeOverride !== undefined ||
-      item.cropAspectOverride !== undefined,
+      item.cropAspectOverride !== undefined ||
+      item.cropAnchorOverride !== undefined,
   );
   const invalidLongEdgeItem = items.find(
     (item) =>
@@ -1300,6 +1304,7 @@ function Images() {
           Boolean(item.pngOverride),
           item.longEdgeOverride,
           item.cropAspectOverride,
+          item.cropAnchorOverride,
         );
         const rendered = await renderImage(item, itemSettings, controller.signal, cropRect);
         if (controller.signal.aborted) {
@@ -1561,6 +1566,15 @@ function Images() {
     );
   }
 
+  function setCropAnchorOverride(item: WorkItem, value: CropAnchorKey | undefined): void {
+    if (runningRef.current || addingRef.current) return;
+    setItems((previous) =>
+      previous.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, cropAnchorOverride: value } : candidate,
+      ),
+    );
+  }
+
   function applyWebReady(): void {
     if (!selected || runningRef.current || socialController.current) return;
     if (selected.pngOverride) setPngOverride(selected, false);
@@ -1733,12 +1747,14 @@ function Images() {
       previous.map((item) =>
         item.pngOverride ||
         item.longEdgeOverride !== undefined ||
-        item.cropAspectOverride !== undefined
+        item.cropAspectOverride !== undefined ||
+        item.cropAnchorOverride !== undefined
           ? {
               ...item,
               pngOverride: false,
               longEdgeOverride: undefined,
               cropAspectOverride: undefined,
+              cropAnchorOverride: undefined,
             }
           : item,
       ),
@@ -3270,6 +3286,34 @@ function Images() {
                     </select>
                     Crop aspect for this image
                   </label>
+                  <label className="image-list-override">
+                    <select
+                      value={item.cropAnchorOverride ?? ""}
+                      disabled={
+                        running ||
+                        adding ||
+                        (item.cropAspectOverride ?? settings.cropAspect) === "original"
+                      }
+                      aria-label={`Crop position for ${item.file.name}; use batch keeps the batch position`}
+                      aria-describedby="image-batch-note"
+                      onChange={(event) =>
+                        setCropAnchorOverride(
+                          item,
+                          event.target.value === ""
+                            ? undefined
+                            : (event.target.value as CropAnchorKey),
+                        )
+                      }
+                    >
+                      <option value="">Use batch</option>
+                      {Object.entries(CROP_ANCHOR_LABELS).map(([value, label]) => (
+                        <option value={value} key={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    Crop position for this image
+                  </label>
                 </div>
                 <div className="image-list-actions">
                   <button
@@ -3313,8 +3357,10 @@ function Images() {
           PNG and uses no byte target; unchecked images keep the batch format.
           <strong> Long edge for this image</strong> resizes only that row; leave it blank
           to follow the batch resize. <strong>Crop aspect for this image</strong> changes
-          only that row and keeps the shared crop position; <strong>Use batch</strong>
-          follows the batch aspect.
+          only that row; <strong>Use batch</strong> follows the batch aspect.
+          <strong> Crop position for this image</strong> overrides the shared position for
+          that row while its effective aspect is not Original; <strong>Use batch</strong>
+          follows the batch position.
         </p>
       </section>
     </main>

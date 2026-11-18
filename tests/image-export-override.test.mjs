@@ -198,6 +198,39 @@ test("an invalid per-image long edge is passed to the existing whole-number chec
   }
 });
 
+test("a per-image crop position applies only while the effective aspect is cropped", () => {
+  const uncropped = batchSettings({ cropAspect: "original" });
+  assert.equal(
+    settingsForImage(uncropped, "image/png", false, undefined, undefined, "top"),
+    uncropped,
+    "an uncropped row keeps the exact batch settings and its stored anchor is ignored",
+  );
+
+  const batchCropped = batchSettings({ cropAspect: "square" });
+  assert.equal(
+    settingsForImage(batchCropped, "image/png", false, undefined, undefined, "top").cropAnchor,
+    "top",
+  );
+  assert.equal(batchCropped.cropAnchor, "centre", "the batch anchor is unchanged");
+
+  const rowCropped = settingsForImage(
+    uncropped,
+    "image/png",
+    false,
+    undefined,
+    "square",
+    "bottom",
+  );
+  assert.equal(rowCropped.cropAspect, "square");
+  assert.equal(rowCropped.cropAnchor, "bottom", "a row aspect makes its anchor relevant");
+
+  assert.equal(
+    settingsForImage(batchCropped, "image/png", false, undefined, undefined, undefined),
+    batchCropped,
+    "a blank anchor inherits the batch position",
+  );
+});
+
 test("the receipt records the effective per-image long edge, not the batch value", () => {
   const settings = batchSettings({ format: "webp", resizeMode: "max-long-edge" });
   const effective = settingsForImage(settings, "image/webp", false, 320);
