@@ -5,11 +5,298 @@
 // what takes space, where is a saved original referenced, and which records are
 // too incomplete to classify. "No saved reference found" is not a claim that
 // bytes are safe to delete.
+//
+// The runtime is a faithful move of storage-doctor.mjs into strict TypeScript.
+// The narrow D1 seam is reused from footage-plans.ts, the asset row from
+// local-render-receipts.ts and the saved plan rows/specs from footage-plans.ts
+// and song-plans.ts. No Cloudflare types are imported; every annotation here is
+// erased at runtime and the SQL, scoping and read-only semantics are unchanged.
 
 import { safeJson } from "./util.mjs";
+import type { FootagePlanEnv, FootagePlanRow, FootagePlanSpec } from "./footage-plans.ts";
+import type { SongPlanRow, SongPlanSpec } from "./song-plans.ts";
+import type { LocalRenderAssetRow } from "./local-render-receipts.ts";
+
+// --- narrow, erased structural seams -------------------------------------
+
+/** Reuse the checked D1 read seam and add only the R2 reads this report makes. */
+export interface StorageDoctorEnv extends FootagePlanEnv {
+  MEDIA: {
+    head?(key: string): Promise<{ size?: number | string } | null>;
+    list?(options: { prefix?: string; cursor?: string; limit?: number }): Promise<{
+      objects?: { key: string; size?: number | string }[];
+      truncated?: boolean;
+      cursor?: string;
+    } | null>;
+  };
+}
+/** The project row only needs these three public fields for a private report. */
+export interface StorageDoctorProject { id: string; name: string; slug: string }
+export interface StorageReportOptions { checkObjects?: boolean; listObjects?: boolean }
+
+type AssetKind = "image" | "video" | "audio";
+type LineageRole = "original" | "derivative" | "unknown";
+type ReferenceState = "used" | "unused" | "unknown" | "tombstoned";
+type UseType = keyof typeof USE_LABELS;
+type MissingReason = "r2_key_missing" | "object_missing";
+type ObjectStatus = "missing" | "present" | "size_mismatch" | "check_failed";
+type StorageStatus = "missing" | "present" | "size_mismatch" | "unknown" | "not_checked";
+
+/** Extends the checked asset row with the columns the inventory reads. */
+interface StorageAssetRow extends LocalRenderAssetRow {
+  project_id: string;
+  r2_key: string;
+  bytes: number;
+  title: string;
+  source: string;
+  parent_asset_id: string | null;
+  generation_id: string | null;
+  created_at: number;
+  deleted_at: number | null;
+  erasure_pending: number | null;
+}
+interface StorageGenerationRow {
+  id: string;
+  output_asset_id: string | null;
+  composition_id: string | null;
+  request_json: string;
+  model: string;
+  status: string;
+  created_at: number;
+}
+interface StorageCompositionRow { id: string; title: string; spec_json: string; updated_at: number }
+interface StoragePublicationRow {
+  id: string; asset_id: string; poster_asset_id: string | null;
+  slug: string; title: string; created_at: number; revoked_at: number | null;
+}
+interface StorageSubjectVersionRow {
+  subject_id: string; revision: number; reference_asset_id: string; created_at: number;
+}
+interface StorageReceiptRow { id: string; output_asset_id: string; snapshot_json: string; created_at: number }
+interface StorageExportReceiptRow extends StorageReceiptRow { source_asset_id: string }
+interface StorageReviewRoomRow {
+  id: string; asset_id: string; version_label: string; created_at: number; revoked_at: number | null;
+}
+interface StorageImportRow { id: string; staged_keys_json: string }
+
+interface GenerationRequest {
+  referenceAssetId?: string | null;
+  maskAssetId?: string | null;
+  sourceAssetId?: string | null;
+  parentAssetId?: string | null;
+}
+interface CompositionSpec {
+  shots?: { assetId?: string | null }[] | null;
+  audioAssetId?: string | null;
+  audioTracks?: { assetId?: string | null; role?: string | null }[] | null;
+  slateAssetId?: string | null;
+  slateVideoAssetId?: string | null;
+}
+interface RenderSnapshot {
+  shots?: { assetId?: string | null }[] | null;
+  soundtrack?: { assetId?: string | null } | null;
+  tracks?: { assetId?: string | null; role?: string | null }[] | null;
+  captions?: { songAssetId?: string | null } | null;
+}
+
+interface SavedUse {
+  type: UseType;
+  parentId?: string | null;
+  parentLabel?: string | null;
+  detail?: string | null;
+  href?: string | null;
+  savedAt?: number | null;
+  active?: boolean;
+}
+interface UseEntry {
+  type: UseType;
+  label: string;
+  parentId: string | null;
+  parentLabel: string | null;
+  detail: string | null;
+  href: string;
+  savedAt: number | null;
+  available: boolean;
+  active: boolean;
+}
+interface DanglingReference extends SavedUse {
+  assetId: string;
+  assetTitle?: string | null;
+  reason: string;
+}
+interface KindTotals { assets: number; bytes: number; originals: number; derivatives: number; unknown: number }
+interface AssetEntry {
+  id: string;
+  kind: string;
+  title: string;
+  bytes: number;
+  mime: string;
+  sha256: string;
+  source: string;
+  role: LineageRole;
+  referenceState: ReferenceState;
+  protected: boolean;
+  published: boolean;
+  uses: number;
+  href: string;
+  file: string;
+  legacyReasons: string[];
+  storage?: StorageStatus;
+}
+interface CoverageSource { source: string; available: boolean; rows: number }
+interface ReportCoverage {
+  complete: boolean;
+  assetsScanned: number;
+  liveAssets: number;
+  tombstonedAssets: number;
+  objectChecks: boolean;
+  objectChecksTruncated: boolean;
+  usesTruncated: boolean;
+  duplicateGroupsTruncated: boolean;
+  sources: CoverageSource[];
+  note: string;
+}
+interface ReportTotals {
+  liveAssets: number;
+  liveBytes: number;
+  storedBytes: number;
+  sizeMismatchObjects: number;
+  tombstonedAssets: number;
+  tombstonedBytes: number;
+  erasurePending: number;
+  originals: number;
+  derivatives: number;
+  unknownRole: number;
+  protectedAssets: number;
+  protectedBytes: number;
+  publishedAssets: number;
+  publishedBytes: number;
+  missingObjects: number;
+  missingBytes: number;
+  danglingReferences: number;
+  unknownLegacyRows: number;
+  duplicateGroups: number;
+  duplicateExtraAssets: number;
+  duplicateWastedBytes: number;
+  unreferencedObjects: number;
+  unreferencedBytes: number;
+}
+interface MissingObject {
+  assetId: string;
+  key: string | null;
+  reason: MissingReason;
+  bytes: number;
+}
+interface ObjectCheck {
+  assetId: string;
+  status: ObjectStatus;
+  storedBytes?: number;
+  recordedBytes?: number;
+}
+type DuplicateGroupSeed = Pick<DuplicateGroup, "sha256" | "bytes" | "mime" | "assetIds">;
+interface DuplicateGroup {
+  sha256: string;
+  bytes: number;
+  mime: string;
+  count: number;
+  extraBytes: number;
+  assetIds: string[];
+  assets: { id: string; title: string | null; href: string }[];
+}
+interface ObjectListing {
+  available: boolean;
+  truncated: boolean;
+  scanned: number;
+  unreferenced: number;
+  unreferencedBytes: number;
+  sample: { key: string; size: number; reason: string }[];
+}
+interface LegacyRow {
+  assetId: string;
+  title: string;
+  kind: string;
+  source: string;
+  role: LineageRole;
+  deletedAt: number | null;
+  reasons: string[];
+}
+interface PublishedView {
+  publicationId: string;
+  slug: string;
+  title: string;
+  assetId: string;
+  posterAssetId: string | null;
+  href: string;
+  createdAt: number;
+}
+interface ProtectedView {
+  assetId: string;
+  title: string;
+  bytes: number;
+  uses: number;
+  published: boolean;
+  href: string;
+}
+
+/** The complete read-only payload. The owner UI keeps a smaller subset view. */
+export interface ProjectStorageReport {
+  format: "media-studio.storage-report/v1";
+  readOnly: true;
+  writes: 0;
+  generatedAt: number;
+  project: { id: string; name: string; slug: string };
+  coverage: ReportCoverage;
+  totals: ReportTotals;
+  byKind: Record<string, KindTotals>;
+  assets: AssetEntry[];
+  usedBy: Record<string, UseEntry[]>;
+  missingReferencedObjects: MissingObject[];
+  danglingReferences: DanglingReference[];
+  unknownLegacy: LegacyRow[];
+  duplicateContent: DuplicateGroup[];
+  published: PublishedView[];
+  protectedAssets: ProtectedView[];
+  objectListing: ObjectListing;
+  cleanup: { status: "read_only"; destructiveActions: 0; note: string };
+}
+export interface UsageReport {
+  readOnly: true;
+  writes: 0;
+  projectId: string;
+  asset: {
+    id: string;
+    title: string;
+    kind: string;
+    bytes: number;
+    sha256: string;
+    source: string;
+    deletedAt: number | null;
+    role: LineageRole;
+    referenceState: ReferenceState;
+    protected: boolean;
+    published: boolean;
+    legacyReasons: string[];
+  };
+  uses: UseEntry[];
+  coverage: ReportCoverage;
+  notes: string[];
+}
+export interface DuplicateLookupInput {
+  sha256?: unknown;
+  size?: unknown;
+  mime?: unknown;
+  filename?: unknown;
+}
+export type DuplicateLookup =
+  | { valid: false; reason: string }
+  | {
+      valid: true;
+      duplicate: StorageAssetRow | null;
+      fingerprint: { sha256: string; size: number; mime: string };
+    };
 
 const SHA = /^[a-f0-9]{64}$/i;
-const KINDS = ["image", "video", "audio"];
+const KINDS = ["image", "video", "audio"] as const;
 const MAX_ASSETS = 1000;
 const MAX_OBJECT_CHECKS = 1000;
 const MAX_USES = 5000;
@@ -60,32 +347,39 @@ const SOURCE_TABLES = [
   "review_rooms",
 ];
 
-async function rows(env, sql, ...bind) {
-  return (await env.DB.prepare(sql).bind(...bind).all()).results;
+async function rows<Row>(env: StorageDoctorEnv, sql: string, ...bind: unknown[]): Promise<Row[]> {
+  return (await env.DB.prepare(sql).bind(...bind).all<Row>()).results;
 }
 
-async function optionalRows(env, sql, ...bind) {
+async function optionalRows<Row>(
+  env: StorageDoctorEnv,
+  sql: string,
+  ...bind: unknown[]
+): Promise<{ available: boolean; rows: Row[] }> {
   try {
-    return { available: true, rows: await rows(env, sql, ...bind) };
+    return { available: true, rows: await rows<Row>(env, sql, ...bind) };
   } catch {
     return { available: false, rows: [] };
   }
 }
 
-function projectHref(projectId, route) {
+function projectHref(projectId: string, route: string): string {
   return `#/p/${encodeURIComponent(projectId)}/${route}`;
 }
 
-function assetHref(projectId, assetId) {
+function assetHref(projectId: string, assetId: string): string {
   return `#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(assetId)}`;
 }
 
-function asCount(value) {
+function asCount(value: unknown): number {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
 
-function normaliseLineage(asset, generation) {
-  const reasons = [];
+function normaliseLineage(
+  asset: StorageAssetRow,
+  generation: StorageGenerationRow | null | undefined,
+): { role: LineageRole; legacyReasons: string[] } {
+  const reasons: string[] = [];
   const sha = String(asset.sha256 ?? "");
   if (!SHA.test(sha)) reasons.push("fingerprint_missing_or_invalid");
   if (!Number.isSafeInteger(Number(asset.bytes)) || Number(asset.bytes) <= 0) reasons.push("size_invalid");
@@ -96,7 +390,7 @@ function normaliseLineage(asset, generation) {
   if (asset.generation_id && !generation) reasons.push("generation_row_missing");
   if (generation && generation.output_asset_id && generation.output_asset_id !== asset.id) reasons.push("generation_output_mismatch");
 
-  const request = generation ? safeJson(generation.request_json, {}) : {};
+  const request: GenerationRequest = generation ? safeJson<GenerationRequest>(generation.request_json, {}) : {};
   const hasDerivation =
     Boolean(asset.parent_asset_id) ||
     Boolean(request.referenceAssetId) ||
@@ -104,7 +398,7 @@ function normaliseLineage(asset, generation) {
     Boolean(generation?.composition_id) ||
     ["variant", "assembled"].includes(asset.source);
 
-  let role = "unknown";
+  let role: LineageRole = "unknown";
   if (asset.source === "upload" && !asset.parent_asset_id) role = "original";
   else if (hasDerivation) role = "derivative";
   else if (asset.source === "generated" && generation) role = "original";
@@ -118,28 +412,32 @@ function normaliseLineage(asset, generation) {
  * live asset (bounded); `listObjects` inspects the project's own key prefix for
  * objects with no asset row (bounded). Both are reads.
  */
-export async function projectStorageReport(env, project, { checkObjects = true, listObjects = true } = {}) {
+export async function projectStorageReport(
+  env: StorageDoctorEnv,
+  project: StorageDoctorProject,
+  { checkObjects = true, listObjects = true }: StorageReportOptions = {},
+): Promise<ProjectStorageReport> {
   const projectId = project.id;
-  const assets = await rows(env, "SELECT * FROM assets WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId);
-  const generationRows = await rows(env, "SELECT * FROM generations WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId).catch(() => null);
-  const compositionRows = await rows(env, "SELECT * FROM compositions WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId).catch(() => null);
-  const publicationRows = await rows(env, "SELECT * FROM publications WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId).catch(() => null);
+  const assets = await rows<StorageAssetRow>(env, "SELECT * FROM assets WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId);
+  const generationRows = await rows<StorageGenerationRow>(env, "SELECT * FROM generations WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId).catch(() => null);
+  const compositionRows = await rows<StorageCompositionRow>(env, "SELECT * FROM compositions WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId).catch(() => null);
+  const publicationRows = await rows<StoragePublicationRow>(env, "SELECT * FROM publications WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId).catch(() => null);
 
   const optional = {
-    subject_versions: await optionalRows(env, "SELECT * FROM subject_versions WHERE project_id=?1 ORDER BY subject_id ASC,revision ASC", projectId),
-    song_plans: await optionalRows(env, "SELECT * FROM song_plans WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
-    footage_plans: await optionalRows(env, "SELECT * FROM footage_plans WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
-    local_render_receipts: await optionalRows(env, "SELECT * FROM local_render_receipts WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
-    footage_export_receipts: await optionalRows(env, "SELECT * FROM footage_export_receipts WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
-    review_rooms: await optionalRows(env, "SELECT * FROM review_rooms WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
+    subject_versions: await optionalRows<StorageSubjectVersionRow>(env, "SELECT * FROM subject_versions WHERE project_id=?1 ORDER BY subject_id ASC,revision ASC", projectId),
+    song_plans: await optionalRows<SongPlanRow>(env, "SELECT * FROM song_plans WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
+    footage_plans: await optionalRows<FootagePlanRow>(env, "SELECT * FROM footage_plans WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
+    local_render_receipts: await optionalRows<StorageReceiptRow>(env, "SELECT * FROM local_render_receipts WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
+    footage_export_receipts: await optionalRows<StorageExportReceiptRow>(env, "SELECT * FROM footage_export_receipts WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
+    review_rooms: await optionalRows<StorageReviewRoomRow>(env, "SELECT * FROM review_rooms WHERE project_id=?1 ORDER BY created_at ASC,id ASC", projectId),
   };
-  const optionalImports = await optionalRows(
+  const optionalImports = await optionalRows<StorageImportRow>(
     env,
     "SELECT id,status,staged_keys_json FROM project_bundle_imports WHERE project_id=?1 ORDER BY created_at ASC,id ASC",
     projectId,
   );
 
-  const coverageSources = [];
+  const coverageSources: CoverageSource[] = [];
   for (const [name, value] of Object.entries({ generations: generationRows, compositions: compositionRows, publications: publicationRows })) {
     coverageSources.push({ source: name, available: Array.isArray(value), rows: Array.isArray(value) ? value.length : 0 });
   }
@@ -156,13 +454,13 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
   const live = assets.filter((asset) => asset.deleted_at === null);
   const tombstoned = assets.filter((asset) => asset.deleted_at !== null);
 
-  const uses = new Map();
-  const dangling = [];
+  const uses = new Map<string, UseEntry[]>();
+  const dangling: DanglingReference[] = [];
   let danglingTotal = 0;
   let totalUses = 0;
   let usesTruncated = false;
 
-  const addUse = (assetId, use) => {
+  const addUse = (assetId: unknown, use: SavedUse): void => {
     if (typeof assetId !== "string" || !assetId) return;
     const asset = assetById.get(assetId);
     if (!asset) {
@@ -175,7 +473,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
       if (dangling.length < MAX_DANGLING)
         dangling.push({ ...use, assetId, assetTitle: asset.title, reason: "asset_tombstoned" });
     }
-    const entry = {
+    const entry: UseEntry = {
       type: use.type,
       label: USE_LABELS[use.type] ?? use.type,
       parentId: use.parentId ?? null,
@@ -212,7 +510,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
 
   // A generation result and its exact inputs.
   for (const generation of generationRows ?? []) {
-    const request = safeJson(generation.request_json, {});
+    const request: GenerationRequest = safeJson<GenerationRequest>(generation.request_json, {});
     if (generation.output_asset_id)
       addUse(generation.output_asset_id, {
         type: "generation_output",
@@ -263,7 +561,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
 
   // Storyboards keep shots, beds, tracks and slates as explicit asset ids.
   for (const composition of compositionRows ?? []) {
-    const spec = safeJson(composition.spec_json, {});
+    const spec: CompositionSpec = safeJson<CompositionSpec>(composition.spec_json, {});
     const storyboardHref = projectHref(projectId, "assemble");
     for (const shot of Array.isArray(spec.shots) ? spec.shots : [])
       addUse(shot?.assetId, {
@@ -346,7 +644,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
     });
 
   for (const plan of optional.song_plans.rows) {
-    const spec = safeJson(plan.spec_json, {});
+    const spec: Partial<SongPlanSpec> = safeJson<Partial<SongPlanSpec>>(plan.spec_json, {});
     addUse(plan.song_asset_id, {
       type: "song_plan_song",
       parentId: plan.id,
@@ -378,7 +676,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
   }
 
   for (const plan of optional.footage_plans.rows) {
-    const spec = safeJson(plan.spec_json, {});
+    const spec: Partial<FootagePlanSpec> = safeJson<Partial<FootagePlanSpec>>(plan.spec_json, {});
     addUse(plan.source_asset_id, {
       type: "footage_plan_source",
       parentId: plan.id,
@@ -411,7 +709,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
 
   // Browser-reported local renders keep their source ids in a private receipt.
   for (const receipt of optional.local_render_receipts.rows) {
-    const snapshot = safeJson(receipt.snapshot_json, {});
+    const snapshot: RenderSnapshot = safeJson<RenderSnapshot>(receipt.snapshot_json, {});
     addUse(receipt.output_asset_id, {
       type: "render_receipt_output",
       parentId: receipt.id,
@@ -488,8 +786,8 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
       active: !room.revoked_at,
     });
 
-  const byKind = Object.fromEntries(
-    KINDS.map((kind) => [kind, { assets: 0, bytes: 0, originals: 0, derivatives: 0, unknown: 0 }]),
+  const byKind: Record<string, KindTotals> = Object.fromEntries(
+    KINDS.map((kind): [string, KindTotals] => [kind, { assets: 0, bytes: 0, originals: 0, derivatives: 0, unknown: 0 }]),
   );
   let originals = 0;
   let derivatives = 0;
@@ -500,13 +798,13 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
   let protectedBytes = 0;
   let liveBytes = 0;
 
-  const assetEntries = live.slice(0, MAX_ASSETS).map((asset) => {
+  const assetEntries: AssetEntry[] = live.slice(0, MAX_ASSETS).map((asset) => {
     const generation = asset.generation_id ? generationById.get(asset.generation_id) : null;
     const { role, legacyReasons } = normaliseLineage(asset, generation);
     const assetUses = uses.get(asset.id) ?? [];
     const published = assetUses.some((use) => use.type === "publication" || use.type === "publication_poster");
     const protectedAsset = assetUses.length > 0 || published;
-    const referenceState = assetUses.length > 0 ? "used" : legacyReasons.length > 0 || !coverageComplete ? "unknown" : "unused";
+    const referenceState: ReferenceState = assetUses.length > 0 ? "used" : legacyReasons.length > 0 || !coverageComplete ? "unknown" : "unused";
     const bytes = asCount(asset.bytes);
     liveBytes += bytes;
     const bucket = byKind[asset.kind] ?? (byKind[asset.kind] = { assets: 0, bytes: 0, originals: 0, derivatives: 0, unknown: 0 });
@@ -551,8 +849,8 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
 
   // Object checks are reads. A missing object is a real integrity finding, not
   // an inference from metadata.
-  const objectChecks = [];
-  const missingReferencedObjects = [];
+  const objectChecks: ObjectCheck[] = [];
+  const missingReferencedObjects: MissingObject[] = [];
   let objectChecksTruncated = false;
   if (checkObjects) {
     const checkable = live.slice(0, MAX_OBJECT_CHECKS);
@@ -597,15 +895,15 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
   }
 
   // Duplicate content is exact bytes plus size and MIME, inside this project.
-  const duplicateMap = new Map();
+  const duplicateMap = new Map<string, DuplicateGroupSeed>();
   for (const asset of live) {
     if (!SHA.test(String(asset.sha256 ?? "")) || !Number.isSafeInteger(Number(asset.bytes)) || Number(asset.bytes) <= 0) continue;
     const key = `${String(asset.sha256).toLowerCase()}\0${Number(asset.bytes)}\0${asset.mime}`;
-    const group = duplicateMap.get(key) ?? { sha256: asset.sha256, bytes: Number(asset.bytes), mime: asset.mime, assetIds: [] };
+    const group: DuplicateGroupSeed = duplicateMap.get(key) ?? { sha256: asset.sha256, bytes: Number(asset.bytes), mime: asset.mime, assetIds: [] };
     group.assetIds.push(asset.id);
     duplicateMap.set(key, group);
   }
-  const duplicateContent = [...duplicateMap.values()]
+  const duplicateContent: DuplicateGroup[] = [...duplicateMap.values()]
     .filter((group) => group.assetIds.length > 1)
     .sort((left, right) => (right.assetIds.length - 1) * right.bytes - (left.assetIds.length - 1) * left.bytes)
     .slice(0, MAX_DUPLICATE_GROUPS)
@@ -625,16 +923,16 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
   const duplicateWastedBytes = duplicateContent.reduce((sum, group) => sum + group.extraBytes, 0);
 
   // R2 objects under this project's own prefix without a matching asset row.
-  let objectListing = { available: false, truncated: false, scanned: 0, unreferenced: 0, unreferencedBytes: 0, sample: [] };
+  let objectListing: ObjectListing = { available: false, truncated: false, scanned: 0, unreferenced: 0, unreferencedBytes: 0, sample: [] };
   if (listObjects && typeof env.MEDIA.list === "function") {
     const referencedKeys = new Set(assets.map((asset) => asset.r2_key).filter(Boolean));
-    const stagingKeys = new Set();
+    const stagingKeys = new Set<string>();
     for (const row of optionalImports.rows) {
-      for (const key of safeJson(row.staged_keys_json, [])) if (typeof key === "string") stagingKeys.add(key);
+      for (const key of safeJson<string[]>(row.staged_keys_json, [])) if (typeof key === "string") stagingKeys.add(key);
     }
     const prefix = `projects/${projectId}/assets/`;
-    const objects = [];
-    let cursor = undefined;
+    const objects: { key: string; size: number }[] = [];
+    let cursor: string | undefined = undefined;
     let truncated = false;
     try {
       do {
@@ -667,7 +965,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
     }
   }
 
-  const unknownLegacy = assets
+  const unknownLegacy: LegacyRow[] = assets
     .map((asset) => {
       const generation = asset.generation_id ? generationById.get(asset.generation_id) : null;
       const { role, legacyReasons } = normaliseLineage(asset, generation);
@@ -684,7 +982,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
     .filter((entry) => entry.reasons.length > 0);
   const unknownLegacyLive = unknownLegacy.filter((entry) => entry.deletedAt === null);
 
-  const published = (publicationRows ?? [])
+  const published: PublishedView[] = (publicationRows ?? [])
     .filter((publication) => !publication.revoked_at)
     .map((publication) => ({
       publicationId: publication.id,
@@ -696,7 +994,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
       createdAt: publication.created_at,
     }));
 
-  const protectedList = assetEntries
+  const protectedList: ProtectedView[] = assetEntries
     .filter((entry) => entry.protected)
     .map((entry) => ({ assetId: entry.id, title: entry.title, bytes: entry.bytes, uses: entry.uses, published: entry.published, href: entry.href }));
 
@@ -752,7 +1050,7 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
     },
     byKind,
     assets: assetEntries,
-    usedBy: Object.fromEntries([...uses.entries()].map(([assetId, entries]) => [assetId, entries])),
+    usedBy: Object.fromEntries([...uses.entries()].map(([assetId, entries]): [string, UseEntry[]] => [assetId, entries])),
     missingReferencedObjects,
     danglingReferences: dangling,
     unknownLegacy,
@@ -769,13 +1067,17 @@ export async function projectStorageReport(env, project, { checkObjects = true, 
 }
 
 /** One asset's saved-reference view, used by the asset detail panel. */
-export async function assetUsageReport(env, project, assetId) {
+export async function assetUsageReport(
+  env: StorageDoctorEnv,
+  project: StorageDoctorProject,
+  assetId: string,
+): Promise<UsageReport | null> {
   const report = await projectStorageReport(env, project, { checkObjects: false, listObjects: false });
   const asset = report.assets.find((entry) => entry.id === assetId);
   if (!asset) {
-    const row = await env.DB.prepare("SELECT * FROM assets WHERE id=?1 AND project_id=?2").bind(assetId, project.id).first();
+    const row = await env.DB.prepare("SELECT * FROM assets WHERE id=?1 AND project_id=?2").bind(assetId, project.id).first<StorageAssetRow>();
     if (!row) return null;
-    const generation = row.generation_id ? await env.DB.prepare("SELECT * FROM generations WHERE id=?1 AND project_id=?2").bind(row.generation_id, project.id).first() : null;
+    const generation = row.generation_id ? await env.DB.prepare("SELECT * FROM generations WHERE id=?1 AND project_id=?2").bind(row.generation_id, project.id).first<StorageGenerationRow>() : null;
     const { role, legacyReasons } = normaliseLineage(row, generation);
     const assetUses = report.usedBy[row.id] ?? [];
     return {
@@ -833,7 +1135,11 @@ export async function assetUsageReport(env, project, assetId) {
 
 /** Preflight lookup. Matching is exact SHA-256 + byte size + MIME, same project
  * and live only. A filename is never used to decide a duplicate. */
-export async function findDuplicateOriginal(env, project, { sha256, size, mime }) {
+export async function findDuplicateOriginal(
+  env: StorageDoctorEnv,
+  project: StorageDoctorProject,
+  { sha256, size, mime }: DuplicateLookupInput,
+): Promise<DuplicateLookup> {
   const hash = String(sha256 ?? "").trim().toLowerCase();
   const bytes = Number(size);
   const type = String(mime ?? "").trim().toLowerCase();
@@ -849,6 +1155,6 @@ export async function findDuplicateOriginal(env, project, { sha256, size, mime }
      ORDER BY created_at ASC,id ASC LIMIT 1`,
   )
     .bind(project.id, hash, bytes, type)
-    .first();
+    .first<StorageAssetRow>();
   return { valid: true, duplicate, fingerprint: { sha256: hash, size: bytes, mime: type } };
 }
