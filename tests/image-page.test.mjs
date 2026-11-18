@@ -127,7 +127,7 @@ test("the make-image button keeps keyboard focus while the canvas encodes", () =
 });
 
 test("the contact-sheet button keeps keyboard focus while its canvas encodes", () => {
-  assert.match(workbench, /disabled=\{running \|\| socialBusy \|\| adding \|\| zipBusy \|\| \([\s\S]*?doneItems\.length\s*\) < CONTACT_SHEET_MIN_IMAGES\}\s+aria-disabled=\{sheetBusy\}\s+onClick=\{\(\) => \{\s+if \(sheetBusy\) return;\s+void makeSheet\(\);/);
+  assert.match(workbench, /disabled=\{running \|\| socialBusy \|\| adding \|\| zipBusy \|\| \(isAtlasMode\s*\? !atlasPlan \|\| Boolean\(atlasProblem\)\s*: doneItems\.length < CONTACT_SHEET_MIN_IMAGES\)\}\s+aria-disabled=\{sheetBusy\}\s+onClick=\{\(\) => \{\s+if \(sheetBusy\) return;\s+void makeSheet\(\);/);
   assert.match(workbench, /async function makeSheet\(\): Promise<void> \{\s+if \(batchExport \|\| addingRef\.current \|\| runningRef\.current \|\| socialController\.current\) return;/);
   assert.match(workbench, /if \(!layout\) return;/);
 });

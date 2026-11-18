@@ -981,6 +981,15 @@ function Images() {
     snippets && selected?.result?.sha256 === snippets.key ? snippets.data : null;
   const snippetText = visibleSnippets ? visibleSnippets.snippets[snippetKind] : "";
   const doneItems = items.filter((item) => item.result);
+  const isAtlasMode = sheetMode === "sprite-atlas";
+  const atlasEntries = isAtlasMode ? doneItems.flatMap((item) =>
+    item.result?.mime === "image/png" ? [{ item, result: item.result }] : [],
+  ) : [];
+  const atlasPlan = isAtlasMode ? atlasLayout(atlasEntries.map(({ result }) => ({
+    width: result.width,
+    height: result.height,
+  })), sheetColumns) : null;
+  const atlasProblem = atlasPlan ? atlasBoundsProblem(atlasPlan) : null;
   const importBlob = selected?.result?.blob ?? selected?.stripped?.blob ?? null;
   const importFormat: "png" | "jpeg" | "webp" | null = selected?.result
     ? selected.result.mime === "image/jpeg"
@@ -1566,13 +1575,14 @@ function Images() {
     if (batchExport || addingRef.current || runningRef.current || socialController.current) return;
     const isAtlas = sheetMode === "sprite-atlas";
     const name = isAtlas ? "sprite atlas" : "contact sheet";
-    const entries = doneItems.flatMap(item => {
-      const result = item.result;
-      return result && (!isAtlas || result.mime === "image/png") ? [{ item, result }] : [];
-    });
-    const atlas = isAtlas
-      ? atlasLayout(entries.map(({ result }) => ({ width: result.width, height: result.height })), sheetColumns)
-      : null;
+    const entries = isAtlas
+      ? atlasEntries
+      : doneItems.flatMap(item => item.result ? [{ item, result: item.result }] : []);
+    const atlas = atlasPlan;
+    if (atlasProblem) {
+      setBatchMessage(atlasProblem);
+      return;
+    }
     const layout = isAtlas ? atlas : contactSheetLayout(entries.length, sheetColumns);
     if (!layout) return;
     if (atlas) {
@@ -3453,10 +3463,14 @@ function Images() {
         </label>
         <label className="image-sheet-columns">
           {sheetMode === "sprite-atlas" ? "Atlas columns" : "Contact sheet columns"}
-          <select value={sheetColumns} disabled={running || sheetBusy} onChange={(event) => {
-            const value = event.target.value;
-            setSheetColumns(value === "auto" ? "auto" : Number(value) as ContactSheetColumns);
-          }}>
+          <select
+            value={sheetColumns}
+            disabled={running || sheetBusy}
+            aria-describedby={sheetMode === "sprite-atlas" ? "image-atlas-preflight" : undefined}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSheetColumns(value === "auto" ? "auto" : Number(value) as ContactSheetColumns);
+            }}>
             <option value="auto">Auto (up to 4)</option>
             <option value="1">1</option>
             <option value="2">2</option>
@@ -3464,8 +3478,16 @@ function Images() {
             <option value="4">4</option>
           </select>
         </label>
-        {sheetMode === "sprite-atlas" && (
-          <p className="trim-note">Use at least two completed PNGs. The atlas keeps their native size and leaves gaps transparent.</p>
+        {isAtlasMode && (
+          <p id="image-atlas-preflight"
+            className={atlasProblem ? "image-plan is-error" : "trim-note"}
+            role="status"
+          >
+            {atlasPlan && <>Planned size {atlasPlan.width} × {atlasPlan.height} px. </>}
+            {atlasProblem ?? (atlasPlan
+              ? "Native size with transparent gaps."
+              : "Process at least two PNGs to plan the atlas.")}
+          </p>
         )}
         <div className="image-control-actions">
           <button
@@ -3501,11 +3523,9 @@ function Images() {
           <button
             type="button"
             className="secondary"
-            disabled={running || socialBusy || adding || zipBusy || (
-              sheetMode === "sprite-atlas"
-                ? doneItems.filter(item => item.result?.mime === "image/png").length
-                : doneItems.length
-            ) < CONTACT_SHEET_MIN_IMAGES}
+            disabled={running || socialBusy || adding || zipBusy || (isAtlasMode
+              ? !atlasPlan || Boolean(atlasProblem)
+              : doneItems.length < CONTACT_SHEET_MIN_IMAGES)}
             aria-disabled={sheetBusy}
             onClick={() => {
               if (sheetBusy) return;
