@@ -312,7 +312,18 @@ export function publicPage({
   const ogImageMime = isVideo ? posterMime : mime;
   const ogImageWidth = isVideo ? posterWidth : width;
   const ogImageHeight = isVideo ? posterHeight : height;
-  const sourceCredits = (Array.isArray(attribution) ? attribution : []).filter((item) => item && typeof item.credit === "string" && woodhouseUrl(item.sourceUrl)).map((item) => `<li>${escapeHtml(item.credit)} · <a href="${escapeHtml(woodhouseUrl(item.sourceUrl))}">Public source and provenance</a>${item.reuse === "unconfirmed" ? " · Catalogue reuse status: unconfirmed" : ""}</li>`).join("");
+  const publicAttribution = (Array.isArray(attribution) ? attribution : []).flatMap((item) => {
+    const source = typeof item?.credit === "string" ? woodhouseUrl(item.sourceUrl) : null;
+    return source ? [{ credit: item.credit, source, unconfirmed: item.reuse === "unconfirmed" }] : [];
+  });
+  const sourceCredits = publicAttribution.map(({ credit, source, unconfirmed }) =>
+    `<li>${escapeHtml(credit)} · <a href="${escapeHtml(source)}">Public source and provenance</a>${unconfirmed ? " · Catalogue reuse status: unconfirmed" : ""}</li>`,
+  ).join("");
+  const postCredits = publicAttribution.map(({ credit, source, unconfirmed }) =>
+    `${credit} · ${source}${unconfirmed ? " · Reuse status unconfirmed" : ""}`,
+  );
+  const caption = typeof description === "string" ? description.trim() : "";
+  const postText = [title, caption, ...postCredits, url].filter(Boolean).join("\n\n");
   const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
 
 Copyright (c) 2020-2026 Paweł Kuna
@@ -399,12 +410,14 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
       <span>${escapeHtml(facts)}</span>
       <span class="row">
         <button type="button" class="button secondary" data-copy-link data-copy-url="${escapeHtml(url)}" hidden>Copy link</button>
+        <button type="button" class="button secondary" data-copy-post hidden>Copy post text</button>
         <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
       </span>
     </figcaption>
   </figure>
   <span class="small" role="status" data-copy-status></span>
   <input class="copy-link-field" type="text" readonly aria-label="Link to this page" value="${escapeHtml(url)}" data-copy-field hidden>
+  <textarea class="copy-link-field" readonly rows="4" aria-label="Post text to copy manually" data-post-field hidden>${escapeHtml(postText)}</textarea>
   ${sourceCredits ? `<section class="public-credits" aria-labelledby="credits-title"><h2 id="credits-title">Source and credit</h2><ul>${sourceCredits}</ul>${tablerLicense}</section>` : ""}
   <p class="small">A deliberately published piece. Private projects, other media, masks and prompts stay in the studio. Withdrawing this page stops new visits here; copies someone already downloaded cannot be recalled.</p>
   ${

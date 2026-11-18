@@ -1,23 +1,38 @@
 const piece = document.querySelector("[data-public-piece]");
-const button = piece?.querySelector("[data-copy-link]");
 const status = piece?.querySelector("[data-copy-status]");
-const field = piece?.querySelector("[data-copy-field]");
 
-if (button && status && field) {
-  button.hidden = false;
-  button.addEventListener("click", async () => {
-    const url = button.dataset.copyUrl;
-    try {
-      await navigator.clipboard.writeText(url);
-      field.hidden = true;
-      status.textContent = "Link copied.";
-    } catch {
-      field.hidden = false;
-      field.focus();
-      field.select();
-      status.textContent = "Copy the selected link.";
-    }
-  });
+let latestCopy = 0;
+
+async function copyText(value, field, copiedMessage, manualMessage) {
+  const attempt = ++latestCopy;
+  if (linkField) linkField.hidden = true;
+  if (postField) postField.hidden = true;
+  try {
+    await navigator.clipboard.writeText(value);
+    if (attempt === latestCopy) status.textContent = copiedMessage;
+  } catch {
+    if (attempt !== latestCopy) return;
+    field.hidden = false;
+    field.focus();
+    field.select();
+    status.textContent = manualMessage;
+  }
+}
+
+const linkButton = piece?.querySelector("[data-copy-link]");
+const linkField = piece?.querySelector("[data-copy-field]");
+if (linkButton && status && linkField) {
+  linkButton.hidden = false;
+  linkButton.addEventListener("click", () =>
+    copyText(linkButton.dataset.copyUrl, linkField, "Link copied.", "Copy the selected link."));
+}
+
+const postButton = piece?.querySelector("[data-copy-post]");
+const postField = piece?.querySelector("[data-post-field]");
+if (postButton && status && postField) {
+  postButton.hidden = false;
+  postButton.addEventListener("click", () =>
+    copyText(postField.value, postField, "Post text copied.", "Copy the selected post text."));
 }
 
 // The browser can report the previous same-tab entry on supported engines.
