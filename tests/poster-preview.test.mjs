@@ -159,6 +159,7 @@ test("publishing a film with a chosen poster builds a page-size WebP and the pag
   assert.match(html, new RegExp(`property="og:image" content="https://studio\\.test/p/${slug}/poster"`));
   assert.match(html, /property="og:image:width" content="1600"/);
   assert.doesNotMatch(html, new RegExp(`og:image" content="https://studio\\.test/p/${slug}/poster-preview`));
+  assert.ok(html.includes(`<a href="/p/${slug}/poster" download>Download poster</a>`), "the full public poster is downloadable, not the first-paint preview");
 
   const full = await call(env, `/p/${slug}/poster`);
   assert.equal(full.status, 200);
@@ -193,6 +194,12 @@ test("a film with no chosen poster keeps its stored thumb on both first paint an
   const html = await (await call(env, `/p/${slug}`)).text();
   assert.match(html, new RegExp(`poster="/p/${slug}/thumb"`));
   assert.match(html, new RegExp(`property="og:image" content="https://studio\\.test/p/${slug}/thumb"`));
+  assert.ok(html.includes(`<a href="/p/${slug}/thumb" download>Download poster</a>`), "the stored thumb is offered as the poster download");
+
+  const thumb = await call(env, `/p/${slug}/thumb`);
+  assert.equal(thumb.status, 200);
+  assert.equal(thumb.headers.get("content-type"), "image/jpeg");
+  assert.deepEqual(new Uint8Array(await thumb.arrayBuffer()), jpeg(720, 1280), "the download URL serves the exact displayed public poster bytes");
 });
 
 test("a replaced poster is never served from the old derivative, and the owner can rebuild it in place", async () => {
