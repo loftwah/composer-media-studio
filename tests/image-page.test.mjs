@@ -114,6 +114,14 @@ test("the prepare-ZIP button keeps keyboard focus while its ZIP assembles", () =
   assert.match(workbench, /if \(!doneItems\.length \|\| batchExport \|\| addingRef\.current \|\| runningRef\.current \|\| socialController\.current\) return;/);
 });
 
+test("a batch row can set its own long edge without touching the batch", () => {
+  assert.match(workbench, /Long edge for this image \(px\)/);
+  assert.match(workbench, /leave blank to use the batch resize/i);
+  assert.match(workbench, /longEdgeFromControl\(event\.currentTarget\)/);
+  assert.match(workbench, /const invalidLongEdgeItem = items\.find/);
+  assert.match(workbench, /Boolean\(invalidLongEdgeItem\)/);
+});
+
 test("the metadata strip button keeps keyboard focus while the bytes load", () => {
   assert.match(workbench, /disabled=\{running\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
   assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running\) return;/);
