@@ -83,7 +83,7 @@ test("crop position and embed code are wired as honest controls", () => {
   assert.match(workbench, /<label>Crop position/);
   assert.match(workbench, /Object\.entries\(CROP_ANCHOR_LABELS\)\.map/);
   assert.match(workbench, /cropAnchor: settings\.cropAnchor/);
-  assert.match(workbench, /disabled=\{running \|\| settings\.cropAspect === "original"\}/);
+  assert.match(workbench, /disabled=\{running \|\| \(settings\.cropAspect === "original" && selectedSettings\.cropAspect === "original"\)\}/);
   assert.match(workbench, /<h2 id="image-embed-heading">Embed code<\/h2>/);
   assert.match(workbench, /buildImageSnippets\(\{/);
   assert.match(workbench, /It is not encryption, redaction/);
