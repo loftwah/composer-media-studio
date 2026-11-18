@@ -930,6 +930,7 @@ function Images() {
   const socialController = useRef<AbortController | null>(null);
   const makeSocialKitRef = useRef<HTMLButtonElement>(null);
   const cancelSocialKitRef = useRef<HTMLButtonElement>(null);
+  const socialSizesRef = useRef<HTMLFieldSetElement>(null);
   const restoreSocialKitFocus = useRef(false);
   const stripRevision = useRef(0);
   const didInitSettings = useRef(false);
@@ -2528,6 +2529,11 @@ function Images() {
             Try the sample
           </button>
           {selected && <a className="button secondary" href="#image-output-plan">Go to image output</a>}
+          {selected?.publicPoster && (
+            <button type="button" className="button secondary" onClick={() => socialSizesRef.current?.focus()}>
+              Go to social sizes
+            </button>
+          )}
           {items.length > 1 && <a className="button secondary" href="#image-batch">Go to batch</a>}
           {items.length > 0 && (
             <button type="button" className="quiet" onClick={resetAll} disabled={running || adding || importing}>
@@ -2619,7 +2625,7 @@ function Images() {
             </p>
           </fieldset>
 
-          <fieldset className="image-controls">
+          <fieldset className="image-controls" ref={socialSizesRef} tabIndex={-1}>
             <legend>Social sizes</legend>
             <label>Kit format
               <select
