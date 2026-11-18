@@ -4,7 +4,8 @@ import { escapeHtml } from "./util.mjs";
 import { composerShare, composerShowcase } from "./composer-share.ts";
 import { woodhouseUrl } from "./woodhouse-share.ts";
 import { videoObjectJsonLd } from "./video-object-json-ld.ts";
-import { galleryPageHref, galleryHasFilters, galleryIsFiltered, galleryResultCount, galleryAudioEmpty } from "./gallery-query.ts";
+import { galleryPageHref, galleryHasFilters, galleryResultCount, galleryAudioEmpty } from "./gallery-query.ts";
+import { galleryCards, galleryDimensions } from "./gallery-cards.ts";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 
@@ -511,50 +512,6 @@ function publicStudioHeader({ sourceArtwork = false, active }) {
       <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
     </nav>
   </header>`;
-}
-
-// The gallery uses listed publications; the home fallback uses only configured public films.
-// Keep the published description unchanged; cards point readers to its full version.
-function galleryDescription(description) {
-  return description.replace(/https?:\/\/[^\s<>"']+/gi, url => {
-    const punctuation = url.match(/[.,;!?]+$/)?.[0] || "";
-    return `see the work page${punctuation}`;
-  });
-}
-
-// One renderer for public gallery cards and the related-work strip on a work
-// page. It keeps the exact /p/<slug> canonical link, preview fallbacks and
-// published-copy handling identical everywhere a listed work is shown.
-function galleryDimensions(width, height) {
-  return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
-    ? ` width="${width}" height="${height}"`
-    : "";
-}
-
-function galleryCards(entries, { query = "", kind = "", project = "", capability = "", order = "newest", page = 1, home = false } = {}) {
-  const previewImage = (src, width, height) =>
-    `<img src="${src}" alt=""${galleryDimensions(width, height)} loading="lazy" decoding="async">`;
-  const queryState = { search: query, kind, project, capability, order, page };
-  const filtered = galleryIsFiltered(queryState);
-  const pageHref = (number) => galleryPageHref(queryState, number);
-  return entries.map((item) => {
-    const slug = encodeURIComponent(item.slug);
-    const title = escapeHtml(item.title);
-    // A stored preview is small and regenerable, so it always beats the full
-    // original or a large parent poster. The old routes stay as fallbacks.
-    const preview = item.thumb_id
-      ? previewImage(`/p/${slug}/thumb`, item.thumb_width, item.thumb_height)
-      : item.poster_preview_id
-        ? previewImage(`/p/${slug}/poster-preview`, item.poster_preview_width, item.poster_preview_height)
-        : item.kind === "image"
-          ? previewImage(`/p/${slug}/media`, item.width, item.height)
-          : item.kind === "video" && item.poster_asset_id
-            ? previewImage(`/p/${slug}/poster`, item.poster_width, item.poster_height)
-            : `<span class="gallery-placeholder"><span>${item.kind === "audio" ? "Listen" : "Watch"}</span><strong>${title}</strong><span aria-hidden="true">↗</span></span>`;
-    const action = item.kind === "video" ? "Watch film →" : item.kind === "audio" ? "Listen →" : "View image →";
-    const pieceHref = `/p/${slug}${home || !filtered ? "" : `?back=${encodeURIComponent(pageHref(page))}`}`;
-    return `<li><a class="gallery-card" href="${escapeHtml(pieceHref)}"><span class="gallery-preview">${preview}</span><span class="gallery-card-copy"><strong>${title}</strong><span>${escapeHtml(action)}</span></span>${item.description ? `<span class="gallery-description">${escapeHtml(galleryDescription(item.description))}</span>` : ""}</a></li>`;
-  }).join("");
 }
 
 export function publicGallery({ items = [], featured = [], hasMore = false, total = 0, projects = [], capabilities = [], page = 1, home = false, woodhouseShare = false, buildUrl = null, storyUrl = null, query = "", kind = "", project = "", capability = "", order = "newest" }) {
