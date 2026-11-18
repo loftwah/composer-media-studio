@@ -142,6 +142,28 @@ missing values fail before Chrome starts or a file is written, and the v1
 layout and report keep their shape. Use `--include-layout` to carry the browser
 layout JSON in the receipt.
 
+### Native sprite atlas from explicit local PNGs
+
+Add `--sprite-atlas` to make a native-size atlas instead of the fitted sheet.
+Select two to twenty explicit PNG `--source` files in atlas order (JPEG and WebP
+are refused before Chrome starts). The command drives the same isolated
+workbench's **Sheet mode → Sprite atlas · native size** and keeps each source at
+its displayed size with the shrink-only maximum-long-edge control.
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-contact-sheet.mjs --sprite-atlas --source ./a.png --source ./b.png --output ./atlas.png
+```
+
+`--columns` still selects Auto or 1–4, now through the workbench's **Atlas
+columns** control. The output is the exact native atlas PNG. The receipt always
+carries the separate `media-studio/sprite-atlas-layout` v1 layout JSON, with
+whole-pixel rectangles and source/output hashes; its `sheet.sha256` is checked
+against a local read of the downloaded PNG. No `--include-layout` is needed.
+The command passes through zero network requests and refuses an existing output
+path. Omitting `--sprite-atlas` preserves the original fixed contact-sheet PNG,
+v1 layout and `--include-layout` contract unchanged.
+
 ## Cover an area of an explicit local PNG
 
 With the frontend built, select one PNG, an unused destination, and a rectangle
