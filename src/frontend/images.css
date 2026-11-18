@@ -556,6 +556,11 @@
   pointer-events: none;
 }
 
+.image-sheet-columns {
+  max-width: 16rem;
+  margin: 0 0 0.9rem;
+}
+
 .image-contact-sheet {
   display: block;
   max-width: 100%;
