@@ -3,12 +3,7 @@
 // Anything absent, unsupported or invalid stays null, so an upload it cannot
 // read keeps the unmeasured state described in #330.
 import { BufferSource, Input, WEBM } from 'mediabunny';
-
-interface WebmVideoSize {
-  durationMs: number | null;
-  width: number | null;
-  height: number | null;
-}
+import type { VideoMetadata } from './media-metadata.ts';
 
 // A positive duration in whole milliseconds, or null when the value cannot be trusted.
 const wholeMilliseconds = (seconds: number | null): number | null => {
@@ -28,7 +23,7 @@ const wholePixels = (value: number | null): number | null => {
 const settle = (field: Promise<number | null>): Promise<number | null> =>
   field.then((value) => value, () => null);
 
-export async function webmVideoSize(bytes: Uint8Array<ArrayBuffer>): Promise<WebmVideoSize> {
+export async function webmVideoSize(bytes: Uint8Array<ArrayBuffer>): Promise<VideoMetadata> {
   const input = new Input({ formats: [WEBM], source: new BufferSource(bytes) });
   try {
     const track = await input.getPrimaryVideoTrack();
