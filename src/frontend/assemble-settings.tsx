@@ -296,7 +296,7 @@ export function Assemble({
           cut follows, so an existing plan is not buried under empty forms. */}
       <SongPlans key={projectId} projectId={projectId} assets={assets} canEdit={canEdit} onStoryboard={onSongStoryboard} onAssetSaved={onAssetSaved} />
       <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} onVoiceDraft={onVoiceDraft} />
-      <FootagePlans key={`footage-${projectId}`} projectId={projectId} assets={assets} canEdit={canEdit} />
+      <FootagePlans key={`footage-${projectId}`} projectId={projectId} assets={assets} canEdit={canEdit} onAssetSaved={onAssetSaved} />
       <div className="spread">
         <h2 style={{ margin: 0 }}>Storyboard and assembly</h2>
         <span className="small">
