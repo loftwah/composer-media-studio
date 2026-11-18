@@ -928,6 +928,9 @@ function Images() {
   const batchExportRevision = useRef(0);
   const batchController = useRef<{ controller: AbortController; report: (message: string) => void } | null>(null);
   const socialController = useRef<AbortController | null>(null);
+  const makeSocialKitRef = useRef<HTMLButtonElement>(null);
+  const cancelSocialKitRef = useRef<HTMLButtonElement>(null);
+  const restoreSocialKitFocus = useRef(false);
   const stripRevision = useRef(0);
   const didInitSettings = useRef(false);
   const addFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
@@ -1205,6 +1208,13 @@ function Images() {
     const active = document.activeElement;
     if (!active || active === document.body || active === fileInputRef.current) fileInputRef.current?.focus();
   }, [adding]);
+
+  useLayoutEffect(() => {
+    if (socialBusy || !restoreSocialKitFocus.current) return;
+    restoreSocialKitFocus.current = false;
+    const button = makeSocialKitRef.current;
+    if (button && !button.disabled && document.activeElement === document.body) button.focus();
+  }, [socialBusy]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -1942,6 +1952,9 @@ function Images() {
       }
     } finally {
       if (isCurrent()) {
+        // Capture focus before Cancel kit unmounts, after the current encode settles.
+        restoreSocialKitFocus.current = controller.signal.aborted &&
+          document.activeElement === cancelSocialKitRef.current;
         socialController.current = null;
         setSocialBusy(false);
       }
@@ -2638,12 +2651,13 @@ function Images() {
                 className="secondary"
                 disabled={running || socialBusy || Boolean(batchExport) || adding || !socialReady}
                 aria-describedby="image-social-kit-note"
+                ref={makeSocialKitRef}
                 onClick={() => void makeSocialKit()}
               >
                 {socialBusy ? "Making sizes…" : "Make 4 social sizes"}
               </button>
               {socialBusy && (
-                <button type="button" className="quiet" onClick={cancelSocialKit}>
+                <button type="button" className="quiet" ref={cancelSocialKitRef} onClick={cancelSocialKit}>
                   Cancel kit
                 </button>
               )}
