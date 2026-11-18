@@ -3,8 +3,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { helpPage, publicPage } from "../src/lib/ui.mjs";
+import { escapeHtml } from "../src/lib/util.mjs";
 import {
   extensionForMime,
   publicDestination,
@@ -98,6 +100,58 @@ test("public work detail exposes a keyboard-reachable Copy link bound to the can
   assert.ok(html.includes(`aria-label="Link to this page" value="${canonical}" data-copy-field hidden`), "manual-copy field holds the canonical URL");
   assert.ok(html.includes('src="/public-piece.js" defer'), "the local, no-network handler is loaded");
   assert.doesNotMatch(html, /onclick=|navigator\./, "no inline scripting or network calls in the page");
+});
+
+function postField(html) {
+  const match = html.match(/<textarea[^>]*data-post-field[^>]*>([\s\S]*?)<\/textarea>/);
+  assert.ok(match, "the post-text manual-copy field exists");
+  return match[1];
+}
+
+test("public work detail copies a plain-text handoff of only already public fields", () => {
+  const canonical = `${origin}/p/${slug}`;
+  const html = published();
+  assert.ok(html.includes('<button type="button" class="button secondary" data-copy-post hidden>Copy post text</button>'), "Copy post text is a native, focusable button revealed by local script");
+  assert.equal(
+    postField(html),
+    escapeHtml(`The wheel, <late> light\n\nA paper-cut editorial still.\n\n${canonical}`),
+    "the handoff is exactly the public title, caption and canonical URL",
+  );
+  const text = postField(html);
+  for (const privateToken of [`/p/${slug}/media`, `/p/${slug}/download`, "back=", "project", "prompt"]) {
+    assert.doesNotMatch(text, new RegExp(privateToken), `no ${privateToken} in the handoff`);
+  }
+  assert.ok(html.includes('role="status" data-copy-status></span>'), "the shared status region announces the result");
+});
+
+test("post text preserves publicly rendered attribution and its reuse status", () => {
+  const publicSource = "https://woodhouse.loftwah.com/api/v1/assets/example";
+  const html = published({
+    attribution: [
+      { credit: "Woodhouse source", sourceUrl: publicSource, reuse: "unconfirmed" },
+      { credit: "Hidden source", sourceUrl: "https://example.test/private" },
+    ],
+  });
+  const text = postField(html);
+  assert.match(text, /A paper-cut editorial still/);
+  assert.ok(text.includes(`Woodhouse source · ${publicSource} · Reuse status unconfirmed`));
+  assert.doesNotMatch(text, /Hidden source|example\.test/);
+});
+
+test("post text keeps the canonical URL free of incoming gallery filter state", () => {
+  const html = published({ galleryBack: "/gallery?q=paper&kind=video&page=2#gallery-results" });
+  const text = postField(html);
+  assert.ok(text.includes(`${origin}/p/${slug}`));
+  assert.doesNotMatch(text, /\?|back=|q=paper|kind=video|page=2|gallery-results/);
+});
+
+test("the local handler copies post text and falls back to an honest manual copy", () => {
+  const source = readFileSync(new URL("../public/public-piece.js", import.meta.url), "utf8");
+  assert.match(source, /\[data-copy-post\]/);
+  assert.match(source, /\[data-post-field\]/);
+  assert.match(source, /copyText\(postField\.value, postField, "Post text copied\.", "Copy the selected post text\."\)/);
+  assert.match(source, /field\.select\(\)/);
+  assert.doesNotMatch(source, /fetch\(|XMLHttpRequest|navigator\.share|\/api\//, "no network, share sheet or app write");
 });
 
 test("unlisted work keeps noindex while its Copy link still uses the canonical URL", () => {
