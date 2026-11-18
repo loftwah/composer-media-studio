@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import worker from "../src/worker.mjs";
 import { createSession } from "../src/lib/auth.mjs";
-import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "../src/lib/storage-doctor.mjs";
+import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "../src/lib/storage-doctor.ts";
 import { setup } from "./harness.mjs";
 
 const sha = (label) => createHash("sha256").update(label).digest("hex");
