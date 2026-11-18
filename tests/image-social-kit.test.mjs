@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   SOCIAL_KIT_FORMATS,
   SOCIAL_SIZES,
+  defaultSocialKitFormat,
   socialKitSettings,
 } from "../src/frontend/image-social-kit.ts";
 import { CROP_ASPECTS, extensionForImageMime, mimeForExport } from "../src/frontend/image-ops.ts";
@@ -78,6 +79,23 @@ test("the kit offers exactly one explicit choice, with WebP as the default", () 
   assert.deepEqual([...SOCIAL_KIT_FORMATS], ["webp", "png"]);
   for (const size of SOCIAL_SIZES) {
     assert.equal(socialKitSettings(BASE, size, 0.82).format, "webp");
+  }
+});
+
+test("the workbench default follows WebP encode support without changing any size or edit", () => {
+  assert.equal(defaultSocialKitFormat(true), "webp");
+  assert.equal(defaultSocialKitFormat(false), "png");
+  for (const size of SOCIAL_SIZES) {
+    const settings = socialKitSettings(BASE, size, 0.82, defaultSocialKitFormat(false));
+    assert.equal(settings.format, "png");
+    assert.equal(settings.quality, 0.82);
+    assert.equal(settings.targetKiB, null);
+    assert.equal(settings.cropAnchor, "bottomRight");
+    assert.equal(settings.rotate, 1);
+    assert.deepEqual(settings.adjust, BASE.adjust);
+    assert.equal(settings.resizeMode, "exact");
+    assert.equal(settings.exactWidth, size.width);
+    assert.equal(settings.exactHeight, size.height);
   }
 });
 
