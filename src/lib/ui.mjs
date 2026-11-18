@@ -286,6 +286,7 @@ export function publicPage({
   bytes,
   media,
   download,
+  captionSrc = null,
   poster,
   videoPoster,
   posterMime,
@@ -405,7 +406,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
     <div class="media${isVideo ? " media-video" : ""}"${videoFrameStyle}>
       ${
         isVideo
-          ? `<video controls playsinline preload="metadata" ${videoDimensions} ${poster || videoPoster ? `poster="${escapeHtml(videoPoster ?? poster)}"` : ""} aria-label="${escapeHtml(title)}"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">Your browser cannot play this video. <a href="${escapeHtml(download)}">Download it instead</a>.</video>`
+          ? `<video controls playsinline preload="metadata" ${videoDimensions} ${poster || videoPoster ? `poster="${escapeHtml(videoPoster ?? poster)}"` : ""} aria-label="${escapeHtml(title)}"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">${captionSrc ? `<track kind="captions" srclang="en" label="English" src="${escapeHtml(captionSrc)}">` : ""}Your browser cannot play this video. <a href="${escapeHtml(download)}">Download it instead</a>.</video>`
           : isAudio
             ? `<audio controls preload="metadata" aria-label="${escapeHtml(title)}" style="width:100%"><source src="${escapeHtml(media)}" type="${escapeHtml(mime)}">Your browser cannot play this audio. <a href="${escapeHtml(download)}">Download it instead</a>.</audio>`
             : `<img src="${escapeHtml(media)}" alt="${escapeHtml(title)}" ${width ? `width="${width}" height="${height}"` : ""} decoding="async" fetchpriority="high">`
