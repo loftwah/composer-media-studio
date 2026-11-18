@@ -213,6 +213,8 @@ type WorkItem = {
   pngOverride?: boolean;
   /** A reversible one-image long edge in px. Undefined follows the batch. */
   longEdgeOverride?: number;
+  /** A reversible one-image crop aspect. Undefined follows the batch. */
+  cropAspectOverride?: CropAspectKey;
 };
 
 type Rejection = { name: string; message: string };
@@ -851,6 +853,7 @@ function Images() {
         selected.source.mime,
         Boolean(selected.pngOverride),
         selected.longEdgeOverride,
+        selected.cropAspectOverride,
       )
     : settings;
   const plan = selected ? makePlan(selected.source, selectedSettings, activeTrim) : null;
@@ -879,7 +882,10 @@ function Images() {
         0.001
       : false;
   const hasItemOverride = items.some(
-    (item) => item.pngOverride || item.longEdgeOverride !== undefined,
+    (item) =>
+      item.pngOverride ||
+      item.longEdgeOverride !== undefined ||
+      item.cropAspectOverride !== undefined,
   );
   const invalidLongEdgeItem = items.find(
     (item) =>
@@ -1292,6 +1298,7 @@ function Images() {
           item.source.mime,
           Boolean(item.pngOverride),
           item.longEdgeOverride,
+          item.cropAspectOverride,
         );
         const rendered = await renderImage(item, itemSettings, controller.signal, cropRect);
         if (controller.signal.aborted) {
@@ -1543,6 +1550,15 @@ function Images() {
     return control.valueAsNumber;
   }
 
+  function setCropAspectOverride(item: WorkItem, value: CropAspectKey | undefined): void {
+    if (runningRef.current || addingRef.current) return;
+    setItems((previous) =>
+      previous.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, cropAspectOverride: value } : candidate,
+      ),
+    );
+  }
+
   function applyWebReady(): void {
     if (!selected || runningRef.current || socialController.current) return;
     if (selected.pngOverride) setPngOverride(selected, false);
@@ -1713,8 +1729,15 @@ function Images() {
     setSettings(DEFAULT_SETTINGS);
     setItems((previous) =>
       previous.map((item) =>
-        item.pngOverride || item.longEdgeOverride !== undefined
-          ? { ...item, pngOverride: false, longEdgeOverride: undefined }
+        item.pngOverride ||
+        item.longEdgeOverride !== undefined ||
+        item.cropAspectOverride !== undefined
+          ? {
+              ...item,
+              pngOverride: false,
+              longEdgeOverride: undefined,
+              cropAspectOverride: undefined,
+            }
           : item,
       ),
     );
@@ -2272,7 +2295,7 @@ function Images() {
               </select>
             </label>
             <label>Crop position
-              <select value={settings.cropAnchor} disabled={running || settings.cropAspect === "original"} onChange={(event) => setSettings((previous) => ({ ...previous, cropAnchor: event.target.value as CropAnchorKey }))}>
+              <select value={settings.cropAnchor} disabled={running || (settings.cropAspect === "original" && selectedSettings.cropAspect === "original")} onChange={(event) => setSettings((previous) => ({ ...previous, cropAnchor: event.target.value as CropAnchorKey }))}>
                 {Object.entries(CROP_ANCHOR_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
               </select>
             </label>
@@ -2298,8 +2321,9 @@ function Images() {
               {trimMessage || (selected.source.alpha ? "Trim removes fully transparent padding; near-transparent edge pixels are kept." : "This image declares no alpha channel, so transparent padding is unlikely. Trim will check the decoded pixels before changing the plan.")}
             </p>
             <p className="trim-note">
-              Crop position applies when the aspect is not Original. It decides which
-              part of the picture is kept instead of always cutting from the centre.
+              Crop position applies when the aspect is not Original, including an
+              aspect chosen for one row. It decides which part of the picture is kept
+              instead of always cutting from the centre.
             </p>
           </fieldset>
 
@@ -3220,6 +3244,30 @@ function Images() {
                         blank to use the batch resize.
                       </span>
                     )}
+                  <label className="image-list-override">
+                    <select
+                      value={item.cropAspectOverride ?? ""}
+                      disabled={running || adding}
+                      aria-label={`Crop aspect for ${item.file.name}; use batch keeps the batch aspect`}
+                      aria-describedby="image-batch-note"
+                      onChange={(event) =>
+                        setCropAspectOverride(
+                          item,
+                          event.target.value === ""
+                            ? undefined
+                            : (event.target.value as CropAspectKey),
+                        )
+                      }
+                    >
+                      <option value="">Use batch</option>
+                      {Object.entries(CROP_ASPECT_LABELS).map(([value, label]) => (
+                        <option value={value} key={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    Crop aspect for this image
+                  </label>
                 </div>
                 <div className="image-list-actions">
                   <button
@@ -3262,7 +3310,9 @@ function Images() {
           archive. <strong>Export this image as PNG</strong> applies only to that checked
           PNG and uses no byte target; unchecked images keep the batch format.
           <strong> Long edge for this image</strong> resizes only that row; leave it blank
-          to follow the batch resize.
+          to follow the batch resize. <strong>Crop aspect for this image</strong> changes
+          only that row and keeps the shared crop position; <strong>Use batch</strong>
+          follows the batch aspect.
         </p>
       </section>
     </main>
