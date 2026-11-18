@@ -503,6 +503,19 @@
   width: 100%;
 }
 
+.image-cover-draw-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.image-cover-draw-bar .trim-note {
+  margin: 0;
+  flex: 1 1 16rem;
+}
+
 .image-cover-preview {
   position: relative;
   width: min(100%, 30rem);
@@ -513,6 +526,13 @@
   display: block;
   width: 100%;
   height: auto;
+}
+
+.image-cover-preview.is-drawing img {
+  touch-action: none;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .image-cover-outline {
