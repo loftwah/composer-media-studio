@@ -3,6 +3,7 @@
 import { escapeHtml } from "./util.mjs";
 import { composerShare, composerShowcase } from "./composer-share.ts";
 import { woodhouseUrl } from "./woodhouse-share.ts";
+import { videoObjectJsonLd } from "./video-object-json-ld.ts";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 
@@ -263,39 +264,9 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
 </html>`;
 }
 
-const PUBLIC_VIDEO_MIME = new Set(["video/mp4", "video/webm"]);
-
-export function videoObjectJsonLd({ kind, listed, title, description, poster, media, mime, publishedAt, pageUrl }) {
-  if (kind !== "video" || !listed || !PUBLIC_VIDEO_MIME.has(mime)) return "";
-  if (typeof title !== "string" || !title.trim()) return "";
-  if (typeof poster !== "string" || !poster.startsWith("/p/")) return "";
-  if (typeof media !== "string" || !media.startsWith("/p/")) return "";
-  if (!Number.isSafeInteger(publishedAt) || publishedAt <= 0) return "";
-  const published = new Date(publishedAt);
-  if (Number.isNaN(published.getTime())) return "";
-  try {
-    const origin = new URL(pageUrl).origin;
-    const thumbnail = new URL(poster, pageUrl);
-    const content = new URL(media, pageUrl);
-    if (!origin.startsWith("https://") || thumbnail.origin !== origin || content.origin !== origin) return "";
-    const schema = {
-      "@context": "https://schema.org",
-      "@type": "VideoObject",
-      name: title,
-      thumbnailUrl: thumbnail.href,
-      contentUrl: content.href,
-      uploadDate: published.toISOString(),
-    };
-    if (typeof description === "string" && description.trim()) schema.description = description;
-    // Escaping `<`, `>` and `&` as JSON unicode escapes prevents a public title
-    // from closing the <script> element; JSON.parse still yields the original.
-    const json = JSON.stringify(schema).replace(/[<>&]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
-    return `<script type="application/ld+json">${json}</script>`;
-  } catch {
-    // An unusable origin/page URL means the absolute URLs are unknown: omit.
-    return "";
-  }
-}
+// The public VideoObject JSON-LD builder is owned by video-object-json-ld.ts.
+// Re-exported so existing ui.mjs import callers keep the exact same module path.
+export { videoObjectJsonLd };
 
 export function publicPage({
   attribution = [],
