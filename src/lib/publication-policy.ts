@@ -318,6 +318,19 @@ const shareChain = `EXISTS(WITH RECURSIVE chain(node_id,depth) AS (
         OR (ng.id IS NOT NULL AND ng.project_id=n.project_id AND ng.status='saved' AND ng.deleted_at IS NULL AND ng.output_asset_id IS n.id AND COALESCE((${chainEdge}),0)=1))
       OR EXISTS(SELECT 1 FROM publications prior WHERE prior.asset_id=n.id AND (prior.revoked_at IS NOT NULL OR prior.hidden=1))))`;
 
+// The four provenance paths are staged as separate UNION branches for the
+// inventory count. D1 caps expression trees at depth 100; combining every path
+// with the eligibility and publication guards in one OR exceeded that cap on a
+// real project. Each branch below is no deeper than the page SELECT's own flag
+// expressions, and UNION (distinct ids) keeps the counted set identical.
+const recordCandidateBranches = [attributionSafe, generatedChain, directReference, shareChain]
+  .map(
+    (predicate) => `SELECT a.id FROM assets a LEFT JOIN generations g ON g.id=a.generation_id
+      WHERE a.project_id=?1 AND ${eligible} AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id)
+      AND ${predicate}`,
+  )
+  .join(" UNION ");
+
 // Recheck that the exact public original verified before the write is still
 // the root of this chain, not merely an unrelated asset with the same hash.
 function shareRootProof(idParam: string, hashParam: string, captionParam: string): string {
@@ -366,9 +379,7 @@ export async function inventory(env: PublicationInventoryEnv, projectId: string,
       (SELECT COUNT(*) FROM publications WHERE project_id=?1 AND revoked_at IS NULL AND hidden=1) AS hidden_publications,
       (SELECT COUNT(*) FROM publications WHERE project_id=?1 AND revoked_at IS NOT NULL) AS withdrawn_publications,
       (SELECT COUNT(DISTINCT asset_id) FROM publications WHERE project_id=?1 AND revoked_at IS NULL) AS published_assets,
-      (SELECT COUNT(*) FROM assets a LEFT JOIN generations g ON g.id=a.generation_id WHERE a.project_id=?1 AND ${eligible}
-        AND (${attributionSafe} OR ${generatedChain} OR ${directReference} OR ${shareChain})
-        AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.asset_id=a.id)) AS record_candidates,
+      (SELECT COUNT(*) FROM (${recordCandidateBranches})) AS record_candidates,
       (SELECT COUNT(*) FROM (SELECT 1 FROM assets WHERE project_id=?1 AND deleted_at IS NULL GROUP BY sha256 HAVING COUNT(*)>1)) AS duplicate_groups,
       (SELECT COALESCE(SUM(n),0) FROM (SELECT COUNT(*) AS n FROM assets WHERE project_id=?1 AND deleted_at IS NULL GROUP BY sha256 HAVING COUNT(*)>1)) AS duplicate_assets,
       (SELECT COUNT(*) FROM assets WHERE project_id=?1 AND deleted_at IS NULL AND parent_asset_id IS NOT NULL) AS versions,
