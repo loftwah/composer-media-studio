@@ -4,11 +4,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { inspectImage } from "../src/frontend/image-metadata.ts";
 import { SOCIAL_SIZES } from "../src/frontend/image-social-kit.ts";
 import {
   assertSocialReproducible,
+  assertSocialSourceEligible,
   socialFormatForReceipt,
 } from "../scripts/replay-web-ready-image.mjs";
+import {
+  ascii,
+  jpegFixture,
+  pngFixture,
+  webpAnimatedFixture,
+  webpFixture,
+} from "./support/image-fixtures.mjs";
 
 const STORY = SOCIAL_SIZES.find((size) => size.key === "story");
 
@@ -116,5 +125,39 @@ test("a differing setting is reported by field and format-specific MIME is check
   assert.throws(
     () => assertSocialReproducible(wrongClaim, structuredClone(wrongClaim), STORY, "png"),
     /output dimensions or format/,
+  );
+});
+
+test("the local social replay accepts JPEG, PNG and still alpha WebP sources", () => {
+  const stillWebp = webpFixture({alpha: true, orientation: 1});
+  assert.equal(inspectImage(stillWebp).alpha, true);
+  assert.equal(inspectImage(stillWebp).webpAnimated, false);
+  for (const source of [jpegFixture(), pngFixture(), stillWebp]) {
+    assert.doesNotThrow(() => assertSocialSourceEligible(source));
+  }
+});
+
+test("the local social replay refuses animated WebP from bounded source metadata", () => {
+  for (const source of [
+    webpAnimatedFixture(),
+    webpAnimatedFixture({animFlagOnly: true}),
+    webpAnimatedFixture({hasAnimationFlag: false}),
+  ]) {
+    assert.equal(inspectImage(source).webpAnimated, true);
+    assert.throws(
+      () => assertSocialSourceEligible(source),
+      /selected WebP is animated/i,
+    );
+  }
+});
+
+test("the local social replay refuses active content and unsupported inputs", () => {
+  assert.throws(
+    () => assertSocialSourceEligible(ascii("<svg></svg>")),
+    /SVG can contain active content/,
+  );
+  assert.throws(
+    () => assertSocialSourceEligible(ascii("GIF89a0000")),
+    /GIF is not decoded/,
   );
 });

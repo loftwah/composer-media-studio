@@ -3,10 +3,10 @@ import { resolve } from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { IMAGE_RECEIPT_SCHEMA, IMAGE_RECEIPT_VERSION } from "../src/frontend/image-receipt.ts";
-import { sniffLocalImage } from "../src/frontend/image-metadata.ts";
+import { inspectImage, sniffLocalImage } from "../src/frontend/image-metadata.ts";
 import { mimeForExport } from "../src/frontend/image-ops.ts";
-import { SOCIAL_KIT_FORMATS, SOCIAL_SIZES } from "../src/frontend/image-social-kit.ts";
-import { digest, downloadLink, readLocalJson, readLocalPng, runLocalImages } from "./local-image-workbench.mjs";
+import { socialSourceEligible, SOCIAL_KIT_FORMATS, SOCIAL_SIZES } from "../src/frontend/image-social-kit.ts";
+import { digest, downloadLink, readLocalImage, readLocalJson, readLocalPng, runLocalImages } from "./local-image-workbench.mjs";
 
 async function download(page, name) {
   const { bytes } = await downloadLink(page, page.getByRole("link", { name, exact: true }));
@@ -40,6 +40,14 @@ export function assertSocialReproducible(expected, actual, size, format) {
   );
 }
 
+export function assertSocialSourceEligible(bytes) {
+  const { mime, webpAnimated } = inspectImage(bytes);
+  assert(
+    socialSourceEligible(mime, false, webpAnimated),
+    "The selected WebP is animated. Choose a still WebP, JPEG or PNG.",
+  );
+}
+
 async function main() {
   const { values } = parseArgs({
     options: {
@@ -48,16 +56,17 @@ async function main() {
       size: {type: "string"},
     },
   });
-  assert(values.source && values.receipt, "Supply an explicit --source <PNG> and --receipt <JSON>.");
+  assert(values.source && values.receipt, "Supply an explicit --source <image file> and --receipt <JSON>.");
   const size = values.size ? SOCIAL_SIZES.find((candidate) => candidate.key === values.size) : null;
   assert(!values.size || size, `Select one social size: ${SOCIAL_SIZES.map((candidate) => candidate.key).join(", ")}.`);
   const [source, expected] = await Promise.all([
-    readLocalPng(values.source),
+    size ? readLocalImage(values.source) : readLocalPng(values.source),
     readLocalJson(values.receipt),
   ]);
   assert.equal(expected?.schema, IMAGE_RECEIPT_SCHEMA, "Select an Image Tools receipt.");
   assert.equal(expected?.version, IMAGE_RECEIPT_VERSION, "Select a supported Image Tools receipt version.");
   assert.equal(digest(source), expected.source?.sha256, "The source bytes do not match the receipt.");
+  if (size) assertSocialSourceEligible(source);
   const format = size ? socialFormatForReceipt(expected, size) : null;
   const report = await runLocalImages(source, async page => {
     let actual;
