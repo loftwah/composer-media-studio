@@ -68,6 +68,7 @@ import {
   pruneReviewAttempts,
 } from "./lib/review-rooms.mjs";
 import { measureFootageSource } from "./lib/footage-preflight.mjs";
+import { webmVideoSize } from "./lib/webm-metadata.ts";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.ts";
 import { models, publicModels, publicRetiredModels, retiredModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
@@ -2017,7 +2018,7 @@ async function storeAsset(env, project, bytes, { mime, title, caption, parent = 
     if (!audio.format)
       throw new HttpError(415, "That audio could not be read. Try WAV, MP3 or M4A.", "unsupported_type");
   } else {
-    const video = videoInfo(bytes);
+    const video = sniffed.mime === "video/webm" ? await webmVideoSize(bytes) : videoInfo(bytes);
     size = { width: video.width, height: video.height, durationMs: video.durationMs };
   }
 
