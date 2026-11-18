@@ -9,6 +9,7 @@ import {
   SOCIAL_SIZES,
   defaultSocialKitFormat,
   socialKitSettings,
+  socialSourceEligible,
 } from "../src/frontend/image-social-kit.ts";
 import { CROP_ASPECTS, extensionForImageMime, mimeForExport } from "../src/frontend/image-ops.ts";
 import {
@@ -167,6 +168,16 @@ test("the typed v1 builder captures each output's exact receipt without new sche
   assert.equal(receipt.transform.settings.cropAnchor, "bottomRight");
   assert.equal(receipt.transform.settings.cropAspect, size.aspect);
   assert.equal(receipt.transform.settings.format, "webp");
+});
+
+test("the social kit accepts local JPEG and PNG and preserves the public poster path", () => {
+  for (const mime of ["image/png", "image/jpeg"]) {
+    assert.equal(socialSourceEligible(mime, false), true, mime);
+  }
+  for (const mime of ["image/webp", "image/gif", "image/avif", "image/heic", undefined]) {
+    assert.equal(socialSourceEligible(mime, false), false, mime);
+  }
+  assert.equal(socialSourceEligible("image/webp", true), true);
 });
 
 test("four WebP outputs and four receipts fit one bounded flat ZIP", () => {
