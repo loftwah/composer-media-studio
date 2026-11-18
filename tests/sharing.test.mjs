@@ -362,6 +362,51 @@ test("a video without a poster has explicit text-only share metadata", () => {
   assert.match(html, /name="twitter:description"/);
 });
 
+test("a published film with its own poster offers a native download of the exact displayed poster", () => {
+  const html = published({
+    kind: "video",
+    mime: "video/mp4",
+    width: 1080,
+    height: 1920,
+    durationMs: 5000,
+    poster: `/p/${slug}/poster`,
+    posterMime: "image/jpeg",
+    posterWidth: 768,
+    posterHeight: 960,
+  });
+  assert.ok(html.includes(`<a href="/p/${slug}/poster" download>Download poster</a>`), "the compact action is a native download of the same public poster the page shares");
+  assert.ok(html.includes(`property="og:image" content="${origin}/p/${slug}/poster"`));
+  assert.match(html, /Download video<\/a>/, "the existing video download stays");
+  assert.match(html, /data-copy-link/);
+  assert.match(html, /data-copy-post/);
+  assert.doesNotMatch(html, /onclick=|navigator\./, "no inline scripting or new network action");
+});
+
+test("a film whose displayed poster is its stored thumb downloads that thumb, not a generated still", () => {
+  const html = published({
+    kind: "video",
+    mime: "video/mp4",
+    videoPoster: `/p/${slug}/thumb`,
+    poster: `/p/${slug}/thumb`,
+    posterMime: "image/webp",
+  });
+  assert.ok(html.includes(`<a href="/p/${slug}/thumb" download>Download poster</a>`));
+  assert.doesNotMatch(html, /href="\/p\/[^"]*\/poster" download>Download poster/);
+  assert.match(html, new RegExp(`poster="/p/${slug}/thumb"`));
+});
+
+test("no poster download is offered where the work has no own displayed poster", () => {
+  const film = published({ kind: "video", mime: "video/mp4", poster: null });
+  const still = published();
+  const audio = published({ kind: "audio", mime: "audio/mpeg" });
+  for (const [name, html] of [["film without a poster", film], ["still", still], ["audio", audio]]) {
+    assert.doesNotMatch(html, /Download poster/, `${name} has no poster download`);
+  }
+  assert.match(film, /Download video<\/a>/);
+  assert.match(still, /Download image<\/a>/);
+  assert.match(audio, /Download audio<\/a>/);
+});
+
 test("Launch Kit download filenames match the supported still MIME", () => {
   assert.equal(extensionForMime("image/jpeg"), "jpg");
   assert.equal(extensionForMime("image/png"), "png");
