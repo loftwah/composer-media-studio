@@ -159,6 +159,7 @@ function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, h
           ${woodhouseShare ? `<li data-destination data-local-launcher-group="studio"><a href="${composerShare}"><span>Share artwork<small>App Composer Share originals</small></span></a></li>` : ""}
           <li data-destination data-local-launcher-group="studio"><a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener"><span>Help<small>Studio guides and limits</small></span></a></li>
           <li data-destination data-local-launcher-group="studio" data-keywords="image editor image workbench resize crop convert rotate batch export"><a href="/tools/images"><span>Edit images<small>Image tools: resize, crop, convert and batch-export local images</small></span></a></li>
+          <li data-destination data-local-launcher-group="apps" data-keywords="favicon favicons site icon app icon make create pwa maskable"><a href="https://composer-launch-kit.loftwah.workers.dev/?operation=icons" target="_blank" rel="noopener"><span>Make site icons<small>Open Launch Kit in a new tab</small></span></a></li>
         </ul>
       </dialog>
     </div>` : ""}
