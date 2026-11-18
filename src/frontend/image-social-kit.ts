@@ -10,11 +10,20 @@ export const SOCIAL_KIT_FORMATS = Object.freeze(["webp", "png"] as const);
 export type SocialKitFormat = (typeof SOCIAL_KIT_FORMATS)[number];
 
 /**
+ * The workbench default follows the one-time Canvas capability probe. A browser
+ * that cannot encode WebP starts on lossless PNG instead of wasting a four-size
+ * transform on a request that would silently come back as PNG.
+ */
+export function defaultSocialKitFormat(webpEncodable: boolean): SocialKitFormat {
+  return webpEncodable ? "webp" : "png";
+}
+
+/**
  * Per-size editor settings. Crop position, rotation, straighten, resampling
  * and adjustments carry over from the current controls; only the aspect and
  * exact output size change. The caller chooses an explicit alpha-safe output
- * format, defaulting to WebP. PNG is a deliberate choice for browsers whose
- * WebP encoder is absent or broken; there is no automatic fallback.
+ * format, normally via `defaultSocialKitFormat`. A forced WebP request in a
+ * browser without a WebP encoder is still refused by the exporter's byte check.
  */
 type SocialSize = (typeof SOCIAL_SIZES)[number];
 

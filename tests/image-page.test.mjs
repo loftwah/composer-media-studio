@@ -50,9 +50,20 @@ test("the export path wires trim, target search and nearest-neighbour smoothing"
   assert.match(workbench, /describeTransform\(\{[\s\S]*resample: selected\.result\.settings\.resample/);
 });
 
+test("WebP choices follow the one-time probe while the byte-level MIME check stays", () => {
+  assert.match(workbench, /const WEBP_ENCODABLE = canEncodeWebP\(\)/);
+  assert.match(workbench, /WEBP_ENCODABLE \? "WebP · smaller" : "WebP · unavailable in this browser"/);
+  assert.match(workbench, /useState<SocialKitFormat>\(defaultSocialKitFormat\(WEBP_ENCODABLE\)\)/);
+  assert.match(workbench, /format: defaultSocialKitFormat\(WEBP_ENCODABLE\)/);
+  assert.match(workbench, /image-webp-unavailable-note/);
+  assert.equal([...workbench.matchAll(/disabled=\{value === "webp" && !WEBP_ENCODABLE\}/g)].length, 2);
+  assert.match(workbench, /if \(blob\.type !== mime\)/);
+  assert.match(workbench, /if \(!sniffed\.supported \|\| sniffed\.mime !== mime\)/);
+});
+
 test("PNG states that a byte target is not achievable and offers resize guidance", () => {
   assert.match(workbench, /PNG is lossless, so a byte target is not achievable here/);
-  assert.match(workbench, /Lower the output width and height, or choose JPEG or WebP/);
+  assert.match(workbench, /Lower the output width and height, or choose JPEG/);
   assert.match(workbench, /reports the real encoded bytes/);
   assert.match(workbench, /not met/);
 });

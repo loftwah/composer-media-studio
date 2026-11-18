@@ -100,9 +100,11 @@ import { ImageCover } from "./image-cover.tsx";
 import {
   SOCIAL_KIT_FORMATS,
   SOCIAL_SIZES,
+  defaultSocialKitFormat,
   socialKitSettings,
   type SocialKitFormat,
 } from "./image-social-kit.ts";
+import { canEncodeWebP } from "./image-encode-support.ts";
 import { LocalImport } from "./local-import";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -258,10 +260,17 @@ const DEFAULT_SETTINGS: Settings = {
 const WEB_READY_LONG_EDGE = 1600;
 const WEB_READY_QUALITY = 0.82;
 
+// One tiny canvas, probed once when this lazy image-tool chunk loads.
+const WEBP_ENCODABLE = canEncodeWebP();
+
 const FORMATS: Array<{ value: ExportFormat; label: string; mime: string }> = [
   { value: "png", label: "PNG · lossless", mime: "image/png" },
   { value: "jpeg", label: "JPEG · smaller", mime: "image/jpeg" },
-  { value: "webp", label: "WebP · smaller", mime: "image/webp" },
+  {
+    value: "webp",
+    label: WEBP_ENCODABLE ? "WebP · smaller" : "WebP · unavailable in this browser",
+    mime: "image/webp",
+  },
 ];
 
 const ORIENTATION_LABELS: Record<number, string> = {
@@ -806,7 +815,7 @@ function Images() {
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
   const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
   const [socialBusy, setSocialBusy] = useState(false);
-  const [socialFormat, setSocialFormat] = useState<SocialKitFormat>("webp");
+  const [socialFormat, setSocialFormat] = useState<SocialKitFormat>(defaultSocialKitFormat(WEBP_ENCODABLE));
   const [stripBusy, setStripBusy] = useState(false);
   const [removeIcc, setRemoveIcc] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -1628,7 +1637,7 @@ function Images() {
       ...previous,
       resizeMode: "max-long-edge",
       longEdge: WEB_READY_LONG_EDGE,
-      format: "webp",
+      format: defaultSocialKitFormat(WEBP_ENCODABLE),
       quality: WEB_READY_QUALITY,
       targetKiB: null,
     }));
@@ -2349,8 +2358,9 @@ function Images() {
               </button>
             </div>
             <p className="trim-note" id="image-web-ready-note">
-              Set WebP at {Math.round(WEB_READY_QUALITY * 100)}% quality and cap the longest side at {WEB_READY_LONG_EDGE} px.
+              Set {WEBP_ENCODABLE ? `WebP at ${Math.round(WEB_READY_QUALITY * 100)}% quality` : "PNG at lossless quality"} and cap the longest side at {WEB_READY_LONG_EDGE} px.
               The preset keeps transparency and your edits. It only shrinks images.
+              {!WEBP_ENCODABLE && " This browser cannot encode WebP, so the preset uses PNG."}
             </p>
           </fieldset>
 
@@ -2370,8 +2380,12 @@ function Images() {
                 }}
               >
                 {SOCIAL_KIT_FORMATS.map((value) => (
-                  <option key={value} value={value}>
-                    {value === "webp" ? "WebP · default, smaller files" : "PNG · lossless, larger files"}
+                  <option key={value} value={value} disabled={value === "webp" && !WEBP_ENCODABLE}>
+                    {value === "webp"
+                      ? WEBP_ENCODABLE
+                        ? "WebP · default, smaller files"
+                        : "WebP · unavailable in this browser"
+                      : "PNG · lossless, larger files"}
                   </option>
                 ))}
               </select>
@@ -2565,10 +2579,24 @@ function Images() {
           <fieldset className="image-controls">
             <legend>Output</legend>
             <label>Format
-              <select value={settings.format} disabled={running} onChange={(event) => setNextFormat(event.target.value as ExportFormat)}>
-                {FORMATS.map((format) => <option value={format.value} key={format.value}>{format.label}</option>)}
+              <select
+                value={settings.format}
+                disabled={running}
+                aria-describedby={WEBP_ENCODABLE ? undefined : "image-webp-unavailable-note"}
+                onChange={(event) => setNextFormat(event.target.value as ExportFormat)}
+              >
+                {FORMATS.map(({ value, label }) => (
+                  <option value={value} key={value} disabled={value === "webp" && !WEBP_ENCODABLE}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </label>
+            {!WEBP_ENCODABLE && (
+              <p className="trim-note" id="image-webp-unavailable-note">
+                This browser cannot export WebP. Use PNG to preserve transparency, or JPEG for a smaller file.
+              </p>
+            )}
             <label>Quality {settings.format === "png" ? "(PNG is lossless)" : `${Math.round(settings.quality * 100)}%`}
               <input type="range" min="0.5" max="1" step="0.01" value={settings.quality} disabled={running || settings.format === "png" || settings.targetKiB !== null} onChange={(event) => setSettings((previous) => ({ ...previous, quality: Number(event.target.value) }))} />
             </label>
@@ -2592,7 +2620,7 @@ function Images() {
             </label>
             {settings.format === "png" ? (
               <p className="trim-note" id="image-target-note">
-                PNG is lossless, so a byte target is not achievable here. Lower the output width and height, or choose JPEG or WebP.
+                PNG is lossless, so a byte target is not achievable here. Lower the output width and height, or choose JPEG{WEBP_ENCODABLE ? " or WebP" : ""}.
               </p>
             ) : (
               <p className="trim-note" id="image-target-note">
