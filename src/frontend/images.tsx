@@ -2528,12 +2528,22 @@ function Images() {
             <div className="image-result" aria-live="polite">
               <ul className="image-social-list">
                 {socialOutputs.map((output) => (
-                  <li key={output.key}>
-                    <a href={output.url} download={`${safeStem(selected.file.name)}-${output.key}-${output.width}x${output.height}.${extensionForImageMime(output.mime)}`}>
-                      {output.label} · {output.width} × {output.height}
-                    </a>{" "}
-                    <span className="small">{formatBytes(output.bytes)} · sha256 {shortHash(output.sha256)}</span>{" "}
-                    <a href={output.receiptHref} download={`${safeStem(selected.file.name)}-${output.key}-receipt.json`}>receipt</a>
+                  <li key={output.key} className="image-social-item">
+                    <img
+                      src={output.url}
+                      alt=""
+                      width={output.width}
+                      height={output.height}
+                      loading="lazy"
+                      className="image-social-thumb"
+                    />
+                    <div className="image-social-details">
+                      <a href={output.url} download={`${safeStem(selected.file.name)}-${output.key}-${output.width}x${output.height}.${extensionForImageMime(output.mime)}`}>
+                        {output.label} · {output.width} × {output.height}
+                      </a>{" "}
+                      <span className="small">{formatBytes(output.bytes)} · sha256 {shortHash(output.sha256)}</span>{" "}
+                      <a href={output.receiptHref} download={`${safeStem(selected.file.name)}-${output.key}-receipt.json`}>receipt</a>
+                    </div>
                   </li>
                 ))}
               </ul>
