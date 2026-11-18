@@ -3060,7 +3060,7 @@ function Images() {
             asset. Nothing is published automatically.
           </p>
           <LocalImport
-            key={`${selected.id}:${importBlob.size}:${importFormat}`}
+            key={selected.result?.url ?? selected.stripped?.url}
             blob={importBlob}
             filename={importFilename}
             operation={selected.result ? "resize, crop and convert image" : "strip image metadata"}
