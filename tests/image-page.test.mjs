@@ -144,6 +144,15 @@ test("a batch row can set its own long edge without touching the batch", () => {
   assert.match(workbench, /Boolean\(invalidLongEdgeItem\)/);
 });
 
+test("intake decodes each candidate before it queues or resets exports", () => {
+  assert.match(workbench, /async function browserDecodeProblem\(file: File\): Promise<string \| null> \{/);
+  assert.match(workbench, /bitmap = await createImageBitmap\(file\);[\s\S]*?finally \{\s*bitmap\?\.close\(\);\s*\}/);
+  const decodeAt = workbench.indexOf("const decodeProblem = await browserDecodeProblem(file)");
+  const resetAt = workbench.indexOf("if (!added) clearBatchExports()");
+  assert.ok(decodeAt > 0, "intake calls the browser decoder");
+  assert.ok(resetAt > decodeAt, "the decoder runs before the first export reset");
+});
+
 test("the metadata strip button keeps keyboard focus while the bytes load", () => {
   assert.match(workbench, /disabled=\{running \|\| importing\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
   assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running \|\| importing\) return;/);
