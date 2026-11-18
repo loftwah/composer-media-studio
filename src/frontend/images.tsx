@@ -1246,9 +1246,12 @@ function Images() {
       setRejections(localRejections);
       setAdding(false);
       addingRef.current = false;
+      const retained = !added && items.length
+        ? " Your existing images and any finished downloads are still available."
+        : "";
       setMessage(
         localRejections.length
-          ? `${added} image${added === 1 ? "" : "s"} added. ${localRejections.length} file${localRejections.length === 1 ? " was" : "s were"} refused; read the reason below.`
+          ? `${added} image${added === 1 ? "" : "s"} added. ${localRejections.length} file${localRejections.length === 1 ? " was" : "s were"} refused; read the reason below.${retained}`
           : `${added} image${added === 1 ? "" : "s"} added locally. Nothing was uploaded.`,
       );
     }
