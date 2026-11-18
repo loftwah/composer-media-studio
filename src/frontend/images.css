@@ -570,7 +570,6 @@
 
 .image-result .button,
 .image-result .button:hover {
-  color: var(--paper);
   text-decoration: none;
 }
 
