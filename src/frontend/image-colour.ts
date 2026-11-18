@@ -40,6 +40,18 @@ export type AlphaBoundsResult =
     }
   | { ok: false; error: string };
 
+export type AlphaProfileResult =
+  | {
+      ok: true;
+      width: number;
+      height: number;
+      totalPixels: number;
+      transparent: number;
+      partial: number;
+      opaque: number;
+    }
+  | { ok: false; error: string };
+
 export const MAX_PALETTE_COLOURS = 8;
 export const PALETTE_MERGE_DISTANCE = 18;
 export const PALETTE_MAX_SAMPLES = 1_000_000;
@@ -476,6 +488,39 @@ export function alphaBounds(
     transparentPixels,
     bounds,
     isFull: bounds.width === width && bounds.height === height,
+  };
+}
+
+/**
+ * Classify every decoded alpha byte of a completed result. Counts are exact:
+ * no sampling, no scaling, no rounding. The byte length must match the stated
+ * dimensions, so a stale or oversized buffer cannot contribute a pixel.
+ */
+export function alphaProfile(
+  pixels: Uint8Array | Uint8ClampedArray,
+  { width, height }: { width: number; height: number },
+): AlphaProfileResult {
+  const problem = pixelLengthProblem(pixels, width, height);
+  if (problem) return { ok: false, error: problem };
+  if (pixels.length !== width * height * 4)
+    return { ok: false, error: "The decoded pixels do not match the stated dimensions." };
+  let transparent = 0;
+  let partial = 0;
+  let opaque = 0;
+  for (let index = 3; index < pixels.length; index += 4) {
+    const alpha = pixels[index];
+    if (alpha === 0) transparent += 1;
+    else if (alpha === 255) opaque += 1;
+    else partial += 1;
+  }
+  return {
+    ok: true,
+    width,
+    height,
+    totalPixels: width * height,
+    transparent,
+    partial,
+    opaque,
   };
 }
 

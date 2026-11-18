@@ -95,6 +95,17 @@ test("crop position and embed code are wired as honest controls", () => {
   assert.match(workbench, /draggable=\{!running\}/);
 });
 
+test("the completed result has an on-demand exact alpha inspection", () => {
+  assert.match(workbench, /<h3>Result alpha<\/h3>/);
+  assert.match(workbench, /Inspect result alpha/);
+  assert.match(workbench, /Transparent is\s+alpha 0, partial is 1–254/);
+  assert.match(workbench, /createImageBitmap\(result\.blob\)/);
+  assert.match(workbench, /alphaProfile\(data, \{ width, height: rows \}\)/);
+  assert.match(workbench, /key === currentOutputKey\.current/);
+  assert.match(workbench, /alphaRevision\.current \+= 1/);
+  assert.match(workbench, /aria-disabled=\{alphaBusy \|\| running\}/);
+});
+
 test("the embed-code button keeps keyboard focus while it is building", () => {
   assert.match(workbench, /\n\s+disabled=\{running\}\n\s+aria-disabled=\{snippetBusy \|\| running\}/);
   assert.match(workbench, /if \(!selected\?\.result \|\| snippetBusy \|\| running\) return;/);

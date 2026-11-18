@@ -47,6 +47,7 @@ import {
   MAX_PALETTE_COLOURS,
   PALETTE_WORKING_EDGE,
   alphaBounds,
+  alphaProfile,
   extractPalette,
   formatHsl,
   formatRgb,
@@ -58,6 +59,7 @@ import {
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
+  type AlphaProfileResult,
   type ImageBounds,
   type PaletteResult,
   type Rgb,
@@ -186,6 +188,11 @@ type SnippetState = {
   data: Extract<SnippetResult, { ok: true }>;
 };
 
+type AlphaInspectState = {
+  key: string;
+  result: Extract<AlphaProfileResult, { ok: true }>;
+};
+
 type StrippedImage = {
   blob: Blob;
   url: string;
@@ -276,6 +283,11 @@ function formatBytes(bytes: number): string {
 
 function shortHash(hash: string): string {
   return hash ? `${hash.slice(0, 12)}…` : "—";
+}
+
+function percentOf(count: number, total: number): string {
+  if (!total) return "0";
+  return String(Math.round((count / total) * 1000) / 10);
 }
 
 function formatLabelForMime(mime: string): string {
@@ -811,6 +823,9 @@ function Images() {
   const [snippetBusy, setSnippetBusy] = useState(false);
   const [snippetMessage, setSnippetMessage] = useState("");
   const [snippetUrl, setSnippetUrl] = useState<{ kind: SnippetKind; url: string } | null>(null);
+  const [alphaInspect, setAlphaInspect] = useState<AlphaInspectState | null>(null);
+  const [alphaBusy, setAlphaBusy] = useState(false);
+  const [alphaMessage, setAlphaMessage] = useState("");
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
   const batchExportRevision = useRef(0);
@@ -834,6 +849,7 @@ function Images() {
   const latestSnippetCopy = useRef(0);
   const snippetField = useRef<HTMLTextAreaElement>(null);
   const currentOutputKey = useRef("");
+  const alphaRevision = useRef(0);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const socialReady = selected?.source.mime === "image/png";
@@ -869,6 +885,10 @@ function Images() {
   useLayoutEffect(() => {
     currentOutputKey.current = outputResultKey;
   }, [outputResultKey]);
+  // An alpha profile belongs to one exact finished result. Selecting another
+  // row or regenerating can never leave an earlier result's counts on screen.
+  const visibleAlpha =
+    alphaInspect?.key === outputResultKey ? alphaInspect.result : null;
   const canCopyPng =
     typeof window !== "undefined" &&
     typeof window.ClipboardItem === "function" &&
@@ -1010,6 +1030,7 @@ function Images() {
       revision.current += 1;
       stripRevision.current += 1;
       batchExportRevision.current += 1;
+      alphaRevision.current += 1;
       batchController.current?.controller.abort();
       socialController.current?.abort();
       socialController.current = null;
@@ -1036,6 +1057,8 @@ function Images() {
     setPicked(null);
     setPickMessage("");
     setSnippetMessage("");
+    setAlphaInspect(null);
+    setAlphaMessage("");
   }, [selected?.result?.url]);
 
   // One list focus lifecycle serves removals and reorders: the pending target
@@ -1233,6 +1256,7 @@ function Images() {
     focusAfterListChange.current = { kind: "picker" };
     revision.current += 1;
     stripRevision.current += 1;
+    alphaRevision.current += 1;
     batchController.current?.controller.abort();
     socialController.current?.abort();
     addingRef.current = false;
@@ -1255,6 +1279,9 @@ function Images() {
     setPicked(null);
     setPickMessage("");
     setCopyMessage("");
+    setAlphaInspect(null);
+    setAlphaBusy(false);
+    setAlphaMessage("");
     setMessage("Cleared. Nothing remains in this tab.");
     setRejections([]);
     setBatch({ total: 0, completed: 0, current: "" });
@@ -2088,6 +2115,76 @@ function Images() {
     if (point) samplePixel(point.x, point.y);
   }
 
+  async function inspectResultAlpha(): Promise<void> {
+    if (!selected?.result || alphaBusy || running) return;
+    const result = selected.result;
+    const key = result.url;
+    const attempt = ++alphaRevision.current;
+    const isCurrent = () => attempt === alphaRevision.current && key === currentOutputKey.current;
+    setAlphaBusy(true);
+    setAlphaMessage("Decoding the completed result on this device…");
+    let bitmap: ImageBitmap | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    try {
+      bitmap = await createImageBitmap(result.blob);
+      if (!isCurrent()) return;
+      if (bitmap.width !== result.width || bitmap.height !== result.height)
+        throw new Error("The decoded result size did not match the completed result.");
+      const { width, height } = result;
+      // Read the bitmap at its native scale in bands to bound canvas and
+      // readback memory even for a large completed image.
+      const bandRows = Math.min(height, Math.max(1, Math.floor(512_000 / width)));
+      canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = bandRows;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("This browser could not read the result pixels.");
+      context.globalCompositeOperation = "copy";
+      const profile = {
+        ok: true as const,
+        width,
+        height,
+        totalPixels: width * height,
+        transparent: 0,
+        partial: 0,
+        opaque: 0,
+      };
+      for (let y = 0; y < height; y += bandRows) {
+        const rows = Math.min(bandRows, height - y);
+        context.drawImage(bitmap, 0, y, width, rows, 0, 0, width, rows);
+        const data = context.getImageData(0, 0, width, rows).data;
+        const band = alphaProfile(data, { width, height: rows });
+        if (!band.ok) throw new Error(band.error);
+        profile.transparent += band.transparent;
+        profile.partial += band.partial;
+        profile.opaque += band.opaque;
+        if ((y + bandRows) < height && (y / bandRows) % 4 === 3) {
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+          if (!isCurrent()) return;
+        }
+      }
+      if (!isCurrent()) return;
+      setAlphaInspect({ key, result: profile });
+      setAlphaMessage(
+        `Read ${profile.totalPixels.toLocaleString()} exact pixels from this completed result. Nothing was uploaded.`,
+      );
+    } catch (error) {
+      if (isCurrent()) {
+        setAlphaInspect(null);
+        setAlphaMessage(
+          error instanceof Error ? error.message : "Could not read the result alpha.",
+        );
+      }
+    } finally {
+      bitmap?.close();
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      if (attempt === alphaRevision.current) setAlphaBusy(false);
+    }
+  }
+
   return (
     <main className="trim-page image-page" id="main">
       <header>
@@ -2810,6 +2907,60 @@ function Images() {
                     </li>
                   ))}
                 </ul>
+              </>
+            )}
+          </div>
+
+          <div className="image-colour-block">
+            <h3>Result alpha</h3>
+            <p className="trim-note" id="image-alpha-note">
+              Counts every pixel in the finished image on this device. Transparent is
+              alpha 0, partial is 1–254 and opaque is 255.
+            </p>
+            <div className="image-control-actions">
+              <button
+                type="button"
+                className="secondary"
+                disabled={!selected.result || running}
+                aria-disabled={alphaBusy || running}
+                aria-describedby="image-alpha-note"
+                onClick={() => void inspectResultAlpha()}
+              >
+                {alphaBusy
+                  ? "Reading result alpha…"
+                  : visibleAlpha
+                    ? "Re-inspect result alpha"
+                    : "Inspect result alpha"}
+              </button>
+            </div>
+            <p className="trim-note" role="status" aria-live="polite">{alphaMessage}</p>
+            {visibleAlpha && (
+              <>
+                <dl className="image-alpha-summary">
+                  <div>
+                    <dt>Transparent</dt>
+                    <dd>{visibleAlpha.transparent.toLocaleString()} px · {percentOf(visibleAlpha.transparent, visibleAlpha.totalPixels)}%</dd>
+                  </div>
+                  <div>
+                    <dt>Partial</dt>
+                    <dd>{visibleAlpha.partial.toLocaleString()} px · {percentOf(visibleAlpha.partial, visibleAlpha.totalPixels)}%</dd>
+                  </div>
+                  <div>
+                    <dt>Opaque</dt>
+                    <dd>{visibleAlpha.opaque.toLocaleString()} px · {percentOf(visibleAlpha.opaque, visibleAlpha.totalPixels)}%</dd>
+                  </div>
+                </dl>
+                <p className="trim-note">
+                  {visibleAlpha.totalPixels.toLocaleString()} pixels at{" "}
+                  {visibleAlpha.width} × {visibleAlpha.height}, decoded from the exact
+                  finished image.
+                  {visibleAlpha.partial > 0
+                    ? " Partial pixels are semi-transparent; check them on white and black."
+                    : ""}
+                  {selected.result?.mime === "image/jpeg"
+                    ? " JPEG was flattened onto the chosen matte, so all pixels should be opaque."
+                    : ""}
+                </p>
               </>
             )}
           </div>
