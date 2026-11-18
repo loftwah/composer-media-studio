@@ -86,6 +86,7 @@ import {
   contactSheetDocument,
   contactSheetLayout,
   contactSheetPlacement,
+  type ContactSheetColumns,
   type ContactSheetTile,
 } from "./image-contact-sheet.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
@@ -233,7 +234,7 @@ type ListFocus =
   | { kind: "row-action"; id: string; offset: -1 | 1 }
   | { kind: "picker" };
 
-type ContactSheet = { url: string; layoutUrl: string; count: number; width: number; height: number };
+type ContactSheet = { url: string; layoutUrl: string; count: number; columns: number; width: number; height: number };
 
 const DEFAULT_SETTINGS: Settings = {
   resizeMode: "long-edge",
@@ -797,6 +798,7 @@ function Images() {
   const [zipUrl, setZipUrl] = useState("");
   const [zipBytes, setZipBytes] = useState(0);
   const [contactSheet, setContactSheet] = useState<ContactSheet | null>(null);
+  const [sheetColumns, setSheetColumns] = useState<ContactSheetColumns>("auto");
   const [batchExport, setBatchExport] = useState<"zip" | "contact-sheet" | null>(null);
   const zipBusy = batchExport === "zip";
   const sheetBusy = batchExport === "contact-sheet";
@@ -1487,7 +1489,7 @@ function Images() {
 
   async function makeContactSheet(): Promise<void> {
     const entries = doneItems.flatMap(item => item.result ? [{ item, result: item.result }] : []);
-    const layout = contactSheetLayout(entries.length);
+    const layout = contactSheetLayout(entries.length, sheetColumns);
     if (!layout || batchExport || addingRef.current || runningRef.current || socialController.current) return;
 
     const attempt = batchExportRevision.current;
@@ -1537,7 +1539,7 @@ function Images() {
       const layoutUrl = trackUrl(layoutBlob);
       releaseUrl(contactSheet?.url);
       releaseUrl(contactSheet?.layoutUrl);
-      setContactSheet({ url, layoutUrl, count: layout.count, width: layout.width, height: layout.height });
+      setContactSheet({ url, layoutUrl, count: layout.count, columns: layout.columns, width: layout.width, height: layout.height });
       setBatchMessage(`Contact sheet ready: ${layout.count} images · ${layout.width} × ${layout.height} px.`);
     } catch (error) {
       if (attempt === batchExportRevision.current) {
@@ -3257,6 +3259,19 @@ function Images() {
             {MAX_IMAGE_OUTPUT_DIMENSION}, or leave it blank to use the batch resize.
           </p>
         )}
+        <label className="image-sheet-columns">
+          Contact sheet columns
+          <select value={sheetColumns} disabled={running || sheetBusy} onChange={(event) => {
+            const value = event.target.value;
+            setSheetColumns(value === "auto" ? "auto" : Number(value) as ContactSheetColumns);
+          }}>
+            <option value="auto">Auto (up to 4)</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </label>
         <div className="image-control-actions">
           <button
             type="button"
@@ -3322,7 +3337,7 @@ function Images() {
               alt={`Contact sheet of ${contactSheet.count} completed images`}
             />
             <p className="trim-note">
-              The layout uses {CONTACT_SHEET_TILE} px transparent tiles in batch order.
+              The layout uses {CONTACT_SHEET_TILE} px transparent tiles across {contactSheet.columns} column{contactSheet.columns === 1 ? "" : "s"} in batch order.
             </p>
           </>
         )}

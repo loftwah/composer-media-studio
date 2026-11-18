@@ -8,6 +8,8 @@ export const CONTACT_SHEET_MIN_IMAGES = 2;
 export const CONTACT_SHEET_LAYOUT_SCHEMA = "media-studio/contact-sheet-layout";
 export const CONTACT_SHEET_LAYOUT_VERSION = 1;
 
+export type ContactSheetColumns = "auto" | 1 | 2 | 3 | 4;
+
 export type ContactSheetLayout = {
   count: number;
   columns: number;
@@ -29,15 +31,17 @@ export type ContactSheetTile = {
   output: { sha256: string; width: number; height: number; mime: string; bytes: number };
 };
 
-export function contactSheetLayout(count: number): ContactSheetLayout | null {
+export function contactSheetLayout(count: number, columns: ContactSheetColumns = "auto"): ContactSheetLayout | null {
   if (!Number.isInteger(count) || count < CONTACT_SHEET_MIN_IMAGES || count > MAX_BATCH_IMAGES) return null;
 
-  const columns = Math.min(count, CONTACT_SHEET_MAX_COLUMNS);
+  const resolved = columns !== "auto" && Number.isInteger(columns) && columns >= 1 && columns <= CONTACT_SHEET_MAX_COLUMNS
+    ? columns
+    : Math.min(count, CONTACT_SHEET_MAX_COLUMNS);
   return {
     count,
-    columns,
-    width: columns * CONTACT_SHEET_TILE,
-    height: Math.ceil(count / columns) * CONTACT_SHEET_TILE,
+    columns: resolved,
+    width: resolved * CONTACT_SHEET_TILE,
+    height: Math.ceil(count / resolved) * CONTACT_SHEET_TILE,
   };
 }
 
