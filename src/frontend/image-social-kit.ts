@@ -9,6 +9,10 @@ export const SOCIAL_SIZES = Object.freeze([
 export const SOCIAL_KIT_FORMATS = Object.freeze(["webp", "png"] as const);
 export type SocialKitFormat = (typeof SOCIAL_KIT_FORMATS)[number];
 
+export function socialSourceEligible(mime: string | undefined, isPublicPoster: boolean): boolean {
+  return mime === "image/png" || mime === "image/jpeg" || isPublicPoster;
+}
+
 /**
  * The workbench default follows the one-time Canvas capability probe. A browser
  * that cannot encode WebP starts on lossless PNG instead of wasting a four-size
