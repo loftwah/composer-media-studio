@@ -221,6 +221,7 @@ type WorkItem = {
   url: string;
   source: ImageMetadataSummary;
   sourceHash: string;
+  publicPoster?: string;
   status: ItemStatus;
   result?: RenderedImage;
   stripped?: StrippedImage;
@@ -818,7 +819,58 @@ function drawSample(canvas: HTMLCanvasElement): void {
   context.fillText("Media Studio · signed-out local workbench", width * 0.07, height - Math.round(height * 0.052));
 }
 
+const PUBLIC_POSTER_TIMEOUT_MS = 15_000;
+const POSTER_EXTENSIONS = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+]);
+
+function publicPosterFromHash(): string | null {
+  const path = new URLSearchParams(window.location.hash.slice(1)).get("public-poster");
+  return path && /^\/p\/[A-Za-z0-9_-]{1,128}\/(poster|thumb)$/.test(path) ? path : null;
+}
+
+async function fetchPublicPoster(path: string, signal: AbortSignal): Promise<File> {
+  const response = await fetch(path, {
+    mode: "same-origin",
+    credentials: "omit",
+    redirect: "error",
+    cache: "no-store",
+    signal,
+  });
+  const type = response.headers.get("content-type") ?? "";
+  const extension = POSTER_EXTENSIONS.get(type);
+  if (!response.ok || !extension || !response.body) {
+    await response.body?.cancel();
+    throw new Error("This public poster is unavailable or is not a supported image.");
+  }
+  const reader = response.body.getReader();
+  const chunks: BlobPart[] = [];
+  let total = 0;
+  try {
+    if (Number(response.headers.get("content-length")) > MAX_IMAGE_INPUT_BYTES)
+      throw new Error("This public poster exceeds the image size limit.");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_IMAGE_INPUT_BYTES)
+        throw new Error("This public poster exceeds the image size limit.");
+      chunks.push(new Uint8Array(value));
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  const [, , slug] = path.split("/");
+  return new File(chunks, `${slug}-poster.${extension}`, { type });
+}
+
 function Images() {
+  const [publicPoster] = useState(publicPosterFromHash);
+  const [posterLoading, setPosterLoading] = useState(false);
+  const posterRequest = useRef<AbortController | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -898,7 +950,8 @@ function Images() {
   const alphaRevision = useRef(0);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
-  const socialReady = selected?.source.mime === "image/png";
+  const socialReady = selected?.source.mime === "image/png" || Boolean(selected?.publicPoster);
+  const posterLoaded = Boolean(publicPoster && items.some((item) => item.publicPoster === publicPoster));
   const activeTrim =
     selected &&
     trim &&
@@ -1169,7 +1222,9 @@ function Images() {
     }
   }, [paletteCopyFallback]);
 
-  async function addFiles(files: File[], fromPicker = false): Promise<void> {
+  useEffect(() => () => posterRequest.current?.abort(), []);
+
+  async function addFiles(files: File[], fromPicker = false, posterPath?: string): Promise<void> {
     if (!files.length || addingRef.current || runningRef.current || socialController.current) return;
     restorePickerFocus.current = fromPicker && document.activeElement === fileInputRef.current;
     addingRef.current = true;
@@ -1237,6 +1292,7 @@ function Images() {
           url,
           source,
           sourceHash,
+          publicPoster: posterPath,
           status: "ready",
         };
         setItems((previous) => [...previous, item]);
@@ -1274,6 +1330,40 @@ function Images() {
     }
   }
   addFilesRef.current = addFiles;
+
+  async function loadPublicPoster(): Promise<void> {
+    if (!publicPoster || posterLoaded || posterRequest.current || addingRef.current ||
+      runningRef.current || socialController.current || items.length >= MAX_BATCH_IMAGES) return;
+    const controller = new AbortController();
+    const token = revision.current;
+    posterRequest.current = controller;
+    setPosterLoading(true);
+    const timeout = AbortSignal.timeout(PUBLIC_POSTER_TIMEOUT_MS);
+    try {
+      const file = await fetchPublicPoster(publicPoster, AbortSignal.any([controller.signal, timeout]));
+      if (controller.signal.aborted) return;
+      if (token !== revision.current || runningRef.current || socialController.current) {
+        setMessage("The workbench changed while loading the poster. Choose Load public poster to try again.");
+        return;
+      }
+      await addFiles([file], false, publicPoster);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        if (timeout.aborted) {
+          setMessage("The public poster download timed out. Choose Load public poster to try again.");
+        } else {
+          setMessage(error instanceof TypeError
+            ? "Could not download this public poster. Try again or use Download poster on the film page."
+            : error instanceof Error ? error.message : "Could not download this public poster.");
+        }
+      }
+    } finally {
+      if (posterRequest.current === controller && !controller.signal.aborted) {
+        posterRequest.current = null;
+        setPosterLoading(false);
+      }
+    }
+  }
 
   async function addSample(): Promise<void> {
     // One encode per press: a held Enter key or a slow PNG encoder must not
@@ -1338,6 +1428,9 @@ function Images() {
 
   function resetAll(): void {
     if (importing) return;
+    posterRequest.current?.abort();
+    posterRequest.current = null;
+    setPosterLoading(false);
     focusAfterListChange.current = { kind: "picker" };
     revision.current += 1;
     stripRevision.current += 1;
@@ -1738,7 +1831,7 @@ function Images() {
 
   async function makeSocialKit(): Promise<void> {
     if (!selected || runningRef.current || socialController.current || batchExport || addingRef.current) return;
-    if (selected.source.mime !== "image/png") return;
+    if (!socialReady) return;
     const item = selected;
     const snapshot = { ...settings };
     const format = socialFormat;
@@ -1746,7 +1839,7 @@ function Images() {
     const controller = new AbortController();
     socialController.current = controller;
     setSocialBusy(true);
-    setMessage(`Making four ${formatLabelForMime(mimeForExport(format))} sizes from the selected PNG…`);
+    setMessage(`Making four ${formatLabelForMime(mimeForExport(format))} sizes from the selected image…`);
     const outputs: SocialOutput[] = [];
     const isCurrent = () => socialController.current === controller;
     const alive = () => isCurrent() && !controller.signal.aborted;
@@ -2338,7 +2431,7 @@ function Images() {
         <h1>Image workbench</h1>
         <p>
           Resize, crop, rotate, convert and inspect images on this device. There is no
-          sign-in, no provider, no upload and no external image request. Your original
+          sign-in, no provider and no upload. Your original
           File stays unchanged in this tab.
         </p>
       </header>
@@ -2376,7 +2469,24 @@ function Images() {
             }}
           />
         </label>
+        {publicPoster && (
+          <p className="trim-note">
+            <a href={publicPoster.slice(0, publicPoster.lastIndexOf("/"))}>Source film</a>
+            {" · "}The poster is downloaded from Media Studio when you choose Load public poster.
+          </p>
+        )}
         <div className="image-source-actions">
+          {publicPoster && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => void loadPublicPoster()}
+              disabled={running || socialBusy || items.length >= MAX_BATCH_IMAGES}
+              aria-disabled={posterLoading || posterLoaded || adding}
+            >
+              {posterLoaded ? "Public poster added" : "Load public poster"}
+            </button>
+          )}
           <button
             type="button"
             className="secondary"
@@ -2405,7 +2515,7 @@ function Images() {
           sample are read from the actual bytes and pixels, not from the filename.
         </p>
         <p role="status" aria-live="polite" className="image-status">
-          {adding ? "Checking files on this device…" : message}
+          {adding ? "Checking files on this device…" : posterLoading ? "Downloading the public poster…" : message}
         </p>
         {rejections.length > 0 && (
           <details className="image-rejections" open>
@@ -2444,6 +2554,11 @@ function Images() {
             <h2 id="image-edit-heading">Edit {selected.file.name}</h2>
             <span>{selected.source.orientation === 1 ? "no EXIF rotation" : `EXIF ${ORIENTATION_LABELS[selected.source.orientation] ?? selected.source.orientation}`}</span>
           </div>
+          {selected.publicPoster && (
+            <p className="trim-note">
+              Public poster from <a href={selected.publicPoster.slice(0, selected.publicPoster.lastIndexOf("/"))}>the source film</a>.
+            </p>
+          )}
           <dl className="image-facts">
             <div><dt>Source</dt><dd>{selected.source.width} × {selected.source.height} px</dd></div>
             <div><dt>Displayed</dt><dd>{selected.source.orientedWidth} × {selected.source.orientedHeight} px</dd></div>
@@ -2516,7 +2631,7 @@ function Images() {
               )}
             </div>
             <p className="trim-note" id="image-social-kit-note">
-              One selected PNG becomes {formatLabelForMime(mimeForExport(socialFormat))} at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
+              The selected PNG or public poster becomes {formatLabelForMime(mimeForExport(socialFormat))} at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
               1080 × 1920 (9:16) and 1920 × 1080 (16:9)
               {socialFormat === "webp" ? ` with ${Math.round(WEB_READY_QUALITY * 100)}% quality` : " at lossless quality"}.
               Smaller crops can be enlarged to fit. The ZIP includes one receipt for each size.
