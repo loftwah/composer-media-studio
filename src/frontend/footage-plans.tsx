@@ -28,7 +28,9 @@ function SourceRangePreview({ source, scene, index }: { source: MediaAssetV1; sc
 }
 export function FootagePlans({ projectId, assets, canEdit }: { projectId: string; assets: MediaAssetV1[]; canEdit: boolean }) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/footage-plans`;
-  const videos = assets.filter(a => a.kind === 'video' && a.durationMs && a.durationMs > 0);
+  const sourceVideos = assets.filter(asset => asset.kind === 'video');
+  const videos = sourceVideos.filter(asset => asset.durationMs && asset.durationMs > 0);
+  const hasUnmeasuredVideos = sourceVideos.length > videos.length;
   const images = assets.filter(a => a.kind === 'image');
   const [plans, setPlans] = useState<Plan[]>([]);
   const cached = cache.get(projectId);
@@ -79,7 +81,14 @@ export function FootagePlans({ projectId, assets, canEdit }: { projectId: string
     {message && <p className="notice calm" role="status">{message}</p>}
     {loading ? <p>Loading saved cut maps…</p> : <>
       {!canEdit && <p className="small">This connection can view cut maps; editing requires project edit access.</p>}
-      <div className="song-plan-columns"><div><h3>Start with a video</h3>{videos.length === 0 ? <p>No measured video yet. Upload an MP4 or WebM in the library, then return here.</p> : <form onSubmit={e => { e.preventDefault(); if (!mayLeave()) return; void run(async () => { const result = await request(base, 'POST', { sourceAssetId: sourceId, rightsConfirmed: rights, title, aspect: '16:9', sourceStartMs: milliseconds(start), sourceEndMs: milliseconds(end), sceneCount: Number(count) }); setPlans(current => [result.plan, ...current]); open(result.plan); setTitle(''); setRights(false); setMessage('Cut map saved. Adjust the suggested ranges below.'); }); }}><fieldset disabled={!canEdit || busy}>
+      <div className="song-plan-columns"><div>
+        <h3>Start with a video</h3>
+        {hasUnmeasuredVideos && <p className="small">
+          Cut maps need a measured duration. Use <a href="/tools/video-clip">Clip and Frame</a> to export an MP4,
+          then upload it in Library alongside the original.
+        </p>}
+        {sourceVideos.length === 0 && <p>Upload an MP4 in Library, then return here.</p>}
+        {videos.length > 0 && <form onSubmit={e => { e.preventDefault(); if (!mayLeave()) return; void run(async () => { const result = await request(base, 'POST', { sourceAssetId: sourceId, rightsConfirmed: rights, title, aspect: '16:9', sourceStartMs: milliseconds(start), sourceEndMs: milliseconds(end), sceneCount: Number(count) }); setPlans(current => [result.plan, ...current]); open(result.plan); setTitle(''); setRights(false); setMessage('Cut map saved. Adjust the suggested ranges below.'); }); }}><fieldset disabled={!canEdit || busy}>
         <label>Source video<select value={sourceId} onChange={e => { const id = e.target.value; setPreviewReady(false); setMarkStatus(''); setSourceId(id); setRights(false); setStart('0'); setEnd(seconds(Math.min(videos.find(v => v.id === id)?.durationMs ?? 30000, 60000))); }}>{videos.map(v => <option key={v.id} value={v.id}>{v.title} · {seconds(v.durationMs ?? 0)}s</option>)}</select></label>
         {selectedSource && <><video key={selectedSource.id} ref={sourcePreview} className="footage-preview" controls playsInline preload="metadata" src={selectedSource.file} aria-label={`Preview source ${selectedSource.title}`} onLoadedMetadata={() => setPreviewReady(true)} onError={() => { setPreviewReady(false); setMarkStatus('The source preview could not load. You can still enter times manually.'); }} /><p className="small">Pause at a point in the video, then use it as the start or end. You can still enter times below.</p><div className="row"><button type="button" className="secondary" disabled={!previewReady} onClick={() => markPlayhead('start')}>Use playhead for start</button><button type="button" className="secondary" disabled={!previewReady} onClick={() => markPlayhead('end')}>Use playhead for end</button></div><p className="small" role="status">{markStatus}</p></>}
         <label>Cut map title<input required maxLength={80} value={title} onChange={e => setTitle(e.target.value)} placeholder="My footage edit" /></label>
