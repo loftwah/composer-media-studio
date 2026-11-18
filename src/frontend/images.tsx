@@ -1229,6 +1229,7 @@ function Images() {
   }
 
   function resetAll(): void {
+    if (importing) return;
     focusAfterListChange.current = { kind: "picker" };
     revision.current += 1;
     stripRevision.current += 1;
@@ -1263,7 +1264,7 @@ function Images() {
   }
 
   async function runItems(list: WorkItem[], report: (message: string) => void = setMessage): Promise<void> {
-    if (!list.length || runningRef.current || socialController.current || sheetBusy) return;
+    if (!list.length || runningRef.current || socialController.current || sheetBusy || importing) return;
     runningRef.current = true;
     const snapshot = { ...settings };
     const trimSnapshot = trim;
@@ -1376,7 +1377,7 @@ function Images() {
   }
 
   async function stripSelected(): Promise<void> {
-    if (!selected || stripBusy || running) return;
+    if (!selected || stripBusy || running || importing) return;
     const item = selected;
     const token = ++stripRevision.current;
     setStripBusy(true);
@@ -1697,6 +1698,7 @@ function Images() {
   }
 
   function selectItem(id: string): void {
+    if (importing) return;
     if (id !== selectedId) clearSocial();
     setSelectedId(id);
     setTrim(null);
@@ -2145,7 +2147,7 @@ function Images() {
           {selected && <a className="button secondary" href="#image-output-plan">Go to image output</a>}
           {items.length > 1 && <a className="button secondary" href="#image-batch">Go to batch</a>}
           {items.length > 0 && (
-            <button type="button" className="quiet" onClick={resetAll} disabled={running || adding}>
+            <button type="button" className="quiet" onClick={resetAll} disabled={running || adding || importing}>
               Clear all
             </button>
           )}
@@ -2475,7 +2477,7 @@ function Images() {
           <div className="image-control-actions">
             <button
               type="button"
-              disabled={socialBusy || adding || sheetBusy || !plan?.ok || Boolean(targetProblem)}
+              disabled={socialBusy || adding || sheetBusy || importing || !plan?.ok || Boolean(targetProblem)}
               aria-disabled={running}
               onClick={() => {
                 if (running) return;
@@ -2486,7 +2488,7 @@ function Images() {
             </button>
             {selected.result && <a className="button secondary" href="#image-downloads">Go to downloads</a>}
             {selected.status === "error" && (
-              <button type="button" className="secondary" disabled={running || sheetBusy} onClick={() => void runItems([selected])}>Retry</button>
+              <button type="button" className="secondary" disabled={running || sheetBusy || importing} onClick={() => void runItems([selected])}>Retry</button>
             )}
             <button
               type="button"
@@ -3028,7 +3030,7 @@ function Images() {
             Also remove the ICC colour profile — this can change how colours appear in other apps
           </label>
           <div className="image-control-actions">
-            <button type="button" className="secondary" disabled={running} aria-disabled={stripBusy || running} onClick={() => void stripSelected()}>
+            <button type="button" className="secondary" disabled={running || importing} aria-disabled={stripBusy || running} onClick={() => void stripSelected()}>
               {stripBusy ? "Stripping and verifying…" : "Strip metadata and verify"}
             </button>
           </div>
@@ -3085,6 +3087,7 @@ function Images() {
             format={importFormat}
             caption={importCaption}
             onBusyChange={setImporting}
+            blocked={running || stripBusy}
           />
         </section>
       )}
@@ -3107,7 +3110,7 @@ function Images() {
           <button
             type="button"
             ref={processAllRef}
-            disabled={socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(batchTargetProblem) || Boolean(invalidLongEdgeItem)}
+            disabled={socialBusy || adding || sheetBusy || importing || !items.length || !plan?.ok || Boolean(batchTargetProblem) || Boolean(invalidLongEdgeItem)}
             aria-disabled={running}
             onClick={() => {
               if (running) return;
@@ -3204,6 +3207,7 @@ function Images() {
                     className="image-list-select"
                     data-image-row={item.id}
                     onClick={() => selectItem(item.id)}
+                    disabled={importing}
                     aria-pressed={item.id === selectedId}
                   >
                     <span className="image-list-name">{item.file.name}</span>
@@ -3340,7 +3344,7 @@ function Images() {
                     <a className="button secondary" href={item.result.url} download={`${safeStem(item.file.name)}-${item.result.width}x${item.result.height}.${extensionForImageMime(item.result.mime)}`}>Download</a>
                   )}
                   {(item.status === "error" || item.status === "cancelled") && (
-                    <button type="button" className="secondary" disabled={running || sheetBusy} onClick={() => void runItems([item])}>Retry</button>
+                    <button type="button" className="secondary" disabled={running || sheetBusy || importing} onClick={() => void runItems([item])}>Retry</button>
                   )}
                   <button type="button" className="quiet" disabled={running || adding || importing} onClick={() => removeItem(item)}>Remove</button>
                 </div>

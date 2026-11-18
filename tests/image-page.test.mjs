@@ -101,7 +101,7 @@ test("the embed-code button keeps keyboard focus while it is building", () => {
 });
 
 test("the make-image button keeps keyboard focus while the canvas encodes", () => {
-  assert.match(workbench, /disabled=\{socialBusy \|\| adding \|\| sheetBusy \|\| !plan\?\.ok \|\| Boolean\(targetProblem\)\}\s+aria-disabled=\{running\}\s+onClick=\{\(\) => \{\s+if \(running\) return;\s+void runItems\(\[selected\]\);/);
+  assert.match(workbench, /disabled=\{socialBusy \|\| adding \|\| sheetBusy \|\| importing \|\| !plan\?\.ok \|\| Boolean\(targetProblem\)\}\s+aria-disabled=\{running\}\s+onClick=\{\(\) => \{\s+if \(running\) return;\s+void runItems\(\[selected\]\);/);
 });
 
 test("the contact-sheet button keeps keyboard focus while its canvas encodes", () => {
@@ -123,8 +123,8 @@ test("a batch row can set its own long edge without touching the batch", () => {
 });
 
 test("the metadata strip button keeps keyboard focus while the bytes load", () => {
-  assert.match(workbench, /disabled=\{running\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
-  assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running\) return;/);
+  assert.match(workbench, /disabled=\{running \|\| importing\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
+  assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running \|\| importing\) return;/);
   assert.match(workbench, /Download verified copy/);
 });
 
