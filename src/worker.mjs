@@ -67,7 +67,7 @@ import {
   setFeedbackResolved,
   pruneReviewAttempts,
 } from "./lib/review-rooms.mjs";
-import { measureFootageSource } from "./lib/footage-preflight.mjs";
+import { measureFootageSource } from "./lib/footage-preflight.ts";
 import { webmVideoSize } from "./lib/webm-metadata.ts";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.ts";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.ts";
