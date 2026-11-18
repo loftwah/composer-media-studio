@@ -156,3 +156,56 @@ test("receipts keep the v1 shape and record the real PNG result", () => {
   assert.equal(originalReceipt.output.mime, "image/jpeg");
   assert.deepEqual(originalReceipt.transform.settings, jpegSettings);
 });
+
+test("a blank per-image long edge inherits the batch exactly", () => {
+  for (const resizeMode of ["long-edge", "max-long-edge", "exact"]) {
+    const settings = batchSettings({ resizeMode });
+    assert.equal(settingsForImage(settings, "image/png", false, undefined), settings);
+    assert.equal(settingsForImage(settings, "image/png", true, undefined).longEdge, settings.longEdge);
+  }
+});
+
+test("a nonblank per-image long edge resizes only that image", () => {
+  for (const resizeMode of ["long-edge", "max-long-edge", "exact"]) {
+    const settings = batchSettings({ format: "webp", resizeMode });
+    const effective = settingsForImage(settings, "image/webp", false, 640);
+
+    assert.equal(effective.longEdge, 640);
+    assert.equal(effective.resizeMode, "long-edge");
+    assert.equal(settings.longEdge, 1600, "the batch setting is unchanged");
+    assert.equal(settings.resizeMode, resizeMode);
+    assert.equal(effective.format, "webp");
+    assert.equal(effective.targetKiB, 120);
+  }
+});
+
+test("the per-image long edge composes with the PNG choice", () => {
+  const settings = batchSettings({ format: "jpeg" });
+  const effective = settingsForImage(settings, "image/png", true, 400);
+
+  assert.equal(effective.format, "png");
+  assert.equal(effective.targetKiB, null);
+  assert.equal(effective.longEdge, 400);
+  assert.equal(effective.resizeMode, "long-edge");
+});
+
+test("an invalid per-image long edge is passed to the existing whole-number check", () => {
+  const settings = batchSettings();
+  for (const value of [Number.NaN, 0, 9000, 1.5]) {
+    const effective = settingsForImage(settings, "image/webp", false, value);
+    assert.equal(effective.longEdge, value);
+    assert.equal(effective.resizeMode, "long-edge");
+  }
+});
+
+test("the receipt records the effective per-image long edge, not the batch value", () => {
+  const settings = batchSettings({ format: "webp", resizeMode: "max-long-edge" });
+  const effective = settingsForImage(settings, "image/webp", false, 320);
+  const receipt = buildImageReceipt(receiptInput(effective, { mime: "image/webp" }));
+
+  assert.equal(IMAGE_RECEIPT_VERSION, 1);
+  assert.equal(Object.keys(receipt.transform.settings).length, Object.keys(settings).length);
+  assert.equal(receipt.transform.settings.longEdge, 320);
+  assert.equal(receipt.transform.settings.resizeMode, "long-edge");
+  assert.equal(settings.longEdge, 1600, "the batch settings are never mutated");
+});

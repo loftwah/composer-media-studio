@@ -66,6 +66,7 @@ import {
   MAX_BATCH_IMAGES,
   MAX_IMAGE_INPUT_BYTES,
   MAX_IMAGE_OUTPUT_BYTES,
+  MAX_IMAGE_OUTPUT_DIMENSION,
   MAX_ZIP_BYTES,
   imageInputProblem,
   imagePixelProblem,
@@ -210,6 +211,8 @@ type WorkItem = {
   error?: string;
   /** A reversible one-image choice: export this PNG source as lossless PNG. */
   pngOverride?: boolean;
+  /** A reversible one-image long edge in px. Undefined follows the batch. */
+  longEdgeOverride?: number;
 };
 
 type Rejection = { name: string; message: string };
@@ -294,6 +297,12 @@ function targetBytesFor(settings: Settings): number | null {
   if (settings.format === "png" || settings.targetKiB === null) return null;
   if (!Number.isFinite(settings.targetKiB) || settings.targetKiB <= 0) return null;
   return Math.round(settings.targetKiB * 1024);
+}
+
+function itemLongEdgeIsValid(value: number): boolean {
+  return (
+    Number.isInteger(value) && value >= 1 && value <= MAX_IMAGE_OUTPUT_DIMENSION
+  );
 }
 
 function resizeFor(settings: Settings): ResizePlan {
@@ -834,10 +843,15 @@ function Images() {
     trim.flipV === settings.flipV
       ? trim.rect
       : null;
-  // The batch controls stay shared; this one choice changes only the selected
-  // PNG image's effective settings. Everything downstream reads that snapshot.
+  // The batch controls stay shared; these per-item choices change only the
+  // selected image's effective settings. Everything downstream reads that snapshot.
   const selectedSettings = selected
-    ? settingsForImage(settings, selected.source.mime, Boolean(selected.pngOverride))
+    ? settingsForImage(
+        settings,
+        selected.source.mime,
+        Boolean(selected.pngOverride),
+        selected.longEdgeOverride,
+      )
     : settings;
   const plan = selected ? makePlan(selected.source, selectedSettings, activeTrim) : null;
   const currentSettingsKey = settingsKey(selectedSettings, activeTrim);
@@ -864,9 +878,15 @@ function Images() {
           (selected.source.orientedWidth * selected.source.orientedHeight) <
         0.001
       : false;
-  const hasPngOverride = items.some((item) => item.pngOverride);
+  const hasItemOverride = items.some(
+    (item) => item.pngOverride || item.longEdgeOverride !== undefined,
+  );
+  const invalidLongEdgeItem = items.find(
+    (item) =>
+      item.longEdgeOverride !== undefined && !itemLongEdgeIsValid(item.longEdgeOverride),
+  );
   const controlsAreOriginal =
-    settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim && !hasPngOverride;
+    settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim && !hasItemOverride;
   const requestedTargetBytes = targetBytesFor(selectedSettings);
   const targetProblem =
     requestedTargetBytes === null
@@ -1271,6 +1291,7 @@ function Images() {
           snapshot,
           item.source.mime,
           Boolean(item.pngOverride),
+          item.longEdgeOverride,
         );
         const rendered = await renderImage(item, itemSettings, controller.signal, cropRect);
         if (controller.signal.aborted) {
@@ -1505,9 +1526,27 @@ function Images() {
     );
   }
 
+  // A blank control means "follow the batch". The native number input keeps
+  // partial or invalid text as NaN so the existing whole-number check rejects
+  // it instead of silently treating it as inheritance.
+  function setLongEdgeOverride(item: WorkItem, value: number | undefined): void {
+    if (runningRef.current || addingRef.current) return;
+    setItems((previous) =>
+      previous.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, longEdgeOverride: value } : candidate,
+      ),
+    );
+  }
+
+  function longEdgeFromControl(control: HTMLInputElement): number | undefined {
+    if (control.value === "" && !control.validity.badInput) return undefined;
+    return control.valueAsNumber;
+  }
+
   function applyWebReady(): void {
     if (!selected || runningRef.current || socialController.current) return;
     if (selected.pngOverride) setPngOverride(selected, false);
+    if (selected.longEdgeOverride !== undefined) setLongEdgeOverride(selected, undefined);
     setSettings((previous) => ({
       ...previous,
       resizeMode: "max-long-edge",
@@ -1673,7 +1712,11 @@ function Images() {
   function resetControls(): void {
     setSettings(DEFAULT_SETTINGS);
     setItems((previous) =>
-      previous.map((item) => (item.pngOverride ? { ...item, pngOverride: false } : item)),
+      previous.map((item) =>
+        item.pngOverride || item.longEdgeOverride !== undefined
+          ? { ...item, pngOverride: false, longEdgeOverride: undefined }
+          : item,
+      ),
     );
     setTrim(null);
     setTrimMessage("");
@@ -3012,11 +3055,17 @@ function Images() {
         {batchTargetProblem && batchTargetProblem !== targetProblem && (
           <p className="trim-note">Batch output size: {batchTargetProblem}</p>
         )}
+        {invalidLongEdgeItem && (
+          <p className="image-plan is-error" role="alert">
+            Fix the long edge for {invalidLongEdgeItem.file.name}: enter a whole number from 1 to{" "}
+            {MAX_IMAGE_OUTPUT_DIMENSION}, or leave it blank to use the batch resize.
+          </p>
+        )}
         <div className="image-control-actions">
           <button
             type="button"
             ref={processAllRef}
-            disabled={socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(batchTargetProblem)}
+            disabled={socialBusy || adding || sheetBusy || !items.length || !plan?.ok || Boolean(batchTargetProblem) || Boolean(invalidLongEdgeItem)}
             aria-disabled={running}
             onClick={() => {
               if (running) return;
@@ -3135,6 +3184,42 @@ function Images() {
                       Export this image as PNG
                     </label>
                   )}
+                  <label className="image-list-override">
+                    <input
+                      type="number"
+                      min="1"
+                      max={MAX_IMAGE_OUTPUT_DIMENSION}
+                      step="1"
+                      inputMode="numeric"
+                      placeholder="Batch"
+                      value={
+                        item.longEdgeOverride === undefined ||
+                        !Number.isFinite(item.longEdgeOverride)
+                          ? ""
+                          : item.longEdgeOverride
+                      }
+                      disabled={running || adding}
+                      aria-label={`Long edge in pixels for ${item.file.name}; leave blank to use the batch resize`}
+                      aria-describedby="image-batch-note"
+                      aria-invalid={
+                        item.longEdgeOverride !== undefined &&
+                        !itemLongEdgeIsValid(item.longEdgeOverride)
+                          ? true
+                          : undefined
+                      }
+                      onChange={(event) =>
+                        setLongEdgeOverride(item, longEdgeFromControl(event.currentTarget))
+                      }
+                    />
+                    Long edge for this image (px)
+                  </label>
+                  {item.longEdgeOverride !== undefined &&
+                    !itemLongEdgeIsValid(item.longEdgeOverride) && (
+                      <span className="image-list-error">
+                        Enter a whole number from 1 to {MAX_IMAGE_OUTPUT_DIMENSION}, or leave it
+                        blank to use the batch resize.
+                      </span>
+                    )}
                 </div>
                 <div className="image-list-actions">
                   <button
@@ -3176,6 +3261,8 @@ function Images() {
           list. ZIP export uses a small store-only writer in this page, not a server
           archive. <strong>Export this image as PNG</strong> applies only to that checked
           PNG and uses no byte target; unchecked images keep the batch format.
+          <strong> Long edge for this image</strong> resizes only that row; leave it blank
+          to follow the batch resize.
         </p>
       </section>
     </main>

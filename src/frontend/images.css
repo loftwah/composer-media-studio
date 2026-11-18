@@ -638,6 +638,17 @@
   color: var(--muted);
 }
 
+.image-list-override input[type="number"] {
+  width: 6.5rem;
+  min-height: 2.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 1rem;
+}
+
+.image-list-override input[type="number"][aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
 .image-list-select {
   display: grid;
   gap: 0.2rem;
