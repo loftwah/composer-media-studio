@@ -102,6 +102,7 @@ import {
   type ExportFormat,
 } from "./image-export-override.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
+import { socialSourceManifestEntry, sourceFilmPath } from "./image-social-source.ts";
 import { ImageCover } from "./image-cover.tsx";
 import {
   SOCIAL_KIT_FORMATS,
@@ -828,7 +829,7 @@ const POSTER_EXTENSIONS = new Map([
 
 function publicPosterFromHash(): string | null {
   const path = new URLSearchParams(window.location.hash.slice(1)).get("public-poster");
-  return path && /^\/p\/[A-Za-z0-9_-]{1,128}\/(poster|thumb)$/.test(path) ? path : null;
+  return path && sourceFilmPath(path) ? path : null;
 }
 
 async function fetchPublicPoster(path: string, signal: AbortSignal): Promise<File> {
@@ -1898,13 +1899,28 @@ function Images() {
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
         entries.push({ name: `${stem}-${output.key}-receipt.json`, data: receiptBytes });
       }
+      // Only an explicitly loaded, already public poster adds a source document.
+      // Ordinary local input keeps the exact same eight ZIP members as before.
+      if (item.publicPoster) {
+        if (!alive()) throw abortError();
+        const manifest = socialSourceManifestEntry({
+          poster: item.publicPoster,
+          sourceHash: item.sourceHash,
+          studioOrigin: window.location.origin,
+        });
+        if (!manifest) throw new Error("The public poster source could not be recorded in this ZIP.");
+        total += manifest.data.length;
+        if (total > MAX_ZIP_BYTES)
+          throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
+        entries.push(manifest);
+      }
       if (!alive()) throw abortError();
       const zip = createZip(entries, { date: new Date() });
       if (!zip.ok) throw new Error(zip.error);
       const zipBlob = blobFromBytes(zip.bytes, ZIP_MIME);
       setSocialZip({ url: trackUrl(zipBlob), bytes: zipBlob.size });
       setMessage(
-        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts, ${formatBytes(zipBlob.size)} total.`,
+        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts${item.publicPoster ? " and a public source manifest" : ""}, ${formatBytes(zipBlob.size)} total.`,
       );
     } catch (error) {
       if (!isCurrent()) {
@@ -2471,7 +2487,7 @@ function Images() {
         </label>
         {publicPoster && (
           <p className="trim-note">
-            <a href={publicPoster.slice(0, publicPoster.lastIndexOf("/"))}>Source film</a>
+            <a href={sourceFilmPath(publicPoster) ?? undefined}>Source film</a>
             {" · "}The poster is downloaded from Media Studio when you choose Load public poster.
           </p>
         )}
@@ -2556,7 +2572,7 @@ function Images() {
           </div>
           {selected.publicPoster && (
             <p className="trim-note">
-              Public poster from <a href={selected.publicPoster.slice(0, selected.publicPoster.lastIndexOf("/"))}>the source film</a>.
+              Public poster from <a href={sourceFilmPath(selected.publicPoster) ?? undefined}>the source film</a>.
             </p>
           )}
           <dl className="image-facts">
@@ -2635,6 +2651,7 @@ function Images() {
               1080 × 1920 (9:16) and 1920 × 1080 (16:9)
               {socialFormat === "webp" ? ` with ${Math.round(WEB_READY_QUALITY * 100)}% quality` : " at lossless quality"}.
               Smaller crops can be enlarged to fit. The ZIP includes one receipt for each size.
+              {selected?.publicPoster && " The ZIP also includes a link to the source film and poster."}
             </p>
             {!socialReady && <p className="notice calm">Choose a PNG to make this kit.</p>}
           </fieldset>
