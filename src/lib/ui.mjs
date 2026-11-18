@@ -324,6 +324,7 @@ export function publicPage({
   );
   const caption = typeof description === "string" ? description.trim() : "";
   const postText = [title, caption, ...postCredits, url].filter(Boolean).join("\n\n");
+  const postTextDownload = `data:text/plain;charset=utf-8,${encodeURIComponent(postText.toWellFormed())}`;
   const posterDownload = isVideo ? poster : null;
   const posterHandoff = posterDownload === `/p/${slug}/poster` || posterDownload === `/p/${slug}/thumb`
     ? `/tools/images#public-poster=${encodeURIComponent(posterDownload)}`
@@ -415,6 +416,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
       <span class="row">
         <button type="button" class="button secondary" data-copy-link data-copy-url="${escapeHtml(url)}" hidden>Copy link</button>
         <button type="button" class="button secondary" data-copy-post hidden>Copy post text</button>
+        <a href="${escapeHtml(postTextDownload)}" download="${escapeHtml(slug)}-post-text.txt">Download post text (TXT)</a>
         ${posterDownload ? `<a href="${escapeHtml(posterDownload)}" download>Download poster</a>` : ""}
         ${posterHandoff ? `<a href="${escapeHtml(posterHandoff)}">Make social sizes</a>` : ""}
         <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
