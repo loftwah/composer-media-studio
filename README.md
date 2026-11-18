@@ -136,7 +136,11 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 The isolated Chrome workbench processes the selected images, sniffing each
 file's JPEG, PNG or WebP bytes and passing only a synthetic name, and saves its
 native contact sheet PNG. The report includes the source hashes, dimensions
-and output SHA-256.
+and output SHA-256. Add `--columns 1` through `--columns 4` to pick the same
+grid as the page's **Contact sheet columns** control; omit it for Auto. Bad or
+missing values fail before Chrome starts or a file is written, and the v1
+layout and report keep their shape. Use `--include-layout` to carry the browser
+layout JSON in the receipt.
 
 ## Cover an area of an explicit local PNG
 
