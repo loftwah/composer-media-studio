@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { imagesPage, loginPage } from "../src/lib/ui.mjs";
+import { imagesPage, loginPage, publicPage } from "../src/lib/ui.mjs";
 
 const workbench = readFileSync(new URL("../src/frontend/images.tsx", import.meta.url), "utf8");
 
@@ -16,6 +16,27 @@ test("the public image page mounts the tracked wrapper with the build revision",
 
 test("login discovery links to the signed-out image workbench", () => {
   assert.match(loginPage({ revision: "abc123" }), /href="\/tools\/images"/);
+});
+
+test("only the published film's own eligible poster gets a social handoff", () => {
+  const film = {
+    origin: "https://media.example",
+    slug: "Film_1",
+    title: "Published film",
+    kind: "video",
+    mime: "video/mp4",
+    media: "/p/Film_1/media",
+    download: "/p/Film_1/download",
+  };
+  for (const route of ["poster", "thumb"]) {
+    const poster = `/p/Film_1/${route}`;
+    const html = publicPage({ ...film, poster, posterMime: "image/webp" });
+    assert.ok(html.includes(`href="${poster}" download>Download poster</a>`));
+    assert.ok(html.includes(`href="/tools/images#public-poster=${encodeURIComponent(poster)}">Make social sizes</a>`));
+  }
+  assert.doesNotMatch(publicPage({ ...film, poster: "/p/Another/thumb" }), /Make social sizes/);
+  assert.doesNotMatch(publicPage({ ...film, kind: "image", poster: "/p/Film_1/thumb" }), /Make social sizes/);
+  assert.doesNotMatch(publicPage({ ...film, poster: null }), /Make social sizes/);
 });
 
 test("the workbench exposes labelled colour and output controls", () => {

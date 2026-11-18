@@ -325,6 +325,9 @@ export function publicPage({
   const caption = typeof description === "string" ? description.trim() : "";
   const postText = [title, caption, ...postCredits, url].filter(Boolean).join("\n\n");
   const posterDownload = isVideo ? poster : null;
+  const posterHandoff = posterDownload === `/p/${slug}/poster` || posterDownload === `/p/${slug}/thumb`
+    ? `/tools/images#public-poster=${encodeURIComponent(posterDownload)}`
+    : null;
   const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
 
 Copyright (c) 2020-2026 Paweł Kuna
@@ -413,6 +416,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
         <button type="button" class="button secondary" data-copy-link data-copy-url="${escapeHtml(url)}" hidden>Copy link</button>
         <button type="button" class="button secondary" data-copy-post hidden>Copy post text</button>
         ${posterDownload ? `<a href="${escapeHtml(posterDownload)}" download>Download poster</a>` : ""}
+        ${posterHandoff ? `<a href="${escapeHtml(posterHandoff)}">Make social sizes</a>` : ""}
         <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
       </span>
     </figcaption>
