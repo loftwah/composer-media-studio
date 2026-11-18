@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { resolveSheetColumns } from "../scripts/local-contact-sheet.mjs";
+import { atlasExpectation, resolveSheetColumns } from "../scripts/local-contact-sheet.mjs";
 import { localSelections, readLocalImage, readLocalPng } from "../scripts/local-image-workbench.mjs";
 import { jpegFixture, pngFixture, webpFixture } from "./support/image-fixtures.mjs";
 
@@ -93,6 +93,72 @@ test("the CLI refuses an invalid --columns before Chrome or any output is writte
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("the atlas expectation uses displayed native dimensions in selection order", () => {
+  const first = pngFixture({ width: 3, height: 2 });
+  const second = pngFixture({ width: 2, height: 3 });
+  const expected = atlasExpectation([first, second], "auto");
+  assert.deepEqual(expected.sizes, [{ width: 3, height: 2 }, { width: 2, height: 3 }]);
+  assert.deepEqual(expected.layout, { count: 2, columns: 2, cellWidth: 3, cellHeight: 3, width: 6, height: 3 });
+
+  const oneColumn = atlasExpectation([first, second], 1);
+  assert.deepEqual(oneColumn.layout, { count: 2, columns: 1, cellWidth: 3, cellHeight: 3, width: 3, height: 6 });
+});
+
+test("the atlas expectation measures the displayed size of an oriented PNG", () => {
+  const rotated = pngFixture({ width: 3, height: 2, orientation: 6 });
+  const expected = atlasExpectation([rotated, rotated], "auto");
+  assert.deepEqual(expected.sizes, [{ width: 2, height: 3 }, { width: 2, height: 3 }]);
+  assert.equal(expected.layout.cellWidth, 2);
+  assert.equal(expected.layout.cellHeight, 3);
+});
+
+test("the atlas expectation refuses non-PNG and over-bound selections before Chrome", () => {
+  assert.throws(() => atlasExpectation([jpegFixture(), pngFixture()], "auto"), /PNG/);
+  const huge = pngFixture({ width: 9000, height: 2 });
+  assert.throws(() => atlasExpectation([huge, huge], 2), /8192 px on each side/);
+});
+
+test("the CLI atlas mode refuses a non-PNG before Chrome or any output is written", async () => {
+  const root = await mkdtemp(join(tmpdir(), "studio-atlas-invalid-"));
+  try {
+    const first = join(root, "first.png");
+    const second = join(root, "second.png");
+    const output = join(root, "atlas.png");
+    await writeFile(first, pngFixture());
+    await writeFile(second, jpegFixture());
+    await assert.rejects(
+      run(process.execPath, [
+        command, "--sprite-atlas", "--source", first, "--source", second, "--output", output,
+      ], { cwd }),
+      error => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /supports PNG inputs/);
+        return true;
+      },
+    );
+    await assert.rejects(readFile(output), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the atlas path drives the canonical workbench mode and validates the sibling layout", async () => {
+  const source = await readFile(new URL("../scripts/local-contact-sheet.mjs", import.meta.url), "utf8");
+  assert.match(source, /selectOption\("max-long-edge"\)/);
+  assert.match(source, /getByLabel\("Maximum long edge \(px\)"/);
+  assert.match(source, /name: "Sheet mode", exact: true \}\)\.selectOption\("sprite-atlas"\)/);
+  assert.match(source, /spriteAtlas \? "Atlas columns" : "Contact sheet columns"/);
+  assert.match(source, /name: label, exact: true \}\)\.selectOption/);
+  assert.match(source, /name: "Make sprite atlas"/);
+  assert.match(source, /name: "Download sprite atlas PNG"/);
+  assert.match(source, /name: "Download atlas layout JSON"/);
+  assert.match(source, /ATLAS_LAYOUT_SCHEMA/);
+  assert.match(source, /ATLAS_LAYOUT_VERSION/);
+  assert.match(source, /atlasPlacement\(expected, index, size\.width, size\.height\)/);
+  assert.match(source, /layout\.sheet\?\.sha256, receipt\.output\.sha256/);
+  assert.match(source, /spriteAtlas \? \{ mode: "sprite-atlas" \} : \{\}/);
 });
 
 test("the CLI refuses a --columns with no value before Chrome or any output is written", async () => {
