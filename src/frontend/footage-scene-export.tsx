@@ -46,7 +46,6 @@ export function FootageSceneExport({ projectId, plan, scene, index, disabled }: 
     if (task.current || disabled) return;
     const snapshotPlan = structuredClone(plan), snapshotScene = structuredClone(scene);
     const controller = new AbortController(); task.current = controller; setBusy(true); setStatus('Checking the saved scene and source…');
-    if (resultUrl.current) URL.revokeObjectURL(resultUrl.current); resultUrl.current = ''; setResult(''); exported.current = null; setSavedId('');
     try {
       if (quality === 'hd' && (snapshotScene.sourceEndMs-snapshotScene.sourceStartMs < 3000 || snapshotScene.sourceEndMs-snapshotScene.sourceStartMs > 10000)) throw new Error('HD exports support scenes from 3 to 10 seconds.');
       const asset = await loadSaved(projectId, snapshotPlan, snapshotScene, controller.signal);
@@ -73,7 +72,16 @@ export function FootageSceneExport({ projectId, plan, scene, index, disabled }: 
         try { const outVideo = await check.getPrimaryVideoTrack(), outAudio = await check.getPrimaryAudioTrack(); if (!outVideo || await outVideo.getCodedWidth() !== width || await outVideo.getCodedHeight() !== height || (audio && !outAudio) || Math.abs((await outVideo.computeDuration()) - (snapshotScene.sourceEndMs-snapshotScene.sourceStartMs)/1000) > .15) throw new Error('The finished clip did not match the selected duration or audio.'); } finally { check.dispose(); }
         cancelled(controller.signal); const verified = await loadSaved(projectId, snapshotPlan, snapshotScene, controller.signal);
         if (verified.sha256 !== asset.sha256 || verified.bytes !== asset.bytes) throw new Error('The source changed during export. Reload the cut map.');
-        cancelled(controller.signal); exported.current = {blob,frame,fit,quality,plan:snapshotPlan,scene:snapshotScene}; resultUrl.current = URL.createObjectURL(blob); setResult(resultUrl.current); setResultSettings(`${quality === 'hd' ? 'HD' : 'standard'}, ${frame}, ${fit === 'cover' ? 'centre crop' : 'whole frame'}`); setStatus(audio ? 'Clip ready with the primary original audio track. Check playback before downloading.' : 'Clip ready. This source has no primary audio track.');
+        cancelled(controller.signal);
+        const nextUrl = URL.createObjectURL(blob);
+        const previousUrl = resultUrl.current;
+        exported.current = {blob,frame,fit,quality,plan:snapshotPlan,scene:snapshotScene};
+        resultUrl.current = nextUrl;
+        setResult(nextUrl);
+        setResultSettings(`${quality === 'hd' ? 'HD' : 'standard'}, ${frame}, ${fit === 'cover' ? 'centre crop' : 'whole frame'}`);
+        setSavedId('');
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
+        setStatus(audio ? 'Clip ready with the primary original audio track. Check playback before downloading.' : 'Clip ready. This source has no primary audio track.');
       } finally { input.dispose(); }
     } catch (error) { setStatus(controller.signal.aborted ? 'Export cancelled. The source is unchanged.' : error instanceof Error ? error.message : 'The clip could not be exported.'); }
     finally { if (task.current === controller) {task.current = null; setBusy(false);} }
