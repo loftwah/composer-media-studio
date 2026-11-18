@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   alphaBounds,
+  alphaProfile,
   extractPalette,
   formatHsl,
   formatRgb,
@@ -257,6 +258,48 @@ test("alpha bounds find transparent padding without silently cropping opaque ima
   assert.equal(empty.empty, true);
   assert.equal(empty.bounds, null);
   assert.equal(empty.isFull, false);
+});
+
+test("alpha profile counts exact transparent, partial and opaque pixels", () => {
+  const pixels = makePixels(2, 2, (x, y) => {
+    if (x === 0 && y === 0) return [0, 0, 0, 0];
+    if (x === 1 && y === 0) return [1, 2, 3, 1];
+    if (x === 0 && y === 1) return [1, 2, 3, 254];
+    return [1, 2, 3, 255];
+  });
+  const profile = alphaProfile(pixels, { width: 2, height: 2 });
+  assert.equal(profile.ok, true);
+  assert.equal(profile.totalPixels, 4);
+  assert.equal(profile.width, 2);
+  assert.equal(profile.height, 2);
+  assert.deepEqual(
+    {
+      transparent: profile.transparent,
+      partial: profile.partial,
+      opaque: profile.opaque,
+    },
+    { transparent: 1, partial: 2, opaque: 1 },
+  );
+});
+
+test("alpha profile reports fully opaque and fully transparent results honestly", () => {
+  const opaque = alphaProfile(makePixels(2, 1, () => [7, 8, 9, 255]), { width: 2, height: 1 });
+  assert.equal(opaque.ok, true);
+  assert.equal(opaque.opaque, 2);
+  assert.equal(opaque.transparent, 0);
+  assert.equal(opaque.partial, 0);
+
+  const empty = alphaProfile(makePixels(2, 1, () => [7, 8, 9, 0]), { width: 2, height: 1 });
+  assert.equal(empty.ok, true);
+  assert.equal(empty.transparent, 2);
+  assert.equal(empty.opaque, 0);
+  assert.equal(empty.partial, 0);
+});
+
+test("alpha profile refuses buffers that do not match the result dimensions", () => {
+  assert.match(alphaProfile(new Uint8ClampedArray(4), { width: 2, height: 2 }).error, /smaller/);
+  assert.match(alphaProfile(new Uint8ClampedArray(20), { width: 2, height: 2 }).error, /do not match/);
+  assert.match(alphaProfile(new Uint8ClampedArray(16), { width: 0, height: 2 }).error, /dimensions/);
 });
 
 test("alpha bounds respect an explicit threshold", () => {
