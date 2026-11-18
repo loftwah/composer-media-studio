@@ -10,7 +10,7 @@ import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
 import { createSongPlan, updateSongPlan, updateSongCaptions } from '../src/lib/song-plans.ts';
 import { createComposition, createRender, completeFromWebhook, loadGeneration } from '../src/lib/jobs.mjs';
-import { measureFootageSource } from '../src/lib/footage-preflight.mjs';
+import { measureFootageSource } from '../src/lib/footage-preflight.ts';
 import { sha256Hex, sniffMedia, videoInfo } from '../src/lib/util.mjs';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { setup, addAsset } from './harness.mjs';
