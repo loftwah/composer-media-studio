@@ -52,7 +52,7 @@ the work:
 | Extension | Status | Note |
 | --- | --- | --- |
 | Transparency / alpha-edge checker | Partial | Exact alpha bounds are now read from decoded pixels for trim, and the source/export summary reports declared alpha. Transparent results can be inspected on checkerboard, white or black in the After and eyedropper previews. Inspect result alpha counts transparent, partial and opaque pixels in the finished result on demand at its native size. Display background does not change the encoded result. |
-| Sprite-sheet / atlas assembly | Deferred | Needs ordering, cell geometry, padding and metadata output. |
+| Sprite-sheet / atlas assembly | Shipped | **Batch → Sheet mode → Sprite atlas** assembles completed PNGs at native size in ordered transparent cells. Auto or 1–4 columns, integer placement and a separate layout JSON with exact rectangles and source/result hashes. The existing fitted contact sheet remains the default. |
 | Trim transparent padding | Shipped | Alpha bounds are measured from every decoded pixel. The trim action updates the crop plan (centre crop composes inside the trimmed region), applies to the selected image only, and is cleared by rotation, flips, image change or clear. Opaque images report that there is nothing to trim instead of cropping silently. |
 | Consistent pixel-art nearest-neighbour mode | Shipped | Resampling is an explicit smooth/nearest choice applied to resize and crop output. Nearest-neighbour is recorded in the exported caption and the visible transform description. |
 

@@ -89,6 +89,12 @@ import {
   type ContactSheetColumns,
   type ContactSheetTile,
 } from "./image-contact-sheet.ts";
+import {
+  atlasBoundsProblem,
+  atlasDocument,
+  atlasLayout,
+  atlasPlacement,
+} from "./image-atlas.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import {
   canExportImageAsPng,
@@ -236,7 +242,8 @@ type ListFocus =
   | { kind: "row-action"; id: string; offset: -1 | 1 }
   | { kind: "picker" };
 
-type ContactSheet = { url: string; layoutUrl: string; count: number; columns: number; width: number; height: number };
+type ContactSheet = { url: string; layoutUrl: string; count: number; columns: number; width: number; height: number; mode: SheetMode };
+type SheetMode = "contact-sheet" | "sprite-atlas";
 
 const DEFAULT_SETTINGS: Settings = {
   resizeMode: "long-edge",
@@ -827,9 +834,10 @@ function Images() {
   const [zipBytes, setZipBytes] = useState(0);
   const [contactSheet, setContactSheet] = useState<ContactSheet | null>(null);
   const [sheetColumns, setSheetColumns] = useState<ContactSheetColumns>("auto");
-  const [batchExport, setBatchExport] = useState<"zip" | "contact-sheet" | null>(null);
+  const [sheetMode, setSheetMode] = useState<SheetMode>("contact-sheet");
+  const [batchExport, setBatchExport] = useState<"zip" | SheetMode | null>(null);
   const zipBusy = batchExport === "zip";
-  const sheetBusy = batchExport === "contact-sheet";
+  const sheetBusy = batchExport === "contact-sheet" || batchExport === "sprite-atlas";
   const [batchMessage, setBatchMessage] = useState("");
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
   const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
@@ -1041,7 +1049,7 @@ function Images() {
   function clearBatchExports(): void {
     batchExportRevision.current += 1;
     const nextMessage = zipBusy ? "The batch changed. Prepare the ZIP again." :
-      sheetBusy ? "The batch changed. Make the contact sheet again." : "";
+      sheetBusy ? `The batch changed. Make the ${sheetMode === "sprite-atlas" ? "sprite atlas" : "contact sheet"} again.` : "";
     setBatchMessage(nextMessage);
     releaseUrl(zipUrl);
     releaseUrl(contactSheet?.url);
@@ -1554,30 +1562,54 @@ function Images() {
     }
   }
 
-  async function makeContactSheet(): Promise<void> {
-    const entries = doneItems.flatMap(item => item.result ? [{ item, result: item.result }] : []);
-    const layout = contactSheetLayout(entries.length, sheetColumns);
-    if (!layout || batchExport || addingRef.current || runningRef.current || socialController.current) return;
+  async function makeSheet(): Promise<void> {
+    if (batchExport || addingRef.current || runningRef.current || socialController.current) return;
+    const isAtlas = sheetMode === "sprite-atlas";
+    const name = isAtlas ? "sprite atlas" : "contact sheet";
+    const entries = doneItems.flatMap(item => {
+      const result = item.result;
+      return result && (!isAtlas || result.mime === "image/png") ? [{ item, result }] : [];
+    });
+    const atlas = isAtlas
+      ? atlasLayout(entries.map(({ result }) => ({ width: result.width, height: result.height })), sheetColumns)
+      : null;
+    const layout = isAtlas ? atlas : contactSheetLayout(entries.length, sheetColumns);
+    if (!layout) return;
+    if (atlas) {
+      const problem = atlasBoundsProblem(atlas);
+      if (problem) {
+        setBatchMessage(problem);
+        return;
+      }
+    }
 
     const attempt = batchExportRevision.current;
-    setBatchExport("contact-sheet");
-    setBatchMessage("Making a contact sheet on this device…");
+    setBatchExport(sheetMode);
+    setBatchMessage(`Making a ${name} on this device…`);
     const canvas = document.createElement("canvas");
     canvas.width = layout.width;
     canvas.height = layout.height;
     const tiles: ContactSheetTile[] = [];
     try {
       const context = canvas.getContext("2d");
-      if (!context) throw new Error("This browser could not make the contact sheet.");
+      if (!context) throw new Error(`This browser could not make the ${name}.`);
       for (const [index, { item, result }] of entries.entries()) {
         const bitmap = await createImageBitmap(result.blob);
         try {
           if (attempt !== batchExportRevision.current) return;
-          const tile = contactSheetPlacement(layout, index, bitmap.width, bitmap.height);
-          context.drawImage(bitmap, tile.x, tile.y, tile.width, tile.height);
+          let rect: ContactSheetTile["rect"];
+          if (atlas) {
+            if (bitmap.width !== result.width || bitmap.height !== result.height)
+              throw new Error("A completed PNG changed size. Process the batch again.");
+            rect = atlasPlacement(atlas, index, bitmap.width, bitmap.height);
+            context.drawImage(bitmap, rect.x, rect.y);
+          } else {
+            rect = contactSheetPlacement(layout, index, bitmap.width, bitmap.height);
+            context.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height);
+          }
           tiles.push({
             index,
-            rect: tile,
+            rect,
             source: {
               sha256: item.sourceHash,
               width: item.source.orientedWidth,
@@ -1598,19 +1630,26 @@ function Images() {
       }
       const blob = await canvasToBlob(canvas, "image/png");
       if (attempt !== batchExportRevision.current) return;
+      if (isAtlas && blob.size > MAX_IMAGE_OUTPUT_BYTES)
+        throw new Error(`The sprite atlas exceeds ${MAX_IMAGE_OUTPUT_BYTES / 1024 / 1024} MiB. Use smaller PNGs or split the batch.`);
       const sheetHash = await sha256Hex(await blob.arrayBuffer());
       if (attempt !== batchExportRevision.current) return;
-      const layoutDocument = contactSheetDocument(layout, { sha256: sheetHash, bytes: blob.size }, tiles);
+      const sheet = { sha256: sheetHash, bytes: blob.size };
+      const layoutDocument = atlas
+        ? atlasDocument(atlas, sheet, tiles)
+        : contactSheetDocument(layout, sheet, tiles);
       const layoutBlob = new Blob([JSON.stringify(layoutDocument)], { type: "application/json" });
       const url = trackUrl(blob);
       const layoutUrl = trackUrl(layoutBlob);
       releaseUrl(contactSheet?.url);
       releaseUrl(contactSheet?.layoutUrl);
-      setContactSheet({ url, layoutUrl, count: layout.count, columns: layout.columns, width: layout.width, height: layout.height });
-      setBatchMessage(`Contact sheet ready: ${layout.count} images · ${layout.width} × ${layout.height} px.`);
+      setContactSheet({ url, layoutUrl, count: layout.count, columns: layout.columns, width: layout.width, height: layout.height, mode: sheetMode });
+      const skipped = isAtlas ? doneItems.length - entries.length : 0;
+      const skippedNote = skipped ? ` (${skipped} non-PNG result${skipped === 1 ? "" : "s"} skipped)` : "";
+      setBatchMessage(`${isAtlas ? "Sprite atlas" : "Contact sheet"} ready: ${layout.count} ${isAtlas ? "PNGs" : "images"}${skippedNote} · ${layout.width} × ${layout.height} px.`);
     } catch (error) {
       if (attempt === batchExportRevision.current) {
-        setBatchMessage(error instanceof Error ? error.message : "Could not make the contact sheet.");
+        setBatchMessage(error instanceof Error ? error.message : `Could not make the ${name}.`);
       }
     } finally {
       canvas.width = 0;
@@ -3404,7 +3443,16 @@ function Images() {
           </p>
         )}
         <label className="image-sheet-columns">
-          Contact sheet columns
+          Sheet mode
+          <select value={sheetMode} disabled={running || sheetBusy} onChange={(event) =>
+            setSheetMode(event.target.value === "sprite-atlas" ? "sprite-atlas" : "contact-sheet")
+          }>
+            <option value="contact-sheet">Contact sheet · 240 px fit</option>
+            <option value="sprite-atlas">Sprite atlas · native size</option>
+          </select>
+        </label>
+        <label className="image-sheet-columns">
+          {sheetMode === "sprite-atlas" ? "Atlas columns" : "Contact sheet columns"}
           <select value={sheetColumns} disabled={running || sheetBusy} onChange={(event) => {
             const value = event.target.value;
             setSheetColumns(value === "auto" ? "auto" : Number(value) as ContactSheetColumns);
@@ -3416,6 +3464,9 @@ function Images() {
             <option value="4">4</option>
           </select>
         </label>
+        {sheetMode === "sprite-atlas" && (
+          <p className="trim-note">Use at least two completed PNGs. The atlas keeps their native size and leaves gaps transparent.</p>
+        )}
         <div className="image-control-actions">
           <button
             type="button"
@@ -3450,16 +3501,31 @@ function Images() {
           <button
             type="button"
             className="secondary"
-            disabled={running || socialBusy || adding || zipBusy || doneItems.length < CONTACT_SHEET_MIN_IMAGES}
+            disabled={running || socialBusy || adding || zipBusy || (
+              sheetMode === "sprite-atlas"
+                ? doneItems.filter(item => item.result?.mime === "image/png").length
+                : doneItems.length
+            ) < CONTACT_SHEET_MIN_IMAGES}
             aria-disabled={sheetBusy}
             onClick={() => {
               if (sheetBusy) return;
-              void makeContactSheet();
+              void makeSheet();
             }}
           >
-            {sheetBusy ? "Making contact sheet…" : "Make contact sheet"}
+            {sheetMode === "sprite-atlas"
+              ? sheetBusy ? "Making sprite atlas…" : "Make sprite atlas"
+              : sheetBusy ? "Making contact sheet…" : "Make contact sheet"}
           </button>
-          {contactSheet && (
+          {contactSheet && contactSheet.mode === "sprite-atlas" ? (
+            <>
+              <a className="button secondary" href={contactSheet.url} download={`media-studio-sprite-atlas-${contactSheet.count}.png`}>
+                Download sprite atlas PNG
+              </a>
+              <a className="button secondary" href={contactSheet.layoutUrl} download={`media-studio-sprite-atlas-${contactSheet.count}.json`}>
+                Download atlas layout JSON
+              </a>
+            </>
+          ) : contactSheet && (
             <>
               <a className="button secondary" href={contactSheet.url} download={`media-studio-contact-sheet-${contactSheet.count}.png`}>
                 Download contact sheet PNG
@@ -3478,11 +3544,19 @@ function Images() {
               src={contactSheet.url}
               width={contactSheet.width}
               height={contactSheet.height}
-              alt={`Contact sheet of ${contactSheet.count} completed images`}
+              alt={contactSheet.mode === "sprite-atlas"
+                ? `Sprite atlas of ${contactSheet.count} completed PNG images`
+                : `Contact sheet of ${contactSheet.count} completed images`}
             />
-            <p className="trim-note">
-              The layout uses {CONTACT_SHEET_TILE} px transparent tiles across {contactSheet.columns} column{contactSheet.columns === 1 ? "" : "s"} in batch order.
-            </p>
+            {contactSheet.mode === "sprite-atlas" ? (
+              <p className="trim-note">
+                Completed PNGs at their native size, centred on whole pixels in transparent cells across {contactSheet.columns} column{contactSheet.columns === 1 ? "" : "s"} in batch order. No resampling.
+              </p>
+            ) : (
+              <p className="trim-note">
+                The layout uses {CONTACT_SHEET_TILE} px transparent tiles across {contactSheet.columns} column{contactSheet.columns === 1 ? "" : "s"} in batch order.
+              </p>
+            )}
           </>
         )}
         {running && (
