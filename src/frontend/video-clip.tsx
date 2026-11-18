@@ -3,7 +3,7 @@ import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output } from "mediabunny";
+import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, VideoSampleSink } from "mediabunny";
 import "./audio-trim.css";
 import "./video-clip.css";
 
@@ -17,6 +17,26 @@ const sizes = {
 type Quality = keyof typeof sizes;
 type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
+
+// A playable container header does not prove that the file has any video
+// frames. The same decoder used for export can distinguish a missing frame
+// from a real transparent frame. An unsupported decoder keeps the native
+// preview path so it does not narrow the formats a browser can open.
+async function hasVideoFrame(file: File): Promise<boolean> {
+  const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(file) });
+  try {
+    const track = await input.getPrimaryVideoTrack();
+    if (!track || !await track.canDecode()) return true;
+    const frame = await new VideoSampleSink(track).getSample(await track.getFirstTimestamp());
+    frame?.close();
+    return frame !== null;
+  } catch {
+    // Some browsers can preview formats their export decoder cannot inspect.
+    return true;
+  } finally {
+    input.dispose();
+  }
+}
 
 function VideoClip() {
   const [file, setFile] = useState<File | null>(null);
@@ -76,6 +96,10 @@ function VideoClip() {
         video.onerror = () => reject(new Error("This browser cannot read that video. Try another MP4 or WebM."));
       });
       if (!Number.isFinite(length) || length <= 0 || length > MAX_SOURCE_SECONDS) throw new Error("Choose a video no longer than 3 minutes.");
+      if (revision !== current.current) { URL.revokeObjectURL(url); return; }
+      // Metadata alone cannot prove there is a frame. Refuse before resetting
+      // the source, settings or any finished MP4 when the decoder finds none.
+      if (!await hasVideoFrame(next)) throw new Error("No video frame could be read. Choose another MP4 or WebM.");
       if (revision !== current.current) { URL.revokeObjectURL(url); return; }
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setResult(""); setResultBlob(null); setApplied(null); setChecking(false);
