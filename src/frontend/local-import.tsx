@@ -13,7 +13,7 @@ const IMPORT_MEDIA: Record<LocalImportFormat, { label: string; mime: string; lim
 };
 
 /** This control only sends file bytes after an explicit project choice and upload click. */
-export function LocalImport({ blob, filename, operation, onBusyChange, format = "mp4", caption = "" }: { blob: Blob; filename: string; operation: string; onBusyChange: (busy: boolean) => void; format?: LocalImportFormat; caption?: string }) {
+export function LocalImport({ blob, filename, operation, onBusyChange, format = "mp4", caption = "", blocked = false }: { blob: Blob; filename: string; operation: string; onBusyChange: (busy: boolean) => void; format?: LocalImportFormat; caption?: string; blocked?: boolean }) {
   const media = IMPORT_MEDIA[format];
   const mediaKind = format === "wav" ? "audio" : format === "mp4" ? "video" : "image";
   const defaultCaption = `Edited on this device with Media Studio ${operation}. Source files were not uploaded by this tool.`;
@@ -46,7 +46,7 @@ export function LocalImport({ blob, filename, operation, onBusyChange, format = 
     finally { lock.current = false; }
   }
   async function upload() {
-    if (lock.current || attempted.current || state !== "ready" || !projects.some(p=>p.id===project)) return;
+    if (blocked || lock.current || attempted.current || state !== "ready" || !projects.some(p=>p.id===project)) return;
     lock.current = true; setState("uploading"); onBusyChange(true); setMessage("");
     try {
       const sessionResponse = await fetch("/api/session", {credentials:"same-origin",cache:"no-store"});
@@ -72,7 +72,7 @@ export function LocalImport({ blob, filename, operation, onBusyChange, format = 
     <p className="trim-note">Optional: sign in and choose a studio, then explicitly upload this finished {media.label}. Your source files stay on this device. The imported file becomes a new private library asset; nothing is published. Opening this section does not upload anything.</p>
     {(state === "idle" || state === "signed-out" || state === "denied") && <><button type="button" className="secondary" onClick={()=>void checkAccess()}>Check sign-in and studios</button>{(state === "signed-out" || state === "denied") && <p>Open <a href="/studio" target="_blank" rel="noopener noreferrer">Studio sign-in in a new tab</a>, then return here and check again. Keep this page open to retain your result.</p>}</>}
     {state === "checking" && <p>Checking Studio access…</p>}
-    {(state === "ready" || state === "uploading") && <><label className="trim-file">Destination studio<select value={project} disabled={state === "uploading"} onChange={e=>setProject(e.target.value)}><option value="">Choose a studio</option>{projects.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><button type="button" className="secondary" disabled={!project || state === "uploading"} onClick={()=>void upload()}>{state === "uploading" ? "Uploading…" : `Upload ${media.label} to selected studio`}</button></>}
+    {(state === "ready" || state === "uploading") && <><label className="trim-file">Destination studio<select value={project} disabled={state === "uploading"} onChange={e=>setProject(e.target.value)}><option value="">Choose a studio</option>{projects.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><button type="button" className="secondary" disabled={!project || state === "uploading" || blocked} onClick={()=>void upload()}>{state === "uploading" ? "Uploading…" : `Upload ${media.label} to selected studio`}</button></>}
     {message && <p role="status" aria-live="polite">{message}</p>}
     {state === "uncertain" && project && <p><a href={`/#/p/${encodeURIComponent(project)}/library`} target="_blank" rel="noopener noreferrer">Check the selected library</a></p>}
     {state === "saved" && <p><a href={`/#/a/${encodeURIComponent(project)}/${encodeURIComponent(asset)}`} target="_blank" rel="noopener noreferrer">Open imported {mediaKind} in Studio</a></p>}
