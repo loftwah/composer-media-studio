@@ -9,8 +9,13 @@ export const SOCIAL_SIZES = Object.freeze([
 export const SOCIAL_KIT_FORMATS = Object.freeze(["webp", "png"] as const);
 export type SocialKitFormat = (typeof SOCIAL_KIT_FORMATS)[number];
 
-export function socialSourceEligible(mime: string | undefined, isPublicPoster: boolean): boolean {
-  return mime === "image/png" || mime === "image/jpeg" || isPublicPoster;
+export function socialSourceEligible(
+  mime: string | undefined,
+  isPublicPoster: boolean,
+  webpAnimated?: boolean,
+): boolean {
+  return isPublicPoster || mime === "image/png" || mime === "image/jpeg" ||
+    (mime === "image/webp" && webpAnimated === false);
 }
 
 /**

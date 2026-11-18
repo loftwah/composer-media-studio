@@ -170,14 +170,17 @@ test("the typed v1 builder captures each output's exact receipt without new sche
   assert.equal(receipt.transform.settings.format, "webp");
 });
 
-test("the social kit accepts local JPEG and PNG and preserves the public poster path", () => {
+test("the social kit accepts local still PNG, JPEG and WebP and preserves the public poster path", () => {
   for (const mime of ["image/png", "image/jpeg"]) {
     assert.equal(socialSourceEligible(mime, false), true, mime);
   }
-  for (const mime of ["image/webp", "image/gif", "image/avif", "image/heic", undefined]) {
+  assert.equal(socialSourceEligible("image/webp", false, false), true);
+  assert.equal(socialSourceEligible("image/webp", false, true), false);
+  assert.equal(socialSourceEligible("image/webp", false), false);
+  for (const mime of ["image/gif", "image/avif", "image/heic", undefined]) {
     assert.equal(socialSourceEligible(mime, false), false, mime);
   }
-  assert.equal(socialSourceEligible("image/webp", true), true);
+  assert.equal(socialSourceEligible("image/webp", true, true), true);
 });
 
 test("four WebP outputs and four receipts fit one bounded flat ZIP", () => {

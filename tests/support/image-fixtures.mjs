@@ -170,6 +170,28 @@ export function webpFixture({ width = 120, height = 80, alpha = true, exif = tru
   return concat(ascii("RIFF"), u32le(body.length), body);
 }
 
+/**
+ * A tiny fictional animated WebP: VP8X carries the ANIM flag, with ANIM and
+ * ANMF chunks unless `animFlagOnly` asks for the flag alone. No frame pixels
+ * are invented; the fixture exercises the bounded animation gate only.
+ */
+export function webpAnimatedFixture({ width = 2, height = 2, animFlagOnly = false, hasAnimationFlag = true } = {}) {
+  const dimension = (value) => bytes([(value - 1) & 0xff, ((value - 1) >>> 8) & 0xff, ((value - 1) >>> 16) & 0xff]);
+  const vp8x = concat(bytes([hasAnimationFlag ? 0x02 : 0, 0, 0, 0]), dimension(width), dimension(height));
+  const chunks = [webpChunk("VP8X", vp8x)];
+  if (!animFlagOnly) {
+    chunks.push(webpChunk("ANIM", bytes([0, 0, 0, 0, 0, 0])));
+    chunks.push(
+      webpChunk(
+        "ANMF",
+        concat(bytes([0, 0, 0, 0, 0, 0]), dimension(width), dimension(height), bytes([0, 0, 0, 0])),
+      ),
+    );
+  }
+  const body = concat(ascii("WEBP"), ...chunks);
+  return concat(ascii("RIFF"), u32le(body.length), body);
+}
+
 export function heifFtyp(brand = "heic", compatible = ["mif1", "heic"]) {
   const brands = [brand, ...compatible];
   const size = 16 + brands.length * 4;

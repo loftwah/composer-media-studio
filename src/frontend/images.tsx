@@ -952,7 +952,8 @@ function Images() {
   const alphaRevision = useRef(0);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
-  const socialReady = socialSourceEligible(selected?.source.mime, Boolean(selected?.publicPoster));
+  const socialReady = socialSourceEligible(selected?.source.mime, Boolean(selected?.publicPoster), selected?.source.webpAnimated);
+  const animatedWebp = selected?.source.mime === "image/webp" && Boolean(selected?.source.webpAnimated);
   const posterLoaded = Boolean(publicPoster && items.some((item) => item.publicPoster === publicPoster));
   const activeTrim =
     selected &&
@@ -2648,13 +2649,18 @@ function Images() {
               )}
             </div>
             <p className="trim-note" id="image-social-kit-note">
-              The selected PNG, JPEG or public poster becomes {formatLabelForMime(mimeForExport(socialFormat))} at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
+              The selected PNG, JPEG, still WebP or public poster becomes {formatLabelForMime(mimeForExport(socialFormat))} at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
               1080 × 1920 (9:16) and 1920 × 1080 (16:9)
               {socialFormat === "webp" ? ` with ${Math.round(WEB_READY_QUALITY * 100)}% quality` : " at lossless quality"}.
               Smaller crops can be enlarged to fit. The ZIP includes one receipt for each size.
               {selected?.publicPoster && " The ZIP also includes a link to the source film and poster."}
             </p>
-            {!socialReady && <p className="notice calm">Choose a PNG or JPEG to make this kit.</p>}
+            {!socialReady &&
+              (animatedWebp ? (
+                <p className="notice calm">This WebP is animated. Choose a still PNG, JPEG or WebP to make a social kit.</p>
+              ) : (
+                <p className="notice calm">Choose a PNG, JPEG or still WebP to make this kit.</p>
+              ))}
           </fieldset>
 
           {socialOutputs.length > 0 && (
