@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captionPlayheadProposal as capture } from '../src/frontend/caption-playhead.mjs';
+import { captionPlayheadProposal as capture } from '../src/frontend/caption-playhead.ts';
 const cue = { startMs: 1000, endMs: 3000 };
 test('playhead capture suggests millisecond timing inside the segment', () => {
   assert.deepEqual(capture(cue, 'startMs', 1.2354, 500, 5000), {edge:'startMs',value:1235,startMs:1235,endMs:3000});

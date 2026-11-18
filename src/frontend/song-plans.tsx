@@ -1,4 +1,4 @@
-import { captionPlayheadProposal } from './caption-playhead.mjs';
+import { captionPlayheadProposal } from './caption-playhead';
 import { parseSongTime } from './song-time';
 import { useEffect, useRef, useState } from 'react';
 import type { CompositionV1, MediaAssetV1 } from './contracts';
