@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MediaAssetV1 } from './contracts';
 import { previewSceneDirections, type DirectionMode } from './scene-direction';
 import { previewSceneReferences } from './scene-reference';
-import { createSubjectPack, readSubjectPack } from './subject-pack.mjs';
+import { createSubjectPack, readSubjectPack } from './subject-pack.ts';
 
 type Scene = { id: string; direction: string; referenceAssetId: string | null };
 type Subject = { id: string; revision: number; type: string; name: string; traits: string; referenceAssetId: string; referenceSha256: string; referenceRole: string; referenceAvailable: boolean };
