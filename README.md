@@ -152,6 +152,21 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 The isolated Chrome workbench saves a separate PNG with an opaque black rectangle.
 The report records both file hashes, pixel dimensions and rectangle coordinates.
 
+For several rectangles, repeat `--area left,top,width,height` instead of the four
+single-rectangle flags. Supply up to eight whole-pixel rectangles, in the order
+they should be covered; each is checked before the browser starts. Old and new
+coordinate flags cannot be combined.
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-cover-area.mjs --source ./source.png --output ./redacted.png \
+  --area 64,64,100,80 --area 300,300,50,50
+```
+
+The new form reports the ordered `areas` list in its JSON instead of the single
+`region`; the older single-rectangle flags and their `region` JSON are unchanged.
+The output path must still be new.
+
 ## Trim transparent edges from an explicit local PNG
 
 Build the frontend, select the exact source and choose a new output path.
