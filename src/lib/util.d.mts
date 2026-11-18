@@ -11,6 +11,8 @@ export class HttpError extends Error {
 
 export function id(prefix: string): string;
 
+export function slug(bytes?: number): string;
+
 export function now(): number;
 
 export function safeJson<T>(value: string, fallback: T): T;

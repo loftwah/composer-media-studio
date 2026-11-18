@@ -11,7 +11,7 @@ reviewed app brief and owner entry. The [product contract](../PRODUCT.md) and
 | Local tools | The Worker serves `/tools/images` without an account. [home.tsx](../src/frontend/home.tsx) mounts [images.tsx](../src/frontend/images.tsx). Local selection, rendering and export stay in the browser. An explicit import of a derivative uses the separate Studio upload path and its access checks. |
 | Paid jobs | [jobs.mjs](../src/lib/jobs.mjs) handles admission, budget, idempotency and retained results. [providers.mjs](../src/lib/providers.mjs) owns model declarations, inputs and provider dispatch. A new UI or agent action should use these existing job paths. |
 | Agent tools | [oauth.mjs](../src/mcp/oauth.mjs) validates the Studio grant. [tools.mjs](../src/mcp/tools.mjs) calls the existing Worker API routes within that scope. Generation uses client request identity and the configured spend limit. |
-| Public work | [publication-policy.mjs](../src/lib/publication-policy.mjs) controls publication eligibility. [publication-derivatives.ts](../src/lib/publication-derivatives.ts) handles public derivatives. [sitemap.ts](../src/lib/sitemap.ts) selects public listings for discovery. Originals, public media and withdrawal keep separate access paths. |
+| Public work | [publication-policy.ts](../src/lib/publication-policy.ts) controls publication eligibility. [publication-derivatives.ts](../src/lib/publication-derivatives.ts) handles public derivatives. [sitemap.ts](../src/lib/sitemap.ts) selects public listings for discovery. Originals, public media and withdrawal keep separate access paths. |
 
 ## Changing a boundary
 
