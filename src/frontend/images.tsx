@@ -819,6 +819,11 @@ function Images() {
   const [picked, setPicked] = useState<PickedColour | null>(null);
   const [pickMessage, setPickMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [paletteCopyFallback, setPaletteCopyFallback] = useState<{
+    label: string;
+    value: string;
+    trigger: HTMLButtonElement;
+  } | null>(null);
   const [outputCopy, setOutputCopy] = useState<{ key: string; message: string } | null>(null);
   const [snippets, setSnippets] = useState<SnippetState | null>(null);
   const [snippetKind, setSnippetKind] = useState<SnippetKind>("dataUri");
@@ -850,6 +855,8 @@ function Images() {
   const latestOutputCopy = useRef(0);
   const latestSnippetCopy = useRef(0);
   const snippetField = useRef<HTMLTextAreaElement>(null);
+  const latestPaletteCopy = useRef(0);
+  const paletteCopyField = useRef<HTMLInputElement>(null);
   const currentOutputKey = useRef("");
   const alphaRevision = useRef(0);
 
@@ -1100,6 +1107,12 @@ function Images() {
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
+  useEffect(() => {
+    if (paletteCopyFallback?.trigger === document.activeElement) {
+      paletteCopyField.current?.focus();
+    }
+  }, [paletteCopyFallback]);
+
   async function addFiles(files: File[]): Promise<void> {
     if (!files.length || addingRef.current || runningRef.current || socialController.current) return;
     addingRef.current = true;
@@ -1245,6 +1258,7 @@ function Images() {
       clearSocial();
       setTrim(null);
       setTrimMessage("");
+      clearPaletteCopyFallback();
       setPalette(null);
       setPaletteMessage("");
       setPicked(null);
@@ -1276,6 +1290,7 @@ function Images() {
     setPreviewBackdrop("checkerboard");
     setTrim(null);
     setTrimMessage("");
+    clearPaletteCopyFallback();
     setPalette(null);
     setPaletteMessage("");
     setPicked(null);
@@ -1732,6 +1747,7 @@ function Images() {
     setSelectedId(id);
     setTrim(null);
     setTrimMessage("");
+    clearPaletteCopyFallback();
     setPalette(null);
     setPaletteMessage("");
     setPicked(null);
@@ -1823,6 +1839,30 @@ function Images() {
       report(fallback ?? `Could not copy automatically. Select the ${label} value and copy it.`);
       return false;
     }
+  }
+
+  function clearPaletteCopyFallback(): void {
+    latestPaletteCopy.current += 1;
+    setPaletteCopyFallback(null);
+  }
+
+  async function copyPaletteValue(
+    button: HTMLButtonElement,
+    label: string,
+    value: string,
+  ): Promise<void> {
+    const attempt = ++latestPaletteCopy.current;
+    const stillCurrent = () => attempt === latestPaletteCopy.current;
+    const copied = await copyValue(label, value, {
+      fallback: `Could not copy automatically. The exact ${label} value is in the field below — select it and copy it.`,
+      report: (message) => { if (stillCurrent()) setCopyMessage(message); },
+    });
+    if (!stillCurrent()) return;
+    if (copied) {
+      setPaletteCopyFallback(null);
+      return;
+    }
+    setPaletteCopyFallback({ label, value, trigger: button });
   }
 
   // Both controls report in one place. An older write cannot replace the
@@ -1974,6 +2014,7 @@ function Images() {
         maxColors: MAX_PALETTE_COLOURS,
       });
       if (!result.ok) throw new Error(result.error);
+      clearPaletteCopyFallback();
       setPalette({ itemId: item.id, result, workingWidth: width, workingHeight: height });
       setPaletteMessage(
         result.colors.length
@@ -1981,6 +2022,7 @@ function Images() {
           : "Every sampled pixel is fully transparent. There is no colour to report.",
       );
     } catch (error) {
+      clearPaletteCopyFallback();
       setPalette(null);
       setPaletteMessage(
         error instanceof Error ? error.message : "Could not read a colour palette.",
@@ -2894,21 +2936,35 @@ function Images() {
                         style={{ backgroundColor: colour.hex }}
                         aria-label={`Copy HEX ${colour.hex}, ${colour.coverage}% of visible sampled pixels`}
                         title={`Copy ${colour.hex}`}
-                        onClick={() => void copyValue("HEX", colour.hex)}
+                        onClick={(event) => void copyPaletteValue(event.currentTarget, "HEX", colour.hex)}
                       />
                       <div className="image-palette-values">
                         <span><strong>{colour.hex}</strong> · {colour.coverage}%{colour.alpha < 255 ? ` · alpha ${Math.round(colour.alpha / 2.55)}%` : ""}</span>
                         <span>{formatRgb(colour.rgb)}</span>
                         <span>{formatHsl(colour.hsl)}</span>
                         <div className="image-copy-actions">
-                          <button type="button" className="quiet image-copy" aria-label={`Copy HEX ${colour.hex}`} onClick={() => void copyValue("HEX", colour.hex)}>Copy HEX</button>
-                          <button type="button" className="quiet image-copy" aria-label={`Copy RGB ${formatRgb(colour.rgb)}`} onClick={() => void copyValue("RGB", formatRgb(colour.rgb))}>Copy RGB</button>
-                          <button type="button" className="quiet image-copy" aria-label={`Copy HSL ${formatHsl(colour.hsl)}`} onClick={() => void copyValue("HSL", formatHsl(colour.hsl))}>Copy HSL</button>
+                          <button type="button" className="quiet image-copy" aria-label={`Copy HEX ${colour.hex}`} onClick={(event) => void copyPaletteValue(event.currentTarget, "HEX", colour.hex)}>Copy HEX</button>
+                          <button type="button" className="quiet image-copy" aria-label={`Copy RGB ${formatRgb(colour.rgb)}`} onClick={(event) => void copyPaletteValue(event.currentTarget, "RGB", formatRgb(colour.rgb))}>Copy RGB</button>
+                          <button type="button" className="quiet image-copy" aria-label={`Copy HSL ${formatHsl(colour.hsl)}`} onClick={(event) => void copyPaletteValue(event.currentTarget, "HSL", formatHsl(colour.hsl))}>Copy HSL</button>
                         </div>
                       </div>
                     </li>
                   ))}
                 </ul>
+                {paletteCopyFallback && (
+                  <label className="image-copy-fallback">
+                    {paletteCopyFallback.label} value — select and copy
+                    <input
+                      readOnly
+                      ref={paletteCopyField}
+                      value={paletteCopyFallback.value}
+                      spellCheck={false}
+                      aria-label={`Exact ${paletteCopyFallback.label} value to copy`}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onClick={(event) => event.currentTarget.select()}
+                    />
+                  </label>
+                )}
               </>
             )}
           </div>
