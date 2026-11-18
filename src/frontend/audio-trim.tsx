@@ -22,12 +22,20 @@ function AudioTrim() {
   const [fadeOut, setFadeOut] = useState(0);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  // Settings recorded only when a render succeeds: proof of what the finished
+  // WAV actually contains, not what the controls currently show.
+  const [applied, setApplied] = useState<string | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const chooser = useRef<HTMLInputElement>(null);
   const revision = useRef(0);
   useEffect(() => () => { if (sourceUrl) URL.revokeObjectURL(sourceUrl); }, [sourceUrl]);
   useEffect(() => () => { if (outputUrl) URL.revokeObjectURL(outputUrl); }, [outputUrl]);
   useEffect(() => () => { revision.current++; }, []);
+  // A finished WAV outlives draft edits: only a successful replacement, or a
+  // valid new source, clears it. The draft key is compared with the recorded
+  // one on every render, so returning to the same settings drops the note.
+  const draft = [start, end, fadeIn, fadeOut].join("|");
+  const previous = applied !== null && applied !== draft;
   useEffect(() => {
     if (!buffer || !canvas.current) return;
     const ctx = canvas.current.getContext("2d");
@@ -76,7 +84,7 @@ function AudioTrim() {
         if (!Number.isFinite(decoded.duration) || decoded.duration <= 0 || decoded.duration > MAX_LOCAL_AUDIO_SECONDS || decoded.numberOfChannels > 2 || decoded.length * decoded.numberOfChannels * 4 > MAX_LOCAL_PCM_BYTES) throw new Error("The decoded audio exceeds this tool's local limits.");
       } finally { await context.close(); }
       if (current !== revision.current) return;
-        setFile(next); setBuffer(decoded); setSourceUrl(URL.createObjectURL(next)); setStart(0); setEnd(decoded.duration > MAX_TRIM_SECONDS ? Math.min(decoded.duration, DEFAULT_TRIM_SECONDS) : decoded.duration); setFadeIn(0); setFadeOut(0); setOutputUrl(""); setOutputBlob(null);
+        setFile(next); setBuffer(decoded); setSourceUrl(URL.createObjectURL(next)); setStart(0); setEnd(decoded.duration > MAX_TRIM_SECONDS ? Math.min(decoded.duration, DEFAULT_TRIM_SECONDS) : decoded.duration); setFadeIn(0); setFadeOut(0); setOutputUrl(""); setOutputBlob(null); setApplied(null);
       setMessage("Ready. Choose a start and end, then make your WAV.");
     } catch (error) {
       if (current === revision.current) refuse(error instanceof Error ? error.message : "Could not open this file.", retained);
@@ -109,9 +117,9 @@ function AudioTrim() {
         to[i] = from[first + i] * Math.max(0, gain);
       }
     }
-    const wav = encodeWav(result); setOutputBlob(wav); setOutputUrl(URL.createObjectURL(wav)); setMessage("Your WAV is ready to play or save.");
+    const wav = encodeWav(result); setOutputBlob(wav); setOutputUrl(URL.createObjectURL(wav)); setApplied(draft); setMessage("Your WAV is ready to play or save.");
   }
-  const change = (setter: (n: number) => void, value: string) => { setter(value === "" ? NaN : Number(value)); setOutputUrl(""); setOutputBlob(null); };
+  const change = (setter: (n: number) => void, value: string) => { setter(value === "" ? NaN : Number(value)); };
   return <main className="trim-page" id="main">
     <header><a href="/">← Media Studio</a><h1>Trim a song</h1><p>Choose a short audio file, mark the part you want and save a WAV. Your source stays on this device; you can choose to upload the finished clip to Studio.</p></header>
     <section className="trim-work" aria-labelledby="source-heading"><h2 id="source-heading">Your audio</h2>
@@ -136,7 +144,7 @@ function AudioTrim() {
           <label>Fade out (seconds)<input type="number" min="0" step="0.01" disabled={importing || busy} value={Number.isNaN(fadeOut) ? "" : fadeOut} onChange={e => change(setFadeOut,e.target.value)} /></label>
         </div><button type="button" disabled={importing || busy} onClick={makeClip}>Make WAV</button></>}
       <p role="status" aria-live="polite">{busy ? "Reading audio on this device…" : message}</p>
-      {outputUrl && <div className="trim-result" aria-busy={busy}><h2>Your clip</h2><audio controls src={outputUrl} aria-label="Trimmed audio"/><a className="button" href={outputUrl} download={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`}>Save WAV</a><p className="trim-note">The original is unchanged.</p>{outputBlob && <div inert={busy || undefined}><LocalImport key={outputUrl} blob={outputBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`} operation="trim audio" format="wav" onBusyChange={setImporting}/></div>}</div>}
+      {outputUrl && <div className="trim-result" aria-busy={busy}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this WAV was made. Make WAV updates it; until then this is your last successful export.</p>}<audio controls src={outputUrl} aria-label="Trimmed audio"/><a className="button" href={outputUrl} download={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`}>Save WAV</a><p className="trim-note">The original is unchanged.</p>{outputBlob && <div inert={busy || undefined}><LocalImport key={outputUrl} blob={outputBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "audio"}-trimmed.wav`} operation="trim audio" format="wav" onBusyChange={setImporting}/></div>}</div>}
     </section>
   </main>;
 }
