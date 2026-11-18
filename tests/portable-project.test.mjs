@@ -11,7 +11,7 @@ import { sha256Hex, extensionFor } from '../src/lib/util.mjs';
 import { createSongPlan, listSongPlans, updateSongPlan } from '../src/lib/song-plans.ts';
 import { saveSubject, listSubjects } from '../src/lib/subjects.mjs';
 import { createComposition } from '../src/lib/jobs.mjs';
-import { createPromoBrief } from '../src/lib/promo-briefs.mjs';
+import { createPromoBrief } from '../src/lib/promo-briefs.ts';
 import { createFootagePlan, listFootagePlans } from '../src/lib/footage-plans.ts';
 import {
   MAX_PORTABLE_ASSET_BYTES,
