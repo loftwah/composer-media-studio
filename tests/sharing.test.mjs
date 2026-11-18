@@ -108,6 +108,23 @@ function postField(html) {
   return match[1];
 }
 
+// Single pass, mirroring escapeHtml's five entities so double-encoded text is
+// never decoded twice.
+function htmlDecode(value) {
+  return value.replace(/&(?:amp|lt|gt|quot|#39);/g, (entity) => ({
+    "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'",
+  })[entity]);
+}
+
+const POST_TEXT_PREFIX = "data:text/plain;charset=utf-8,";
+
+function downloadedPostText(html) {
+  const match = html.match(/<a href="(data:text\/plain;charset=utf-8,[^"]*)" download="([^"]+)">Download post text \(TXT\)<\/a>/);
+  assert.ok(match, "Download post text (TXT) is a native, JS-off download anchor in the existing action row");
+  assert.equal(match[2], `${slug}-post-text.txt`);
+  return decodeURIComponent(htmlDecode(match[1]).slice(POST_TEXT_PREFIX.length));
+}
+
 test("public work detail copies a plain-text handoff of only already public fields", () => {
   const canonical = `${origin}/p/${slug}`;
   const html = published();
@@ -122,6 +139,37 @@ test("public work detail copies a plain-text handoff of only already public fiel
     assert.doesNotMatch(text, new RegExp(privateToken), `no ${privateToken} in the handoff`);
   }
   assert.ok(html.includes('role="status" data-copy-status></span>'), "the shared status region announces the result");
+});
+
+test("public work detail offers a JS-off TXT download of the exact post text bytes", () => {
+  const html = published();
+  const canonical = `${origin}/p/${slug}`;
+  assert.equal(
+    downloadedPostText(html),
+    htmlDecode(postField(html)),
+    "the saved TXT is byte-for-byte the same post text the copy button exposes",
+  );
+  assert.equal(downloadedPostText(html), `The wheel, <late> light\n\nA paper-cut editorial still.\n\n${canonical}`);
+});
+
+test("post text download keeps exact bytes with credits, escaping and a clean canonical URL", () => {
+  const publicSource = "https://woodhouse.loftwah.com/api/v1/assets/example";
+  const html = published({
+    title: 'A "quoted" & <tagged> post',
+    description: "A caption with 'apostrophe' & a\nnewline.",
+    attribution: [
+      { credit: "Woodhouse source", sourceUrl: publicSource, reuse: "unconfirmed" },
+      { credit: "Hidden source", sourceUrl: "https://example.test/private" },
+    ],
+    galleryBack: "/gallery?q=paper&kind=video&page=2#gallery-results",
+  });
+  const text = downloadedPostText(html);
+  assert.equal(text, htmlDecode(postField(html)), "download and copy still share one byte-exact text");
+  assert.ok(text.includes('A "quoted" & <tagged> post'), "HTML-significant characters survive the data URL");
+  assert.ok(text.includes("A caption with 'apostrophe' & a\nnewline."), "apostrophes and newlines survive HTML and URI escaping");
+  assert.ok(text.includes(`Woodhouse source · ${publicSource} · Reuse status unconfirmed`));
+  assert.doesNotMatch(text, /Hidden source|example\.test|\?|back=|q=paper|gallery-results/);
+  assert.ok(text.endsWith(`${origin}/p/${slug}`), "the canonical URL stays free of gallery filter state");
 });
 
 test("post text preserves publicly rendered attribution and its reuse status", () => {
