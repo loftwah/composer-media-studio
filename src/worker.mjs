@@ -69,7 +69,7 @@ import {
 } from "./lib/review-rooms.mjs";
 import { measureFootageSource } from "./lib/footage-preflight.mjs";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.mjs";
-import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.mjs";
+import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.ts";
 import { models, publicModels, publicRetiredModels, retiredModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.ts";
