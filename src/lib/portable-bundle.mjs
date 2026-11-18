@@ -8,6 +8,7 @@
 // Nothing here reads provider credentials or session material.
 
 import { extensionFor, HttpError, id, safeJson, sha256Hex, slug, sniffMedia } from './util.mjs';
+import { decodePortableArchive, encodePortableArchive } from './portable-archive.ts';
 
 export const PORTABLE_FORMAT = 'studio-project-bundle/v1';
 export const PORTABLE_SCHEMA_VERSION = 1;
@@ -901,74 +902,26 @@ export async function cleanupPortableImport(env, importId, { confirm = false } =
 // ---------------------------------------------------------------------------
 // Deterministic container: magic, length-prefixed canonical manifest, blobs in
 // manifest order, then a SHA-256 trailer for the manifest and the blob stream.
+// The byte container lives in portable-archive.ts; these thin wrappers keep the
+// public names, signatures and import paths and hand it only the seams it
+// needs, so the typed module has no dependency back into this D1 module.
 // ---------------------------------------------------------------------------
 
-export async function encodePortableBundle(manifest, blobs) {
-  const validated = await validateManifest(manifest);
-  const encoder = new TextEncoder();
-  const manifestBytes = encoder.encode(canonicalJson(manifest));
-  const magic = encoder.encode(PORTABLE_MAGIC);
-  const length = encoder.encode(`${String(manifestBytes.length).padStart(10, '0')}\n`);
-  const chunks = [];
-  for (const blob of manifest.blobs) {
-    const bytes = blobs instanceof Map ? blobs.get(blob.sha256) : blobs?.[blob.sha256];
-    if (!(bytes instanceof Uint8Array)) throw new PortableError(400, 'missing_media', `The archive is missing media ${blob.sha256}.`);
-    const hash = await sha256Bytes(bytes);
-    if (bytes.byteLength !== blob.bytes || hash !== blob.sha256) throw new PortableError(409, 'integrity_failed', `Media ${blob.sha256} does not match the manifest.`);
-    chunks.push(bytes);
-  }
-  const blobHash = await sha256Bytes(concat(chunks));
-  const manifestHash = await sha256Bytes(manifestBytes);
-  return concat([magic, length, manifestBytes, ...chunks, encoder.encode(`${blobHash}\n${manifestHash}\n`)]);
-}
+const archiveSeams = {
+  magic: PORTABLE_MAGIC,
+  maxManifestBytes: MAX_PORTABLE_MANIFEST_BYTES,
+  canonicalJson,
+  sha256Bytes,
+  validateManifest,
+  PortableError,
+};
 
-function concat(chunks) {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
-  return out;
+export async function encodePortableBundle(manifest, blobs) {
+  return encodePortableArchive(manifest, blobs, archiveSeams);
 }
 
 export async function decodePortableBundle(input) {
-  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-  const encoder = new TextEncoder();
-  const magic = encoder.encode(PORTABLE_MAGIC);
-  if (bytes.byteLength < magic.byteLength + 11) throw new PortableError(400, 'invalid_bundle', 'This is not a Studio project bundle.');
-  for (let index = 0; index < magic.byteLength; index += 1) if (bytes[index] !== magic[index]) throw new PortableError(400, 'invalid_bundle', 'This is not a Studio project bundle.');
-  const lengthText = new TextDecoder().decode(bytes.subarray(magic.byteLength, magic.byteLength + 11));
-  if (!/^\d{10}\n$/.test(lengthText)) throw new PortableError(400, 'invalid_bundle', 'The bundle manifest length is malformed.');
-  const manifestLength = Number(lengthText.slice(0, 10));
-  if (manifestLength > MAX_PORTABLE_MANIFEST_BYTES) throw new PortableError(413, 'bundle_too_large', 'The bundle manifest exceeds the supported size.');
-  const manifestStart = magic.byteLength + 11;
-  const manifestEnd = manifestStart + manifestLength;
-  if (manifestLength < 2 || manifestEnd + 130 > bytes.byteLength) throw new PortableError(400, 'invalid_bundle', 'The bundle is truncated.');
-  const manifestBytes = bytes.subarray(manifestStart, manifestEnd);
-  let manifest;
-  try { manifest = JSON.parse(new TextDecoder().decode(manifestBytes)); } catch { throw new PortableError(400, 'invalid_bundle', 'The bundle manifest is not JSON.'); }
-  const trailer = new TextDecoder().decode(bytes.subarray(bytes.byteLength - 130));
-  const match = /^([a-f0-9]{64})\n([a-f0-9]{64})\n$/.exec(trailer);
-  if (!match) throw new PortableError(400, 'invalid_bundle', 'The bundle integrity trailer is malformed.');
-  const [, blobHash, manifestHash] = match;
-  const expectedManifest = await sha256Bytes(manifestBytes);
-  if (expectedManifest !== manifestHash) throw new PortableError(409, 'integrity_failed', 'The bundle manifest was modified after sealing.');
-  const blobs = new Map();
-  let offset = manifestEnd;
-  const chunks = [];
-  const validated = await validateManifest(manifest);
-  for (const blob of manifest.blobs) {
-    const end = offset + blob.bytes;
-    if (end > bytes.byteLength - 130) throw new PortableError(400, 'invalid_bundle', 'The bundle is truncated.');
-    const slice = bytes.subarray(offset, end);
-    const hash = await sha256Bytes(slice);
-    if (hash !== blob.sha256) throw new PortableError(409, 'integrity_failed', `Media ${blob.sha256} does not match its hash.`);
-    blobs.set(blob.sha256, slice);
-    chunks.push(slice);
-    offset = end;
-  }
-  if (offset !== bytes.byteLength - 130) throw new PortableError(400, 'invalid_bundle', 'The bundle has unexpected trailing bytes.');
-  if (await sha256Bytes(concat(chunks)) !== blobHash) throw new PortableError(409, 'integrity_failed', 'The bundle media stream does not match its trailer.');
-  return { manifest, blobs, validated };
+  return decodePortableArchive(input, archiveSeams);
 }
 
 /** Local validation helper used by the CLI before any network write. */
