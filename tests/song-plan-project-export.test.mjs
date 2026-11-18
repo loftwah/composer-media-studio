@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
 import { createSongPlan, updateSongCaptions, updateSongPlan } from '../src/lib/song-plans.ts';
-import { saveSubject } from '../src/lib/subjects.mjs';
+import { saveSubject } from '../src/lib/subjects.ts';
 import { setup, addAsset } from './harness.mjs';
 
 test('private project export includes only its own song plans, captions and subject history', async () => {

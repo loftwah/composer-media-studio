@@ -164,7 +164,7 @@ test('MCP scene proposal previews without mutation and applies only its exact sc
 
 test('MCP preserves a private subject origin through explicit and legacy scene updates', async () => {
   const { createSongPlan } = await import('../src/lib/song-plans.ts');
-  const { saveSubject } = await import('../src/lib/subjects.mjs');
+  const { saveSubject } = await import('../src/lib/subjects.ts');
   const {env,project}=await setup();
   await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:4000});
   await addAsset(env,project,{id:'asset_image1',kind:'image'});
