@@ -5,7 +5,7 @@
 // entitlement, not a paid per-request provider route; every call is a single
 // bounded request with no retries.
 import { HttpError, money, safeJson, text } from './util.mjs';
-import { previewSceneProposal, type SceneProposalPreview } from './scene-proposals.mjs';
+import { previewSceneProposal, type SceneProposalPreview } from './scene-proposals.ts';
 import { songPlanRevisionDigest, viewSongPlan } from './song-plans.ts';
 import type { CaptionCue, SongPlanRow, SongPlanScene, SongPlanSpec } from './song-plans.ts';
 
