@@ -373,6 +373,25 @@ async function sha256Hex(bytes: BufferSource): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * A header-only PNG (IHDR plus IEND, no image data) passes the byte sniff and
+ * the header pixel limits but has no pixels to export. Decode the candidate
+ * with the same native decoder the export path uses, then close the temporary
+ * bitmap immediately so intake never keeps a full-size copy in memory.
+ */
+async function browserDecodeProblem(file: File): Promise<string | null> {
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    if (bitmap.width >= 1 && bitmap.height >= 1) return null;
+    return "the decoder returned no pixels";
+  } catch {
+    return "the decoder refused the file";
+  } finally {
+    bitmap?.close();
+  }
+}
+
 function blobFromBytes(bytes: Uint8Array, type: string): Blob {
   return new Blob([bytes as unknown as BlobPart], { type });
 }
@@ -1168,6 +1187,15 @@ function Images() {
         }
         const pixelProblem = imagePixelProblem(source.orientedWidth, source.orientedHeight);
         if (pixelProblem) throw new Error(pixelProblem);
+        // The header and pixel limits cannot prove there are pixels: a
+        // structurally valid PNG can carry IHDR and IEND with no image data.
+        // Refuse it here, before the first queued item or export reset.
+        const decodeProblem = await browserDecodeProblem(file);
+        if (currentRevision !== revision.current) break;
+        if (decodeProblem)
+          throw new Error(
+            `This ${sniffed.format?.toUpperCase() ?? "image"} has a valid header but no decodable pixels: ${decodeProblem}.`,
+          );
         const sourceHash = await sha256Hex(bytes);
         if (currentRevision !== revision.current) break;
         // Accepted images invalidate the finished exports once, at the first
