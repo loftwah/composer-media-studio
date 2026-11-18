@@ -2635,7 +2635,6 @@ function Images() {
                 onChange={(event) => {
                   const next = SOCIAL_KIT_FORMATS.find((format) => format === event.target.value);
                   if (!next || next === socialFormat) return;
-                  releaseSocial();
                   setSocialFormat(next);
                   setMessage("");
                 }}
@@ -2716,7 +2715,7 @@ function Images() {
                   href={socialZip.url}
                   download={`${safeStem(selected.file.name)}-social-kit.zip`}
                 >
-                  Download ZIP · {formatBytes(socialZip.bytes)}
+                  Download ZIP · {formatLabelForMime(socialOutputs[0].mime)} · {formatBytes(socialZip.bytes)}
                 </a>
               )}
               {!socialZip && socialBusy && <p className="small">Building the ZIP on this device…</p>}
