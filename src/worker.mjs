@@ -46,7 +46,7 @@ import { previewSceneProposal, applySceneProposal } from "./lib/scene-proposals.
 import { proposeSceneDirection, diagnoseShots } from "./lib/director.ts";
 import { createSongPlan, importSongPlan, listSongPlans, updateSongPlan, updateSongCaptions, exportSongCaptions } from "./lib/song-plans.ts";
 import { createLocalRenderReceipt } from "./lib/local-render-receipts.ts";
-import { createFootageExportReceipt } from "./lib/footage-export-receipts.mjs";
+import { createFootageExportReceipt } from "./lib/footage-export-receipts.ts";
 import {
   addReviewFeedback,
   assertFeedbackAttemptAllowed,
