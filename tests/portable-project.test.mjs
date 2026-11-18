@@ -9,7 +9,7 @@ import worker from '../src/worker.mjs';
 import { createSession } from '../src/lib/auth.mjs';
 import { sha256Hex, extensionFor } from '../src/lib/util.mjs';
 import { createSongPlan, listSongPlans, updateSongPlan } from '../src/lib/song-plans.ts';
-import { saveSubject, listSubjects } from '../src/lib/subjects.mjs';
+import { saveSubject, listSubjects } from '../src/lib/subjects.ts';
 import { createComposition } from '../src/lib/jobs.mjs';
 import { createPromoBrief } from '../src/lib/promo-briefs.ts';
 import { createFootagePlan, listFootagePlans } from '../src/lib/footage-plans.ts';

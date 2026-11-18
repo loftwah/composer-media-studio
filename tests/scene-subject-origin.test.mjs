@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, addAsset } from './harness.mjs';
 import { createSongPlan, listSongPlans, updateSongPlan, updateSongCaptions } from '../src/lib/song-plans.ts';
-import { saveSubject } from '../src/lib/subjects.mjs';
+import { saveSubject } from '../src/lib/subjects.ts';
 
 async function fixture() {
  const {env,project}=await setup();
