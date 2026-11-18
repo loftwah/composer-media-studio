@@ -47,6 +47,8 @@ export type ImageMetadataSummary = {
   orientedWidth: number;
   orientedHeight: number;
   alpha: boolean;
+  /** True when VP8X animation or ANIM/ANMF chunks were read from the source bytes. */
+  webpAnimated: boolean;
   exif: ExifSummary;
   gps: boolean;
   camera: { make: string | null; model: string | null } | null;
@@ -131,6 +133,7 @@ type JpegCategory =
 type JpegClassification = { category: JpegCategory; label: string };
 
 const SUPPORTED = new Set<string>(["image/jpeg", "image/png", "image/webp"]);
+const WEBP_ANIM_FLAG = 0x02;
 const HEIC_BRANDS = new Set<string>(["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"]);
 const HEIF_BRANDS = new Set<string>(["mif1", "msf1"]);
 const MAX_IFD_ENTRIES = 512;
@@ -438,6 +441,7 @@ function inspectJpeg(bytes: Uint8Array): JpegMetadata {
     orientedWidth: oriented.width,
     orientedHeight: oriented.height,
     alpha: false,
+    webpAnimated: false,
     exif,
     gps: exif.gps,
     camera: exif.camera,
@@ -541,6 +545,7 @@ function inspectPng(bytes: Uint8Array): PngMetadata {
     orientedWidth: oriented.width,
     orientedHeight: oriented.height,
     alpha,
+    webpAnimated: false,
     exif,
     gps: exif.gps,
     camera: exif.camera,
@@ -620,7 +625,13 @@ function webpDimensions(
 
 function inspectWebp(bytes: Uint8Array): WebpMetadata {
   const { chunks, trailing } = webpChunks(bytes);
-  const { width, height, alpha } = webpDimensions(bytes, chunks);
+  const { width, height, alpha, flags } = webpDimensions(bytes, chunks);
+  // WebP marks animation in VP8X bit 1 and in the ANIM/ANMF chunks. Both come
+  // from the bounded chunk walk above, so neither a declared MIME type nor a
+  // missing flag can let an animated file through the ordinary-file path.
+  const webpAnimated =
+    (flags !== null && (flags & WEBP_ANIM_FLAG) !== 0) ||
+    chunks.some((chunk) => chunk.type === "ANIM" || chunk.type === "ANMF");
   let exif = emptyExif(false);
   let xmp: MetadataFlag = { present: false, bytes: 0 };
   let icc: MetadataFlag = { present: false, bytes: 0 };
@@ -649,6 +660,7 @@ function inspectWebp(bytes: Uint8Array): WebpMetadata {
     orientedWidth: oriented.width,
     orientedHeight: oriented.height,
     alpha,
+    webpAnimated,
     exif,
     gps: exif.gps,
     camera: exif.camera,

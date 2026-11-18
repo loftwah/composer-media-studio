@@ -15,6 +15,7 @@ import {
   ascii,
   bytes,
   webpFixture,
+  webpAnimatedFixture,
 } from "./support/image-fixtures.mjs";
 
 const JPEG_SCAN_TAIL = bytes([0x01, 0x02, 0xff, 0x00, 0x03, 0xff, 0xd9]);
@@ -139,6 +140,19 @@ test("WebP chunks, alpha and metadata stripping are handled honestly", () => {
   assert.equal(result.after.icc.present, false);
   assert.equal(result.after.alpha, true);
   assert.match(result.warning, /colour/);
+});
+
+test("WebP animation is read from the VP8X flag and ANIM/ANMF chunks", () => {
+  const still = inspectImage(webpFixture({ width: 2, height: 2, alpha: true, exif: false, xmp: false, icc: false }));
+  assert.equal(still.format, "webp");
+  assert.equal(still.alpha, true);
+  assert.equal(still.webpAnimated, false);
+
+  const animated = inspectImage(webpAnimatedFixture());
+  assert.equal(animated.format, "webp");
+  assert.equal(animated.webpAnimated, true);
+  assert.equal(inspectImage(webpAnimatedFixture({ animFlagOnly: true })).webpAnimated, true);
+  assert.equal(inspectImage(webpAnimatedFixture({ hasAnimationFlag: false })).webpAnimated, true);
 });
 
 test("non-default orientation is retained for PNG and WebP metadata-only copies", () => {
