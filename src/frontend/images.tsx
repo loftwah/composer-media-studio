@@ -2695,7 +2695,11 @@ function Images() {
                         {output.label} · {output.width} × {output.height}
                       </a>{" "}
                       <span className="small">{formatBytes(output.bytes)} · sha256 {shortHash(output.sha256)}</span>{" "}
-                      <a href={output.receiptHref} download={`${safeStem(selected.file.name)}-${output.key}-receipt.json`}>receipt</a>
+                      <a
+                        href={output.receiptHref}
+                        download={`${safeStem(selected.file.name)}-${output.key}-receipt.json`}
+                        aria-label={`Download ${output.label} receipt`}
+                      >receipt</a>
                     </div>
                   </li>
                 ))}
