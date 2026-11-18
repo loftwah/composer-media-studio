@@ -153,6 +153,16 @@ test("intake decodes each candidate before it queues or resets exports", () => {
   assert.ok(resetAt > decodeAt, "the decoder runs before the first export reset");
 });
 
+test("chooser intake restores focus only when the picker owned it and focus stayed put", () => {
+  assert.match(workbench, /const restorePickerFocus = useRef\(false\)/);
+  const restoreAt = workbench.indexOf("if (adding || !restorePickerFocus.current) return;");
+  const guardAt = workbench.indexOf("if (!active || active === document.body || active === fileInputRef.current) fileInputRef.current?.focus();");
+  assert.ok(restoreAt > 0 && guardAt > restoreAt, "the focus return is gated on adding and current focus");
+  assert.match(workbench, /restorePickerFocus\.current = fromPicker && document\.activeElement === fileInputRef\.current/);
+  assert.match(workbench, /void addFiles\(files, true\)/);
+  assert.ok(!/addFiles\(files\)/.test(workbench.replace("void addFiles(files, true)", "")), "paste and drop do not pass the picker flag");
+});
+
 test("the metadata strip button keeps keyboard focus while the bytes load", () => {
   assert.match(workbench, /disabled=\{running \|\| importing\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
   assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running \|\| importing\) return;/);

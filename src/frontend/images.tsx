@@ -874,6 +874,7 @@ function Images() {
   const sampleRunRef = useRef(0);
   const runningRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const restorePickerFocus = useRef(false);
   const listRef = useRef<HTMLUListElement | null>(null);
   const processAllRef = useRef<HTMLButtonElement | null>(null);
   const focusAfterListChange = useRef<ListFocus | null>(null);
@@ -1122,6 +1123,16 @@ function Images() {
     (row ?? fileInputRef.current)?.focus();
   }, [items]);
 
+  // Intake from the native chooser disables the picker while it decodes, which
+  // blurs it to BODY. Return focus only if the picker owned it and the user has
+  // not moved elsewhere; paste and drop never set the flag, so they never steal focus.
+  useLayoutEffect(() => {
+    if (adding || !restorePickerFocus.current) return;
+    restorePickerFocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body || active === fileInputRef.current) fileInputRef.current?.focus();
+  }, [adding]);
+
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       const files = [...(event.clipboardData?.files ?? [])].filter((file) =>
@@ -1141,8 +1152,9 @@ function Images() {
     }
   }, [paletteCopyFallback]);
 
-  async function addFiles(files: File[]): Promise<void> {
+  async function addFiles(files: File[], fromPicker = false): Promise<void> {
     if (!files.length || addingRef.current || runningRef.current || socialController.current) return;
+    restorePickerFocus.current = fromPicker && document.activeElement === fileInputRef.current;
     addingRef.current = true;
     const currentRevision = ++revision.current;
     setAdding(true);
@@ -2308,7 +2320,7 @@ function Images() {
             onChange={(event) => {
               const files = [...(event.target.files ?? [])];
               event.target.value = "";
-              void addFiles(files);
+              void addFiles(files, true);
             }}
           />
         </label>
