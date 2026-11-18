@@ -38,6 +38,8 @@ export function imageSize(bytes: Uint8Array): {
 
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 
+export function constantTimeEqual(a: string, b: string): boolean;
+
 export function sniffMedia(bytes: Uint8Array, declaredMime?: string): {
   mime: string;
   kind: string | null;
