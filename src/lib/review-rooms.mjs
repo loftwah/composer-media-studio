@@ -6,6 +6,12 @@
 // untrusted text and is never imported as instructions.
 
 import { constantTimeEqual, HttpError, id, now, safeJson, sha256Hex, text } from "./util.mjs";
+// The pure view/DTO core lives in review-rooms.ts (annotations erased at
+// runtime). Re-exporting the public names here keeps every import path and the
+// share auth, expiry, rate and write logic in this module exactly where they
+// were.
+import { reviewRoomStatus, feedbackView, decisionView, ownerReviewRoomView, publicReviewRoomView, reviewerCompareSideView } from "./review-rooms.ts";
+export { reviewRoomStatus, ownerReviewRoomView, publicReviewRoomView };
 
 export const REVIEW_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const REVIEW_TOKEN_BYTES = 32;
@@ -33,120 +39,6 @@ export function generateReviewToken() {
 
 export async function hashReviewToken(token) {
   return sha256Hex(new TextEncoder().encode(token));
-}
-
-export function reviewRoomStatus(row, at = now()) {
-  if (row.revoked_at) return "revoked";
-  if (row.expires_at <= at) return "expired";
-  return "open";
-}
-
-function feedbackView(row) {
-  return {
-    id: row.id,
-    author: row.reviewer_name,
-    body: row.body,
-    atMs: row.at_ms,
-    endMs: row.end_ms,
-    region: safeJson(row.region_json, null),
-    createdAt: row.created_at,
-    resolvedAt: row.resolved_at,
-  };
-}
-
-function decisionView(row) {
-  return {
-    id: row.id,
-    decision: row.decision,
-    note: row.note,
-    reviewerName: row.reviewer_name,
-    createdAt: row.created_at,
-  };
-}
-
-/** Owner-facing room shape. It names the asset and hash but never the token. */
-export function ownerReviewRoomView(row, { feedback = [], decisions = [] } = {}) {
-  const unresolved = feedback.filter((item) => !item.resolved_at).length;
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    assetId: row.asset_id,
-    assetTitle: row.asset_title,
-    versionLabel: row.version_label,
-    sha256: row.asset_sha256,
-    kind: row.asset_kind,
-    mime: row.asset_mime,
-    bytes: row.asset_bytes,
-    width: row.asset_width,
-    height: row.asset_height,
-    durationMs: row.asset_duration_ms,
-    sourceKind: row.source_kind,
-    compositionId: row.composition_id,
-    compositionRevision: row.composition_revision,
-    status: reviewRoomStatus(row),
-    decision: row.decision,
-    decidedAt: row.decided_at,
-    decisionNote: row.decision_note,
-    reviewerName: row.reviewer_name,
-    createdAt: row.created_at,
-    expiresAt: row.expires_at,
-    revokedAt: row.revoked_at,
-    feedbackCount: feedback.length,
-    unresolvedCount: unresolved,
-    feedback: feedback.map(feedbackView),
-    decisions: decisions.map(decisionView),
-  };
-}
-
-/** Reviewer-facing shape: only the pinned version, its status and comments.
- * It deliberately omits project and asset IDs, prompts, captions, source
- * lineage and anything else from the wider Studio. */
-export function publicReviewRoomView(row, feedback = []) {
-  const status = reviewRoomStatus(row);
-  return {
-    version: {
-      label: row.version_label,
-      kind: row.asset_kind,
-      mime: row.asset_mime,
-      bytes: row.asset_bytes,
-      width: row.asset_width,
-      height: row.asset_height,
-      durationMs: row.asset_duration_ms,
-    },
-    status,
-    decision: row.decision,
-    decisionNote: row.decision_note,
-    decidedAt: row.decided_at,
-    reviewerName: row.reviewer_name,
-    expiresAt: row.expires_at,
-    canComment: status === "open",
-    approvalIsFeedbackOnly: true,
-    feedback: feedback.map(feedbackView),
-  };
-}
-
-/** Reviewer-facing shape for one side of a comparison. It names only the
- * pinned version and cannot carry feedback, source lineage, project or asset
- * identity. `reviewPath` and `mediaPath` are scoped to the token the reviewer
- * already supplied, so the pair is reachable only through its own links. */
-function reviewerCompareSideView(room, token) {
-  return {
-    version: {
-      label: room.version_label,
-      kind: room.asset_kind,
-      mime: room.asset_mime,
-      bytes: room.asset_bytes,
-      width: room.asset_width,
-      height: room.asset_height,
-      durationMs: room.asset_duration_ms,
-    },
-    status: reviewRoomStatus(room),
-    decision: room.decision,
-    decisionNote: room.decision_note,
-    decidedAt: room.decided_at,
-    reviewPath: `/r/${encodeURIComponent(token)}`,
-    mediaPath: `/r/${encodeURIComponent(token)}/media`,
-  };
 }
 
 async function loadRoomFeedback(env, room) {
