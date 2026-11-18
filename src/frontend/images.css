@@ -516,6 +516,21 @@
   flex: 1 1 16rem;
 }
 
+.image-cover-area-list {
+  display: grid;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+.image-cover-area-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .image-cover-preview {
   position: relative;
   width: min(100%, 30rem);
