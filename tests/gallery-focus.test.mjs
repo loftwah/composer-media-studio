@@ -10,11 +10,13 @@ const plain = value => JSON.parse(JSON.stringify(value));
 
 // A small DOM stand-in: just the results list, its cards and a Navigation API
 // entry the script may read and update.
-function mount({ state, cards = [], active = null, updateThrows = false, noNavigation = false, noResults = false, navigationType = "navigate" } = {}) {
+function mount({ state, cards = [], active = null, updateThrows = false, noNavigation = false, noResults = false, navigationType = "navigate", hash = "" } = {}) {
   const updates = [];
+  const frames = [];
   const handlers = new Map();
   const body = { tag: "body" };
   const html = { tag: "html" };
+  const summary = { tag: "p" };
   let entryState = state;
   let activeElement = active;
 
@@ -40,6 +42,7 @@ function mount({ state, cards = [], active = null, updateThrows = false, noNavig
     body,
     get activeElement() { return activeElement ?? body; },
     documentElement: html,
+    getElementById(id) { return id === "gallery-results" ? summary : null; },
     querySelector(selector) { return selector === "[data-gallery-cards]" && !noResults ? results : null; },
   };
   const navigation = {
@@ -54,7 +57,11 @@ function mount({ state, cards = [], active = null, updateThrows = false, noNavig
     ...(noNavigation ? {} : { navigation }),
     addEventListener(type, handler) { handlers.set(`window:${type}`, handler); },
   };
-  vm.runInContext(source, vm.createContext({ document, window, Element, performance: { getEntriesByType: () => [{ type: navigationType }] } }));
+  vm.runInContext(source, vm.createContext({
+    document, window, Element, location: { hash },
+    performance: { getEntriesByType: () => [{ type: navigationType }] },
+    requestAnimationFrame(callback) { frames.push(callback); },
+  }));
   return {
     Element,
     results,
@@ -65,7 +72,11 @@ function mount({ state, cards = [], active = null, updateThrows = false, noNavig
       handlers.get("results:click")?.(event);
       return event;
     },
-    pageshow(persisted = true) { handlers.get("window:pageshow")?.({ persisted }); },
+    pageshow(persisted = true, { focusFragment = false } = {}) {
+      handlers.get("window:pageshow")?.({ persisted });
+      if (focusFragment) activeElement = summary;
+      for (const callback of frames.splice(0)) callback();
+    },
   };
 }
 
@@ -114,6 +125,18 @@ test('returning to the entry focuses the exact card without moving the scroll', 
   assert.deepEqual(page.results.cards[0].focusCalls, []);
   assert.deepEqual(plain(page.results.cards[1].focusCalls), [{ preventScroll: true }]);
   assert.deepEqual(page.results.cards[2].focusCalls, []);
+});
+
+test('returning from a filtered card takes focus back after the browser focuses the results fragment', () => {
+  const page = mount({
+    state: { galleryCardFocus: "/p/abyssjaw" },
+    cards: ["/p/abyssjaw"],
+    navigationType: "back_forward",
+    hash: "#gallery-results",
+  });
+  page.pageshow(false, { focusFragment: true });
+  assert.deepEqual(plain(page.results.cards[0].focusCalls), [{ preventScroll: true }]);
+  assert.deepEqual(plain(page.state()), {});
 });
 
 test('no marker, a missing card, focus already taken or no results leave focus alone', () => {

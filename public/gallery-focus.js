@@ -56,7 +56,8 @@ function restoreCardFocus(event) {
   }
 
   const active = document.activeElement;
-  if (active && active !== document.body && active !== document.documentElement) return;
+  const fragmentFocus = location.hash === "#gallery-results" && active === document.getElementById("gallery-results");
+  if (active && active !== document.body && active !== document.documentElement && !fragmentFocus) return;
   for (const card of galleryResults.querySelectorAll("a.gallery-card")) {
     if (card.getAttribute("href") === href) {
       card.focus({ preventScroll: true });
@@ -65,4 +66,5 @@ function restoreCardFocus(event) {
   }
 }
 
-window.addEventListener("pageshow", restoreCardFocus);
+// Let the browser restore focus to the results fragment before returning to the card.
+window.addEventListener("pageshow", event => requestAnimationFrame(() => restoreCardFocus(event)));
