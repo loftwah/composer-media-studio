@@ -50,13 +50,14 @@ function u16be(value) {
 
 /**
  * A small little-endian TIFF/EXIF block with Make, Model, Orientation and a
- * GPS IFD that contains GPSLatitudeRef. No coordinate values are invented.
+ * GPS IFD with a latitude reference and optional fictional coordinates.
  */
 export function tiffExif({
   make = "Fixture Camera Co",
   model = "Local 1",
   orientation = 6,
   gps = true,
+  gpsCoordinates,
 } = {}) {
   const makeBytes = ascii(`${make}\0`);
   const modelBytes = ascii(`${model}\0`);
@@ -66,9 +67,10 @@ export function tiffExif({
   const makeOffset = ifd0End;
   const modelOffset = makeOffset + makeBytes.length;
   const gpsOffset = modelOffset + modelBytes.length + ((modelOffset + modelBytes.length) % 2);
-  const gpsEntryCount = gps ? 1 : 0;
+  const coordinateBytes = gps && gpsCoordinates ? gpsCoordinates : [];
+  const gpsEntryCount = gps ? (coordinateBytes.length ? 4 : 1) : 0;
   const gpsEnd = gpsOffset + 2 + gpsEntryCount * 12 + 4;
-  const total = Math.max(modelOffset + modelBytes.length, gpsEnd);
+  const total = gpsEnd + coordinateBytes.reduce((length, part) => length + part.length, 0);
   const output = new Uint8Array(total);
   output.set(ascii("II"), 0);
   output.set(u16le(42), 2);
@@ -90,12 +92,19 @@ export function tiffExif({
   output.set(makeBytes, makeOffset);
   output.set(modelBytes, modelOffset);
   if (gps) {
-    output.set(u16le(1), gpsOffset);
-    output.set(u16le(1), gpsOffset + 2);
-    output.set(u16le(2), gpsOffset + 4);
-    output.set(u32le(2), gpsOffset + 6);
-    output.set(ascii("S\0"), gpsOffset + 10);
-    output.set(u32le(0), gpsOffset + 14);
+    output.set(u16le(gpsEntryCount), gpsOffset);
+    at = gpsOffset + 2;
+    writeEntry(0x0001, 2, 2, ascii("S\0"));
+    if (coordinateBytes.length) {
+      const [latitude, longitude] = coordinateBytes;
+      const longitudeOffset = gpsEnd + latitude.length;
+      writeEntry(0x0002, 5, 3, u32le(gpsEnd));
+      writeEntry(0x0003, 2, 2, ascii("W\0"));
+      writeEntry(0x0004, 5, 3, u32le(longitudeOffset));
+      output.set(latitude, gpsEnd);
+      output.set(longitude, longitudeOffset);
+    }
+    output.set(u32le(0), at);
   }
   return output;
 }
@@ -104,15 +113,23 @@ function jpegSegment(marker, payload) {
   return concat(bytes([0xff, marker]), u16be(payload.length + 2), payload);
 }
 
-export function jpegFixture({ width = 200, height = 100, orientation = 6, gps = true, icc = true } = {}) {
-  const tiff = tiffExif({ orientation, gps });
+export function jpegFixture({
+  width = 200,
+  height = 100,
+  orientation = 6,
+  gps = true,
+  gpsCoordinates,
+  icc = true,
+  xmp = "<x:xmpmeta xmlns:x='adobe:ns:meta/'/>",
+} = {}) {
+  const tiff = tiffExif({ orientation, gps, gpsCoordinates });
   const sof = bytes([8, (height >>> 8) & 0xff, height & 0xff, (width >>> 8) & 0xff, width & 0xff, 1, 1, 0x11, 0]);
   const scan = bytes([0x01, 0x02, 0xff, 0x00, 0x03]);
   return concat(
     bytes([0xff, 0xd8]),
     jpegSegment(0xe0, ascii("JFIF\0\x01\x02")),
     jpegSegment(0xe1, concat(ascii("Exif\0\0"), tiff)),
-    jpegSegment(0xe1, concat(ascii("http://ns.adobe.com/xap/1.0/\0"), ascii("<x:xmpmeta xmlns:x='adobe:ns:meta/'/>"))),
+    jpegSegment(0xe1, concat(ascii("http://ns.adobe.com/xap/1.0/\0"), ascii(xmp))),
     ...(icc ? [jpegSegment(0xe2, concat(ascii("ICC_PROFILE\0\x01\x01"), new Uint8Array(32)))] : []),
     jpegSegment(0xdb, bytes([0, ...new Uint8Array(64)])),
     jpegSegment(0xc0, sof),

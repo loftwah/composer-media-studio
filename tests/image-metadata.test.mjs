@@ -84,6 +84,39 @@ test("keeping a JPEG ICC profile is explicit and leaves metadataRemoved true", (
   assert.equal(result.warning, null);
 });
 
+test("stripping JPEG metadata removes GPS and XMP payload bytes while preserving the scan", () => {
+  const rationals = (values) => {
+    const data = Buffer.alloc(24);
+    for (const [index, value] of values.entries()) {
+      data.writeUInt32LE(value, index * 8);
+      data.writeUInt32LE(1, index * 8 + 4);
+    }
+    return data;
+  };
+  const gpsCoordinates = [rationals([1, 2, 3]), rationals([155, 12, 23])];
+  const identifier = "synthetic-studio-metadata-id";
+  const source = Buffer.from(jpegFixture({
+    gpsCoordinates,
+    xmp: `<x:xmpmeta xmlns:x="adobe:ns:meta/">${identifier}</x:xmpmeta>`,
+  }));
+  const result = stripImageMetadata(source, { keepColorProfile: false });
+  const stripped = Buffer.from(result.bytes);
+
+  assert.equal(result.before.gps, true);
+  assert.equal(result.before.xmp.present, true);
+  for (const payload of [...gpsCoordinates, identifier]) {
+    assert.ok(source.includes(payload));
+    assert.equal(stripped.includes(payload), false);
+  }
+  const scan = Buffer.from([0xff, 0xda]);
+  const sourceScan = source.indexOf(scan);
+  const strippedScan = stripped.indexOf(scan);
+  assert.ok(sourceScan >= 0 && strippedScan >= 0);
+  assert.deepEqual(stripped.subarray(strippedScan), source.subarray(sourceScan));
+  assert.equal(result.verified.all, true);
+  assert.deepEqual([result.after.width, result.after.height, result.after.orientation], [200, 100, 6]);
+});
+
 test("PNG chunks are parsed and stripped without touching IDAT bytes", () => {
   const source = pngFixture();
   const summary = inspectImage(source);
