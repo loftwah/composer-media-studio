@@ -44,6 +44,7 @@ test('the launcher trigger always ships with the dialog it controls', () => {
   assert.match(html, /href="#\/"><span>Studio projects/);
   assert.match(html, /href="\/gallery"/);
   assert.match(html, /href="\/help"/);
+  assert.match(html, /href="https:\/\/composer-launch-kit\.loftwah\.workers\.dev\/\?operation=icons" target="_blank" rel="noopener"><span>Make site icons/);
   assert.doesNotMatch(html, /href="\/init"|href="\/discover"|href="\/collections"|href="\/me"/);
   // No dialog, no trigger: a bare signed-in page never offers a dead control.
   const bare = shell({revision:'a1', session:{mode:'owner'}});
