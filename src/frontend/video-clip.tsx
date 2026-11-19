@@ -16,8 +16,10 @@ import {
   type PublicVideoSource,
 } from "./video-clip-source";
 import {
-  LOCAL_MIX_HANDOFF_MS, localMixReady, localMixTokenFromHash,
-  parseLocalMixDeliver,
+  VIDEO_MP4,
+  localMixBlobFits, localMixTokenFromHash, localMixToolUrl, newLocalMixToken,
+  openLocalMixHandoff, receiveLocalMix,
+  type LocalMixHandoff, type LocalMixHandoffStatus,
 } from "./local-mix-handoff";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -143,6 +145,7 @@ function VideoClip() {
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [handoffBusy, setHandoffBusy] = useState(false);
   // A handoff only offers a source; nothing is fetched until the visitor acts.
   const [publicVideo] = useState(() => publicVideoFromHash(window.location.hash));
   const [localMixToken] = useState(() => localMixTokenFromHash(window.location.hash));
@@ -153,53 +156,39 @@ function VideoClip() {
   const chooser = useRef<HTMLInputElement>(null);
   const active = useRef<Conversion | null>(null);
   const cancelRequested = useRef(false);
+  const handoff = useRef<LocalMixHandoff | null>(null);
+  // Mirrors the committed snapshot so a handoff can tell a stale input from the
+  // exact clip that was opened before it replies with the File.
+  const completedClipRef = useRef<CompletedClip | null>(null);
   useEffect(() => () => { if (source) URL.revokeObjectURL(source); }, [source]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => {
     if (captionTrack && !captionTrack.english) URL.revokeObjectURL(captionTrack.url);
   }, [captionTrack]);
-  useEffect(() => () => { current.current++; captionRequest.current++; receiptRequest.current++; void active.current?.cancel(); }, []);
+  useEffect(() => { completedClipRef.current = completedClip; }, [completedClip]);
+  useEffect(() => () => {
+    current.current++; captionRequest.current++; receiptRequest.current++;
+    void active.current?.cancel();
+    handoff.current?.close();
+  }, []);
   useEffect(() => () => publicRequest.current?.abort(), []);
   // Consume only the explicit handoff from the opener that launched this tab.
   // A ready is announced once; the first verified delivery from that exact
   // same-origin WindowProxy is the only one accepted, then all listeners go.
   useEffect(() => {
     if (!localMixToken) return;
-    history.replaceState(history.state, "", location.pathname + location.search);
-    const opener = window.opener;
-    if (!opener) {
-      setMessage("Choose the MP4 file on this device to open it in Video Clip.");
-      return;
-    }
     const sourceRevision = current.current;
-    let done = false;
-    let timer = 0;
-    let listener: (event: MessageEvent) => void = () => {};
-    const stop = () => {
-      done = true;
-      window.removeEventListener("message", listener);
-      clearTimeout(timer);
-    };
-    listener = (event: MessageEvent) => {
-      if (done || event.origin !== window.location.origin || event.source !== opener) return;
-      const delivered = parseLocalMixDeliver(event.data, localMixToken);
-      if (!delivered) return;
-      stop();
-      if (sourceRevision === current.current) void choose(delivered);
-    };
-    window.addEventListener("message", listener);
-    timer = window.setTimeout(() => {
-      if (done) return;
-      stop();
-      if (sourceRevision === current.current) setMessage("Video Clip did not receive the mix. Choose the MP4 file on this device.");
-    }, LOCAL_MIX_HANDOFF_MS);
-    try {
-      opener.postMessage(localMixReady(localMixToken), window.location.origin);
-    } catch {
-      stop();
-      setMessage("The local mix handoff could not start. Choose the MP4 file yourself.");
-    }
-    return () => { done = true; window.removeEventListener("message", listener); clearTimeout(timer); };
+    return receiveLocalMix({
+      token: localMixToken,
+      origin: window.location.origin,
+      opener: window.opener,
+      onDeliver: (file) => { if (sourceRevision === current.current) void choose(file); },
+      onStatus: (status) => { if (sourceRevision === current.current) setMessage(
+        status === "no-opener" ? "Choose the MP4 file on this device to open it in Video Clip."
+          : status === "failed" ? "The local mix handoff could not start. Choose the MP4 file yourself."
+            : "Video Clip did not receive the mix. Choose the MP4 file on this device."
+      ); },
+    });
   }, [localMixToken]);
   // A finished MP4 outlives draft edits: only a successful replacement, or a
   // valid new source, clears it. The draft key is compared with the recorded
@@ -398,6 +387,41 @@ function VideoClip() {
     } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
     finally { active.current = null; input.dispose(); setBusy(false); }
   }
+  // Explicit, local-only action: hand the exact completed clip to a same-origin
+  // Add Music tab through one bounded postMessage, so it becomes the video
+  // source before any soundtrack is chosen. Every failure keeps Save MP4 and
+  // the normal file chooser available.
+  function openInAddMusic() {
+    if (!completedClip || handoffBusy || busy || importing || checking || receiptLoading) return;
+    const blob = completedClip.output.blob;
+    const filename = `${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`;
+    const fallbackText = "Save MP4 below, then choose that file in Add Music.";
+    const fallback = (text: string) => setMessage(`${text} ${fallbackText}`);
+    if (!localMixBlobFits(blob)) { fallback("The finished clip is not available for a direct handoff."); return; }
+    setHandoffBusy(true);
+    const token = newLocalMixToken();
+    const url = localMixToolUrl("addMusic", token);
+    if (!url) { setHandoffBusy(false); fallback("Could not start the handoff."); return; }
+    // Deliberate click: open the target synchronously, before waiting for ready.
+    const popup = window.open(url, "_blank");
+    const statusMessage = (status: LocalMixHandoffStatus) => status === "sent"
+      ? "Sent the finished clip to Add Music."
+      : status === "stale"
+        ? `The finished clip changed before the handoff completed. ${fallbackText}`
+        : status === "failed"
+          ? `Could not send the MP4 to Add Music. ${fallbackText}`
+          : `Add Music did not respond. ${fallbackText}`;
+    const record = openLocalMixHandoff({
+      popup, token, origin: window.location.origin,
+      file: new File([blob], filename, { type: VIDEO_MP4 }),
+      isCurrent: () => completedClipRef.current?.output.blob === blob,
+      onStatus: (status) => setMessage(statusMessage(status)),
+      onDone: () => { handoff.current = null; setHandoffBusy(false); },
+    });
+    if (!record) { setHandoffBusy(false); fallback("The Add Music popup was blocked."); return; }
+    handoff.current = record;
+    setMessage("Waiting for Add Music to open…");
+  }
   // The preview sizes this same native player to the encoded frame: the actual
   // output pixels where they fit, scaled down only for the existing 42rem width
   // and 32rem height bounds. Toggling only changes element attributes, so the
@@ -480,6 +504,7 @@ function VideoClip() {
       {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading || (captionOffsetMs === null)} aria-describedby={captionOffsetMs === null ? "caption-offset-error" : undefined} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionTrack={captionTrack}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
+        <button type="button" className="button secondary" disabled={!completedClip || handoffBusy || busy || importing || checking || receiptLoading} aria-disabled={handoffBusy || undefined} onClick={() => void openInAddMusic()}>{handoffBusy ? "Opening Add Music…" : "Open finished clip in Add Music"}</button>
         {completedClip && <>
           <ClipReceiptDownload key={`receipt:${result}`} clip={completedClip} filename={clipFilename} onCaptionReady={setCaptionTrack}/>
           <div inert={checking || busy || undefined}>
