@@ -129,6 +129,7 @@ import {
   SOCIAL_SIZES,
   defaultSocialKitFormat,
   socialKitCropAnchor,
+  socialKitCropStale,
   socialKitSettings,
   socialPostEntries,
   socialSourceEligible,
@@ -188,7 +189,7 @@ type RenderedImage = {
 };
 
 type SocialOutput = {
-  key: string;
+  key: SocialSizeKey;
   label: string;
   width: number;
   height: number;
@@ -1051,6 +1052,13 @@ function Images() {
       return entry.name !== included.name || entry.data.length !== included.data.length ||
         entry.data.some((byte, offset) => byte !== included.data[offset]);
     })),
+  );
+  const socialCropStale = Boolean(
+    socialZip &&
+    socialZip.itemId === selected?.id &&
+    selected &&
+    socialOutputs.length === SOCIAL_SIZES.length &&
+    socialKitCropStale(selected.socialCropAnchors, settings.cropAnchor, socialOutputs),
   );
   const animatedWebp = selected?.source.mime === "image/webp" && Boolean(selected?.source.webpAnimated);
   const publicImageLoaded = Boolean(publicImageSource && items.some((item) => item.publicSource === publicImageSource));
@@ -3106,14 +3114,22 @@ function Images() {
                 ))}
               </ul>
               {socialZip && (
-                <a
-                  className="button"
-                  ref={socialZipDownloadRef}
-                  href={socialZip.url}
-                  download={`${safeStem(selected.file.name)}-social-kit.zip`}
-                >
-                  Download ZIP · {formatLabelForMime(socialOutputs[0].mime)} · {formatBytes(socialZip.bytes)}
-                </a>
+                <>
+                  <a
+                    className="button"
+                    ref={socialZipDownloadRef}
+                    href={socialZip.url}
+                    download={`${safeStem(selected.file.name)}-social-kit.zip`}
+                    aria-describedby={socialCropStale ? "social-zip-pending-crop" : undefined}
+                  >
+                    Download ZIP · {formatLabelForMime(socialOutputs[0].mime)} · {formatBytes(socialZip.bytes)}
+                  </a>
+                  {socialCropStale && (
+                    <p className="notice calm" id="social-zip-pending-crop">
+                      The ZIP uses the previous crop positions. Make 4 social sizes to apply your changes.
+                    </p>
+                  )}
+                </>
               )}
               {!socialZip && socialBusy && <p className="small">Building the ZIP on this device…</p>}
             </div>

@@ -1,3 +1,5 @@
+import { isCropAnchor, type CropAnchorKey } from "./image-ops.ts";
+
 export const SOCIAL_SIZES = Object.freeze([
   Object.freeze({ key: "square", aspect: "square", label: "1:1 square", width: 1080, height: 1080 } as const),
   Object.freeze({ key: "portrait", aspect: "portrait", label: "4:5 portrait", width: 1080, height: 1350 } as const),
@@ -54,6 +56,20 @@ export function socialKitCropAnchor<TAnchor>(
   editorAnchor: TAnchor,
 ): TAnchor {
   return choices?.[key] ?? editorAnchor;
+}
+
+// A text update reuses the finished crops. Compare the active controls with
+// the positions in their receipts, which describe what is in the ZIP.
+export function socialKitCropStale(
+  choices: Partial<Record<SocialSizeKey, CropAnchorKey>> | undefined,
+  editorAnchor: CropAnchorKey,
+  outputs: readonly { key: SocialSizeKey; receipt: { transform: { settings: object } } }[],
+): boolean {
+  return outputs.some(({ key, receipt }) => {
+    const settings = receipt.transform?.settings as { cropAnchor?: unknown } | undefined;
+    const recorded = settings?.cropAnchor;
+    return isCropAnchor(recorded) && socialKitCropAnchor(choices, key, editorAnchor) !== recorded;
+  });
 }
 
 /**

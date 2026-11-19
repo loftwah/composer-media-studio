@@ -9,6 +9,7 @@ import {
   SOCIAL_SIZES,
   defaultSocialKitFormat,
   socialKitCropAnchor,
+  socialKitCropStale,
   socialKitSettings,
   socialPostEntries,
   socialSourceEligible,
@@ -199,6 +200,61 @@ test("blank social size choices keep the editor anchor and explicit choices stay
   const reset = { ...choices, square: undefined };
   assert.equal(socialKitCropAnchor(reset, "square", "centre"), "centre");
   assert.equal(socialKitCropAnchor(reset, "story", "centre"), "bottomRight");
+});
+
+test("a text-only ZIP update spots a changed crop from the finished receipts, not live settings", () => {
+  const editorAnchor = "centre";
+  const madeWith = { story: "top" };
+  const outputs = SOCIAL_SIZES.map((size) => {
+    const cropAnchor = socialKitCropAnchor(madeWith, size.key, editorAnchor);
+    const settings = socialKitSettings({ ...BASE, cropAnchor }, size, 0.82, "webp");
+    return {
+      key: size.key,
+      receipt: buildImageReceipt({
+        sourceHash: "c".repeat(64),
+        result: {
+          plan: { ok: true },
+          settings,
+          width: size.width,
+          height: size.height,
+          mime: "image/webp",
+          bytes: 1000,
+          sha256: "d".repeat(64),
+        },
+      }),
+    };
+  });
+
+  // Settings still match what was rendered, so there is nothing to report.
+  assert.equal(socialKitCropStale(madeWith, editorAnchor, outputs), false);
+
+  // Story Bottom selected, then post text updated: the ZIP deliberately keeps
+  // the earlier Top render. The receipt still says top while the control says bottom.
+  assert.equal(socialKitCropStale({ story: "bottom" }, editorAnchor, outputs), true);
+  assert.equal(socialKitCropAnchor({ story: "bottom" }, "story", editorAnchor), "bottom");
+  assert.equal(outputs.find((output) => output.key === "story").receipt.transform.settings.cropAnchor, "top");
+
+  // Any other size drifting from its receipt is reported too.
+  assert.equal(socialKitCropStale({ ...madeWith, square: "topLeft" }, editorAnchor, outputs), true);
+  // A size returning to "Use editor" is compared against what was rendered.
+  assert.equal(socialKitCropStale({}, editorAnchor, outputs), true);
+});
+
+test("unreadable or unsupported receipt crop positions never falsely report a change", () => {
+  const editorAnchor = "centre";
+  const blank = SOCIAL_SIZES.map((size) => ({
+    key: size.key,
+    receipt: { transform: { settings: {} } },
+  }));
+  assert.equal(socialKitCropStale({ story: "bottom" }, editorAnchor, blank), false);
+  assert.equal(socialKitCropStale({ story: "bottom" }, editorAnchor, []), false);
+  const unsupported = blank.map((output) => ({
+    ...output,
+    receipt: { transform: { settings: { cropAnchor: "sideways" } } },
+  }));
+  assert.equal(socialKitCropStale({ story: "bottom" }, editorAnchor, unsupported), false);
+  const malformed = [{ key: "story", receipt: {} }];
+  assert.equal(socialKitCropStale({ story: "bottom" }, editorAnchor, malformed), false);
 });
 
 test("four sizes carry their own crop anchor into settings, receipts and local replay", () => {
