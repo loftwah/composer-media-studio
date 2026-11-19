@@ -310,12 +310,20 @@ function VideoClip() {
       const w = await video.getCodedWidth(), h = await video.getCodedHeight();
       if (!w || !h || w > 4096 || h > 4096 || w*h > 8294400) throw new Error("Choose a video at or below 4K resolution.");
       const [width,height] = sizes[quality][shape];
+      // Crop is measured in post-rotation display space. An unmeasurable frame
+      // or unexpected rotation keeps the original centred fill instead of
+      // blocking the export or guessing a crop on the wrong axis.
       let crop: CropRectangle | null = null;
       if (fit === "cover" && cropAnchor !== "center") {
-        const [displayWidth, displayHeight] = await Promise.all([video.getDisplayWidth(), video.getDisplayHeight()]);
-        crop = clipCropRectangle({ width: displayWidth, height: displayHeight }, { width, height }, cropAnchor);
-        if (!crop) throw new Error("Choose Center for this video. Its display dimensions could not be read.");
+        const [displayWidth, displayHeight, rotation] = await Promise.all([
+          video.getDisplayWidth(), video.getDisplayHeight(), video.getRotation(),
+        ]);
+        const measurable = [displayWidth, displayHeight].every(value => Number.isSafeInteger(value) && value > 0);
+        const knownRotation = rotation === 0 || rotation === 90 || rotation === 180 || rotation === 270;
+        if (measurable && knownRotation)
+          crop = clipCropRectangle({ width: displayWidth, height: displayHeight }, { width, height }, cropAnchor);
       }
+      const cropFallback = fit === "cover" && cropAnchor !== "center" && !crop;
       const target = new BufferTarget(); const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target });
       const conversion = await Conversion.init({ input, output, tracks: "primary", trim: {start,end}, tags: {}, showWarnings: false,
         video: { width, height, fit, ...(crop ? { crop } : {}), codec: "avc", bitrate: quality === "hd" ? 4000000 : 1200000, forceTranscode: true },
@@ -348,7 +356,9 @@ function VideoClip() {
       } : null);
       setResult(URL.createObjectURL(blob));
       setApplied({ settings: draft, captions: captionDraft, captionOffsetMs });
-      setMessage("Your MP4 is ready to play and save.");
+      setMessage(cropFallback
+        ? "Your MP4 is ready. This video's frame size or rotation could not be cropped precisely, so centre fill was used."
+        : "Your MP4 is ready to play and save.");
     } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
     finally { active.current = null; input.dispose(); setBusy(false); }
   }
@@ -430,7 +440,7 @@ function VideoClip() {
         </div>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
-      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export.</p>
+      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Fill crops from the chosen crop position; fit entire picture keeps every pixel.</p>
       {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading || (captionOffsetMs === null)} aria-describedby={captionOffsetMs === null ? "caption-offset-error" : undefined} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionTrack={captionTrack}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
