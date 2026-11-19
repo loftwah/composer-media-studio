@@ -1,4 +1,4 @@
-import { directorHandoff, currentDirectorHandoff } from './director-handoff.mjs';
+import { directorHandoff, currentDirectorHandoff } from './director-handoff.ts';
 import { directorIdentity } from './director-identity';
 import { ShotDoctor } from './shot-doctor';
 import { useEffect, useRef, useState } from 'react';

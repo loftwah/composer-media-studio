@@ -1,5 +1,21 @@
 // The creator controls what leaves Studio. Saved project fields are data, not instructions.
-export function directorHandoff(projectId, plan, sceneIds, intent) {
+import type { SongPlanScene, SongPlanView } from '../lib/song-plans.ts';
+
+/** The saved scene fields a brief may expose — the caller's slice of SongPlanScene. */
+type HandoffScene = Pick<SongPlanScene, 'id' | 'direction' | 'referenceAssetId'>;
+
+/** The saved plan identity a brief is bound to — the caller's slice of SongPlanView. */
+type HandoffPlan = Pick<SongPlanView, 'id' | 'revision'> & { scenes: HandoffScene[] };
+
+/** A brief prepared for the current project, plan, selection and intent. */
+type Handoff = { text: string; fingerprint: string };
+
+export function directorHandoff(
+  projectId: string,
+  plan: HandoffPlan,
+  sceneIds: string[],
+  intent: string,
+): string | null {
   const selected = plan.scenes.filter(scene => sceneIds.includes(scene.id));
   const request = intent.trim();
   if (!request || request.length > 1200 || !selected.length || selected.length !== new Set(sceneIds).size || selected.length !== sceneIds.length) return null;
@@ -11,6 +27,12 @@ export function directorHandoff(projectId, plan, sceneIds, intent) {
     '', 'My request:', JSON.stringify(request), '', 'Saved scene context (private; share deliberately):', JSON.stringify(context, null, 2),
   ].join('\n');
 }
-export function currentDirectorHandoff(handoff, fingerprint, changed) {
+
+/** Hide a prepared brief as soon as the draft or the saved context it was built from changes. */
+export function currentDirectorHandoff(
+  handoff: Handoff | null,
+  fingerprint: string,
+  changed: boolean,
+): string {
   return !changed && handoff?.fingerprint === fingerprint ? handoff.text : '';
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { directorHandoff, currentDirectorHandoff } from '../src/frontend/director-handoff.mjs';
+import { directorHandoff, currentDirectorHandoff } from '../src/frontend/director-handoff.ts';
 const plan={id:'plan_1',revision:3,scenes:[{id:'scene_1',direction:'Keep the lantern',referenceAssetId:'asset_ref'},{id:'scene_2',direction:'Private other scene',referenceAssetId:null}]};
 test('brief includes only selected saved context and preserves a deliberate no-spend instruction',()=>{
  const result=directorHandoff('project_1',plan,['scene_1'],'Brighten this scene');
