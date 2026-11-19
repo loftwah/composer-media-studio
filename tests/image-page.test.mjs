@@ -9,7 +9,7 @@ const workbench = readFileSync(new URL("../src/frontend/images.tsx", import.meta
 test("the public image page mounts the tracked wrapper with the build revision", () => {
   const html = imagesPage({ revision: "abc123" });
   assert.match(html, /<title>Image tools — Media Studio<\/title>/);
-  assert.match(html, /<div id="images">/);
+  assert.match(html, /<div id="images" data-studio-revision="abc123">/);
   assert.match(html, /src="\/images\.js\?v=abc123"/);
   assert.match(html, /JavaScript is required/);
 });

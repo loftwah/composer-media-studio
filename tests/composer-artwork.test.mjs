@@ -8,6 +8,7 @@ import {
   composerArtworkManifestEntry,
   composerArtworkSourceUrl,
   fetchComposerArtwork,
+  formatComposerArtworkDiagnostic,
   parseComposerArtworkHash,
   parseComposerPostBrief,
 } from "../src/frontend/composer-artwork.ts";
@@ -227,6 +228,14 @@ test("only the fixed Composer diagnostics reach the artwork recovery message", a
     await assert.rejects(fetchComposerArtwork(ref, signal), (error) => {
       assert.match(error.message, message);
       assert.equal(error.reference, safeReference);
+      assert.equal(error.status, status);
+      assert.equal(error.category, status === 504 ? "timeout" : "http-refusal");
+      const diagnostic = formatComposerArtworkDiagnostic(ref, error, "a".repeat(40));
+      assert.ok(diagnostic.includes(`status=${status}`));
+      assert.ok(diagnostic.includes(`request=${safeReference ?? "Unavailable"}`));
+      assert.ok(diagnostic.includes(`source-revision=${ref.revision}`));
+      assert.ok(diagnostic.includes(`studio=${"a".repeat(40)}`));
+      assert.ok(!diagnostic.includes(marker));
       assert.ok(!error.message.includes(marker));
       return true;
     });
@@ -239,6 +248,9 @@ test("artwork recovery preserves cancellation and hides raw transport errors", a
   fetch.mock.mockImplementationOnce(async () => { throw new TypeError(marker); });
   await assert.rejects(fetchComposerArtwork(ref, signal), (error) => {
     assert.match(error.message, /could not reach or finish reading/);
+    assert.equal(error.category, "transport-unknown");
+    assert.equal(error.status, null);
+    assert.match(formatComposerArtworkDiagnostic(ref, error, "dev"), /status=Unavailable/);
     assert.ok(!error.message.includes(marker));
     return true;
   });
