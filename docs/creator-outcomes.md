@@ -2,6 +2,8 @@
 
 Studio Library → Saved outcomes reads the last seven complete UTC days for the selected project. The owner or an existing admin grant for that project can download the same v1 JSON. The private `GET /api/projects/:id/creator-outcomes` endpoint also accepts `from` and `until` calendar dates for 1–30 complete UTC days. The start is inclusive and the end is exclusive. A failed refresh leaves the previous capture marked stale. A sign-in or access failure clears it.
 
+The disclosure offers a 7/30 complete-UTC-day selector: `days=7` (the default with no date options) and `days=30` are presets that cannot be repeated, given another value, or mixed with `from`/`until`. The JSON download pins the explicit `from` and `until` of the report currently on screen, even when a refresh for another period failed.
+
 | Metric key | Unit | Qualifying record |
 | --- | --- | --- |
 | `saved_provider_outputs` | `saved_outputs` | A saved provider job with a completion time in the window and a retained, same-project asset linked in both directions. Count each output asset once. |

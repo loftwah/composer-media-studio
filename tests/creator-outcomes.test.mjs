@@ -74,7 +74,7 @@ function window(params = new URLSearchParams(), now = NOW) {
   return parsed;
 }
 
-test('parseOutcomeWindow: default is the last seven complete UTC days', () => {
+test('parseOutcomeWindow: default and days presets are complete UTC day windows', () => {
   const w = window();
   assert.deepEqual(
     { from: w.fromInclusive, until: w.toExclusive },
@@ -83,6 +83,30 @@ test('parseOutcomeWindow: default is the last seven complete UTC days', () => {
   assert.equal(w.fromMillis, Date.UTC(2026, 10, 12));
   assert.equal(w.toMillis, Date.UTC(2026, 10, 19));
   assert.equal((w.toMillis - w.fromMillis) / DAY, 7);
+
+  const seven = window(new URLSearchParams('days=7'));
+  assert.deepEqual(
+    { from: seven.fromInclusive, until: seven.toExclusive },
+    { from: '2026-11-12', until: '2026-11-19' },
+  );
+  const thirty = window(new URLSearchParams('days=30'));
+  assert.deepEqual(
+    { from: thirty.fromInclusive, until: thirty.toExclusive },
+    { from: '2026-10-20', until: '2026-11-19' },
+  );
+  assert.equal((thirty.toMillis - thirty.fromMillis) / DAY, 30);
+
+  // A preset may not be duplicated, given another value, or mixed with dates.
+  for (const query of [
+    'days=30&days=7',
+    'days=1',
+    'days=14',
+    'days=',
+    'days=7&from=2026-11-01&until=2026-11-19',
+    'days=30&from=2026-11-01',
+  ]) {
+    assert.equal(parseOutcomeWindow(new URLSearchParams(query), NOW), null, query);
+  }
 });
 
 test('parseOutcomeWindow: explicit half-open days, 1 to 30, no future or duplicates', () => {
