@@ -12,9 +12,10 @@ function waitFor(player: HTMLMediaElement, event: 'loadedmetadata' | 'seeked', s
   });
 }
 
-// Seek against the original song clock, not the segment-relative export clock.
-export async function listenFromCaption(player: HTMLMediaElement, startMs: number, durationMs: number, signal: AbortSignal): Promise<void> {
+// Use the original song clock. A manual pause or seek ends a bounded audition.
+export async function listenFromCaption(player: HTMLMediaElement, startMs: number, durationMs: number, signal: AbortSignal, endMs?: number): Promise<void> {
   if (!Number.isSafeInteger(startMs) || !Number.isFinite(durationMs) || startMs < 0 || startMs >= durationMs) throw new Error('Invalid caption start');
+  if (endMs !== undefined && (!Number.isSafeInteger(endMs) || endMs <= startMs || endMs > durationMs)) throw new Error('Invalid caption end');
   if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
   if (player.readyState < 1) { const ready = waitFor(player, 'loadedmetadata', signal); player.load(); await ready; }
   if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -26,7 +27,46 @@ export async function listenFromCaption(player: HTMLMediaElement, startMs: numbe
   }
   if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
   if (Math.abs(player.currentTime - target) > 0.05) throw new Error('Audio did not seek to caption');
+  if (endMs !== undefined && endMs / 1000 > player.duration + 0.05) throw new Error('Caption end exceeds the audio duration');
   const stop = () => player.pause();
   signal.addEventListener('abort', stop, { once: true });
   try { await player.play(); } finally { signal.removeEventListener('abort', stop); }
+  if (endMs === undefined || signal.aborted || player.paused) return;
+  const bound = endMs / 1000;
+  if (player.currentTime >= bound) {
+    player.pause();
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error) => {
+      player.removeEventListener('timeupdate', reached);
+      player.removeEventListener('pause', paused);
+      player.removeEventListener('seeking', done);
+      player.removeEventListener('ended', done);
+      player.removeEventListener('error', failed);
+      signal.removeEventListener('abort', cancelled);
+      if (error) reject(error);
+      else resolve();
+    };
+    const reached = () => {
+      if (player.currentTime < bound) return;
+      player.pause();
+      finish();
+    };
+    const done = () => finish();
+    const paused = () => { if (player.paused) done(); };
+    const failed = () => finish(new Error('Audio could not play'));
+    const cancelled = () => {
+      player.pause();
+      finish(new DOMException('Cancelled', 'AbortError'));
+    };
+    player.addEventListener('timeupdate', reached);
+    player.addEventListener('pause', paused);
+    player.addEventListener('seeking', done);
+    player.addEventListener('ended', done);
+    player.addEventListener('error', failed);
+    signal.addEventListener('abort', cancelled);
+    if (signal.aborted) cancelled();
+  });
 }
