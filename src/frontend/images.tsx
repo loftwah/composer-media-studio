@@ -97,7 +97,10 @@ import {
 } from "./image-atlas.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import {
+  IMAGE_QUALITY_MAX_PERCENT,
+  IMAGE_QUALITY_MIN_PERCENT,
   canExportImageAsPng,
+  imageQualityIsValid,
   settingsForImage,
   type ExportFormat,
 } from "./image-export-override.ts";
@@ -250,6 +253,8 @@ type WorkItem = {
   pngOverride?: boolean;
   /** A reversible one-image long edge in px. Undefined follows the batch. */
   longEdgeOverride?: number;
+  /** A reversible one-image quality in whole percent. Undefined follows the batch. */
+  qualityOverride?: number;
   /** A reversible one-image crop aspect. Undefined follows the batch. */
   cropAspectOverride?: CropAspectKey;
   /** A reversible one-image crop position. Undefined follows the batch. */
@@ -1042,6 +1047,7 @@ function Images() {
         selected.longEdgeOverride,
         selected.cropAspectOverride,
         selected.cropAnchorOverride,
+        selected.qualityOverride,
       )
     : settings;
   const plan = selected ? makePlan(selected.source, selectedSettings, activeTrim) : null;
@@ -1077,6 +1083,7 @@ function Images() {
     (item) =>
       item.pngOverride ||
       item.longEdgeOverride !== undefined ||
+      item.qualityOverride !== undefined ||
       item.cropAspectOverride !== undefined ||
       item.cropAnchorOverride !== undefined,
   );
@@ -1084,6 +1091,11 @@ function Images() {
     (item) =>
       item.longEdgeOverride !== undefined && !itemLongEdgeIsValid(item.longEdgeOverride),
   );
+  const canSetRowQuality = (item: WorkItem) => settings.format !== "png" &&
+    settings.targetKiB === null && !item.pngOverride;
+  const hasInvalidQuality = (item: WorkItem) => canSetRowQuality(item) &&
+    item.qualityOverride !== undefined && !imageQualityIsValid(item.qualityOverride);
+  const invalidQualityItem = items.find(hasInvalidQuality);
   const controlsAreOriginal =
     settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim && !hasItemOverride;
   const requestedTargetBytes = targetBytesFor(selectedSettings);
@@ -1561,6 +1573,13 @@ function Images() {
 
   async function runItems(list: WorkItem[], report: (message: string) => void = setMessage): Promise<void> {
     if (!list.length || runningRef.current || socialController.current || sheetBusy || importing) return;
+    const invalidQuality = list.find(hasInvalidQuality);
+    if (invalidQuality) {
+      report(
+        `Fix the quality for ${invalidQuality.file.name}: enter a whole percent from ${IMAGE_QUALITY_MIN_PERCENT} to ${IMAGE_QUALITY_MAX_PERCENT}, or leave it blank to use the batch quality.`,
+      );
+      return;
+    }
     runningRef.current = true;
     const snapshot = { ...settings };
     const trimSnapshot = trim;
@@ -1602,6 +1621,7 @@ function Images() {
           item.longEdgeOverride,
           item.cropAspectOverride,
           item.cropAnchorOverride,
+          item.qualityOverride,
         );
         const rendered = await renderImage(item, itemSettings, controller.signal, cropRect);
         if (controller.signal.aborted) {
@@ -1886,6 +1906,22 @@ function Images() {
     return control.valueAsNumber;
   }
 
+  // Same blank-means-inherit rule as the long edge. The native number input
+  // keeps partial text as NaN so the quality check rejects it, not inherits it.
+  function setQualityOverride(item: WorkItem, value: number | undefined): void {
+    if (runningRef.current || addingRef.current) return;
+    setItems((previous) =>
+      previous.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, qualityOverride: value } : candidate,
+      ),
+    );
+  }
+
+  function qualityFromControl(control: HTMLInputElement): number | undefined {
+    if (control.value === "" && !control.validity.badInput) return undefined;
+    return control.valueAsNumber;
+  }
+
   function setCropAspectOverride(item: WorkItem, value: CropAspectKey | undefined): void {
     if (runningRef.current || addingRef.current) return;
     setItems((previous) =>
@@ -1934,6 +1970,7 @@ function Images() {
     if (!selected || runningRef.current || socialController.current) return;
     if (selected.pngOverride) setPngOverride(selected, false);
     if (selected.longEdgeOverride !== undefined) setLongEdgeOverride(selected, undefined);
+    if (selected.qualityOverride !== undefined) setQualityOverride(selected, undefined);
     setSettings((previous) => ({
       ...previous,
       resizeMode: "max-long-edge",
@@ -2162,12 +2199,14 @@ function Images() {
       previous.map((item) =>
         item.pngOverride ||
         item.longEdgeOverride !== undefined ||
+        item.qualityOverride !== undefined ||
         item.cropAspectOverride !== undefined ||
         item.cropAnchorOverride !== undefined
           ? {
               ...item,
               pngOverride: false,
               longEdgeOverride: undefined,
+              qualityOverride: undefined,
               cropAspectOverride: undefined,
               cropAnchorOverride: undefined,
             }
@@ -3866,6 +3905,13 @@ function Images() {
             {MAX_IMAGE_OUTPUT_DIMENSION}, or leave it blank to use the batch resize.
           </p>
         )}
+        {invalidQualityItem && (
+          <p className="image-plan is-error" role="alert">
+            Fix the quality for {invalidQualityItem.file.name}: enter a whole percent from{" "}
+            {IMAGE_QUALITY_MIN_PERCENT} to {IMAGE_QUALITY_MAX_PERCENT}, or leave it blank to use
+            the batch quality.
+          </p>
+        )}
         <label className="image-sheet-columns">
           Sheet mode
           <select value={sheetMode} disabled={running || sheetBusy} onChange={(event) =>
@@ -3907,7 +3953,7 @@ function Images() {
           <button
             type="button"
             ref={processAllRef}
-            disabled={socialBusy || adding || sheetBusy || importing || !items.length || !plan?.ok || Boolean(batchTargetProblem) || Boolean(invalidLongEdgeItem)}
+            disabled={socialBusy || adding || sheetBusy || importing || !items.length || !plan?.ok || Boolean(batchTargetProblem) || Boolean(invalidLongEdgeItem) || Boolean(invalidQualityItem)}
             aria-disabled={running}
             onClick={() => {
               if (running) return;
@@ -4084,6 +4130,44 @@ function Images() {
                         blank to use the batch resize.
                       </span>
                     )}
+                  {(settings.format === "jpeg" || settings.format === "webp") && (
+                    <label className="image-list-override">
+                      <input
+                        type="number"
+                        min={IMAGE_QUALITY_MIN_PERCENT}
+                        max={IMAGE_QUALITY_MAX_PERCENT}
+                        step="1"
+                        inputMode="numeric"
+                        placeholder="Batch"
+                        value={
+                          item.qualityOverride === undefined ||
+                          !Number.isFinite(item.qualityOverride)
+                            ? ""
+                            : item.qualityOverride
+                        }
+                        disabled={
+                          running || adding || !canSetRowQuality(item)
+                        }
+                        aria-label={`JPEG or WebP quality in percent for ${item.file.name}; leave blank to use the batch quality`}
+                        aria-describedby="image-batch-note"
+                        aria-invalid={
+                          hasInvalidQuality(item)
+                            ? true
+                            : undefined
+                        }
+                        onChange={(event) =>
+                          setQualityOverride(item, qualityFromControl(event.currentTarget))
+                        }
+                      />
+                      Quality for this image (%)
+                    </label>
+                  )}
+                  {hasInvalidQuality(item) && (
+                      <span className="image-list-error">
+                        Enter a whole percent from {IMAGE_QUALITY_MIN_PERCENT} to{" "}
+                        {IMAGE_QUALITY_MAX_PERCENT}, or leave it blank to use the batch quality.
+                      </span>
+                    )}
                   <label className="image-list-override">
                     <select
                       value={item.cropAspectOverride ?? ""}
@@ -4178,7 +4262,10 @@ function Images() {
           archive. <strong>Export this image as PNG</strong> applies only to that checked
           PNG and uses no byte target; unchecked images keep the batch format.
           <strong> Long edge for this image</strong> resizes only that row; leave it blank
-          to follow the batch resize. <strong>Crop aspect for this image</strong> changes
+          to follow the batch resize. <strong>Quality for this image</strong> sets a whole
+          percent from {IMAGE_QUALITY_MIN_PERCENT} to {IMAGE_QUALITY_MAX_PERCENT} for that
+          row only. Leave it blank to follow the batch quality. It applies to JPEG and
+          WebP when the target size is blank. <strong>Crop aspect for this image</strong> changes
           only that row; <strong>Use batch</strong> follows the batch aspect.
           <strong> Crop position for this image</strong> overrides the shared position for
           that row while its effective aspect is not Original; <strong>Use batch</strong>
