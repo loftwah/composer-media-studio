@@ -262,7 +262,13 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
     {comparisonKind && <section className="compare-panel" aria-labelledby="compare-title">
       <div className="spread"><div><h2 id="compare-title">{isVideo ? "Compare videos" : "Compare stills"}</h2><p className="small">Choose two {isVideo ? "clips" : "images"} from this studio to review them side by side. Your originals stay unchanged.</p></div><button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button></div>
       <p className="sr-only" role="status">{selected.length} of 2 {isVideo ? "videos" : "images"} selected</p>
-      <div className="compare-grid">
+      <div className="compare-grid" onPlayCapture={event => {
+        const playing = event.target;
+        if (!(playing instanceof HTMLVideoElement)) return;
+        for (const video of event.currentTarget.querySelectorAll("video")) {
+          if (video !== playing && !video.paused) video.pause();
+        }
+      }}>
         {[0, 1].map(index => {
           const asset = selected[index];
           if (!asset) return <div className="compare-empty" key={index}>
