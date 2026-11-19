@@ -984,8 +984,8 @@ function Images() {
   const [trimBusy, setTrimBusy] = useState(false);
   const [trimMessage, setTrimMessage] = useState("");
   const [palette, setPalette] = useState<PaletteState | null>(null);
-  const [paletteBusy, setPaletteBusy] = useState(false);
-  const [paletteMessage, setPaletteMessage] = useState("");
+  const [readingPaletteId, setReadingPaletteId] = useState("");
+  const [paletteMessage, setPaletteMessage] = useState<{ itemId: string; text: string } | null>(null);
   const [picked, setPicked] = useState<PickedColour | null>(null);
   const [pickMessage, setPickMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
@@ -1146,7 +1146,10 @@ function Images() {
   const batchTargetProblem = batchUsesTarget
     ? targetSizeProblem(settings.format, targetBytesFor(settings))
     : null;
+  // The palette reads the original file, independently of any processed output.
   const visiblePalette = palette && selected && palette.itemId === selected.id ? palette : null;
+  const visiblePaletteMessage = paletteMessage?.itemId === selected?.id ? paletteMessage?.text : "";
+  const paletteBusy = Boolean(readingPaletteId);
   const visibleSnippets =
     snippets && selected?.result?.sha256 === snippets.key ? snippets.data : null;
   const snippetText = visibleSnippets ? visibleSnippets.snippets[snippetKind] : "";
@@ -1565,7 +1568,7 @@ function Images() {
       setTrimMessage("");
       clearPaletteCopyFallback();
       setPalette(null);
-      setPaletteMessage("");
+      setPaletteMessage(null);
       setPicked(null);
       setPickMessage("");
       setCopyMessage("");
@@ -1602,7 +1605,7 @@ function Images() {
     setTrimMessage("");
     clearPaletteCopyFallback();
     setPalette(null);
-    setPaletteMessage("");
+    setPaletteMessage(null);
     setPicked(null);
     setPickMessage("");
     setCopyMessage("");
@@ -2248,7 +2251,7 @@ function Images() {
     setTrimMessage("");
     clearPaletteCopyFallback();
     setPalette(null);
-    setPaletteMessage("");
+    setPaletteMessage(null);
     setPicked(null);
     setPickMessage("");
     setCopyMessage("");
@@ -2504,8 +2507,8 @@ function Images() {
   async function extractSelectedPalette(): Promise<void> {
     if (!selected || paletteBusy || running) return;
     const item = selected;
-    setPaletteBusy(true);
-    setPaletteMessage("Reading pixels on this device…");
+    setReadingPaletteId(item.id);
+    setPaletteMessage({ itemId: item.id, text: "Reading pixels on this device…" });
     let bitmap: ImageBitmap | null = null;
     let canvas: HTMLCanvasElement | null = null;
     try {
@@ -2531,24 +2534,26 @@ function Images() {
       if (!result.ok) throw new Error(result.error);
       clearPaletteCopyFallback();
       setPalette({ itemId: item.id, result, workingWidth: width, workingHeight: height });
-      setPaletteMessage(
-        result.colors.length
+      setPaletteMessage({
+        itemId: item.id,
+        text: result.colors.length
           ? `${result.colors.length} colour${result.colors.length === 1 ? "" : "s"} from a ${width} × ${height} working copy. Fully transparent pixels are ignored.`
           : "Every sampled pixel is fully transparent. There is no colour to report.",
-      );
+      });
     } catch (error) {
       clearPaletteCopyFallback();
       setPalette(null);
-      setPaletteMessage(
-        error instanceof Error ? error.message : "Could not read a colour palette.",
-      );
+      setPaletteMessage({
+        itemId: item.id,
+        text: error instanceof Error ? error.message : "Could not read a colour palette.",
+      });
     } finally {
       bitmap?.close();
       if (canvas) {
         canvas.width = 0;
         canvas.height = 0;
       }
-      setPaletteBusy(false);
+      setReadingPaletteId("");
     }
   }
 
@@ -3603,7 +3608,7 @@ function Images() {
                 disabled={running || paletteBusy || !selected}
                 onClick={() => void extractSelectedPalette()}
               >
-                {paletteBusy ? "Reading colours…" : "Extract palette"}
+                {readingPaletteId === selected.id ? "Reading colours…" : "Extract palette"}
               </button>
               {!running && !paletteBusy && visiblePalette && visiblePalette.result.colors.length > 0 && (
                 <>
@@ -3662,7 +3667,7 @@ function Images() {
               </p>
             )}
             <p className="trim-note" role="status" aria-live="polite">
-              {paletteMessage ||
+              {visiblePaletteMessage ||
                 "No palette yet. Extraction runs on this device and does not change the original File."}
             </p>
             {visiblePalette && visiblePalette.result.colors.length > 0 && (
