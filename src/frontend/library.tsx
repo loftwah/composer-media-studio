@@ -286,6 +286,12 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
                 {version && <span className="small compare-clip-version">{version}</span>}
               </div>
               <div className="row">
+                {isVideo && asset.download && <a
+                  className="button secondary"
+                  href={asset.download}
+                  download
+                  aria-label={`Download video ${asset.title}${version ? ` · ${version}` : ""}`}
+                >Download video</a>}
                 <button type="button" className="secondary" data-action="open-asset" data-id={asset.id}>Open</button>
                 <button type="button" className="quiet" data-action="compare-toggle" data-id={asset.id} aria-label={`Remove ${asset.title} from comparison`}>Remove</button>
               </div>
