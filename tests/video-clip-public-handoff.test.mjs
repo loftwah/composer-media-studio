@@ -53,7 +53,7 @@ test("only public MP4s inside known input limits advertise the handoff", () => {
     { bytes: 0 },
     { bytes: null },
     { durationMs: 180_001 },
-    { durationMs: 0 },
+    { durationMs: -1 },
     { durationMs: "120000" },
   ]) {
     assert.equal(publicVideoClipUrl({ ...film, ...change }), null, JSON.stringify(change));
@@ -64,6 +64,7 @@ test("only public MP4s inside known input limits advertise the handoff", () => {
 test("a legacy MP4 can use local duration validation when the stored duration is missing", () => {
   assert.match(publicPage({ ...film, durationMs: null }), /Clip this video/);
   assert.match(publicPage({ ...film, durationMs: undefined }), /Clip this video/);
+  assert.match(publicPage({ ...film, durationMs: 0 }), /Clip this video/);
 });
 
 test("only the whole single-ID fragment resolves, to the fixed media path", () => {
