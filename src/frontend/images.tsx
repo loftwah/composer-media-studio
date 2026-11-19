@@ -3330,6 +3330,13 @@ function Images() {
                 key={`${selected.id}:${selected.result.sha256}`}
                 source={selected.result}
                 encodePng={canvas => canvasToBlob(canvas, "image/png")}
+                addToBatch={async (file) => {
+                  let added = false;
+                  await addFiles([file], false, undefined, () => { added = true; });
+                  return added;
+                }}
+                canAddToBatch={!adding && !running && !importing && !socialBusy && !batchExport}
+                batchFull={items.length >= MAX_BATCH_IMAGES}
               />
             </div>
           )}
