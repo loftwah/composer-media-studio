@@ -95,6 +95,7 @@ function VideoClip() {
   const [source, setSource] = useState("");
   const [result, setResult] = useState("");
   const [completedClip, setCompletedClip] = useState<CompletedClip | null>(null);
+  const [captionUrl, setCaptionUrl] = useState("");
   // Settings recorded only when an export succeeds: proof of what the finished
   // file actually contains, not what the controls currently show.
   const [applied, setApplied] = useState<string | null>(null);
@@ -166,7 +167,7 @@ function VideoClip() {
       if (revision !== current.current) { URL.revokeObjectURL(url); return; }
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setPublicLoaded(fromPublication);
-      setResult(""); setCompletedClip(null); setApplied(null); setChecking(false);
+      setResult(""); setCompletedClip(null); setCaptionUrl(""); setApplied(null); setChecking(false);
       setMessage("Choose your clip and frame, then make an MP4.");
     } catch (error) {
       URL.revokeObjectURL(url);
@@ -233,6 +234,7 @@ function VideoClip() {
         edit: { startSeconds: start, endSeconds: end, frame: shape, quality, fit, muteRequested: mute },
         output: { blob, width, height },
       });
+      setCaptionUrl("");
       setResult(URL.createObjectURL(blob));
       setApplied(draft);
       setMessage("Your MP4 is ready to play and save.");
@@ -277,10 +279,10 @@ function VideoClip() {
       <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
       {!busy ? <button type="button" disabled={importing || checking} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename}/>
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionUrl={captionUrl}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
         {completedClip && <>
-          <ClipReceiptDownload key={`receipt:${result}`} clip={completedClip} filename={clipFilename}/>
+          <ClipReceiptDownload key={`receipt:${result}`} clip={completedClip} filename={clipFilename} onCaptionReady={setCaptionUrl}/>
           <div inert={checking || busy || undefined}>
             <LocalImport key={`import:${result}`} blob={completedClip.output.blob} filename={`${clipFilename}.mp4`} operation="clip and frame" onBusyChange={setImporting}/>
           </div>
