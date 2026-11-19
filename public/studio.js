@@ -1268,6 +1268,7 @@ function composeView() {
         ${audio.length === 0 ? `<p class="small" style="margin:0">Upload or generate sound in Create to add music, narration or an effect.</p>` : ""}
         <div class="row">
           <button class="button" data-action="compose-save" ${chosen.length < 2 || overLimit || staleMixedBed() ? "disabled" : ""}>${compose.editingId ? "Save changes" : "Save storyboard"}</button>
+          ${compose.editingId && state.session?.actions.includes("edit") ? `<button class="button secondary" data-action="compose-copy-draft">Copy to a new draft</button>` : ""}
           ${compose.editingId ? `<button class="quiet" data-action="compose-new">Start a new storyboard</button>` : ""}
         </div>
         ${overLimit ? `<p class="small" style="margin:0;color:var(--bad)">Keep the cut under 60 seconds to stay inside the bounded render.</p>` : ""}
@@ -2396,7 +2397,8 @@ async function handleAction(action, element, keyboard = false) {
         audioTracks: state.compose.audioTracks,
         slateAssetId: state.compose.slateAssetId || null,
       };
-      const editingId = state.compose.editingId;
+      const submittedDraft = state.compose;
+      const editingId = submittedDraft.editingId;
       const projectId = state.projectId;
       if (editingId) {
         let result;
@@ -2423,23 +2425,42 @@ async function handleAction(action, element, keyboard = false) {
           }
           throw error;
         }
+        if (state.projectId !== projectId || !state.project) return;
         state.project.compositions = (state.project.compositions ?? []).map((item) =>
           item.id === editingId ? { ...item, ...result.composition } : item,
         );
-        state.compose.editingId = editingId;
-        state.compose.expectedUpdatedAt = result.composition.updatedAt;
+        if (state.compose === submittedDraft) {
+          submittedDraft.editingId = editingId;
+          submittedDraft.expectedUpdatedAt = result.composition.updatedAt;
+        }
         notify("Storyboard updated. Earlier renders still belong to it.");
       } else {
-        const result = await api(`/api/projects/${state.projectId}/compositions`, {
+        const result = await api(`/api/projects/${projectId}/compositions`, {
           method: "POST",
           body: JSON.stringify(payload),
         });
+        if (state.projectId !== projectId || !state.project) return;
         state.project.compositions = [result.composition, ...(state.project.compositions ?? [])];
-        state.compose.editingId = result.composition.id;
-        state.compose.expectedUpdatedAt = result.composition.updatedAt;
+        if (state.compose === submittedDraft) {
+          submittedDraft.editingId = result.composition.id;
+          submittedDraft.expectedUpdatedAt = result.composition.updatedAt;
+        }
         notify("Storyboard saved. Render it when you are ready.");
       }
       render();
+      return;
+    }
+    case "compose-copy-draft": {
+      if (!state.session?.actions.includes("edit") || !state.compose.editingId) return;
+      const title = state.compose.title.trim() || "Untitled storyboard";
+      state.compose = {
+        ...state.compose,
+        title: `${title.slice(0, 95).trimEnd()} copy`,
+        editingId: null,
+        expectedUpdatedAt: undefined,
+      };
+      render();
+      notify("Draft copied. Save storyboard creates a separate edit.");
       return;
     }
     case "compose-new":
