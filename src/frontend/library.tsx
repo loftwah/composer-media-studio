@@ -245,7 +245,37 @@ function PreviewBuilder({ onBuilt }: { onBuilt: () => void }) {
 
 function Library({ projectId, assets, query, filter, canImportShare, canViewStorage, comparisonKind, compareIds }: LibraryProps) {
   const [previewToken, setPreviewToken] = useState(0);
+  const videoRefs = useRef<Array<HTMLVideoElement | null>>([]);
+  const [alignStatus, setAlignStatus] = useState("");
   const isVideo = comparisonKind === "video";
+  const comparisonKey = isVideo ? compareIds.join(",") : "";
+
+  useEffect(() => { setAlignStatus(""); }, [comparisonKey]);
+
+  function matchTime(from: number) {
+    const source = videoRefs.current[from];
+    const other = videoRefs.current[1 - from];
+    if (!source || !other) return;
+    if (!Number.isFinite(source.duration) || !Number.isFinite(other.duration) ||
+      source.duration <= 0 || other.duration <= 0) {
+      setAlignStatus("Wait for both clips to load their duration before matching times.");
+      return;
+    }
+    const time = source.currentTime;
+    const label = time.toFixed(2) + " seconds";
+    if (time > other.duration) {
+      setAlignStatus(`The other clip ends before ${label}. Choose an earlier time.`);
+      return;
+    }
+    try {
+      other.currentTime = time;
+      source.pause();
+      other.pause();
+      setAlignStatus(`Both clips are paused at ${label}.`);
+    } catch {
+      setAlignStatus(`The other clip could not seek to ${label}. Try another time.`);
+    }
+  }
   const selected = compareIds.map(id => assets.find(asset => asset.id === id && asset.kind === comparisonKind))
     .filter((asset): asset is MediaAssetV1 => Boolean(asset));
   const trimmed = query.trim().toLowerCase();
@@ -283,7 +313,7 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
           const version = isVideo ? clipVersion(asset) : "";
           return <figure className="compare-frame" key={asset.id}>
             {isVideo
-              ? <video className="compare-video" src={asset.file} controls playsInline preload="metadata" aria-label={version ? `${asset.title} · ${version}` : asset.title}/>
+              ? <video ref={element => { videoRefs.current[index] = element; }} className="compare-video" src={asset.file} controls playsInline preload="metadata" aria-label={version ? `${asset.title} · ${version}` : asset.title}/>
               : <img src={asset.file} alt={asset.title}/>}
             <figcaption>
               <div>
@@ -301,10 +331,14 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
                 <button type="button" className="secondary" data-action="open-asset" data-id={asset.id}>Open</button>
                 <button type="button" className="quiet" data-action="compare-toggle" data-id={asset.id} aria-label={`Remove ${asset.title} from comparison`}>Remove</button>
               </div>
+              {isVideo && selected.length === 2 && <div className="row">
+                <button type="button" className="secondary" onClick={() => matchTime(index)} aria-label={`Match other clip to this time from ${version || asset.title}`}>Match other clip to this time</button>
+              </div>}
             </figcaption>
           </figure>;
         })}
       </div>
+      {isVideo && selected.length === 2 && <p className="small" role="status">{alignStatus}</p>}
     </section>}
     {assets.length === 0 && <div className="card"><h2>Nothing here yet.</h2><p>Upload a photo or a clip to start the library. You can generate new stills once uploads work.</p><button type="button" className="button" data-action="tab" data-tab="create">Make the first image</button></div>}
     {assets.length > 0 && visible.length === 0 && <p className="notice">No media matches that search or filter. <button type="button" className="quiet" data-action="clear-library">Clear search and filters</button></p>}
