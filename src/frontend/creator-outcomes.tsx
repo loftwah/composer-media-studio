@@ -8,6 +8,7 @@ type Report = {
   metrics: Metric[];
 };
 type Phase = "idle" | "loading" | "ready" | "signed-out" | "forbidden" | "error";
+type Days = 7 | 30;
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" });
 const captureFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
@@ -39,17 +40,18 @@ function parseReport(data: unknown, projectId: string): Report | null {
 export function SavedOutcomes({ projectId }: { projectId: string }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [report, setReport] = useState<Report | null>(null);
+  const [days, setDays] = useState<Days>(7);
   const active = useRef<AbortController | null>(null);
   const endpoint = `/api/projects/${encodeURIComponent(projectId)}/creator-outcomes`;
   useEffect(() => () => active.current?.abort(), []);
 
-  async function load() {
+  async function load(period: Days) {
     if (active.current) return;
     const controller = new AbortController();
     active.current = controller;
     setPhase("loading");
     try {
-      const response = await fetch(endpoint, { signal: controller.signal });
+      const response = await fetch(`${endpoint}?days=${period}`, { signal: controller.signal });
       if (controller.signal.aborted) return;
       if ([401, 403, 404].includes(response.status)) {
         setReport(null);
@@ -69,18 +71,43 @@ export function SavedOutcomes({ projectId }: { projectId: string }) {
     }
   }
 
+  function selectDays(period: Days) {
+    if (period === days || active.current) return;
+    setDays(period);
+    void load(period);
+  }
+
+  // Pin the download to the window of the capture on screen, not to the
+  // selected preset: a failed refresh for another period leaves that capture
+  // (and its dates) visible, and the JSON must match it.
+  const download = report
+    ? `${endpoint}?download=1&from=${encodeURIComponent(report.from)}&until=${encodeURIComponent(report.until)}`
+    : `${endpoint}?download=1`;
+
+  const shownDays = report ? (Date.parse(report.until) - Date.parse(report.from)) / 86_400_000 : days;
+  const summary = shownDays === days ? `Last ${days} complete UTC days` : `Showing ${shownDays} days`;
+
   return <details className="storage-health" onToggle={event => {
-    if (event.currentTarget.open && phase === "idle") void load();
+    if (event.currentTarget.open && phase === "idle") void load(days);
   }}>
-    <summary><span>Saved outcomes</span><span className="small">Last 7 complete UTC days</span></summary>
+    <summary><span>Saved outcomes</span><span className="small">{summary}</span></summary>
     <div className="storage-health-body">
       <div className="storage-health-head">
         <div>
           <h2>Saved outcomes in this project</h2>
           <p className="small">This private report counts recorded saves and publication changes. Exports kept only on this device are outside its coverage.</p>
         </div>
-        {report && <a className="button secondary" href={`${endpoint}?download=1`} download>Download outcomes JSON</a>}
+        {report && <a className="button secondary" href={download} download>Download outcomes JSON</a>}
       </div>
+      {phase !== "signed-out" && phase !== "forbidden" && <div className="row" role="group" aria-label="Reporting period">
+        <span className="small">Period</span>
+        {([7, 30] as const).map(period =>
+          <button key={period} type="button" className="quiet" aria-pressed={days === period}
+            disabled={phase === "loading"} onClick={() => selectDays(period)}>
+            {days === period ? <strong>{period} days</strong> : `${period} days`}
+          </button>,
+        )}
+      </div>}
       {phase === "loading" && <p role="status">{report ? "Refreshing saved outcomes…" : "Reading saved outcomes…"}</p>}
       {phase === "signed-out" && <p role="alert"><a href="/studio">Sign in to Studio</a> to view saved outcomes.</p>}
       {phase === "forbidden" && <p role="alert">This session cannot view the project’s saved outcomes.</p>}
@@ -95,7 +122,7 @@ export function SavedOutcomes({ projectId }: { projectId: string }) {
         </ul>
       </>}
       {(phase === "ready" || phase === "error") &&
-        <button type="button" className="secondary" onClick={() => void load()}>{phase === "error" ? "Retry" : "Refresh saved outcomes"}</button>}
+        <button type="button" className="secondary" onClick={() => void load(days)}>{phase === "error" ? "Retry" : "Refresh saved outcomes"}</button>}
     </div>
   </details>;
 }

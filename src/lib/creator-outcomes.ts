@@ -88,12 +88,26 @@ function dayLabel(millis: number): string {
   return new Date(millis).toISOString().slice(0, 10);
 }
 
+/** Build a half-open window of the last `days` complete UTC days. */
+function lastCompleteDays(days: number, today: number): OutcomeWindow {
+  const fromMillis = today - days * DAY_MS;
+  return {
+    fromInclusive: dayLabel(fromMillis),
+    toExclusive: dayLabel(today),
+    fromMillis,
+    toMillis: today,
+  };
+}
+
 /**
  * Validate a requested reporting window. With no parameters this is the last
- * seven complete UTC days. `from` and `until` must both be present, strict
- * YYYY-MM-DD days, 1 to 30 whole days apart, with `until` no later than today
- * (exclusive, so it is itself a completed day). Duplicate or future values are
- * rejected rather than silently narrowed. Invalid input returns null.
+ * seven complete UTC days; `days=7` and `days=30` select the last seven or
+ * thirty complete days. A preset may not be repeated or combined with explicit
+ * `from`/`until`, and only `7` or `30` are accepted. Explicit `from` and `until`
+ * must both be present, strict YYYY-MM-DD days, 1 to 30 whole days apart, with
+ * `until` no later than today (exclusive, so it is itself a completed day).
+ * Duplicate or future values are rejected rather than silently narrowed.
+ * Invalid input returns null.
  */
 export function parseOutcomeWindow(params: URLSearchParams, now?: number): OutcomeWindow | null {
   const stamp = now ?? Date.now();
@@ -108,18 +122,18 @@ export function parseOutcomeWindow(params: URLSearchParams, now?: number): Outco
 
   const fromValues = params.getAll('from');
   const untilValues = params.getAll('until');
+  const dayValues = params.getAll('days');
+  if (dayValues.length > 1) return null;
+  if (dayValues.length > 0 && (fromValues.length > 0 || untilValues.length > 0)) return null;
+
+  if (dayValues.length > 0) {
+    if (dayValues[0] !== '7' && dayValues[0] !== '30') return null;
+    return lastCompleteDays(Number(dayValues[0]), today);
+  }
+
+  if (fromValues.length === 0 && untilValues.length === 0) return lastCompleteDays(7, today);
   if ((fromValues.length > 0) !== (untilValues.length > 0)) return null;
   if (fromValues.length > 1 || untilValues.length > 1) return null;
-
-  if (fromValues.length === 0) {
-    const fromMillis = today - 7 * DAY_MS;
-    return {
-      fromInclusive: dayLabel(fromMillis),
-      toExclusive: dayLabel(today),
-      fromMillis,
-      toMillis: today,
-    };
-  }
 
   const fromMillis = utcDay(fromValues[0]);
   const toMillis = utcDay(untilValues[0]);
