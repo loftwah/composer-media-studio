@@ -4,7 +4,7 @@ import './local-render.css';
 import { resolveCaptionSnapshot, type CaptionSnapshot } from './local-captions';
 import { createCaptionPainter, type CaptionStyle } from './caption-paint';
 import { defaultFraming, framingNote, resolveFrame, type FrameAspect, type FrameFit, type FrameQuality, type Framing } from './local-framing';
-import { resolveLocalRenderSnapshot, savedRevisionLabel } from './local-render-snapshot';
+import { localRenderDownloadName, resolveLocalRenderSnapshot, savedRevisionLabel } from './local-render-snapshot';
 
 async function loadSavedSnapshot(projectId: string, composition: CompositionV1, signal: AbortSignal, withCaptions: boolean) {
   const base = `/api/projects/${encodeURIComponent(projectId)}`;
@@ -44,7 +44,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ blob: Blob; url: string; caption: string; captioned: boolean; framing: string; receiptId: string | null; revision: string; changed: boolean } | null>(null);
+  const [result, setResult] = useState<{ blob: Blob; url: string; caption: string; captioned: boolean; framing: string; receiptId: string | null; revision: string; changed: boolean; title: string; filename: string } | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'uncertain' | 'reauth'>('idle');
   const [savedAssetId, setSavedAssetId] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(false);
@@ -101,8 +101,11 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
       const url = URL.createObjectURL(blob); preview.current = url; saveAttempt.current = false; setSaveState('idle'); setSavedAssetId('');
       const frameDescription = framingNote(frame);
       const revision = savedRevisionLabel(snapshot);
+      // The card may be stale; the fetched snapshot is what these bytes show.
+      const savedTitle = snapshot.title.trim() || 'saved storyboard';
+      const filename = localRenderDownloadName(snapshot, frame);
       const caption = `Browser MP4 from saved storyboard; ${revision}; ${frameDescription}${captions ? `; owner-confirmed captions (${chosenCaptionStyle === 'lower-third' ? 'lower-third' : 'classic'})` : ''}. ${receiptId ? 'Source evidence is in the private render receipt.' : 'No private render receipt was created.'}`;
-      setResult({blob,url,caption,captioned:Boolean(captions),framing:frameDescription,receiptId,revision,changed:saved.changed}); setStatus('MP4 ready to preview or download.');
+      setResult({blob,url,caption,captioned:Boolean(captions),framing:frameDescription,receiptId,revision,changed:saved.changed,title:savedTitle,filename}); setStatus('MP4 ready to preview or download.');
     } catch (err) { if (task.signal.aborted) setStatus('Local render cancelled.'); else setError((err as Error).message || 'The local render failed.'); }
     finally { if (controller.current === task) controller.current = null; setBusy(false); }
   };
@@ -112,7 +115,9 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     setSaveState('saving'); setError('');
     const form = new FormData();
     form.set('file', new File([result.blob], 'studio-local-render.mp4', { type: 'video/mp4' }));
-    form.set('title', `Local render — ${composition.title}`.slice(0, 100)); form.set('caption', result.caption); if (result.receiptId) form.set('localRenderReceiptId', result.receiptId);
+    form.set('title', `Local render — ${result.title}`.slice(0, 100).replace(/[\uD800-\uDBFF]$/, ''));
+    form.set('caption', result.caption);
+    if (result.receiptId) form.set('localRenderReceiptId', result.receiptId);
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/assets`, { method: 'POST', credentials: 'same-origin', body: form });
       const data = await response.json().catch(() => ({}));
@@ -157,11 +162,11 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
         {' '}Changed framing and caption-look settings apply to the next render.
       </p>
       {result.changed && <p className="notice warn">This card was showing an older save. The MP4 used the current saved storyboard, not the earlier preview.</p>}
-      <video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${composition.title}`} />
+      <video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${result.title}`} />
       {canEdit && saveState === 'reauth' &&
         <p role="alert" className="notice">Your Studio session expired before the save. Keep this tab open and sign in in another tab. Then retry saving this MP4.</p>}
       <div className="row">
-        <a className="button secondary" href={result.url} download="studio-local-render.mp4">Download MP4</a>
+        <a className="button secondary" href={result.url} download={result.filename}>Download MP4</a>
         {canEdit && saveState === 'reauth' &&
           <a className="button secondary" href="/studio" target="_blank" rel="noopener noreferrer">Open Studio sign-in in another tab</a>}
         {canEdit && saveState !== 'saved' && <button type="button" className="secondary"
