@@ -956,6 +956,9 @@ function Images() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [previewBackdrop, setPreviewBackdrop] = useState<PreviewBackdrop>("checkerboard");
   const [message, setMessage] = useState("");
+  // Blocked drop/paste needs its own status: `message` is reused for progress
+  // and would otherwise erase the "add it again" instruction mid-work.
+  const [sourceNotice, setSourceNotice] = useState("");
   const [rejections, setRejections] = useState<Rejection[]>([]);
   const [adding, setAdding] = useState(false);
   const [sampleBusy, setSampleBusy] = useState(false);
@@ -1362,7 +1365,12 @@ function Images() {
     publicImage?: PublicImageSource,
     onAdded?: (item: WorkItem) => void,
   ): Promise<void> {
-    if (!files.length || addingRef.current || runningRef.current || socialController.current) return;
+    if (!files.length) return;
+    if (addingRef.current || runningRef.current || socialController.current) {
+      setSourceNotice("Wait for the current work to finish, then add the new images again.");
+      return;
+    }
+    setSourceNotice("");
     restorePickerFocus.current = fromPicker && document.activeElement === fileInputRef.current;
     addingRef.current = true;
     const currentRevision = ++revision.current;
@@ -1613,6 +1621,7 @@ function Images() {
     setAlphaBusy(false);
     setAlphaMessage("");
     setMessage("Cleared. Nothing remains in this tab.");
+    setSourceNotice("");
     setRejections([]);
     setBatch({ total: 0, completed: 0, current: "" });
     setSocialOutputs([]);
@@ -2863,6 +2872,9 @@ function Images() {
         <p role="status" aria-live="polite" className="image-status">
           {adding ? "Checking files on this device…" : publicImageLoading ? `Downloading the ${publicImageLabel}…` : message}
         </p>
+        <div role="status" aria-live="polite">
+          {sourceNotice && <p className="image-status">{sourceNotice}</p>}
+        </div>
         {rejections.length > 0 && (
           <details className="image-rejections" open>
             <summary>{rejections.length} refused file{rejections.length === 1 ? "" : "s"}</summary>
