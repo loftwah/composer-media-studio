@@ -11,9 +11,8 @@ import {
   MAX_PUBLIC_VIDEO_BYTES as MAX_BYTES,
   MAX_PUBLIC_VIDEO_SOURCE_SECONDS as MAX_SOURCE_SECONDS,
   PUBLIC_VIDEO_TIMEOUT_MS,
+  fetchPublicVideo,
   publicVideoFromHash,
-  publicVideoRefusal,
-  type PublicVideoSource,
 } from "./video-clip-source";
 import {
   VIDEO_MP4,
@@ -68,51 +67,6 @@ async function hasVideoFrame(file: File): Promise<boolean> {
   } finally {
     input.dispose();
   }
-}
-
-// The published film enters the editor as an ordinary File so it takes the
-// exact same validated intake as the picker. Only this page's fixed `/media`
-// path is accepted, the request stays same-origin and credential-free, and
-// the body is read in bounded chunks so no unbounded native Buffer is built.
-async function fetchPublicVideo(
-  source: PublicVideoSource,
-  signal: AbortSignal,
-): Promise<{ file: File } | { reason: string }> {
-  const response = await fetch(source.media, {
-    mode: "same-origin",
-    credentials: "omit",
-    redirect: "error",
-    cache: "no-store",
-    signal,
-  });
-  const declared = response.headers.get("content-length");
-  const refusal = publicVideoRefusal({
-    ok: response.ok,
-    type: response.headers.get("content-type"),
-    bytes: declared === null ? null : Number(declared),
-  });
-  if (refusal || !response.body) {
-    await response.body?.cancel();
-    return { reason: refusal ?? "This published video could not be read." };
-  }
-  const reader = response.body.getReader();
-  const chunks: BlobPart[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_BYTES)
-        return { reason: "This published video exceeds the 128 MB local input limit." };
-      chunks.push(new Uint8Array(value));
-    }
-  } finally {
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
-  const slug = source.page.slice("/p/".length);
-  return { file: new File(chunks, `${slug}.mp4`, { type: "video/mp4" }) };
 }
 
 function VideoClip() {

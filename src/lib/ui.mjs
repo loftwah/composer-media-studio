@@ -7,7 +7,7 @@ import { videoObjectJsonLd } from "./video-object-json-ld.ts";
 import { galleryPageHref, galleryHasFilters, galleryResultCount, galleryAudioEmpty } from "./gallery-query.ts";
 import { galleryCards, galleryDimensions } from "./gallery-cards.ts";
 import { publishedStillToolUrl } from "../frontend/image-social-source.ts";
-import { publicVideoClipUrl } from "../frontend/video-clip-source.ts";
+import { publicVideoAddMusicUrl, publicVideoClipUrl } from "../frontend/video-clip-source.ts";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 
@@ -340,8 +340,10 @@ export function publicPage({
     ["image/jpeg", "image/png", "image/webp"].includes(mime)
     ? publishedStillToolUrl(slug)
     : null;
-  // The published MP4 enters the local editor after an explicit bounded read.
+  // The published MP4 enters the local editors only after an explicit bounded
+  // read. Clip accepts a longer source; Add Music needs a known <=60s duration.
   const videoHandoff = publicVideoClipUrl({ kind, mime, media, slug, bytes, durationMs });
+  const addMusicHandoff = publicVideoAddMusicUrl({ kind, mime, media, slug, bytes, durationMs });
   const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
 
 Copyright (c) 2020-2026 Paweł Kuna
@@ -434,6 +436,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
         ${posterHandoff ? `<a href="${escapeHtml(posterHandoff)}">Make social sizes</a>` : ""}
         ${stillHandoff ? `<a href="${escapeHtml(stillHandoff)}">Edit in Image Tools</a>` : ""}
         ${videoHandoff ? `<a href="${escapeHtml(videoHandoff)}">Clip this video</a>` : ""}
+        ${addMusicHandoff ? `<a href="${escapeHtml(addMusicHandoff)}">Mix this video locally</a>` : ""}
         <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
         ${isVideo && captionSrc ? `<a href="${escapeHtml(captionSrc)}" download="${escapeHtml(slug)}-en.vtt">Download English captions (VTT)</a>` : ""}
         ${embedUrl ? `<a href="${escapeHtml(embedUrl)}">Embed this film</a>` : ""}

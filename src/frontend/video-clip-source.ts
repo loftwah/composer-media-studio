@@ -5,6 +5,10 @@
 // opening a second, looser path into the editor.
 export const MAX_PUBLIC_VIDEO_BYTES = 128 * 1024 * 1024;
 export const MAX_PUBLIC_VIDEO_SOURCE_SECONDS = 180;
+// Add Music accepts a shorter source than Clip. The Watch page only offers its
+// handoff when the stored duration is known and inside this limit; the picker
+// intake still decodes the exact bytes before any export.
+export const MAX_PUBLIC_ADD_MUSIC_SECONDS = 60;
 // A stalled public media response must not pin a tool tab.
 export const PUBLIC_VIDEO_TIMEOUT_MS = 20_000;
 
@@ -30,10 +34,17 @@ export function publicVideoFromHash(hash: string): PublicVideoSource | null {
   return { page, media: `${page}/media` };
 }
 
-export function publishedVideoToolUrl(slug: string): string | null {
+// Both local tools read the exact same whole-fragment publication ID. Only the
+// route differs, so each tool reuses the one hash parser and the one bounded
+// read without a second, looser handoff format.
+function publishedToolUrl(tool: "video-clip" | "add-music", slug: string): string | null {
   return PUBLIC_VIDEO_ID.exec(slug)?.[0] === slug
-    ? `/tools/video-clip#public-video=${slug}`
+    ? `/tools/${tool}#public-video=${slug}`
     : null;
+}
+
+export function publishedVideoToolUrl(slug: string): string | null {
+  return publishedToolUrl("video-clip", slug);
 }
 
 type PublicVideoMetadata = {
@@ -49,16 +60,26 @@ type PublicVideoMetadata = {
  * Public size bounds the deliberate download. The editor checks decoded
  * duration even when a legacy publication has no stored duration.
  */
-export function publicVideoClipUrl({
+function publicVideoToolUrl({
   kind, mime, media, slug, bytes, durationMs,
-}: PublicVideoMetadata): string | null {
+}: PublicVideoMetadata, maxSeconds: number, requireKnownDuration: boolean, tool: "video-clip" | "add-music"): string | null {
   if (kind !== "video" || mime !== VIDEO_MP4) return null;
   if (typeof slug !== "string" || !PUBLIC_VIDEO_ID.test(slug)) return null;
   if (media !== `/p/${slug}/media`) return null;
   if (!Number.isSafeInteger(bytes) || (bytes as number) <= 0 || (bytes as number) > MAX_PUBLIC_VIDEO_BYTES) return null;
-  if (durationMs != null && durationMs !== 0 && (typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) ||
-    durationMs <= 0 || durationMs > MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000)) return null;
-  return publishedVideoToolUrl(slug);
+  if (requireKnownDuration) {
+    if (!Number.isSafeInteger(durationMs) || (durationMs as number) <= 0 || (durationMs as number) > maxSeconds * 1000) return null;
+  } else if (durationMs != null && durationMs !== 0 && (typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) ||
+    durationMs <= 0 || durationMs > maxSeconds * 1000)) return null;
+  return publishedToolUrl(tool, slug);
+}
+
+export function publicVideoClipUrl(meta: PublicVideoMetadata): string | null {
+  return publicVideoToolUrl(meta, MAX_PUBLIC_VIDEO_SOURCE_SECONDS, false, "video-clip");
+}
+
+export function publicVideoAddMusicUrl(meta: PublicVideoMetadata): string | null {
+  return publicVideoToolUrl(meta, MAX_PUBLIC_ADD_MUSIC_SECONDS, true, "add-music");
 }
 
 /**
@@ -74,4 +95,52 @@ export function publicVideoRefusal({
   if (bytes !== null && (!Number.isFinite(bytes) || bytes > MAX_PUBLIC_VIDEO_BYTES))
     return "This published video exceeds the 128 MB local input limit.";
   return null;
+}
+
+/**
+ * A published film enters either editor as an ordinary File, so it takes the
+ * exact same validated picker intake. Only this publication's fixed `/media`
+ * path is accepted, the request stays same-origin and credential-free, and the
+ * body is read in bounded chunks so no unbounded native Buffer is built. Clip
+ * and Add Music share this one bounded read; neither fetches before activation.
+ */
+export async function fetchPublicVideo(
+  source: PublicVideoSource,
+  signal: AbortSignal,
+): Promise<{ file: File } | { reason: string }> {
+  const response = await fetch(source.media, {
+    mode: "same-origin",
+    credentials: "omit",
+    redirect: "error",
+    cache: "no-store",
+    signal,
+  });
+  const declared = response.headers.get("content-length");
+  const refusal = publicVideoRefusal({
+    ok: response.ok,
+    type: response.headers.get("content-type"),
+    bytes: declared === null ? null : Number(declared),
+  });
+  if (refusal || !response.body) {
+    await response.body?.cancel();
+    return { reason: refusal ?? "This published video could not be read." };
+  }
+  const reader = response.body.getReader();
+  const chunks: BlobPart[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_PUBLIC_VIDEO_BYTES)
+        return { reason: "This published video exceeds the 128 MB local input limit." };
+      chunks.push(new Uint8Array(value));
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  const slug = source.page.slice("/p/".length);
+  return { file: new File(chunks, `${slug}.mp4`, { type: VIDEO_MP4 }) };
 }
