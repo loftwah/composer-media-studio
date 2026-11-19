@@ -12,7 +12,9 @@ import {
   MAX_PUBLIC_VIDEO_SOURCE_SECONDS as MAX_SOURCE_SECONDS,
   PUBLIC_VIDEO_TIMEOUT_MS,
   fetchPublicVideo,
+  fetchSavedStudioVideo,
   publicVideoFromHash,
+  savedStudioVideoFromHash,
 } from "./video-clip-source";
 import {
   VIDEO_MP4,
@@ -101,11 +103,18 @@ function VideoClip() {
   const [checking, setChecking] = useState(false);
   const [handoffBusy, setHandoffBusy] = useState(false);
   // A handoff only offers a source; nothing is fetched until the visitor acts.
-  const [publicVideo] = useState(() => publicVideoFromHash(window.location.hash));
+  const [sourceHandoff] = useState(() => {
+    const hash = window.location.hash;
+    const saved = savedStudioVideoFromHash(hash);
+    if (saved) return { kind: "studio" as const, source: saved };
+    const published = publicVideoFromHash(hash);
+    return published ? { kind: "published" as const, source: published } : null;
+  });
+  const publicVideo = sourceHandoff?.kind === "published" ? sourceHandoff.source : null;
   const [localMixToken] = useState(() => localMixTokenFromHash(window.location.hash));
-  const [publicLoading, setPublicLoading] = useState(false);
-  const [publicLoaded, setPublicLoaded] = useState(false);
-  const publicRequest = useRef<AbortController | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [loadedHandoff, setLoadedHandoff] = useState<"published" | "studio" | null>(null);
+  const sourceRequest = useRef<AbortController | null>(null);
   const current = useRef(0);
   const chooser = useRef<HTMLInputElement>(null);
   const active = useRef<Conversion | null>(null);
@@ -125,7 +134,7 @@ function VideoClip() {
     void active.current?.cancel();
     handoff.current?.close();
   }, []);
-  useEffect(() => () => publicRequest.current?.abort(), []);
+  useEffect(() => () => sourceRequest.current?.abort(), []);
   // Consume only the explicit handoff from the opener that launched this tab.
   // A ready is announced once; the first verified delivery from that exact
   // same-origin WindowProxy is the only one accepted, then all listeners go.
@@ -163,13 +172,13 @@ function VideoClip() {
     const activeElement = document.activeElement;
     if (element && (!activeElement || activeElement === document.body || activeElement === element)) element.focus();
   }
-  async function choose(next: File | undefined, fromPublication = false) {
+  async function choose(next: File | undefined, fromHandoff: "published" | "studio" | null = null) {
     if (busy || importing || receiptLoading) return;
     if (!next) return;
-    if (!fromPublication && publicRequest.current) {
-      publicRequest.current.abort();
-      publicRequest.current = null;
-      setPublicLoading(false);
+    if (!fromHandoff && sourceRequest.current) {
+      sourceRequest.current.abort();
+      sourceRequest.current = null;
+      setSourceLoading(false);
     }
     const revision = ++current.current;
     const retained = file !== null;
@@ -189,7 +198,7 @@ function VideoClip() {
       if (!await hasVideoFrame(next)) throw new Error("No video frame could be read. Choose another MP4 or WebM.");
       if (revision !== current.current) { URL.revokeObjectURL(url); return; }
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
-      setPublicLoaded(fromPublication);
+      setLoadedHandoff(fromHandoff);
       captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionMessage(""); setCaptionLoading(false);
       setCropAnchor("center");
@@ -202,29 +211,34 @@ function VideoClip() {
     }
     finally { video.removeAttribute("src"); video.load(); }
   }
-  async function loadPublicVideo(): Promise<void> {
-    if (!publicVideo || publicLoading || publicRequest.current || busy || importing || checking || file) return;
+  async function loadHandoffVideo(): Promise<void> {
+    if (!sourceHandoff || sourceLoading || sourceRequest.current || busy || importing || checking || file) return;
     const controller = new AbortController();
-    publicRequest.current = controller;
-    setPublicLoading(true);
-    setMessage("Downloading the published video from this Media Studio…");
+    sourceRequest.current = controller;
+    setSourceLoading(true);
+    const studio = sourceHandoff.kind === "studio";
+    setMessage(studio ? "Reading the saved Studio video…" : "Downloading the published video from this Media Studio…");
     const timeout = AbortSignal.timeout(PUBLIC_VIDEO_TIMEOUT_MS);
     const signal = AbortSignal.any([controller.signal, timeout]);
     try {
-      const result = await fetchPublicVideo(publicVideo, signal);
+      const read = sourceHandoff.kind === "studio"
+        ? await fetchSavedStudioVideo(sourceHandoff.source, signal)
+        : await fetchPublicVideo(sourceHandoff.source, signal);
       if (controller.signal.aborted) return;
-      if ("reason" in result) { setMessage(result.reason); return; }
-      await choose(result.file, true);
-    } catch (error) {
+      if (timeout.aborted) throw timeout.reason;
+      if ("reason" in read) { setMessage(read.reason); return; }
+      await choose(read.file, sourceHandoff.kind);
+    } catch {
       if (!controller.signal.aborted) {
         setMessage(timeout.aborted
-          ? "The download was cancelled after too long. Choose Load published video to try again."
-          : "Could not download this published video. Try again or use the file picker.");
+          ? `The download took too long. Choose ${studio ? "Load saved Studio video" : "Load published video"} to try again.`
+          : studio ? "Could not read the saved Studio video. Reopen it in Studio or choose a local file."
+          : "Could not download this published video. Try again or use the video picker.");
       }
     } finally {
-      if (publicRequest.current === controller && !controller.signal.aborted) {
-        publicRequest.current = null;
-        setPublicLoading(false);
+      if (sourceRequest.current === controller && !controller.signal.aborted) {
+        sourceRequest.current = null;
+        setSourceLoading(false);
       }
     }
   }
@@ -340,7 +354,7 @@ function VideoClip() {
       } : undefined;
       setCompletedClip({
         source: file,
-        watchUrl: publicLoaded && publicVideo ? new URL(publicVideo.page, window.location.origin).href : null,
+        watchUrl: loadedHandoff === "published" && publicVideo ? new URL(publicVideo.page, window.location.origin).href : null,
         edit: { startSeconds: start, endSeconds: end, frame: shape, quality, fit, muteRequested: mute,
           ...(fit === "cover" && cropAnchor !== "center" ? { cropAnchor } : {}) },
         output: { blob, width, height },
@@ -409,19 +423,22 @@ function VideoClip() {
     <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2>
       <div className="video-tool-actions">
         <label className="trim-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing || receiptLoading} onChange={e => void choose(e.target.files?.[0])}/></label>
-        {publicVideo && (!file || publicLoaded) && (
+        {sourceHandoff && (!file || loadedHandoff === sourceHandoff.kind) && (
           <button
             type="button"
             className="secondary"
             disabled={busy || importing || receiptLoading}
-            aria-disabled={publicLoading || publicLoaded || checking}
-            onClick={() => void loadPublicVideo()}
+            aria-disabled={sourceLoading || loadedHandoff === sourceHandoff.kind || checking}
+            onClick={() => void loadHandoffVideo()}
           >
-            {publicLoaded ? "Published video loaded" : publicLoading ? "Loading published video…" : "Load published video"}
+            {sourceHandoff.kind === "studio"
+              ? loadedHandoff ? "Saved Studio video loaded" : sourceLoading ? "Loading saved Studio video…" : "Load saved Studio video"
+              : loadedHandoff ? "Published video loaded" : sourceLoading ? "Loading published video…" : "Load published video"}
           </button>
         )}
       </div>
       {publicVideo && <p className="trim-note"><a href={publicVideo.page}>Published page</a> · The video is downloaded from this Media Studio only when you choose Load published video. It stays on this device.</p>}
+      {sourceHandoff?.kind === "studio" && <p className="trim-note">Load the saved video using your Studio project access. The edit stays on this device. <a href="/studio">Open Studio</a></p>}
       <p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
       {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p>
       <p className="trim-note">Reopen a Clip receipt to load the saved edit settings for this video.</p>
