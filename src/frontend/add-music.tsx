@@ -357,7 +357,14 @@ function AddMusic() {
         <button type="button" ref={exportAction} disabled={!canRun || busy === "preview"} aria-disabled={busy === "export"} onClick={() => void run("export")}>Make MP4</button>
         {busy && <button type="button" className="secondary" onClick={event => cancelRun(event.currentTarget)}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
       </div>
-      {preview && <div className="trim-result"><h2>Audio-only mix preview</h2><p className="trim-note">This is the sound mix, without video. Play the original video above to compare. The MP4 uses AAC encoding, so it may sound slightly different.</p><audio ref={previewPlayer} onPlay={()=>pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/></div>}
+      {preview && <div className="trim-result">
+        <h2>Audio-only mix preview</h2>
+        <p className="trim-note">Play the original video above to compare. The MP4 uses AAC, so it may sound slightly different.</p>
+        <audio ref={previewPlayer} onPlay={() => pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/>
+        <div className="video-tool-actions">
+          <a className="button" href={preview} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-mix.wav`}>Save mix WAV</a>
+        </div>
+      </div>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>{previous ? "Previous export" : "Your film"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with added audio"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{applied && <details>
         <summary>Mix settings receipt</summary>
         <p className="trim-note">Save the settings and SHA-256 digests of this MP4 and the exact video and audio behind it. It stays on this device until you share it; it is not an upload.</p>
