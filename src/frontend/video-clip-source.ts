@@ -56,7 +56,7 @@ export function publicVideoClipUrl({
   if (typeof slug !== "string" || !PUBLIC_VIDEO_ID.test(slug)) return null;
   if (media !== `/p/${slug}/media`) return null;
   if (!Number.isSafeInteger(bytes) || (bytes as number) <= 0 || (bytes as number) > MAX_PUBLIC_VIDEO_BYTES) return null;
-  if (durationMs != null && (typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) ||
+  if (durationMs != null && durationMs !== 0 && (typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) ||
     durationMs <= 0 || durationMs > MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000)) return null;
   return publishedVideoToolUrl(slug);
 }
