@@ -15,6 +15,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const frames = ["portrait", "landscape", "square"] as const;
 const qualities = ["standard", "hd"] as const;
 const fits = ["cover", "contain"] as const;
+const cropAnchors = ["topLeft", "bottomRight"] as const;
 
 const fail: (message: string) => never = message => { throw new Error(message); };
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -50,7 +51,7 @@ export function parseClipReceipt(text: string, proof: ReceiptSourceProof): Compl
 
   const edit = parsed.edit;
   if (!record(edit)) fail("The receipt has no editable settings.");
-  const { startSeconds, endSeconds, frame, quality, fit, muteRequested } = edit;
+  const { startSeconds, endSeconds, frame, quality, fit, cropAnchor, muteRequested } = edit;
   if (typeof startSeconds !== "number" || !Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > duration)
     fail("The receipt's start is outside this video.");
   if (typeof endSeconds !== "number" || !Number.isFinite(endSeconds) || endSeconds <= startSeconds || endSeconds > duration)
@@ -60,6 +61,10 @@ export function parseClipReceipt(text: string, proof: ReceiptSourceProof): Compl
   if (!oneOf(quality, qualities)) fail("The receipt uses an unsupported quality.");
   if (!oneOf(fit, fits)) fail("The receipt uses an unsupported fit.");
   if (typeof muteRequested !== "boolean") fail("The receipt has an invalid mute setting.");
+  if (cropAnchor !== undefined && !oneOf(cropAnchor, cropAnchors)) fail("The receipt uses an unsupported crop position.");
 
-  return { startSeconds, endSeconds, frame, quality, fit, muteRequested };
+  return {
+    startSeconds, endSeconds, frame, quality, fit, muteRequested,
+    ...(cropAnchor !== undefined ? { cropAnchor } : {}),
+  };
 }

@@ -1,4 +1,5 @@
 import type { ClipCaptionTrack } from "./clip-captions";
+import type { CropAnchor } from "./clip-crop";
 import { useEffect, useRef, useState } from "react";
 import { clippedCaptionFor } from "../lib/public-captions";
 import { sha256Hex } from "../lib/util.mjs";
@@ -14,6 +15,8 @@ export type CompletedClip = Readonly<{
     frame: "portrait" | "landscape" | "square";
     quality: "standard" | "hd";
     fit: "cover" | "contain";
+    // Absent for centre (and for contain), so v1 receipts stay byte-identical.
+    cropAnchor?: Exclude<CropAnchor, "center">;
     muteRequested: boolean;
   }>;
   output: Readonly<{ blob: Blob; width: number; height: number }>;

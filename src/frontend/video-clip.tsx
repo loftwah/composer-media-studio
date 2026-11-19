@@ -2,6 +2,7 @@ import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
+import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
 import { ClipPoster } from "./clip-poster";
 import { sha256Hex } from "../lib/util.mjs";
 import { probeMediaTrack } from "./media-probe";
@@ -131,6 +132,7 @@ function VideoClip() {
   const [shape, setShape] = useState<Shape>("portrait");
   const [quality, setQuality] = useState<Quality>("standard");
   const [fit, setFit] = useState<Fit>("contain");
+  const [cropAnchor, setCropAnchor] = useState<CropAnchor>("center");
   const [previewFraming, setPreviewFraming] = useState(false);
   const [mute, setMute] = useState(false);
   const [message, setMessage] = useState("");
@@ -156,7 +158,7 @@ function VideoClip() {
   // A finished MP4 outlives draft edits: only a successful replacement, or a
   // valid new source, clears it. The draft key is compared with the recorded
   // one on every render, so returning to the same settings drops the note.
-  const draft = [start, end, shape, quality, fit, mute].join("|");
+  const draft = [start, end, shape, quality, fit, fit === "cover" ? cropAnchor : "center", mute].join("|");
   const captionOffsetMs = captionDraft ? parseCaptionOffset(captionOffsetRaw) : 0;
   const previous = applied !== null && (
     applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
@@ -201,6 +203,7 @@ function VideoClip() {
       setPublicLoaded(fromPublication);
       captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionMessage(""); setCaptionLoading(false);
+      setCropAnchor("center");
       setReceiptMessage(""); setReceiptLoading(false);
       setResult(""); setCompletedClip(null); setCaptionTrack(null); setApplied(null); setChecking(false);
       setMessage("Choose your clip and frame, then make an MP4.");
@@ -283,6 +286,7 @@ function VideoClip() {
       setShape(restored.frame);
       setQuality(restored.quality);
       setFit(restored.fit);
+      setCropAnchor(restored.cropAnchor ?? "center");
       setMute(restored.muteRequested);
       setReceiptMessage("Trim and frame settings restored. Make MP4 when ready.");
     } catch (error) {
@@ -306,9 +310,15 @@ function VideoClip() {
       const w = await video.getCodedWidth(), h = await video.getCodedHeight();
       if (!w || !h || w > 4096 || h > 4096 || w*h > 8294400) throw new Error("Choose a video at or below 4K resolution.");
       const [width,height] = sizes[quality][shape];
+      let crop: CropRectangle | null = null;
+      if (fit === "cover" && cropAnchor !== "center") {
+        const [displayWidth, displayHeight] = await Promise.all([video.getDisplayWidth(), video.getDisplayHeight()]);
+        crop = clipCropRectangle({ width: displayWidth, height: displayHeight }, { width, height }, cropAnchor);
+        if (!crop) throw new Error("Choose Center for this video. Its display dimensions could not be read.");
+      }
       const target = new BufferTarget(); const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target });
       const conversion = await Conversion.init({ input, output, tracks: "primary", trim: {start,end}, tags: {}, showWarnings: false,
-        video: { width, height, fit, codec: "avc", bitrate: quality === "hd" ? 4000000 : 1200000, forceTranscode: true },
+        video: { width, height, fit, ...(crop ? { crop } : {}), codec: "avc", bitrate: quality === "hd" ? 4000000 : 1200000, forceTranscode: true },
         audio: mute ? { discard: true } : { codec: "aac", bitrate: 128000, forceTranscode: true } });
       active.current = conversion;
       if (cancelRequested.current) { await conversion.cancel(); throw new DOMException("Export cancelled. Your original is unchanged.", "AbortError"); }
@@ -327,7 +337,8 @@ function VideoClip() {
       setCompletedClip({
         source: file,
         watchUrl: publicLoaded && publicVideo ? new URL(publicVideo.page, window.location.origin).href : null,
-        edit: { startSeconds: start, endSeconds: end, frame: shape, quality, fit, muteRequested: mute },
+        edit: { startSeconds: start, endSeconds: end, frame: shape, quality, fit, muteRequested: mute,
+          ...(fit === "cover" && cropAnchor !== "center" ? { cropAnchor } : {}) },
         output: { blob, width, height },
         captions,
       });
@@ -351,6 +362,7 @@ function VideoClip() {
     maxHeight: "32rem",
     aspectRatio: `${outWidth} / ${outHeight}`,
     objectFit: fit,
+    objectPosition: cropObjectPosition(cropAnchor, fit),
     background: "#000",
   };
   const clipFilename = `${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip`;
@@ -385,7 +397,8 @@ function VideoClip() {
       <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
       <video className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}/>
       <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
-      <label>Frame<select value={shape} disabled={busy || importing || receiptLoading} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing || receiptLoading} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing || receiptLoading} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
+      <label>Frame<select value={shape} disabled={busy || importing || receiptLoading} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing || receiptLoading} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing || receiptLoading} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (crop)</option></select></label>
+      {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
       <details>
         <summary>Use your own captions</summary>
         <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. You can preview them after making the clip.</p>
@@ -417,7 +430,7 @@ function VideoClip() {
         </div>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
-      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
+      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export.</p>
       {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading || (captionOffsetMs === null)} aria-describedby={captionOffsetMs === null ? "caption-offset-error" : undefined} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionTrack={captionTrack}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
