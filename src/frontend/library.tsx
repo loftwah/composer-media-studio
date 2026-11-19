@@ -17,6 +17,16 @@ const bytesLabel = (bytes: number) => !bytes ? "—" : bytes < 1024 * 1024 ? `${
 const dateLabel = (timestamp: string | number) => timestamp ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(timestamp)) : "";
 const extension = (mime: string) => mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
 
+const savedDate = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium", timeStyle: "short", timeZone: "UTC",
+});
+function clipVersion(asset: MediaAssetV1) {
+  const date = new Date(asset.createdAt);
+  const saved = asset.createdAt && Number.isFinite(date.getTime()) ? `Saved ${savedDate.format(date)} UTC` : "";
+  const digest = /^[a-f0-9]{64}$/i.test(asset.sha256) ? `SHA-256 ${asset.sha256.slice(0, 8)}` : "";
+  return [saved, digest].filter(Boolean).join(" · ");
+}
+
 const previewUrl = (assetId: string) => `/api/studio/assets/${encodeURIComponent(assetId)}/preview`;
 
 /**
@@ -53,13 +63,14 @@ function VideoPlaceholder({ asset }: { asset: MediaAssetV1 }) {
 }
 
 function AssetCard({ asset, comparisonKind, selected, full, previewToken }: { asset: MediaAssetV1; comparisonKind: LibraryProps["comparisonKind"]; selected: boolean; full: boolean; previewToken: number }) {
+  const version = comparisonKind === "video" && asset.kind === "video" ? clipVersion(asset) : "";
   return <article className="asset">
     <button type="button" className="thumb" data-action="open-asset" data-id={asset.id} aria-label={`Open ${asset.title}`}>
       {asset.kind === "video" ? <VideoPlaceholder asset={asset}/> : asset.kind === "audio" ? <span className="audio-card"><canvas width="240" height="64" data-waveform={asset.file} aria-hidden="true"/><span className="audio-time">{asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : "audio"}</span></span> : <AssetPreview asset={asset} retryToken={previewToken}/>}
       <span className="badge">{asset.kind}</span>
     </button>
-    <div className="meta"><strong title={asset.title}>{asset.title}</strong><small>{asset.width && asset.height ? `${asset.width}×${asset.height} · ` : ""}{bytesLabel(asset.bytes)} · {asset.source}</small></div>
-    {asset.kind === comparisonKind && <button type="button" className="secondary compare-select" data-action="compare-toggle" data-id={asset.id} aria-pressed={selected} aria-label={`${selected ? "Remove" : "Select"} ${asset.title} ${selected ? "from" : "for"} comparison`} disabled={full && !selected}>{selected ? "Selected" : "Compare"}</button>}
+    <div className="meta"><strong title={asset.title}>{asset.title}</strong><small>{asset.width && asset.height ? `${asset.width}×${asset.height} · ` : ""}{bytesLabel(asset.bytes)} · {asset.source}</small>{version && <small className="compare-clip-version">{version}</small>}</div>
+    {asset.kind === comparisonKind && <button type="button" className="secondary compare-select" data-action="compare-toggle" data-id={asset.id} aria-pressed={selected} aria-label={`${selected ? "Remove" : "Select"} ${asset.title} ${selected ? "from" : "for"} comparison${version ? ` · ${version}` : ""}`} disabled={full && !selected}>{selected ? "Selected" : "Compare"}</button>}
     <button type="button" data-action="open-asset" data-id={asset.id}>Open</button>
   </article>;
 }
@@ -263,12 +274,17 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
             asset.source,
             isVideo && asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : null,
           ].filter(Boolean);
+          const version = isVideo ? clipVersion(asset) : "";
           return <figure className="compare-frame" key={asset.id}>
             {isVideo
-              ? <video className="compare-video" src={asset.file} controls playsInline preload="metadata" aria-label={asset.title}/>
+              ? <video className="compare-video" src={asset.file} controls playsInline preload="metadata" aria-label={version ? `${asset.title} · ${version}` : asset.title}/>
               : <img src={asset.file} alt={asset.title}/>}
             <figcaption>
-              <div><strong>{asset.title}</strong><span className="small">{facts.join(" · ")}</span></div>
+              <div>
+                <strong>{asset.title}</strong>
+                <span className="small">{facts.join(" · ")}</span>
+                {version && <span className="small compare-clip-version">{version}</span>}
+              </div>
               <div className="row">
                 <button type="button" className="secondary" data-action="open-asset" data-id={asset.id}>Open</button>
                 <button type="button" className="quiet" data-action="compare-toggle" data-id={asset.id} aria-label={`Remove ${asset.title} from comparison`}>Remove</button>
