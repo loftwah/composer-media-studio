@@ -46,9 +46,8 @@ type PublicVideoMetadata = {
 };
 
 /**
- * Advertise the native handoff only when the page's own public size and
- * duration already say this exact publication fits the clip tool's validated
- * intake. No new endpoint, provider or publication state is involved.
+ * Public size bounds the deliberate download. The editor checks decoded
+ * duration even when a legacy publication has no stored duration.
  */
 export function publicVideoClipUrl({
   kind, mime, media, slug, bytes, durationMs,
@@ -57,7 +56,8 @@ export function publicVideoClipUrl({
   if (typeof slug !== "string" || !PUBLIC_VIDEO_ID.test(slug)) return null;
   if (media !== `/p/${slug}/media`) return null;
   if (!Number.isSafeInteger(bytes) || (bytes as number) <= 0 || (bytes as number) > MAX_PUBLIC_VIDEO_BYTES) return null;
-  if (!Number.isSafeInteger(durationMs) || (durationMs as number) <= 0 || (durationMs as number) > MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000) return null;
+  if (durationMs != null && (typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) ||
+    durationMs <= 0 || durationMs > MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000)) return null;
   return publishedVideoToolUrl(slug);
 }
 
