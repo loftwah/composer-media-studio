@@ -38,7 +38,7 @@ test("the Watch page hands one exact publication ID to the clip tool", () => {
   assert.ok(publicPage(film).includes(`href="${tool}">Clip this video</a>`));
 });
 
-test("only public MP4 facts already inside the intake limits advertise the handoff", () => {
+test("only public MP4s inside known input limits advertise the handoff", () => {
   assert.ok(publicPage(film).includes("Clip this video"));
   assert.ok(publicVideoClipUrl({ ...film, bytes: MAX_PUBLIC_VIDEO_BYTES, durationMs: 180_000 }));
   for (const change of [
@@ -54,11 +54,16 @@ test("only public MP4 facts already inside the intake limits advertise the hando
     { bytes: null },
     { durationMs: 180_001 },
     { durationMs: 0 },
-    { durationMs: null },
+    { durationMs: "120000" },
   ]) {
     assert.equal(publicVideoClipUrl({ ...film, ...change }), null, JSON.stringify(change));
     assert.doesNotMatch(publicPage({ ...film, ...change }), /Clip this video/, JSON.stringify(change));
   }
+});
+
+test("a legacy MP4 can use local duration validation when the stored duration is missing", () => {
+  assert.match(publicPage({ ...film, durationMs: null }), /Clip this video/);
+  assert.match(publicPage({ ...film, durationMs: undefined }), /Clip this video/);
 });
 
 test("only the whole single-ID fragment resolves, to the fixed media path", () => {

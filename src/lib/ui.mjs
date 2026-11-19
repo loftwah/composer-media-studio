@@ -339,9 +339,7 @@ export function publicPage({
     ["image/jpeg", "image/png", "image/webp"].includes(mime)
     ? publishedStillToolUrl(slug)
     : null;
-  // A published MP4 whose own public size and duration already fit the clip
-  // tool's validated intake earns a native handoff. The tool fetches the exact
-  // `/media` attachment itself, and only after the visitor asks it to.
+  // The published MP4 enters the local editor after an explicit bounded read.
   const videoHandoff = publicVideoClipUrl({ kind, mime, media, slug, bytes, durationMs });
   const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
 
