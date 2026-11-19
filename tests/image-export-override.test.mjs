@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   canExportImageAsPng,
+  imageQualityIsValid,
   settingsForImage,
 } from "../src/frontend/image-export-override.ts";
 import {
@@ -241,4 +242,25 @@ test("the receipt records the effective per-image long edge, not the batch value
   assert.equal(receipt.transform.settings.longEdge, 320);
   assert.equal(receipt.transform.settings.resizeMode, "long-edge");
   assert.equal(settings.longEdge, 1600, "the batch settings are never mutated");
+});
+
+test("JPEG and WebP quality overrides apply to one row while PNG and byte targets keep their settings", () => {
+  for (const format of ["jpeg", "webp"]) {
+    const batch = batchSettings({ format, targetKiB: null });
+    const row = (quality, png = false, settings = batch) =>
+      settingsForImage(settings, "image/png", png, undefined, undefined, undefined, quality);
+
+    assert.equal(row(70).quality, 0.7);
+    assert.equal(row(undefined), batch);
+    assert.equal(row(70, true).format, "png");
+    assert.equal(row(70, true).quality, batch.quality);
+    const png = { ...batch, format: "png" };
+    assert.equal(row(70, false, png), png);
+    const target = { ...batch, targetKiB: 120 };
+    assert.equal(row(70, false, target), target);
+    for (const invalid of [49, 101, 70.5, NaN]) {
+      assert.equal(imageQualityIsValid(invalid), false);
+      assert.equal(row(invalid), batch);
+    }
+  }
 });

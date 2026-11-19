@@ -7,7 +7,9 @@
 // likewise changes only that image; an undefined value keeps the batch crop.
 // A per-image crop position is used only while that image's effective aspect is
 // not Original, so an aspect-agnostic anchor can be kept without changing the
-// plan or receipt of an uncropped row.
+// plan or receipt of an uncropped row. A per-image quality is a whole percent
+// for a lossy row: blank follows the batch, and it is ignored for PNG (lossless)
+// or while a byte target runs its own bounded search.
 
 export type ExportFormat = "png" | "jpeg" | "webp";
 
@@ -18,6 +20,7 @@ type BatchExportSettings = {
   longEdge: number;
   cropAspect: string;
   cropAnchor: string;
+  quality: number;
 };
 
 type EffectiveSettings<T extends BatchExportSettings> = Omit<
@@ -30,6 +33,19 @@ type EffectiveSettings<T extends BatchExportSettings> = Omit<
   longEdge: number;
   cropAspect: T["cropAspect"];
 };
+
+// Quality is stored as a 0.5–1 fraction (the batch slider's 0.01 step) and
+// shown as whole percent in controls, so a row entry maps back to that step.
+export const IMAGE_QUALITY_MIN_PERCENT = 50;
+export const IMAGE_QUALITY_MAX_PERCENT = 100;
+
+export function imageQualityIsValid(percent: number): boolean {
+  return (
+    Number.isInteger(percent) &&
+    percent >= IMAGE_QUALITY_MIN_PERCENT &&
+    percent <= IMAGE_QUALITY_MAX_PERCENT
+  );
+}
 
 /** Only a PNG source in a JPEG/WebP batch needs this choice. */
 export function canExportImageAsPng(sourceMime: string, batchFormat: string): boolean {
@@ -50,6 +66,10 @@ export function canExportImageAsPng(sourceMime: string, batchFormat: string): bo
  * position replaces the batch position only when that effective aspect is not
  * Original; otherwise the batch anchor is left untouched, so the row keeps its
  * stored choice for a later crop without changing an uncropped result.
+ *
+ * A defined quality percent replaces the batch quality only for a lossy row
+ * with no byte target; PNG (lossless) and target searches keep the batch value.
+ * An out-of-range entry is ignored until the row control reports and clears it.
  */
 export function settingsForImage<T extends BatchExportSettings>(
   settings: T,
@@ -58,6 +78,7 @@ export function settingsForImage<T extends BatchExportSettings>(
   longEdgeOverride?: number,
   cropAspectOverride?: T["cropAspect"],
   cropAnchorOverride?: T["cropAnchor"],
+  qualityOverride?: number,
 ): EffectiveSettings<T> {
   let effective: EffectiveSettings<T> = settings;
   if (longEdgeOverride !== undefined) {
@@ -69,6 +90,14 @@ export function settingsForImage<T extends BatchExportSettings>(
   if (cropAnchorOverride !== undefined && effective.cropAspect !== "original") {
     effective = { ...effective, cropAnchor: cropAnchorOverride };
   }
-  if (!pngOverride || !canExportImageAsPng(sourceMime, settings.format)) return effective;
+  const applyQuality = (candidate: EffectiveSettings<T>): EffectiveSettings<T> =>
+    qualityOverride !== undefined &&
+    imageQualityIsValid(qualityOverride) &&
+    candidate.format !== "png" &&
+    candidate.targetKiB === null
+      ? { ...candidate, quality: qualityOverride / 100 }
+      : candidate;
+  if (!pngOverride || !canExportImageAsPng(sourceMime, settings.format))
+    return applyQuality(effective);
   return { ...effective, format: "png", targetKiB: null };
 }
