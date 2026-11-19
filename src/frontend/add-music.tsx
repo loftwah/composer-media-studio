@@ -3,7 +3,7 @@ import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import { encodeWav } from "../../public/wav.js";
 import { localMixRange } from "./local-mix-range";
-import { musicFadeDuration } from "./music-fades";
+import { musicPlacement } from "./music-fades";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ALL_FORMATS, AudioBufferSink, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from "mediabunny";
@@ -33,9 +33,9 @@ async function checkMediaDuration(file: File, signal: AbortSignal, kind: "video"
   } finally { element.removeAttribute("src"); element.load(); URL.revokeObjectURL(url); }
 }
 
-async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: number, originalGain: number, fadeIn: number, fadeOut: number, previewOnly: boolean, quality: "standard" | "hd", signal: AbortSignal, progress: (s: string) => void) {
+async function makeFilm(videoFile: File, musicFile: File, offset: number, delay: number, gain: number, originalGain: number, fadeIn: number, fadeOut: number, previewOnly: boolean, quality: "standard" | "hd", signal: AbortSignal, progress: (s: string) => void) {
   if (!videoFile.size || videoFile.size > MAX_VIDEO_BYTES || !musicFile.size || musicFile.size > MAX_AUDIO_BYTES) throw new Error("Choose video under 128 MB and audio under 16 MB.");
-  if (!Number.isFinite(offset) || offset < 0 || !Number.isFinite(gain) || gain < 0 || gain > 1 || !Number.isFinite(originalGain) || originalGain < 0 || originalGain > 1) throw new Error("Choose a valid added audio start and volume.");
+  if (!Number.isFinite(offset) || offset < 0 || !Number.isFinite(delay) || delay < 0 || !Number.isFinite(gain) || gain < 0 || gain > 1 || !Number.isFinite(originalGain) || originalGain < 0 || originalGain > 1) throw new Error("Choose a valid added audio start and volume.");
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(videoFile) });
   let output: Output | undefined;
   try {
@@ -73,15 +73,17 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
     } finally { await audioContext.close(); }
     check(signal);
     if (!Number.isFinite(music.duration) || music.duration > MAX_LOCAL_AUDIO_SECONDS || music.duration <= offset) throw new Error("Choose audio up to 5 minutes and a start within the track.");
-    const audible = musicFadeDuration(duration, music.duration, offset, fadeIn, fadeOut);
+    // One placement drives both the exact WAV preview and the MP4 soundtrack:
+    // the video-time opener is separate from the offset into the music file.
+    const placement = musicPlacement(duration, music.duration, offset, fadeIn, fadeOut, delay);
     const offline = new OfflineAudioContext(2, Math.ceil(duration * 44100), 44100);
     const source = offline.createBufferSource(); source.buffer = music;
     const volume = offline.createGain();
-    volume.gain.setValueAtTime(fadeIn ? 0 : gain, 0);
-    if (fadeIn) volume.gain.linearRampToValueAtTime(gain, fadeIn);
-    if (fadeOut) { volume.gain.setValueAtTime(gain, audible - fadeOut); volume.gain.linearRampToValueAtTime(0, audible); }
+    volume.gain.setValueAtTime(fadeIn ? 0 : gain, placement.fadeInStart);
+    if (fadeIn) volume.gain.linearRampToValueAtTime(gain, placement.fadeInEnd);
+    if (fadeOut) { volume.gain.setValueAtTime(gain, placement.fadeOutStart); volume.gain.linearRampToValueAtTime(0, placement.fadeOutEnd); }
     source.connect(volume).connect(offline.destination);
-    source.start(0, offset);
+    source.start(placement.start, offset);
     if (originalGain > 0) {
       progress("Reading the original soundtrack on this device…");
       const original = await probeMediaTrack(() => input.getPrimaryAudioTrack(), "audio"); check(signal);
@@ -138,7 +140,7 @@ async function makeFilm(videoFile: File, musicFile: File, offset: number, gain: 
 function AddMusic() {
   const [video,setVideo] = useState<File | null>(null), [music,setMusic] = useState<File | null>(null);
   const [videoUrl,setVideoUrl] = useState(""), [musicUrl,setMusicUrl] = useState(""), [result,setResult] = useState("");
-  const [offset,setOffset] = useState(0), [volume,setVolume] = useState(80), [originalVolume,setOriginalVolume] = useState(0), [fadeIn,setFadeIn] = useState(0), [fadeOut,setFadeOut] = useState(0), [busy,setBusy] = useState<"preview" | "export" | null>(null), [message,setMessage] = useState("");
+  const [offset,setOffset] = useState(0), [delay,setDelay] = useState(0), [volume,setVolume] = useState(80), [originalVolume,setOriginalVolume] = useState(0), [fadeIn,setFadeIn] = useState(0), [fadeOut,setFadeOut] = useState(0), [busy,setBusy] = useState<"preview" | "export" | null>(null), [message,setMessage] = useState("");
   const [quality, setQuality] = useState<"standard" | "hd">("standard");
   const [importing, setImporting] = useState(false);
   const [checkingMusic, setCheckingMusic] = useState(false);
@@ -159,7 +161,7 @@ function AddMusic() {
   // draft edits. Only a successful replacement, or a valid new input, clears it.
   // The draft key is compared with the recorded one on every render, so returning
   // to the same settings drops the note.
-  const draft = [offset, volume, originalVolume, fadeIn, fadeOut, quality].join("|");
+  const draft = [delay, offset, volume, originalVolume, fadeIn, fadeOut, quality].join("|");
   const previous = applied !== null && applied !== draft;
   function clearPreview() { pauseOthers(); setPreview(""); }
   function clearOutputs() { clearPreview(); setResult(""); setResultBlob(null); setApplied(null); }
@@ -217,7 +219,7 @@ function AddMusic() {
     const abort = new AbortController(); controller.current = abort; pauseOthers(); setBusy(mode);
     setMessage("Checking files on this device…");
     try {
-      const blob = await makeFilm(video,music,offset,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",quality,abort.signal,setMessage); check(abort.signal);
+      const blob = await makeFilm(video,music,offset,delay,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",quality,abort.signal,setMessage); check(abort.signal);
       if (mode === "preview") { setPreview(URL.createObjectURL(blob)); setMessage("Audio-only mix preview ready."); }
       else { setResultBlob(blob); setResult(URL.createObjectURL(blob)); setApplied(draft); setMessage("Your film is ready to play and save."); }
     } catch (error) { setMessage(error instanceof Error && error.name === "AbortError" ? "Cancelled. Your originals are unchanged." : error instanceof Error ? error.message : "Could not prepare this on your device."); }
@@ -240,8 +242,8 @@ function AddMusic() {
       <label className="trim-file">Music or spoken audio<input ref={musicChooser} type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing} aria-busy={checkingMusic || undefined} onChange={e => void choose(e.target.files?.[0],"audio")}/></label>
       <p className="trim-note">Use audio you have permission to use, up to 5 minutes and 16 MB; decoded audio must fit within 128 MiB on this device. If the added audio ends early, any enabled original sound continues.</p>
       {music && <><p><strong>{music.name}</strong></p><audio ref={sourceMusic} onPlay={()=>pauseOthers(sourceMusic.current)} controls src={musicUrl} aria-label="Added audio"/></>}
-      <div className="trim-fields"><label>Added audio start (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label></div>
-      <p className="trim-note">Fades apply to the added audio only and must fit within the part used in the video.</p>
+      <div className="trim-fields"><label>Start added audio at video time (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(delay)?"":delay} disabled={busy !== null || importing} onChange={e=>{setDelay(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Skip into added audio (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label></div>
+      <p className="trim-note">Use video time to place the audio after an opener. Skip into the audio to trim its beginning. Fades must fit within the portion heard in the video.</p>
       <p className="trim-note">If your video has no original sound, only the added audio is heard. Combining loud tracks can distort; lower the volumes and listen before saving.</p>
       <label>Export quality<select value={quality} disabled={busy !== null || importing} onChange={e=>{setQuality(e.target.value as "standard" | "hd");clearPreview();}}><option value="standard">Standard · smaller file</option><option value="hd">HD · 720p</option></select></label>
       <p className="trim-note">HD takes longer and uses more memory. The original frame is fitted to your chosen size; bars may be added. Export uses H.264/AAC MP4 in a compatible browser.</p>
