@@ -1494,6 +1494,9 @@ function Images() {
       runningRef.current || socialController.current || items.length >= MAX_BATCH_IMAGES) return;
     const controller = new AbortController();
     const token = revision.current;
+    // Captured from the one real response fetchComposerArtwork observes, so a
+    // later, separate decode failure can report the actual status.
+    let observedStatus: number | undefined;
     const composerRef = publicImageSource.kind === "composer" ? publicImageSource.ref : null;
     const recordDiagnostic = (error: ComposerArtworkLoadError, expectedRevision = token) => {
       if (!composerRef || publicImageRequest.current !== controller ||
@@ -1507,7 +1510,7 @@ function Images() {
     const signal = AbortSignal.any([controller.signal, timeout]);
     try {
       const file = publicImageSource.kind === "composer"
-        ? await fetchComposerArtwork(publicImageSource.ref, signal)
+        ? await fetchComposerArtwork(publicImageSource.ref, signal, (status) => { observedStatus = status; })
         : await fetchPublicImage(publicImageSource.path, signal, publicImageLabel);
       if (controller.signal.aborted) return;
       if (token !== revision.current || runningRef.current || socialController.current) {
@@ -1515,7 +1518,14 @@ function Images() {
         return;
       }
       await addFiles([file], false, publicImageSource, undefined, (reason, intakeRevision) => {
-        recordDiagnostic(new ComposerArtworkLoadError(reason, { category: "invalid-image" }), intakeRevision);
+        // A byte/header/pixel decode failed after the fetch already observed a
+        // real response. Keep its status instead of reporting "Unavailable".
+        // Only the composer source reaches this callback, so local files and
+        // other public media are untouched.
+        recordDiagnostic(
+          new ComposerArtworkLoadError(reason, { category: "invalid-image", status: observedStatus }),
+          intakeRevision,
+        );
       });
     } catch (error) {
       if (!controller.signal.aborted) {
