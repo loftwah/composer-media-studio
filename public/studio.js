@@ -2453,9 +2453,10 @@ async function handleAction(action, element, keyboard = false) {
     case "compose-copy-draft": {
       if (!state.session?.actions.includes("edit") || !state.compose.editingId) return;
       const title = state.compose.title.trim() || "Untitled storyboard";
+      const prefix = title.slice(0, 75).replace(/[\uD800-\uDBFF]$/u, "").trimEnd();
       state.compose = {
         ...state.compose,
-        title: `${title.slice(0, 95).trimEnd()} copy`,
+        title: `${prefix} copy`,
         editingId: null,
         expectedUpdatedAt: undefined,
       };
