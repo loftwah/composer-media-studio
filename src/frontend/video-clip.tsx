@@ -1,7 +1,9 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { MAX_CAPTION_BYTES, serializeClipCaptions, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
+import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { ClipPoster } from "./clip-poster";
+import { sha256Hex } from "../lib/util.mjs";
 import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
 import {
@@ -102,7 +104,10 @@ function VideoClip() {
   const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
   const [captionMessage, setCaptionMessage] = useState("");
   const [captionLoading, setCaptionLoading] = useState(false);
+  const [receiptMessage, setReceiptMessage] = useState("");
+  const [receiptLoading, setReceiptLoading] = useState(false);
   const captionRequest = useRef(0);
+  const receiptRequest = useRef(0);
   // Settings recorded only when an export succeeds: proof of what the finished
   // file actually contains, not what the controls currently show.
   const [applied, setApplied] = useState<{ settings: string; captions: CaptionDraft | null } | null>(null);
@@ -132,7 +137,7 @@ function VideoClip() {
   useEffect(() => () => {
     if (captionTrack && !captionTrack.english) URL.revokeObjectURL(captionTrack.url);
   }, [captionTrack]);
-  useEffect(() => () => { current.current++; captionRequest.current++; void active.current?.cancel(); }, []);
+  useEffect(() => () => { current.current++; captionRequest.current++; receiptRequest.current++; void active.current?.cancel(); }, []);
   useEffect(() => () => publicRequest.current?.abort(), []);
   // A finished MP4 outlives draft edits: only a successful replacement, or a
   // valid new source, clears it. The draft key is compared with the recorded
@@ -151,7 +156,7 @@ function VideoClip() {
     if (element && (!activeElement || activeElement === document.body || activeElement === element)) element.focus();
   }
   async function choose(next: File | undefined, fromPublication = false) {
-    if (busy || importing) return;
+    if (busy || importing || receiptLoading) return;
     if (!next) return;
     if (!fromPublication && publicRequest.current) {
       publicRequest.current.abort();
@@ -177,8 +182,9 @@ function VideoClip() {
       if (revision !== current.current) { URL.revokeObjectURL(url); return; }
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setPublicLoaded(fromPublication);
-      captionRequest.current++;
+      captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionMessage(""); setCaptionLoading(false);
+      setReceiptMessage(""); setReceiptLoading(false);
       setResult(""); setCompletedClip(null); setCaptionTrack(null); setApplied(null); setChecking(false);
       setMessage("Choose your clip and frame, then make an MP4.");
     } catch (error) {
@@ -214,7 +220,7 @@ function VideoClip() {
     }
   }
   async function chooseCaptions(selected: File | undefined) {
-    if (!selected || !file || busy || checking) return;
+    if (!selected || !file || busy || checking || receiptLoading) return;
     const request = ++captionRequest.current;
     setCaptionLoading(true);
     setCaptionMessage("Reading captions on this device…");
@@ -233,8 +239,43 @@ function VideoClip() {
     }
   }
 
+  // Opening a receipt is an explicit, local-only action. It proves the saved
+  // digest against the exact bytes already accepted as the source, then writes
+  // only the editable controls. Results and captions stay until a replacement.
+  async function openReceipt(selected: File | undefined) {
+    if (!selected || !file || busy || importing || checking || captionLoading || receiptLoading) return;
+    const selectedSource = file;
+    const request = ++receiptRequest.current;
+    const stale = () => request !== receiptRequest.current;
+    setReceiptLoading(true);
+    setReceiptMessage("Checking this receipt against the current video…");
+    try {
+      if (!selected.size || selected.size > MAX_RECEIPT_BYTES)
+        throw new Error(`Choose a Clip receipt JSON file under ${MAX_RECEIPT_BYTES / 1024} KB.`);
+      const text = await selected.text();
+      if (stale()) return;
+      const sourceSha256 = await sha256Hex(new Uint8Array(await selectedSource.arrayBuffer()));
+      if (stale()) return;
+      const restored = parseClipReceipt(text, {
+        duration, maxSeconds: MAX_CLIP_SECONDS, sourceBytes: selectedSource.size, sourceSha256,
+      });
+      if (stale()) return;
+      setStart(restored.startSeconds);
+      setEnd(restored.endSeconds);
+      setShape(restored.frame);
+      setQuality(restored.quality);
+      setFit(restored.fit);
+      setMute(restored.muteRequested);
+      setReceiptMessage("Trim and frame settings restored. Make MP4 when ready.");
+    } catch (error) {
+      if (!stale()) setReceiptMessage(error instanceof Error ? error.message : "Could not read that receipt.");
+    } finally {
+      if (!stale()) setReceiptLoading(false);
+    }
+  }
+
   async function makeClip() {
-    if (!file || busy || checking || captionLoading) return;
+    if (!file || busy || checking || captionLoading || receiptLoading) return;
     if (![start,end].every(Number.isFinite) || start < 0 || end > duration || end <= start || end - start > MAX_CLIP_SECONDS) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
     // A finished clip stays committed until a replacement actually succeeds, so a
     // cancelled or failed repeat leaves the previous poster and exact download intact.
@@ -297,12 +338,12 @@ function VideoClip() {
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Clip and frame a video</h1><p>Choose a short video, set its in and out points and save a new MP4. Editing happens on this device without sign-in or generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2>
       <div className="video-tool-actions">
-        <label className="trim-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing} onChange={e => void choose(e.target.files?.[0])}/></label>
+        <label className="trim-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing || receiptLoading} onChange={e => void choose(e.target.files?.[0])}/></label>
         {publicVideo && (!file || publicLoaded) && (
           <button
             type="button"
             className="secondary"
-            disabled={busy || importing}
+            disabled={busy || importing || receiptLoading}
             aria-disabled={publicLoading || publicLoaded || checking}
             onClick={() => void loadPublicVideo()}
           >
@@ -313,19 +354,28 @@ function VideoClip() {
       {publicVideo && <p className="trim-note"><a href={publicVideo.page}>Published page</a> · The video is downloaded from this Media Studio only when you choose Load published video. It stays on this device.</p>}
       <p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
       {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p>
+      <p className="trim-note">Reopen a Clip receipt to load the saved edit settings for this video.</p>
+      <div className="video-tool-actions">
+        <label className="trim-file">Open clip receipt (JSON)<input type="file" accept="application/json,.json" disabled={busy || importing || checking || captionLoading || receiptLoading} onChange={event => {
+          const input = event.currentTarget;
+          void openReceipt(input.files?.[0]);
+          input.value = "";
+        }}/></label>
+      </div>
+      <p role="status" className="trim-note">{receiptMessage}</p>
       <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
       <video className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}/>
-      <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
-      <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
+      <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
+      <label>Frame<select value={shape} disabled={busy || importing || receiptLoading} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing || receiptLoading} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing || receiptLoading} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
       <details>
         <summary>Use your own captions</summary>
         <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. You can preview them after making the clip.</p>
-        <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing} onChange={event => {
+        <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading} onChange={event => {
           const input = event.currentTarget;
           void chooseCaptions(input.files?.[0]);
           input.value = "";
         }}/></label>
-        {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing} onClick={() => {
+        {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
           captionRequest.current++;
           setCaptionDraft(null);
           setCaptionLoading(false);
@@ -333,8 +383,8 @@ function VideoClip() {
         }}>Clear captions</button></p>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
-      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
-      {!busy ? <button type="button" disabled={importing || checking || captionLoading} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
+      <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
+      {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionTrack={captionTrack}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
         {completedClip && <>
