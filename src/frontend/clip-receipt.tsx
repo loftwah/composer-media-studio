@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { clippedCaptionFor } from "../lib/public-captions";
 import { sha256Hex } from "../lib/util.mjs";
 
-const MAX_CLIP_KIT_BYTES = 32 * 1024 * 1024;
+export const MAX_CLIP_KIT_BYTES = 32 * 1024 * 1024;
 
 export type CompletedClip = Readonly<{
   source: File;
