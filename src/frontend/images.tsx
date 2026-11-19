@@ -351,6 +351,14 @@ function safeStem(name: string): string {
   );
 }
 
+/** The download name of one finished render, also used when it becomes an input. */
+function renderedFileName(
+  name: string,
+  result: { width: number; height: number; mime: string },
+): string {
+  return `${safeStem(name)}-${result.width}x${result.height}.${extensionForImageMime(result.mime)}`;
+}
+
 function settingsKey(settings: Settings, cropRect: ImageBounds | null = null): string {
   return JSON.stringify({ settings, cropRect });
 }
@@ -1116,7 +1124,7 @@ function Images() {
           : "png"
       : null;
   const importFilename = selected?.result
-    ? `${safeStem(selected.file.name)}-${selected.result.width}x${selected.result.height}.${extensionForImageMime(selected.result.mime)}`
+    ? renderedFileName(selected.file.name, selected.result)
     : selected?.stripped
       ? `${safeStem(selected.file.name)}-metadata-stripped.${extensionForImageMime(selected.stripped.mime)}`
       : "";
@@ -1289,7 +1297,12 @@ function Images() {
 
   useEffect(() => () => publicImageRequest.current?.abort(), []);
 
-  async function addFiles(files: File[], fromPicker = false, publicImage?: PublicImageSource): Promise<void> {
+  async function addFiles(
+    files: File[],
+    fromPicker = false,
+    publicImage?: PublicImageSource,
+    onAdded?: (item: WorkItem) => void,
+  ): Promise<void> {
     if (!files.length || addingRef.current || runningRef.current || socialController.current) return;
     restorePickerFocus.current = fromPicker && document.activeElement === fileInputRef.current;
     addingRef.current = true;
@@ -1361,7 +1374,8 @@ function Images() {
           status: "ready",
         };
         setItems((previous) => [...previous, item]);
-        setSelectedId((previous) => previous || item.id);
+        if (onAdded) onAdded(item);
+        else setSelectedId((previous) => previous || item.id);
         added += 1;
         if (!didInitSettings.current) {
           didInitSettings.current = true;
@@ -2076,6 +2090,20 @@ function Images() {
     setPicked(null);
     setPickMessage("");
     setCopyMessage("");
+  }
+
+  function reuseResultAsInput(item: WorkItem, trigger: HTMLButtonElement): void {
+    const result = item.result;
+    if (!result || result.bytes > MAX_IMAGE_INPUT_BYTES ||
+      items.length >= MAX_BATCH_IMAGES || importing || batchExport) return;
+    const file = new File([result.blob], renderedFileName(item.file.name, result), {
+      type: result.mime,
+    });
+    // Treat the exported bytes as a new local file with no public source.
+    void addFiles([file], false, undefined, (added) => {
+      if (document.activeElement === trigger) focusAfterListChange.current = { kind: "row", id: added.id };
+      selectItem(added.id);
+    });
   }
 
   function changeRotation(next: Settings["rotate"]): void {
@@ -3237,10 +3265,28 @@ function Images() {
               <a
                 className="button"
                 href={selected.result.url}
-                download={`${safeStem(selected.file.name)}-${selected.result.width}x${selected.result.height}.${extensionForImageMime(selected.result.mime)}`}
+                download={renderedFileName(selected.file.name, selected.result)}
               >
                 Download {selected.result.mime.replace("image/", "").toUpperCase()}
               </a>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={running || importing || socialBusy || Boolean(batchExport) ||
+                  items.length >= MAX_BATCH_IMAGES || selected.result.bytes > MAX_IMAGE_INPUT_BYTES}
+                aria-disabled={adding}
+                aria-describedby="image-reuse-note"
+                onClick={(event) => reuseResultAsInput(selected, event.currentTarget)}
+              >
+                Use as new input
+              </button>
+              <p className="trim-note" id="image-reuse-note">
+                {selected.result.bytes > MAX_IMAGE_INPUT_BYTES
+                  ? `New inputs must be ${formatBytes(MAX_IMAGE_INPUT_BYTES)} or smaller.`
+                  : items.length >= MAX_BATCH_IMAGES
+                    ? "Remove an image before adding this result."
+                    : "Continue editing from this file. The source and its result stay in the batch."}
+              </p>
               {selected.result.mime === "image/png" && canCopyPng && (
                 <button
                   type="button"
