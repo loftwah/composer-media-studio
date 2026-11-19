@@ -26,6 +26,25 @@ test("an unknown project tab selects Library and remembers the bad segment", () 
   assert.ok(PROJECT_TABS.includes(parseStudioHash("#/p/proj_1/nonsense").tab));
 });
 
+test("a two-asset Library comparison link is a strict project route", () => {
+  const a = "asset_9c507145eaac4ebd9907001db1796085";
+  const b = "asset_53e0b83b53f541e1b3eb83c1154a90cb";
+  assert.deepEqual(parseStudioHash(`#/p/proj_1/library/compare/${a}/${b}`), {
+    view: "project", projectId: "proj_1", tab: "library", comparisonLink: true, compareIds: [a, b],
+  });
+  // A duplicate or malformed pair fails closed to the ordinary Library.
+  assert.deepEqual(parseStudioHash(`#/p/proj_1/library/compare/${a}/${a}`), {
+    view: "project", projectId: "proj_1", tab: "library", comparisonLink: true,
+  });
+  assert.deepEqual(parseStudioHash(`#/p/proj_1/library/compare/${a}/bad`), {
+    view: "project", projectId: "proj_1", tab: "library", comparisonLink: true,
+  });
+  // Extra segments are never reduced to a pair.
+  assert.deepEqual(parseStudioHash(`#/p/proj_1/library/compare/${a}/${b}/extra`), {
+    view: "project", projectId: "proj_1", tab: "library", comparisonLink: true,
+  });
+});
+
 test("structurally malformed hashes stay invalid instead of guessing a screen", () => {
   assert.deepEqual(parseStudioHash("#/a/only-one-segment"), { view: "invalid", hash: "a/only-one-segment" });
   assert.deepEqual(parseStudioHash("#/p/proj_1/library/extra"), { view: "invalid", hash: "p/proj_1/library/extra" });
