@@ -103,6 +103,13 @@ import {
 } from "./image-export-override.ts";
 import { buildImageReceipt, type ImageReceipt } from "./image-receipt.ts";
 import { socialSourceManifestEntry, sourceFilmPath } from "./image-social-source.ts";
+import {
+  composerArtworkManifestEntry,
+  composerArtworkSourceUrl,
+  fetchComposerArtwork,
+  parseComposerArtworkHash,
+  type ComposerArtworkRef,
+} from "./composer-artwork.ts";
 import { ImageCover } from "./image-cover.tsx";
 import {
   SOCIAL_KIT_FORMATS,
@@ -226,6 +233,7 @@ type WorkItem = {
   source: ImageMetadataSummary;
   sourceHash: string;
   publicPoster?: string;
+  composerArtwork?: ComposerArtworkRef;
   status: ItemStatus;
   result?: RenderedImage;
   stripped?: StrippedImage;
@@ -829,7 +837,7 @@ function drawSample(canvas: HTMLCanvasElement): void {
   context.fillText("Media Studio · signed-out local workbench", width * 0.07, height - Math.round(height * 0.052));
 }
 
-const PUBLIC_POSTER_TIMEOUT_MS = 15_000;
+const PUBLIC_IMAGE_TIMEOUT_MS = 15_000;
 const POSTER_EXTENSIONS = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -879,8 +887,11 @@ async function fetchPublicPoster(path: string, signal: AbortSignal): Promise<Fil
 
 function Images() {
   const [publicPoster] = useState(publicPosterFromHash);
-  const [posterLoading, setPosterLoading] = useState(false);
-  const posterRequest = useRef<AbortController | null>(null);
+  const [composerArtwork] = useState(() => parseComposerArtworkHash(window.location.hash));
+  const publicImage = composerArtwork ?? publicPoster;
+  const publicImageLabel = composerArtwork ? "Composer artwork" : "public poster";
+  const [publicImageLoading, setPublicImageLoading] = useState(false);
+  const publicImageRequest = useRef<AbortController | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -966,7 +977,9 @@ function Images() {
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const socialReady = socialSourceEligible(selected?.source.mime, Boolean(selected?.publicPoster), selected?.source.webpAnimated);
   const animatedWebp = selected?.source.mime === "image/webp" && Boolean(selected?.source.webpAnimated);
-  const posterLoaded = Boolean(publicPoster && items.some((item) => item.publicPoster === publicPoster));
+  const publicImageLoaded = Boolean(publicImage && items.some((item) =>
+    typeof publicImage === "string" ? item.publicPoster === publicImage : item.composerArtwork === publicImage,
+  ));
   const activeTrim =
     selected &&
     trim &&
@@ -1244,9 +1257,9 @@ function Images() {
     }
   }, [paletteCopyFallback]);
 
-  useEffect(() => () => posterRequest.current?.abort(), []);
+  useEffect(() => () => publicImageRequest.current?.abort(), []);
 
-  async function addFiles(files: File[], fromPicker = false, posterPath?: string): Promise<void> {
+  async function addFiles(files: File[], fromPicker = false, publicSource?: string | ComposerArtworkRef): Promise<void> {
     if (!files.length || addingRef.current || runningRef.current || socialController.current) return;
     restorePickerFocus.current = fromPicker && document.activeElement === fileInputRef.current;
     addingRef.current = true;
@@ -1314,7 +1327,8 @@ function Images() {
           url,
           source,
           sourceHash,
-          publicPoster: posterPath,
+          publicPoster: typeof publicSource === "string" ? publicSource : undefined,
+          composerArtwork: typeof publicSource === "object" ? publicSource : undefined,
           status: "ready",
         };
         setItems((previous) => [...previous, item]);
@@ -1353,36 +1367,40 @@ function Images() {
   }
   addFilesRef.current = addFiles;
 
-  async function loadPublicPoster(): Promise<void> {
-    if (!publicPoster || posterLoaded || posterRequest.current || addingRef.current ||
+  async function loadPublicImage(): Promise<void> {
+    if (!publicImage || publicImageLoaded || publicImageRequest.current || addingRef.current ||
       runningRef.current || socialController.current || items.length >= MAX_BATCH_IMAGES) return;
     const controller = new AbortController();
     const token = revision.current;
-    posterRequest.current = controller;
-    setPosterLoading(true);
-    const timeout = AbortSignal.timeout(PUBLIC_POSTER_TIMEOUT_MS);
+    publicImageRequest.current = controller;
+    setPublicImageLoading(true);
+    const timeout = AbortSignal.timeout(PUBLIC_IMAGE_TIMEOUT_MS);
+    const signal = AbortSignal.any([controller.signal, timeout]);
     try {
-      const file = await fetchPublicPoster(publicPoster, AbortSignal.any([controller.signal, timeout]));
+      const file = typeof publicImage === "string"
+        ? await fetchPublicPoster(publicImage, signal)
+        : await fetchComposerArtwork(publicImage, signal);
       if (controller.signal.aborted) return;
       if (token !== revision.current || runningRef.current || socialController.current) {
-        setMessage("The workbench changed while loading the poster. Choose Load public poster to try again.");
+        setMessage(`The workbench changed while loading the image. Choose Load ${publicImageLabel} to try again.`);
         return;
       }
-      await addFiles([file], false, publicPoster);
+      await addFiles([file], false, publicImage);
     } catch (error) {
       if (!controller.signal.aborted) {
         if (timeout.aborted) {
-          setMessage("The public poster download timed out. Choose Load public poster to try again.");
+          setMessage(`The download timed out. Choose Load ${publicImageLabel} to try again.`);
         } else {
-          setMessage(error instanceof TypeError
-            ? "Could not download this public poster. Try again or use Download poster on the film page."
-            : error instanceof Error ? error.message : "Could not download this public poster.");
+          const fallback = composerArtwork
+            ? "Could not load the artwork. Try again or download it from Composer."
+            : "Could not download this public poster. Try again or use Download poster on the film page.";
+          setMessage(error instanceof Error && !(error instanceof TypeError) ? error.message : fallback);
         }
       }
     } finally {
-      if (posterRequest.current === controller && !controller.signal.aborted) {
-        posterRequest.current = null;
-        setPosterLoading(false);
+      if (publicImageRequest.current === controller && !controller.signal.aborted) {
+        publicImageRequest.current = null;
+        setPublicImageLoading(false);
       }
     }
   }
@@ -1450,9 +1468,9 @@ function Images() {
 
   function resetAll(): void {
     if (importing) return;
-    posterRequest.current?.abort();
-    posterRequest.current = null;
-    setPosterLoading(false);
+    publicImageRequest.current?.abort();
+    publicImageRequest.current = null;
+    setPublicImageLoading(false);
     focusAfterListChange.current = { kind: "picker" };
     revision.current += 1;
     stripRevision.current += 1;
@@ -1952,16 +1970,17 @@ function Images() {
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
         entries.push({ name: `${stem}-${output.key}-receipt.json`, data: receiptBytes });
       }
-      // Only an explicitly loaded, already public poster adds a source document.
-      // Ordinary local input keeps the exact same eight ZIP members as before.
-      if (item.publicPoster) {
+      const hasPublicSource = item.publicPoster || item.composerArtwork;
+      if (hasPublicSource) {
         if (!alive()) throw abortError();
-        const manifest = socialSourceManifestEntry({
-          poster: item.publicPoster,
-          sourceHash: item.sourceHash,
-          studioOrigin: window.location.origin,
-        });
-        if (!manifest) throw new Error("The public poster source could not be recorded in this ZIP.");
+        const manifest = item.composerArtwork
+          ? composerArtworkManifestEntry(item.composerArtwork, item.sourceHash)
+          : socialSourceManifestEntry({
+            poster: item.publicPoster ?? "",
+            sourceHash: item.sourceHash,
+            studioOrigin: window.location.origin,
+          });
+        if (!manifest) throw new Error("The public image source could not be recorded in this ZIP.");
         total += manifest.data.length;
         if (total > MAX_ZIP_BYTES)
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
@@ -1973,7 +1992,7 @@ function Images() {
       const zipBlob = blobFromBytes(zip.bytes, ZIP_MIME);
       setSocialZip({ url: trackUrl(zipBlob), bytes: zipBlob.size });
       setMessage(
-        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts${item.publicPoster ? " and a public source manifest" : ""}, ${formatBytes(zipBlob.size)} total.`,
+        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts${hasPublicSource ? " and a public source manifest" : ""}, ${formatBytes(zipBlob.size)} total.`,
       );
     } catch (error) {
       if (!isCurrent()) {
@@ -2547,16 +2566,24 @@ function Images() {
             {" · "}The poster is downloaded from Media Studio when you choose Load public poster.
           </p>
         )}
+        {composerArtwork && (
+          <p className="trim-note">
+            <a href={composerArtworkSourceUrl(composerArtwork)}>Source artwork in Composer</a>
+            {" · "}The image is downloaded when you choose Load Composer artwork.
+          </p>
+        )}
         <div className="image-source-actions">
-          {publicPoster && (
+          {publicImage && (
             <button
               type="button"
               className="secondary"
-              onClick={() => void loadPublicPoster()}
+              onClick={() => void loadPublicImage()}
               disabled={running || socialBusy || items.length >= MAX_BATCH_IMAGES}
-              aria-disabled={posterLoading || posterLoaded || adding}
+              aria-disabled={publicImageLoading || publicImageLoaded || adding}
             >
-              {posterLoaded ? "Public poster added" : "Load public poster"}
+              {publicImageLoaded
+                ? composerArtwork ? "Composer artwork added" : "Public poster added"
+                : `Load ${publicImageLabel}`}
             </button>
           )}
           <button
@@ -2592,7 +2619,7 @@ function Images() {
           sample are read from the actual bytes and pixels, not from the filename.
         </p>
         <p role="status" aria-live="polite" className="image-status">
-          {adding ? "Checking files on this device…" : posterLoading ? "Downloading the public poster…" : message}
+          {adding ? "Checking files on this device…" : publicImageLoading ? `Downloading the ${publicImageLabel}…` : message}
         </p>
         {rejections.length > 0 && (
           <details className="image-rejections" open>
@@ -2748,6 +2775,7 @@ function Images() {
               {socialFormat === "webp" ? ` with ${Math.round(WEB_READY_QUALITY * 100)}% quality` : " at lossless quality"}.
               Smaller crops can be enlarged to fit. The ZIP includes one receipt for each size.
               {selected?.publicPoster && " The ZIP also includes a link to the source film and poster."}
+              {selected?.composerArtwork && " The ZIP also records the source artwork and revision."}
             </p>
             {!socialReady &&
               (animatedWebp ? (
