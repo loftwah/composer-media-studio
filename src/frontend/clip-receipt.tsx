@@ -33,7 +33,11 @@ function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-export function ClipReceiptDownload({ clip, filename }: { clip: CompletedClip; filename: string }) {
+export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
+  clip: CompletedClip;
+  filename: string;
+  onCaptionReady: (url: string) => void;
+}) {
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [message, setMessage] = useState("");
   const [preparing, setPreparing] = useState(false);
@@ -86,6 +90,7 @@ export function ClipReceiptDownload({ clip, filename }: { clip: CompletedClip; f
         vttUrl,
         kitInputBytes: output.blob.size + utf8Bytes(receiptText) + (vtt ? utf8Bytes(vtt) : 0),
       });
+      if (vttUrl) onCaptionReady(vttUrl);
       setMessage("Receipt ready to save.");
     } catch {
       if (mounted.current) setMessage("Could not prepare the receipt. You can try again or save the MP4.");
