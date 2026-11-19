@@ -37,6 +37,31 @@ test("only the published film's own eligible poster gets a social handoff", () =
   assert.doesNotMatch(publicPage({ ...film, poster: "/p/Another/thumb" }), /Make social sizes/);
   assert.doesNotMatch(publicPage({ ...film, kind: "image", poster: "/p/Film_1/thumb" }), /Make social sizes/);
   assert.doesNotMatch(publicPage({ ...film, poster: null }), /Make social sizes/);
+  assert.doesNotMatch(publicPage({ ...film, poster: "/p/Film_1/poster", posterMime: "image/webp" }), /Edit in Image Tools/);
+});
+
+test("only a published PNG, JPEG or WebP still gets the explicit editor handoff", () => {
+  const still = {
+    origin: "https://media.example",
+    slug: "Still_1",
+    title: "Published still",
+    kind: "image",
+    mime: "image/jpeg",
+    media: "/p/Still_1/media",
+    download: "/p/Still_1/download",
+  };
+  const handoff = 'href="/tools/images#public-still=Still_1">Edit in Image Tools</a>';
+  for (const mime of ["image/jpeg", "image/png", "image/webp"]) {
+    const html = publicPage({ ...still, mime });
+    assert.ok(html.includes(handoff), mime);
+  }
+  assert.doesNotMatch(publicPage({ ...still, kind: "video", mime: "video/mp4" }), /Edit in Image Tools/);
+  assert.doesNotMatch(publicPage({ ...still, kind: "audio", mime: "audio/mpeg" }), /Edit in Image Tools/);
+  for (const mime of ["image/avif", "image/gif", "image/svg+xml"]) {
+    assert.doesNotMatch(publicPage({ ...still, mime }), /Edit in Image Tools/, mime);
+  }
+  assert.doesNotMatch(publicPage({ ...still, media: "/p/Another/media" }), /Edit in Image Tools/);
+  assert.doesNotMatch(publicPage({ ...still, media: "/p/Still_1/download" }), /Edit in Image Tools/);
 });
 
 test("the workbench exposes labelled colour and output controls", () => {
