@@ -6,8 +6,10 @@ import { localMixRange } from "./local-mix-range";
 import { musicPlacement } from "./music-fades";
 import { MAX_MIX_SETTINGS_BYTES, mixSettingsJson, parseMixSettings, type MixSettings } from "./mix-settings.ts";
 import {
-  LOCAL_MIX_HANDOFF_MS, VIDEO_MP4,
-  isLocalMixReady, localMixBlobFits, localMixDeliver, localMixToolUrl, newLocalMixToken,
+  VIDEO_MP4,
+  localMixBlobFits, localMixTokenFromHash, localMixToolUrl, newLocalMixToken,
+  openLocalMixHandoff, receiveLocalMix,
+  type LocalMixHandoff, type LocalMixHandoffStatus,
 } from "./local-mix-handoff";
 import { sha256Hex } from "../lib/util.mjs";
 import { useEffect, useRef, useState } from "react";
@@ -21,12 +23,6 @@ const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 const MAX_SECONDS = 60;
 const FPS = 30;
 function check(signal: AbortSignal) { if (signal.aborted) throw new DOMException("Cancelled", "AbortError"); }
-
-type Handoff = {
-  timer: number;
-  done: boolean;
-  listener: (event: MessageEvent) => void;
-};
 
 // Snapshot of the exact settings and sources behind a successful MP4, so the
 // receipt describes the finished file even after the controls are edited.
@@ -169,6 +165,8 @@ function AddMusic() {
   const [checkingVideo, setCheckingVideo] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [handoffBusy, setHandoffBusy] = useState(false);
+  // A reverse handoff only offers a source; it never fetches or persists media.
+  const [localMixToken] = useState(() => localMixTokenFromHash(window.location.hash));
   const [preview, setPreview] = useState("");
   const [videoSeconds, setVideoSeconds] = useState(0), [musicSeconds, setMusicSeconds] = useState(0);
   const [settingsMessage, setSettingsMessage] = useState(""), [prepareMessage, setPrepareMessage] = useState("");
@@ -203,30 +201,41 @@ function AddMusic() {
   const controller = useRef<AbortController | null>(null);
   const musicAbort = useRef<AbortController | null>(null);
   const videoAbort = useRef<AbortController | null>(null);
+  const videoChoice = useRef(0);
   const receiptRequest = useRef(0), outputRevision = useRef(0);
   const resultBlobRef = useRef<Blob | null>(null);
-  const handoff = useRef<Handoff | null>(null);
+  const handoff = useRef<LocalMixHandoff | null>(null);
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (musicUrl) URL.revokeObjectURL(musicUrl); }, [musicUrl]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   useEffect(() => () => { if (preparedSettings) URL.revokeObjectURL(preparedSettings); }, [preparedSettings]);
-  useEffect(() => {
-    return () => {
-      musicAbort.current?.abort(); videoAbort.current?.abort(); controller.current?.abort();
-      receiptRequest.current++; outputRevision.current++;
-      const active = handoff.current;
-      if (active && !active.done) {
-        active.done = true;
-        window.removeEventListener("message", active.listener);
-        clearTimeout(active.timer);
-        handoff.current = null;
-      }
-    };
+  useEffect(() => () => {
+    musicAbort.current?.abort(); videoAbort.current?.abort(); controller.current?.abort();
+    receiptRequest.current++; outputRevision.current++;
+    handoff.current?.close();
   }, []);
+  // Reverse handoff from Video Clip: restore the delivered File into the exact
+  // same video chooser validation a manual pick uses, before music is chosen.
+  useEffect(() => {
+    if (!localMixToken) return;
+    const chosen = videoChoice.current;
+    return receiveLocalMix({
+      token: localMixToken,
+      origin: window.location.origin,
+      opener: window.opener,
+      onDeliver: (file) => { if (chosen === videoChoice.current) void choose(file, "video"); },
+      onStatus: (status) => { if (chosen === videoChoice.current) setMessage(
+        status === "no-opener" ? "Choose your video on this device, then add music."
+          : status === "failed" ? "The clip handoff could not start. Choose the MP4 file on this device."
+            : "Add Music did not receive the clip. Choose the MP4 file on this device."
+      ); },
+    });
+  }, [localMixToken]);
   async function choose(file: File | undefined, kind: "video" | "audio") {
     if (!file || controller.current || importing || settingsLoading || preparingSettings) return;
     const isVideo = kind === "video";
+    if (isVideo) videoChoice.current++;
     const pending = isVideo ? videoAbort : musicAbort;
     const chooser = isVideo ? videoChooser : musicChooser;
     const setChecking = isVideo ? setCheckingVideo : setCheckingMusic;
@@ -293,15 +302,6 @@ function AddMusic() {
       (busy === "preview" ? previewAction : exportAction).current?.focus();
     }
   }
-  function finishHandoff(record: Handoff) {
-    if (record.done) return;
-    record.done = true;
-    window.removeEventListener("message", record.listener);
-    clearTimeout(record.timer);
-    if (handoff.current === record) handoff.current = null;
-    setHandoffBusy(false);
-  }
-
   // Explicit, local-only action: hand the exact last successful MP4 to a
   // same-origin Video Clip tab through one bounded postMessage. Every failure
   // keeps the Save MP4 link and its normal file chooser fully available.
@@ -309,39 +309,31 @@ function AddMusic() {
     if (!resultBlob || handoffBusy || busy !== null || importing || settingsLoading || preparingSettings) return;
     const blob = resultBlob;
     const filename = `${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`;
-    const fallback = (text: string) => setMessage(`${text} Save MP4 below, then choose that file in Video Clip.`);
+    const fallbackText = "Save MP4 below, then choose that file in Video Clip.";
+    const fallback = (text: string) => setMessage(`${text} ${fallbackText}`);
     if (!localMixBlobFits(blob)) { fallback("The finished MP4 is not available for a direct handoff."); return; }
     setHandoffBusy(true);
     const token = newLocalMixToken();
-    const url = localMixToolUrl(token);
+    const url = localMixToolUrl("videoClip", token);
     if (!url) { setHandoffBusy(false); fallback("Could not start the handoff."); return; }
+    // Deliberate click: open the target synchronously, before waiting for ready.
     const popup = window.open(url, "_blank");
-    if (!popup || popup.closed) { setHandoffBusy(false); fallback("The Video Clip popup was blocked."); return; }
-
-    const record: Handoff = { timer: 0, done: false, listener: () => {} };
-    record.listener = (event: MessageEvent) => {
-      if (record.done || event.origin !== window.location.origin || event.source !== popup) return;
-      if (!isLocalMixReady(event.data, token)) return;
-      // The first valid ready from this exact popup is the only one accepted.
-      finishHandoff(record);
-      if (resultBlobRef.current !== blob) { setMessage("The finished MP4 changed before the handoff completed. Try again."); return; }
-      try {
-        popup.postMessage(
-          localMixDeliver(new File([blob], filename, { type: VIDEO_MP4 }), token),
-          window.location.origin,
-        );
-        setMessage("Sent the finished MP4 to Video Clip.");
-      } catch {
-        setMessage("Could not send the MP4 to Video Clip. Save MP4 below, then choose that file in Video Clip.");
-      }
-    };
+    const statusMessage = (status: LocalMixHandoffStatus) => status === "sent"
+      ? "Sent the finished MP4 to Video Clip."
+      : status === "stale"
+        ? "The finished MP4 changed before the handoff completed. Try again."
+        : status === "failed"
+          ? `Could not send the MP4 to Video Clip. ${fallbackText}`
+          : `Video Clip did not respond. ${fallbackText}`;
+    const record = openLocalMixHandoff({
+      popup, token, origin: window.location.origin,
+      file: new File([blob], filename, { type: VIDEO_MP4 }),
+      isCurrent: () => resultBlobRef.current === blob,
+      onStatus: (status) => setMessage(statusMessage(status)),
+      onDone: () => { handoff.current = null; setHandoffBusy(false); },
+    });
+    if (!record) { setHandoffBusy(false); fallback("The Video Clip popup was blocked."); return; }
     handoff.current = record;
-    window.addEventListener("message", record.listener);
-    record.timer = window.setTimeout(() => {
-      if (record.done) return;
-      finishHandoff(record);
-      setMessage("Video Clip did not respond. Save MP4 below, then choose that file in Video Clip.");
-    }, LOCAL_MIX_HANDOFF_MS);
     setMessage("Waiting for Video Clip to open…");
   }
 

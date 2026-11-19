@@ -1,5 +1,6 @@
-// MIT. Focused boundary checks for the local Add Music -> Video Clip handoff.
-// The caller pins the browser window and origin. This covers the message and file bounds.
+// MIT. Focused boundary checks for the local handoff in both directions:
+// Add Music -> Video Clip and Video Clip -> Add Music. The caller pins the
+// browser window and origin; these cover the target, message and file bounds.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -12,14 +13,22 @@ import {
 const token = newLocalMixToken();
 const mp4 = () => new File([new Uint8Array([0, 1, 2, 3])], "mix-with-music.mp4", { type: VIDEO_MP4 });
 
-test("a one-time token produces exactly one strict same-origin URL and fragment", () => {
+test("a one-time token produces only one of two strict same-origin URLs", () => {
   assert.match(token, /^[A-Za-z0-9_-]{16,128}$/);
-  const url = localMixToolUrl(token);
-  assert.equal(url, `/tools/video-clip#local-mix=${token}`);
-  assert.equal(localMixTokenFromHash(new URL(url, "https://media.example").hash), token);
+  const toClip = localMixToolUrl("videoClip", token);
+  const toMusic = localMixToolUrl("addMusic", token);
+  assert.equal(toClip, `/tools/video-clip#local-mix=${token}`);
+  assert.equal(toMusic, `/tools/add-music#local-mix=${token}`);
+  for (const url of [toClip, toMusic])
+    assert.equal(localMixTokenFromHash(new URL(url, "https://media.example").hash), token);
   assert.notEqual(newLocalMixToken(), token);
-  for (const bad of ["", "short", "a".repeat(129), "has space", `${token}/p/1`, `${token}&x=1`])
-    assert.equal(localMixToolUrl(bad), null, bad);
+  for (const bad of ["", "short", "a".repeat(129), "has space", `${token}/p/1`, `${token}&x=1`]) {
+    assert.equal(localMixToolUrl("videoClip", bad), null, bad);
+    assert.equal(localMixToolUrl("addMusic", bad), null, bad);
+  }
+  // No arbitrary or caller-supplied target path can be opened.
+  for (const tool of ["nope", "/tools/evil", "../add-music", "", undefined, null])
+    assert.equal(localMixToolUrl(tool, token), null, String(tool));
 });
 
 test("only the whole single-token fragment is a handoff", () => {
