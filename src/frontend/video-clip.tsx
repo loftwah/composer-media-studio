@@ -1,3 +1,5 @@
+import { parseCaptionFile, type ImportedCue } from "./caption-import";
+import { MAX_CAPTION_BYTES, serializeClipCaptions, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { ClipPoster } from "./clip-poster";
 import { probeMediaTrack } from "./media-probe";
@@ -24,6 +26,7 @@ const sizes = {
 type Quality = keyof typeof sizes;
 type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
+type CaptionDraft = Readonly<{ name: string; cues: ImportedCue[] }>;
 
 // A playable container header does not prove that the file has any video
 // frames. The same decoder used for export can distinguish a missing frame
@@ -95,10 +98,14 @@ function VideoClip() {
   const [source, setSource] = useState("");
   const [result, setResult] = useState("");
   const [completedClip, setCompletedClip] = useState<CompletedClip | null>(null);
-  const [captionUrl, setCaptionUrl] = useState("");
+  const [captionTrack, setCaptionTrack] = useState<ClipCaptionTrack | null>(null);
+  const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
+  const [captionMessage, setCaptionMessage] = useState("");
+  const [captionLoading, setCaptionLoading] = useState(false);
+  const captionRequest = useRef(0);
   // Settings recorded only when an export succeeds: proof of what the finished
   // file actually contains, not what the controls currently show.
-  const [applied, setApplied] = useState<string | null>(null);
+  const [applied, setApplied] = useState<{ settings: string; captions: CaptionDraft | null } | null>(null);
   const [duration, setDuration] = useState(0);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
@@ -122,13 +129,13 @@ function VideoClip() {
   const cancelRequested = useRef(false);
   useEffect(() => () => { if (source) URL.revokeObjectURL(source); }, [source]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
-  useEffect(() => () => { current.current++; void active.current?.cancel(); }, []);
+  useEffect(() => () => { current.current++; captionRequest.current++; void active.current?.cancel(); }, []);
   useEffect(() => () => publicRequest.current?.abort(), []);
   // A finished MP4 outlives draft edits: only a successful replacement, or a
   // valid new source, clears it. The draft key is compared with the recorded
   // one on every render, so returning to the same settings drops the note.
   const draft = [start, end, shape, quality, fit, mute].join("|");
-  const previous = applied !== null && applied !== draft;
+  const previous = applied !== null && (applied.settings !== draft || applied.captions !== captionDraft);
   // A replacement only replaces the current video after it proves readable.
   // Returning focus to the chooser keeps the refusal next to the control that
   // caused it without stealing focus from somewhere the user has moved to.
@@ -167,7 +174,9 @@ function VideoClip() {
       if (revision !== current.current) { URL.revokeObjectURL(url); return; }
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setPublicLoaded(fromPublication);
-      setResult(""); setCompletedClip(null); setCaptionUrl(""); setApplied(null); setChecking(false);
+      captionRequest.current++;
+      setCaptionDraft(null); setCaptionMessage(""); setCaptionLoading(false);
+      setResult(""); setCompletedClip(null); setCaptionTrack(null); setApplied(null); setChecking(false);
       setMessage("Choose your clip and frame, then make an MP4.");
     } catch (error) {
       URL.revokeObjectURL(url);
@@ -201,8 +210,28 @@ function VideoClip() {
       }
     }
   }
+  async function chooseCaptions(selected: File | undefined) {
+    if (!selected || !file || busy || checking) return;
+    const request = ++captionRequest.current;
+    setCaptionLoading(true);
+    setCaptionMessage("Reading captions on this device…");
+    try {
+      if (!selected.size || selected.size > MAX_CAPTION_BYTES)
+        throw new Error("Choose an SRT or WebVTT file up to 64 KB.");
+      const cues = parseCaptionFile(await selected.text(), 0, MAX_SOURCE_SECONDS * 1000);
+      if (request !== captionRequest.current) return;
+      setCaptionDraft({ name: selected.name, cues });
+      setCaptionMessage(`Loaded ${cues.length} ${cues.length === 1 ? "cue" : "cues"}.`);
+    } catch (error) {
+      if (request === captionRequest.current)
+        setCaptionMessage(error instanceof Error ? error.message : "Could not read captions on this device.");
+    } finally {
+      if (request === captionRequest.current) setCaptionLoading(false);
+    }
+  }
+
   async function makeClip() {
-    if (!file || busy || checking) return;
+    if (!file || busy || checking || captionLoading) return;
     if (![start,end].every(Number.isFinite) || start < 0 || end > duration || end <= start || end - start > MAX_CLIP_SECONDS) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
     // A finished clip stays committed until a replacement actually succeeds, so a
     // cancelled or failed repeat leaves the previous poster and exact download intact.
@@ -233,10 +262,14 @@ function VideoClip() {
         watchUrl: publicLoaded && publicVideo ? new URL(publicVideo.page, window.location.origin).href : null,
         edit: { startSeconds: start, endSeconds: end, frame: shape, quality, fit, muteRequested: mute },
         output: { blob, width, height },
+        captions: captionDraft ? {
+          name: captionDraft.name,
+          vtt: serializeClipCaptions(captionDraft.cues, start, end),
+        } : undefined,
       });
-      setCaptionUrl("");
+      setCaptionTrack(null);
       setResult(URL.createObjectURL(blob));
-      setApplied(draft);
+      setApplied({ settings: draft, captions: captionDraft });
       setMessage("Your MP4 is ready to play and save.");
     } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
     finally { active.current = null; input.dispose(); setBusy(false); }
@@ -277,12 +310,28 @@ function VideoClip() {
       <video className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}/>
       <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
       <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
+      <details>
+        <summary>Use your own captions</summary>
+        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video.</p>
+        <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing} onChange={event => {
+          const input = event.currentTarget;
+          void chooseCaptions(input.files?.[0]);
+          input.value = "";
+        }}/></label>
+        {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing} onClick={() => {
+          captionRequest.current++;
+          setCaptionDraft(null);
+          setCaptionLoading(false);
+          setCaptionMessage("Captions cleared.");
+        }}>Clear captions</button></p>}
+        <p role="status" aria-live="polite">{captionMessage}</p>
+      </details>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
-      {!busy ? <button type="button" disabled={importing || checking} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionUrl={captionUrl}/>
+      {!busy ? <button type="button" disabled={importing || checking || captionLoading} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionTrack={captionTrack}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
         {completedClip && <>
-          <ClipReceiptDownload key={`receipt:${result}`} clip={completedClip} filename={clipFilename} onCaptionReady={setCaptionUrl}/>
+          <ClipReceiptDownload key={`receipt:${result}`} clip={completedClip} filename={clipFilename} onCaptionReady={setCaptionTrack}/>
           <div inert={checking || busy || undefined}>
             <LocalImport key={`import:${result}`} blob={completedClip.output.blob} filename={`${clipFilename}.mp4`} operation="clip and frame" onBusyChange={setImporting}/>
           </div>

@@ -1,3 +1,4 @@
+import type { ClipCaptionTrack } from "./clip-captions";
 import { useEffect, useRef, useState } from "react";
 import { clippedCaptionFor } from "../lib/public-captions";
 import { sha256Hex } from "../lib/util.mjs";
@@ -16,6 +17,7 @@ export type CompletedClip = Readonly<{
     muteRequested: boolean;
   }>;
   output: Readonly<{ blob: Blob; width: number; height: number }>;
+  captions?: Readonly<{ name: string; vtt: string | null }>;
 }>;
 
 // One snapshot keeps the offered bytes and their URLs in step: the ZIP reuses
@@ -36,7 +38,7 @@ function utf8Bytes(text: string): number {
 export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
   clip: CompletedClip;
   filename: string;
-  onCaptionReady: (url: string) => void;
+  onCaptionReady: (track: ClipCaptionTrack) => void;
 }) {
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [message, setMessage] = useState("");
@@ -44,6 +46,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
   const [kitPreparing, setKitPreparing] = useState(false);
   const [kitUrl, setKitUrl] = useState("");
   const mounted = useRef(false);
+  const captionFile = `${filename}-${clip.captions ? "captions" : "en"}.vtt`;
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -69,13 +72,14 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
         version: 1,
         source: { name: source.name, bytes: source.size, watchUrl, sha256: sourceSha },
         edit,
+        ...(clip.captions ? { captions: { sourceName: clip.captions.name, included: Boolean(clip.captions.vtt) } } : {}),
         output: { width: output.width, height: output.height, mime: output.blob.type, bytes: output.blob.size, sha256: outputSha },
       };
       const receiptText = JSON.stringify(receipt, null, 2) + "\n";
       // The sidecar is a sibling of the receipt, never a burn-in. It is only
       // offered once this deliberate calculation has proved the original is
       // the exact registered public film and the edit ties to the finished MP4.
-      const vtt = edit.muteRequested ? null : clippedCaptionFor({
+      const vtt = clip.captions ? clip.captions.vtt : edit.muteRequested ? null : clippedCaptionFor({
         sha256: sourceSha,
         watchUrl,
         startSeconds: edit.startSeconds,
@@ -90,8 +94,8 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
         vttUrl,
         kitInputBytes: output.blob.size + utf8Bytes(receiptText) + (vtt ? utf8Bytes(vtt) : 0),
       });
-      if (vttUrl) onCaptionReady(vttUrl);
-      setMessage("Receipt ready to save.");
+      if (vttUrl) onCaptionReady({ url: vttUrl, english: !clip.captions });
+      setMessage(clip.captions && !vtt ? "Receipt ready. No imported cues fall inside this clip." : "Receipt ready to save.");
     } catch {
       if (mounted.current) setMessage("Could not prepare the receipt. You can try again or save the MP4.");
     } finally {
@@ -113,7 +117,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
       const entries = [
         { name: `${filename}.mp4`, data: mp4 },
         { name: `${filename}-receipt.json`, data: snapshot.receiptText },
-        ...(snapshot.vttText ? [{ name: `${filename}-en.vtt`, data: snapshot.vttText }] : []),
+        ...(snapshot.vttText ? [{ name: captionFile, data: snapshot.vttText }] : []),
       ];
       const zip = createZip(entries, { maxTotalBytes: MAX_CLIP_KIT_BYTES });
       if (!zip.ok) throw new Error("Could not package the clip. Its individual files are ready to save.");
@@ -136,7 +140,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
     <p role="status" aria-live="polite">{message}</p>
     {prepared && <>
       <a className="button secondary" href={prepared.receiptUrl} download={`${filename}-receipt.json`}>Save receipt JSON</a>
-      {prepared.vttUrl && <p><a className="button secondary" href={prepared.vttUrl} download={`${filename}-en.vtt`}>Save English captions (VTT)</a></p>}
+      {prepared.vttUrl && <p><a className="button secondary" href={prepared.vttUrl} download={captionFile}>Save {clip.captions ? "imported" : "English"} captions (VTT)</a></p>}
       {kitAvailable ? <>
         <button
           type="button"
