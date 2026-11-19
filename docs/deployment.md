@@ -163,4 +163,6 @@ video, a funded fal key). Composer never receives those values.
   publications; media downloads are separate. It is not an R2 backup or a
   restore. The portable project bundle and owner CLI add live media bytes and a
   fresh-installation restore; see [portable project bundles](portable-project.md).
-  Production restore is not verified until an owner runs it against real D1/R2.
+  The hosted restore used fresh D1 and R2 resources in the same Cloudflare account.
+  The target API and Wrangler read back matching bytes. A separate owner's account
+  and the hosted browser restore remain open. [Hosted restore receipt](https://github.com/loftwah/composer-media-studio/issues/157#issuecomment-6908133526), [independent owner acceptance](https://github.com/loftwah/composer-media-studio/issues/2).
