@@ -7,6 +7,7 @@ import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.j
 import { prepareVoiceDraft, restoreCreateDraft, switchCreateProject, createEventBelongsToProject, hasCreateDraftChanges, shouldWarnCreateDrafts } from "./voice-handoff.js";
 import { derivativeSize } from "./derivative-size.js";
 import { PROJECT_TABS, nextProjectTab, parseStudioHash } from "./studio-route.js";
+import { consumeStudioSignInRoute, normalizeStudioSignInRoute, rememberStudioSignInRoute } from "./studio-login-return.js";
 import { resolveComparison } from "./studio-comparison.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
@@ -125,6 +126,10 @@ function notify(message, tone = "ok") {
   }, 5200);
 }
 
+function openStudioSignIn() {
+  location.href = "/login" + normalizeStudioSignInRoute(location.hash);
+}
+
 async function api(path, options = {}) {
   const { preserveOnUnauthorized = false, ...requestOptions } = options;
   const response = await fetch(path, {
@@ -136,7 +141,7 @@ async function api(path, options = {}) {
     },
   });
   if (response.status === 401 && !preserveOnUnauthorized && !path.startsWith("/api/login")) {
-    location.href = "/login";
+    openStudioSignIn();
     throw new Error("Signed out");
   }
   const payload = await response.json().catch(() => ({}));
@@ -457,11 +462,12 @@ function rememberOpenedProject(route) {
 async function boot() {
   const session = await api("/api/session");
   if (!session.signedIn) {
-    location.href = "/login";
+    openStudioSignIn();
     return;
   }
   state.session = session;
   if (!session.actions?.includes("read")) {
+    rememberStudioSignInRoute("");
     app.innerHTML = `<div class="card"><h1>This studio is not open to this account.</h1><p>The handoff did not include a current read grant. Ask the workspace owner for access, or read the public story.</p><div class="row">${session.composerOrigin ? `<a class="button" href="${esc(session.composerOrigin)}/">Return to App Composer</a>` : ""}${session.storyUrl ? `<a class="button secondary" href="${esc(session.storyUrl)}">Read the story</a>` : ""}</div></div>`;
     return;
   }
@@ -474,6 +480,8 @@ async function boot() {
   state.destinations = data.destinations ?? {};
   state.woodhouseShare = data.woodhouseShare === true;
   state.showcase = data.showcase ?? [];
+  const returnedHash = consumeStudioSignInRoute(location.hash);
+  if (returnedHash) history.replaceState(history.state, "", returnedHash);
   const openedHash = location.hash;
   const route = parseHash();
   const invalidRoute = route.view === "invalid";
@@ -3678,6 +3686,7 @@ app.addEventListener("submit", async (event) => {
 });
 
 document.querySelector("#signout").addEventListener("click", async () => {
+  rememberStudioSignInRoute("");
   await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   location.href = "/login";
 });
