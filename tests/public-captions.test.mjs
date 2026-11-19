@@ -34,6 +34,9 @@ Take it with you.
 
 const TRACK = `<track kind="captions" srclang="en" label="English" src="/p/${SLUG}${PUBLIC_CAPTION_ROUTE}">`;
 
+// Independent witness: the embed link belongs only to the exact reviewed film.
+const EMBED_LINK = `<a href="https://composer.loftwah.com/widgets#take-it-with-you-film">Embed this film</a>`;
+
 function get(env, path) {
   return worker.fetch(new Request(base + path), env);
 }
@@ -71,6 +74,7 @@ test("the exact published film renders a native caption track, captions off by d
   const html = await (await get(env, `/p/${SLUG}`)).text();
   assert.ok(html.includes(TRACK), "native captions track on the exact film only");
   assert.ok(html.includes(`<a href="/p/${SLUG}${PUBLIC_CAPTION_ROUTE}" download="${SLUG}-en.vtt">Download English captions (VTT)</a>`));
+  assert.ok(html.includes(EMBED_LINK), "embed link appears on the exact reviewed film");
   assert.doesNotMatch(html, /<track[^>]*\bdefault\b/i, "captions are off until the viewer enables them");
   assert.ok(
     html.includes(`<source src="/p/${SLUG}/media" type="video/mp4">${TRACK}`),
@@ -97,6 +101,7 @@ test("a wrong media hash yields no track and no caption route", async () => {
   const html = await (await get(env, `/p/${SLUG}`)).text();
   assert.doesNotMatch(html, /<track\b/i, "no track on a hash mismatch");
   assert.doesNotMatch(html, /Download English captions/);
+  assert.doesNotMatch(html, /Embed this film/, "no embed link on a hash mismatch");
   assert.equal((await get(env, `/p/${SLUG}${PUBLIC_CAPTION_ROUTE}`)).status, 404);
 });
 
@@ -106,6 +111,7 @@ test("the same hash under a different slug is not captioned", async () => {
 
   const html = await (await get(env, "/p/another-public-slug")).text();
   assert.doesNotMatch(html, /<track\b/i);
+  assert.doesNotMatch(html, /Embed this film/, "no embed link under a different slug");
   assert.equal((await get(env, `/p/another-public-slug${PUBLIC_CAPTION_ROUTE}`)).status, 404);
 });
 
