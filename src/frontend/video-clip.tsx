@@ -367,8 +367,16 @@ function VideoClip() {
       setResult(URL.createObjectURL(blob));
       setApplied({ settings: draft, captions: captionDraft, captionOffsetMs });
       setMessage("Your MP4 is ready to play and save.");
-    } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
-    finally { active.current = null; input.dispose(); setBusy(false); }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Could not make the video on this device.";
+      if (error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError")) {
+        setMessage("Export cancelled. Your original is unchanged.");
+      } else if (reason === "Color/alpha merge worker error.") {
+        setMessage("Video Clip could not process this video’s transparent layer. Try a non-transparent MP4 or WebM.");
+      } else {
+        setMessage(reason);
+      }
+    } finally { active.current = null; input.dispose(); setBusy(false); }
   }
   // Explicit, local-only action: hand the exact completed clip to a same-origin
   // Add Music tab through one bounded postMessage, so it becomes the video
