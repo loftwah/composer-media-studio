@@ -91,6 +91,7 @@ import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, st
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.ts";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.ts";
+import { parseOutcomeWindow, readCreatorOutcomes } from "./lib/creator-outcomes.ts";
 import { readCapabilityManifest, readCapabilityState, refreshCapabilities } from "./lib/capabilities.ts";
 import { authorizeMcp, oauthRoute, pruneMcpRecords, reserveMcpSpend } from "./mcp/oauth.mjs";
 import {
@@ -712,6 +713,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
   if (/^\/api\/projects\/[a-z0-9_]+\/portable-export$/.test(path)) action = "read";
   if (/^\/api\/studio\//.test(path)) action = "admin";
   if (/^\/api\/projects\/[a-z0-9_]+\/storage-report$/.test(path)) action = "admin";
+  if (/^\/api\/projects\/[a-z0-9_]+\/creator-outcomes$/.test(path)) action = "admin";
   if (method === "POST" && /^\/api\/projects\/[a-z0-9_]+\/assets\/(preflight|reuse)$/.test(path)) action = "read";
   // Share search is read-only on the wire, but it belongs to the same owner
   // import capability as the POST: require the actual edit role so a read-only
@@ -1366,6 +1368,20 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
       const report = await projectStorageReport(env, project);
       return json(report, 200, url.searchParams.get("download") === "1"
         ? { "content-disposition": `attachment; filename="${project.slug}-storage-report.json"` }
+        : {});
+    }
+
+    if (rest === "creator-outcomes" && method === "GET") {
+      const outcomeWindow = parseOutcomeWindow(url.searchParams);
+      if (!outcomeWindow) throw new HttpError(400, "Invalid creator outcomes window.", "invalid_window");
+      // The producer is this installation's canonical origin, never caller input.
+      // A source lookup failure propagates as an error; it is never a zeroed report.
+      const report = await readCreatorOutcomes(env.DB, project.id, outcomeWindow, {
+        producer: publicOrigin(env, request.url),
+        revision: BUILD.revision,
+      });
+      return json(report, 200, url.searchParams.get("download") === "1"
+        ? { "content-disposition": `attachment; filename="${project.slug}-saved-outcomes.json"` }
         : {});
     }
 
