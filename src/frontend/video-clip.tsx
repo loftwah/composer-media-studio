@@ -1,14 +1,20 @@
 import { ClipPoster } from "./clip-poster";
 import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
+import {
+  MAX_PUBLIC_VIDEO_BYTES as MAX_BYTES,
+  MAX_PUBLIC_VIDEO_SOURCE_SECONDS as MAX_SOURCE_SECONDS,
+  PUBLIC_VIDEO_TIMEOUT_MS,
+  publicVideoFromHash,
+  publicVideoRefusal,
+  type PublicVideoSource,
+} from "./video-clip-source";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, VideoSampleSink } from "mediabunny";
 import "./audio-trim.css";
 import "./video-clip.css";
 
-const MAX_BYTES = 128 * 1024 * 1024;
-const MAX_SOURCE_SECONDS = 180;
 const MAX_CLIP_SECONDS = 60;
 const sizes = {
   standard: { portrait: [360, 640], landscape: [640, 360], square: [480, 480] },
@@ -38,6 +44,51 @@ async function hasVideoFrame(file: File): Promise<boolean> {
   }
 }
 
+// The published film enters the editor as an ordinary File so it takes the
+// exact same validated intake as the picker. Only this page's fixed `/media`
+// path is accepted, the request stays same-origin and credential-free, and
+// the body is read in bounded chunks so no unbounded native Buffer is built.
+async function fetchPublicVideo(
+  source: PublicVideoSource,
+  signal: AbortSignal,
+): Promise<{ file: File } | { reason: string }> {
+  const response = await fetch(source.media, {
+    mode: "same-origin",
+    credentials: "omit",
+    redirect: "error",
+    cache: "no-store",
+    signal,
+  });
+  const declared = response.headers.get("content-length");
+  const refusal = publicVideoRefusal({
+    ok: response.ok,
+    type: response.headers.get("content-type"),
+    bytes: declared === null ? null : Number(declared),
+  });
+  if (refusal || !response.body) {
+    await response.body?.cancel();
+    return { reason: refusal ?? "This published video could not be read." };
+  }
+  const reader = response.body.getReader();
+  const chunks: BlobPart[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BYTES)
+        return { reason: "This published video exceeds the 128 MB local input limit." };
+      chunks.push(new Uint8Array(value));
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  const slug = source.page.slice("/p/".length);
+  return { file: new File(chunks, `${slug}.mp4`, { type: "video/mp4" }) };
+}
+
 function VideoClip() {
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState("");
@@ -58,6 +109,11 @@ function VideoClip() {
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [checking, setChecking] = useState(false);
+  // A handoff only offers a source; nothing is fetched until the visitor acts.
+  const [publicVideo] = useState(() => publicVideoFromHash(window.location.hash));
+  const [publicLoading, setPublicLoading] = useState(false);
+  const [publicLoaded, setPublicLoaded] = useState(false);
+  const publicRequest = useRef<AbortController | null>(null);
   const current = useRef(0);
   const chooser = useRef<HTMLInputElement>(null);
   const active = useRef<Conversion | null>(null);
@@ -65,6 +121,7 @@ function VideoClip() {
   useEffect(() => () => { if (source) URL.revokeObjectURL(source); }, [source]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => { current.current++; void active.current?.cancel(); }, []);
+  useEffect(() => () => publicRequest.current?.abort(), []);
   // A finished MP4 outlives draft edits: only a successful replacement, or a
   // valid new source, clears it. The draft key is compared with the recorded
   // one on every render, so returning to the same settings drops the note.
@@ -81,9 +138,14 @@ function VideoClip() {
     const activeElement = document.activeElement;
     if (element && (!activeElement || activeElement === document.body || activeElement === element)) element.focus();
   }
-  async function choose(next: File | undefined) {
+  async function choose(next: File | undefined, fromPublication = false) {
     if (busy || importing) return;
     if (!next) return;
+    if (!fromPublication && publicRequest.current) {
+      publicRequest.current.abort();
+      publicRequest.current = null;
+      setPublicLoading(false);
+    }
     const revision = ++current.current;
     const retained = file !== null;
     if (!next.size || next.size > MAX_BYTES) { refuse("Choose a video under 128 MB.", retained); return; }
@@ -102,6 +164,7 @@ function VideoClip() {
       if (!await hasVideoFrame(next)) throw new Error("No video frame could be read. Choose another MP4 or WebM.");
       if (revision !== current.current) { URL.revokeObjectURL(url); return; }
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
+      setPublicLoaded(fromPublication);
       setResult(""); setResultBlob(null); setApplied(null); setChecking(false);
       setMessage("Choose your clip and frame, then make an MP4.");
     } catch (error) {
@@ -109,6 +172,32 @@ function VideoClip() {
       if (revision === current.current) refuse(error instanceof Error ? error.message : "Could not open the video.", retained);
     }
     finally { video.removeAttribute("src"); video.load(); }
+  }
+  async function loadPublicVideo(): Promise<void> {
+    if (!publicVideo || publicLoading || publicRequest.current || busy || importing || checking || file) return;
+    const controller = new AbortController();
+    publicRequest.current = controller;
+    setPublicLoading(true);
+    setMessage("Downloading the published video from this Media Studio…");
+    const timeout = AbortSignal.timeout(PUBLIC_VIDEO_TIMEOUT_MS);
+    const signal = AbortSignal.any([controller.signal, timeout]);
+    try {
+      const result = await fetchPublicVideo(publicVideo, signal);
+      if (controller.signal.aborted) return;
+      if ("reason" in result) { setMessage(result.reason); return; }
+      await choose(result.file, true);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setMessage(timeout.aborted
+          ? "The download was cancelled after too long. Choose Load published video to try again."
+          : "Could not download this published video. Try again or use the file picker.");
+      }
+    } finally {
+      if (publicRequest.current === controller && !controller.signal.aborted) {
+        publicRequest.current = null;
+        setPublicLoading(false);
+      }
+    }
   }
   async function makeClip() {
     if (!file || busy || checking) return;
@@ -153,7 +242,23 @@ function VideoClip() {
     background: "#000",
   };
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Clip and frame a video</h1><p>Choose a short video, set its in and out points and save a new MP4. Editing happens on this device without sign-in or generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
-    <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2><label className="trim-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing} onChange={e => void choose(e.target.files?.[0])}/></label><p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
+    <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2>
+      <div className="video-tool-actions">
+        <label className="trim-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing} onChange={e => void choose(e.target.files?.[0])}/></label>
+        {publicVideo && (!file || publicLoaded) && (
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy || importing}
+            aria-disabled={publicLoading || publicLoaded || checking}
+            onClick={() => void loadPublicVideo()}
+          >
+            {publicLoaded ? "Published video loaded" : publicLoading ? "Loading published video…" : "Load published video"}
+          </button>
+        )}
+      </div>
+      {publicVideo && <p className="trim-note"><a href={publicVideo.page}>Published page</a> · The video is downloaded from this Media Studio only when you choose Load published video. It stays on this device.</p>}
+      <p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
       {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p>
       <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
       <video className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}/>
