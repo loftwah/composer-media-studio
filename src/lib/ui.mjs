@@ -7,6 +7,7 @@ import { videoObjectJsonLd } from "./video-object-json-ld.ts";
 import { galleryPageHref, galleryHasFilters, galleryResultCount, galleryAudioEmpty } from "./gallery-query.ts";
 import { galleryCards, galleryDimensions } from "./gallery-cards.ts";
 import { publishedStillToolUrl } from "../frontend/image-social-source.ts";
+import { publicVideoClipUrl } from "../frontend/video-clip-source.ts";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 
@@ -338,6 +339,10 @@ export function publicPage({
     ["image/jpeg", "image/png", "image/webp"].includes(mime)
     ? publishedStillToolUrl(slug)
     : null;
+  // A published MP4 whose own public size and duration already fit the clip
+  // tool's validated intake earns a native handoff. The tool fetches the exact
+  // `/media` attachment itself, and only after the visitor asks it to.
+  const videoHandoff = publicVideoClipUrl({ kind, mime, media, slug, bytes, durationMs });
   const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
 
 Copyright (c) 2020-2026 Paweł Kuna
@@ -429,6 +434,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
         ${posterDownload ? `<a href="${escapeHtml(posterDownload)}" download>Download poster</a>` : ""}
         ${posterHandoff ? `<a href="${escapeHtml(posterHandoff)}">Make social sizes</a>` : ""}
         ${stillHandoff ? `<a href="${escapeHtml(stillHandoff)}">Edit in Image Tools</a>` : ""}
+        ${videoHandoff ? `<a href="${escapeHtml(videoHandoff)}">Clip this video</a>` : ""}
         <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
         ${isVideo && captionSrc ? `<a href="${escapeHtml(captionSrc)}" download="${escapeHtml(slug)}-en.vtt">Download English captions (VTT)</a>` : ""}
       </span>
