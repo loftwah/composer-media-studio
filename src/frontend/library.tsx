@@ -319,6 +319,11 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
             isVideo && asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : null,
           ].filter(Boolean);
           const version = isVideo ? clipVersion(asset) : "";
+          // Same eligibility gate and link contract as AssetViewer: a saved,
+          // supported MP4 opens the existing Video Clip tool with the exact
+          // signed-in session. A new tab keeps this comparison's playback and
+          // selection untouched; the link itself triggers no write or download.
+          const savedClipUrl = isVideo ? savedVideoClipUrl(asset) : null;
           return <figure className="compare-frame" key={asset.id}>
             {isVideo
               ? <video ref={element => { videoRefs.current[index] = element; }} className="compare-video" src={asset.file} controls playsInline preload="metadata" aria-label={version ? `${asset.title} · ${version}` : asset.title}/>
@@ -336,6 +341,13 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
                   download
                   aria-label={`Download video ${asset.title}${version ? ` · ${version}` : ""}`}
                 >Download video</a>}
+                {savedClipUrl && <a
+                  className="button secondary"
+                  href={savedClipUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${asset.title} in Video Clip for local trimming${version ? ` · ${version}` : ""}`}
+                >Open in Video Clip</a>}
                 <button type="button" className="secondary" data-action="open-asset" data-id={asset.id}>Open</button>
                 <button type="button" className="quiet" data-action="compare-toggle" data-id={asset.id} aria-label={`Remove ${asset.title} from comparison`}>Remove</button>
               </div>
