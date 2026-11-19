@@ -246,7 +246,7 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
     </div>
     <p>Upload and organise images, video and sound, make and edit new work with a funded model, and publish deliberately. Uploads and the library work without any AI account.</p>
     ${bridged ? `<p class="notice calm">Open this studio from App Composer. Your existing Composer sign-in carries you in; there is no second password.</p>
-    <p><a class="button" href="${escapeHtml(composerOrigin || "https://composer.loftwah.com")}/media-studio/studio">Continue with App Composer</a></p>
+    <p><a class="button" data-composer-sign-in href="${escapeHtml(composerOrigin || "https://composer.loftwah.com")}/media-studio/studio">Continue with App Composer</a></p>
     ${storyUrl ? `<p class="small"><a href="${escapeHtml(storyUrl)}">Read how this studio was built</a></p>` : ""}
     <details><summary>Standalone owner sign-in</summary>` : ""}
     <form id="login-form" class="stack">

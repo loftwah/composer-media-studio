@@ -1,5 +1,17 @@
 // MIT. Owner sign-in. A same-origin JSON post; no third-party script.
 
+import { rememberStudioSignInRoute } from "./studio-login-return.js";
+
+const studioSignIn = location.pathname === "/studio" || location.pathname === "/login";
+const continueLink = document.querySelector("[data-composer-sign-in]");
+if (studioSignIn) {
+  continueLink?.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey ||
+        event.ctrlKey || event.shiftKey || event.altKey) return;
+    rememberStudioSignInRoute(location.hash);
+  });
+}
+
 const form = document.querySelector("#login-form");
 const status = document.querySelector("#login-status");
 
@@ -22,6 +34,7 @@ form.addEventListener("submit", async (event) => {
       form.querySelector('[name="passphrase"]').select();
       return;
     }
+    if (studioSignIn) rememberStudioSignInRoute(location.hash);
     location.href = "/";
   } catch {
     status.textContent = "Could not reach the studio. Check the connection.";
