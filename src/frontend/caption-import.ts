@@ -31,7 +31,10 @@ export function parseCaptionFile(source:string, segmentStartMs:number, segmentEn
   for(const [index,block] of blocks.entries()) {
     const lines=block.split('\n');let timing=lines.shift()?.trim() ?? '';
     if(!timing.includes('-->')) {if(format==='srt' && !/^\d+$/.test(timing))return fail(`Caption ${index+1} has an invalid identifier.`);if(format==='vtt' && (!timing || timing.length>120))return fail(`Caption ${index+1} has an invalid identifier.`);timing=lines.shift()?.trim() ?? '';}
-    const parts=/^(\S+)\s+-->\s+(\S+)$/.exec(timing);if(!parts)return fail(`Caption ${index+1} has unsupported timing or settings.`);
+    // Watch exports one WebVTT line percentage. Validate it without carrying placement into the clip.
+    const parts=/^(\S+)\s+-->\s+(\S+?)(?:\s+line:(\d+(?:\.\d+)?)%)?$/.exec(timing);
+    if(!parts || (parts[3]!==undefined && (format!=='vtt' || Number(parts[3])>100)))
+      return fail(`Caption ${index+1} has unsupported timing or settings.`);
     const from=timestamp(parts[1],format),to=timestamp(parts[2],format);
     if(from<previousEnd || to<=from || to>segmentEndMs-segmentStartMs)return fail(`Caption ${index+1} overlaps another or lies outside the selected segment.`);
     const raw=lines.join('\n');if(/<\/?[a-z][^>]*>/i.test(raw))return fail('Remove caption markup and styling before import.');
