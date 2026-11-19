@@ -2798,6 +2798,7 @@ function Images() {
           <p className="trim-note">
             <a href={composerArtworkSourceUrl(publicImageSource.ref)}>Source artwork in Composer</a>
             {" · "}The image is downloaded when you choose Load Composer artwork.
+            {" "}Reuse rights unconfirmed. Check the source before publishing.
           </p>
         )}
         <div className="image-source-actions">

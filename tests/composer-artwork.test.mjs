@@ -82,6 +82,7 @@ test("fetches only the public rendition without cookies and records the source h
     download,
     asset: assetId,
     revision,
+    reuse: "unconfirmed",
     sha256: "b".repeat(64),
   });
 });

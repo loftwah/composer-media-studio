@@ -185,6 +185,7 @@ export function composerArtworkManifestEntry(ref: ComposerArtworkRef, sourceHash
       download: composerArtworkDownloadUrl(ref),
       asset: ref.assetId,
       revision: ref.revision,
+      reuse: "unconfirmed",
       sha256: sourceHash,
     }, null, 2)),
   };
