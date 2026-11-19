@@ -45,7 +45,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ blob: Blob; url: string; caption: string; captioned: boolean; framing: string; receiptId: string | null; revision: string; changed: boolean } | null>(null);
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'uncertain'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'uncertain' | 'reauth'>('idle');
   const [savedAssetId, setSavedAssetId] = useState('');
   const [includeCaptions, setIncludeCaptions] = useState(false);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>('classic');
@@ -107,7 +107,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     finally { if (controller.current === task) controller.current = null; setBusy(false); }
   };
   const save = async () => {
-    if (!result || saveState !== 'idle' || saveAttempt.current) return;
+    if (!result || (saveState !== 'idle' && saveState !== 'reauth') || saveAttempt.current) return;
     saveAttempt.current = true;
     setSaveState('saving'); setError('');
     const form = new FormData();
@@ -116,6 +116,12 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/assets`, { method: 'POST', credentials: 'same-origin', body: form });
       const data = await response.json().catch(() => ({}));
+      // requireSession rejects this request before any asset write.
+      if (response.status === 401 && data?.error?.code === 'unauthorized' && data?.signedIn === false) {
+        saveAttempt.current = false;
+        setSaveState('reauth');
+        return;
+      }
       if (!response.ok || !data.asset?.id) throw new Error(data?.error?.message ?? `Save could not be confirmed (${response.status}).`);
       onAssetSaved(data.asset); setSavedAssetId(data.asset.id); setSaveState('saved');
     } catch (err) { setError(`${(err as Error).message || 'Save could not be confirmed.'} Check the library before trying again; your download remains available.`); setSaveState('uncertain'); }
@@ -143,6 +149,28 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     {includeCaptions && <div><label>Caption look<select value={captionStyle} disabled={busy} onChange={event=>setCaptionStyle(event.target.value as CaptionStyle)}><option value="classic">Classic subtitle</option><option value="lower-third">Left lower-third</option></select></label><p className="small">The sample and final MP4 use the same look. {canEdit ? 'If you save the MP4, its private receipt records this choice.' : 'This read-only render has no saved receipt.'}</p><button type="button" className="secondary" disabled={busy || captionSampleBusy} onClick={() => void loadSample()}>{captionSampleBusy ? 'Loading captions…' : 'Preview saved captions'}</button>{captionSample && frame && <><p className="small">Saved captions on a neutral background, using the same text layout and output frame as the MP4. This does not preview your footage. Rendering checks the saved revision again.</p><CaptionSample captions={captionSample} width={frame.width} height={frame.height} style={captionStyle} /></>}</div>}
     <div className="row"><button type="button" className="secondary" onClick={() => void start()} disabled={busy || saveState === 'saving' || (framing.fit === 'cover' && !sourcePreviewReady)}>Make local MP4</button>{busy && <button type="button" className="quiet" onClick={() => controller.current?.abort()}>Cancel</button>}</div>
     {status && <p role="status" className="small">{status}</p>}{error && <p role="alert" className="notice">{error}</p>}
-    {result && <div className="local-render-result"><p className="small"><strong>Rendered from {result.revision}.</strong> {result.framing}. {result.captioned ? 'This preview and download contain the saved captions.' : 'This preview and download do not contain captions.'} Changed framing and caption-look settings apply to the next render.</p>{result.changed && <p className="notice warn">This card was showing an older save. The MP4 used the current saved storyboard, not the earlier preview.</p>}<video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${composition.title}`} /><div className="row"><a className="button secondary" href={result.url} download="studio-local-render.mp4">Download MP4</a>{canEdit && saveState !== 'saved' && <button type="button" className="secondary" disabled={saveState !== 'idle' || busy} onClick={() => void save()}>{saveState === 'saving' ? 'Saving…' : 'Save to library'}</button>}{savedAssetId && <a href={`#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(savedAssetId)}`}>Open saved video</a>}</div></div>}
+    {result && <div className="local-render-result">
+      <p className="small">
+        <strong>Rendered from {result.revision}.</strong> {result.framing}. {result.captioned
+          ? 'This preview and download contain the saved captions.'
+          : 'This preview and download do not contain captions.'}
+        {' '}Changed framing and caption-look settings apply to the next render.
+      </p>
+      {result.changed && <p className="notice warn">This card was showing an older save. The MP4 used the current saved storyboard, not the earlier preview.</p>}
+      <video controls playsInline preload="metadata" src={result.url} aria-label={`Preview local render of ${composition.title}`} />
+      {canEdit && saveState === 'reauth' &&
+        <p role="alert" className="notice">Your Studio session expired before the save. Keep this tab open and sign in in another tab. Then retry saving this MP4.</p>}
+      <div className="row">
+        <a className="button secondary" href={result.url} download="studio-local-render.mp4">Download MP4</a>
+        {canEdit && saveState === 'reauth' &&
+          <a className="button secondary" href="/studio" target="_blank" rel="noopener noreferrer">Open Studio sign-in in another tab</a>}
+        {canEdit && saveState !== 'saved' && <button type="button" className="secondary"
+          disabled={busy || (saveState !== 'idle' && saveState !== 'reauth')}
+          onClick={() => void save()}>
+          {saveState === 'saving' ? 'Saving…' : saveState === 'reauth' ? 'Retry save to library' : 'Save to library'}
+        </button>}
+        {savedAssetId && <a href={`#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(savedAssetId)}`}>Open saved video</a>}
+      </div>
+    </div>}
   </details>;
 }
