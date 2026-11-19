@@ -5,6 +5,8 @@ const filmSlug = "PbvQYtyGG-YlF0Dh";
 const filmSha256 = "187134b76dc0687d95e263d7b3bb2b7cf6507affb4204e61c2badaeff567d046";
 /** The one public Watch path whose clip tool may reuse these captions. */
 const filmWatch = `https://media.loftwah.com/p/${filmSlug}`;
+/** Composer #915: guarded, versioned HTML + React downloads for this reviewed film. */
+export const FILM_EMBED_URL = "https://composer.loftwah.com/widgets#take-it-with-you-film";
 
 /** A cue is words plus a millisecond span; the line setting is added at output. */
 type ReviewedCue = Readonly<{ startMs: number; endMs: number; text: string }>;

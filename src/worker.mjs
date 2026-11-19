@@ -79,7 +79,7 @@ import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.ts";
 import { composerShare } from "./lib/composer-share.ts";
 import { shell, loginPage, publicPage, notFoundPage, helpPage, audioTrimPage, videoClipPage, addMusicPage, imagesPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
-import { PUBLIC_CAPTION_ROUTE, reviewedCaptionFor } from "./lib/public-captions.ts";
+import { FILM_EMBED_URL, PUBLIC_CAPTION_ROUTE, reviewedCaptionFor } from "./lib/public-captions.ts";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
@@ -2434,6 +2434,7 @@ async function handlePublic(request, env, url) {
       media: `/p/${publication.slug}/media`,
       download: `/p/${publication.slug}/download`,
       captionSrc: caption ? `/p/${publicSlug}${PUBLIC_CAPTION_ROUTE}` : null,
+      embedUrl: caption ? FILM_EMBED_URL : null,
       poster,
       videoPoster,
       posterMime: usablePoster?.mime ?? preview?.mime ?? null,

@@ -289,6 +289,7 @@ export function publicPage({
   media,
   download,
   captionSrc = null,
+  embedUrl = null,
   poster,
   videoPoster,
   posterMime,
@@ -435,6 +436,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
         ${videoHandoff ? `<a href="${escapeHtml(videoHandoff)}">Clip this video</a>` : ""}
         <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
         ${isVideo && captionSrc ? `<a href="${escapeHtml(captionSrc)}" download="${escapeHtml(slug)}-en.vtt">Download English captions (VTT)</a>` : ""}
+        ${embedUrl ? `<a href="${escapeHtml(embedUrl)}">Embed this film</a>` : ""}
       </span>
     </figcaption>
   </figure>
