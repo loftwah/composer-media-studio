@@ -1,4 +1,4 @@
-import type { ClipCaptionTrack } from "./clip-captions";
+import { captionReceiptFields, type ClipCaptionTrack } from "./clip-captions";
 import type { CropAnchor } from "./clip-crop";
 import { useEffect, useRef, useState } from "react";
 import { clippedCaptionFor } from "../lib/public-captions";
@@ -20,7 +20,7 @@ export type CompletedClip = Readonly<{
     muteRequested: boolean;
   }>;
   output: Readonly<{ blob: Blob; width: number; height: number }>;
-  captions?: Readonly<{ name: string; vtt: string | null; offsetMs?: number }>;
+  captions?: Readonly<{ name: string; sourceSha256: string; vtt: string | null; offsetMs?: number }>;
 }>;
 
 // One snapshot keeps the offered bytes and their URLs in step: the ZIP reuses
@@ -75,7 +75,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
         version: 1,
         source: { name: source.name, bytes: source.size, watchUrl, sha256: sourceSha },
         edit,
-        ...(clip.captions ? { captions: { sourceName: clip.captions.name, included: Boolean(clip.captions.vtt), ...(clip.captions.offsetMs ? { offsetMs: clip.captions.offsetMs } : {}) } } : {}),
+        ...(clip.captions ? { captions: captionReceiptFields(clip.captions, clip.captions.offsetMs ?? 0) } : {}),
         output: { width: output.width, height: output.height, mime: output.blob.type, bytes: output.blob.size, sha256: outputSha },
       };
       const receiptText = JSON.stringify(receipt, null, 2) + "\n";

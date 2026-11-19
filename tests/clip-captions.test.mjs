@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { serializeClipCaptions } from '../src/frontend/clip-captions.ts';
+import { captionReceiptFields, serializeClipCaptions } from '../src/frontend/clip-captions.ts';
 
 test('imported caption cues are trimmed, rebased and escaped as plain WebVTT', () => {
   const cues = parseCaptionFile('1\n00:00:00,500 --> 00:00:02,000\nA & B\n\n2\n00:00:02,100 --> 00:00:05,200\n&lt;Next&gt;\n', 0, 180_000);
@@ -23,4 +23,16 @@ test('timing offset shifts cues before clipping and rebasing; default 0 keeps th
   assert.equal(serializeClipCaptions(cues, 2, 10, 1500), 'WEBVTT\n\n00:00.500 --> 00:06.500\nA\n\n00:07.500 --> 00:08.000\nB\n');
   // -1.5s moves every cue earlier: A ends sooner, B starts inside the range.
   assert.equal(serializeClipCaptions(cues, 2, 10, -1500), 'WEBVTT\n\n00:00.000 --> 00:03.500\nA\n\n00:04.500 --> 00:08.000\nB\n');
+});
+
+test('a caption receipt carries the source digest and offset but never cue text', () => {
+  const caption = { name: 'watch.vtt', sourceSha256: 'd'.repeat(64), vtt: 'WEBVTT\n\n00:00.000 --> 00:01.000\nPrivate line\n' };
+  assert.deepEqual(captionReceiptFields(caption, 0), {
+    sourceName: 'watch.vtt', included: true, sourceSha256: 'd'.repeat(64),
+  });
+  assert.deepEqual(captionReceiptFields(caption, -1500), {
+    sourceName: 'watch.vtt', included: true, sourceSha256: 'd'.repeat(64), offsetMs: -1500,
+  });
+  assert.equal(captionReceiptFields({ ...caption, vtt: null }, 0).included, false);
+  assert.doesNotMatch(JSON.stringify(captionReceiptFields(caption, 1500)), /Private line/);
 });
