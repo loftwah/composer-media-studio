@@ -129,6 +129,9 @@ function VideoClip() {
   const cancelRequested = useRef(false);
   useEffect(() => () => { if (source) URL.revokeObjectURL(source); }, [source]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
+  useEffect(() => () => {
+    if (captionTrack && !captionTrack.english) URL.revokeObjectURL(captionTrack.url);
+  }, [captionTrack]);
   useEffect(() => () => { current.current++; captionRequest.current++; void active.current?.cancel(); }, []);
   useEffect(() => () => publicRequest.current?.abort(), []);
   // A finished MP4 outlives draft edits: only a successful replacement, or a
@@ -257,17 +260,21 @@ function VideoClip() {
       await conversion.execute();
       if (!target.buffer || !target.buffer.byteLength || target.buffer.byteLength > 64 * 1024 * 1024) throw new Error("The result is empty or exceeds the 64 MB output limit.");
       const blob = new Blob([target.buffer], { type: "video/mp4" });
+      const captions = captionDraft ? {
+        name: captionDraft.name,
+        vtt: serializeClipCaptions(captionDraft.cues, start, end),
+      } : undefined;
       setCompletedClip({
         source: file,
         watchUrl: publicLoaded && publicVideo ? new URL(publicVideo.page, window.location.origin).href : null,
         edit: { startSeconds: start, endSeconds: end, frame: shape, quality, fit, muteRequested: mute },
         output: { blob, width, height },
-        captions: captionDraft ? {
-          name: captionDraft.name,
-          vtt: serializeClipCaptions(captionDraft.cues, start, end),
-        } : undefined,
+        captions,
       });
-      setCaptionTrack(null);
+      setCaptionTrack(captions?.vtt ? {
+        url: URL.createObjectURL(new Blob([captions.vtt], { type: "text/vtt; charset=utf-8" })),
+        english: false,
+      } : null);
       setResult(URL.createObjectURL(blob));
       setApplied({ settings: draft, captions: captionDraft });
       setMessage("Your MP4 is ready to play and save.");
@@ -312,7 +319,7 @@ function VideoClip() {
       <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
       <details>
         <summary>Use your own captions</summary>
-        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video.</p>
+        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. You can preview them after making the clip.</p>
         <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing} onChange={event => {
           const input = event.currentTarget;
           void chooseCaptions(input.files?.[0]);
