@@ -97,14 +97,21 @@ test("a short published MP4 is offered to Add Music through the one bounded sour
   });
   assert.ok(publicPage(shortFilm).includes(`href="${tool}">Mix this video locally</a>`));
   assert.ok(publicVideoAddMusicUrl({ ...shortFilm, durationMs: 60_000 }));
-  // Clip still offers the longer source; only Add Music needs a known <=60s one.
+  // Like Clip, a legacy MP4 with no stored duration still offers Mix: the
+  // editor decodes the exact bytes and enforces <=60s after the visitor acts.
+  for (const durationMs of [null, undefined, 0]) {
+    assert.ok(publicVideoAddMusicUrl({ ...shortFilm, durationMs }), String(durationMs));
+    assert.match(publicPage({ ...shortFilm, durationMs }), /Mix this video locally/, String(durationMs));
+  }
+  // Clip still offers the longer source; only Add Music caps at 60s. A known
+  // duration that is malformed, negative or above the cap is still refused.
   assert.ok(publicPage(film).includes("Clip this video"));
   assert.doesNotMatch(publicPage(film), /Mix this video locally/);
   for (const change of [
     { durationMs: 60_001 },
-    { durationMs: null },
-    { durationMs: 0 },
-    { durationMs: undefined },
+    { durationMs: "45000" },
+    { durationMs: 45_000.5 },
+    { durationMs: -1 },
     { kind: "image" },
     { mime: "video/webm" },
     { media: "/p/Film_1/download" },

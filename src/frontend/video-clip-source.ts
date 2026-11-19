@@ -5,9 +5,10 @@
 // opening a second, looser path into the editor.
 export const MAX_PUBLIC_VIDEO_BYTES = 128 * 1024 * 1024;
 export const MAX_PUBLIC_VIDEO_SOURCE_SECONDS = 180;
-// Add Music accepts a shorter source than Clip. The Watch page only offers its
-// handoff when the stored duration is known and inside this limit; the picker
-// intake still decodes the exact bytes before any export.
+// Add Music accepts a shorter source than Clip. The Watch page applies the same
+// duration gate as Clip with this smaller maximum; a legacy publication with no
+// stored duration still offers the handoff, and the editor decodes the exact
+// bytes to enforce this limit before any export.
 export const MAX_PUBLIC_ADD_MUSIC_SECONDS = 60;
 // A stalled public media response must not pin a tool tab.
 export const PUBLIC_VIDEO_TIMEOUT_MS = 20_000;
@@ -57,29 +58,29 @@ type PublicVideoMetadata = {
 };
 
 /**
- * Public size bounds the deliberate download. The editor checks decoded
- * duration even when a legacy publication has no stored duration.
+ * Public size bounds the deliberate download. Both tools share one stored-
+ * duration gate with their own maximum. A known duration must be a positive
+ * safe integer inside that limit; absent/zero duration is left for the editor
+ * to decode from the exact bytes after the visitor explicitly acts.
  */
 function publicVideoToolUrl({
   kind, mime, media, slug, bytes, durationMs,
-}: PublicVideoMetadata, maxSeconds: number, requireKnownDuration: boolean, tool: "video-clip" | "add-music"): string | null {
+}: PublicVideoMetadata, maxSeconds: number, tool: "video-clip" | "add-music"): string | null {
   if (kind !== "video" || mime !== VIDEO_MP4) return null;
   if (typeof slug !== "string" || !PUBLIC_VIDEO_ID.test(slug)) return null;
   if (media !== `/p/${slug}/media`) return null;
   if (!Number.isSafeInteger(bytes) || (bytes as number) <= 0 || (bytes as number) > MAX_PUBLIC_VIDEO_BYTES) return null;
-  if (requireKnownDuration) {
-    if (!Number.isSafeInteger(durationMs) || (durationMs as number) <= 0 || (durationMs as number) > maxSeconds * 1000) return null;
-  } else if (durationMs != null && durationMs !== 0 && (typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) ||
+  if (durationMs != null && durationMs !== 0 && (typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) ||
     durationMs <= 0 || durationMs > maxSeconds * 1000)) return null;
   return publishedToolUrl(tool, slug);
 }
 
 export function publicVideoClipUrl(meta: PublicVideoMetadata): string | null {
-  return publicVideoToolUrl(meta, MAX_PUBLIC_VIDEO_SOURCE_SECONDS, false, "video-clip");
+  return publicVideoToolUrl(meta, MAX_PUBLIC_VIDEO_SOURCE_SECONDS, "video-clip");
 }
 
 export function publicVideoAddMusicUrl(meta: PublicVideoMetadata): string | null {
-  return publicVideoToolUrl(meta, MAX_PUBLIC_ADD_MUSIC_SECONDS, true, "add-music");
+  return publicVideoToolUrl(meta, MAX_PUBLIC_ADD_MUSIC_SECONDS, "add-music");
 }
 
 /**

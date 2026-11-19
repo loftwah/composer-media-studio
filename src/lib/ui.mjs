@@ -341,7 +341,8 @@ export function publicPage({
     ? publishedStillToolUrl(slug)
     : null;
   // The published MP4 enters the local editors only after an explicit bounded
-  // read. Clip accepts a longer source; Add Music needs a known <=60s duration.
+  // read. Clip accepts a longer source; Add Music shares the duration gate with
+  // a <=60s maximum, and the editor re-checks decoded length before any export.
   const videoHandoff = publicVideoClipUrl({ kind, mime, media, slug, bytes, durationMs });
   const addMusicHandoff = publicVideoAddMusicUrl({ kind, mime, media, slug, bytes, durationMs });
   const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
