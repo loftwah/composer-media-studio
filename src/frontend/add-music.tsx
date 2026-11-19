@@ -4,6 +4,8 @@ import { LocalImport } from "./local-import";
 import { encodeWav } from "../../public/wav.js";
 import { localMixRange } from "./local-mix-range";
 import { musicPlacement } from "./music-fades";
+import { MAX_MIX_SETTINGS_BYTES, mixSettingsJson, parseMixSettings, type MixSettings } from "./mix-settings.ts";
+import { sha256Hex } from "../lib/util.mjs";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ALL_FORMATS, AudioBufferSink, AudioBufferSource, BlobSource, BufferTarget, CanvasSink, CanvasSource, Input, Mp4OutputFormat, Output, canEncodeAudio, canEncodeVideo } from "mediabunny";
@@ -15,6 +17,15 @@ const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 const MAX_SECONDS = 60;
 const FPS = 30;
 function check(signal: AbortSignal) { if (signal.aborted) throw new DOMException("Cancelled", "AbortError"); }
+
+// Snapshot of the exact settings and sources behind a successful MP4, so the
+// receipt describes the finished file even after the controls are edited.
+type AppliedMix = Readonly<{
+  key: string;
+  settings: MixSettings;
+  video: File;
+  music: File;
+}>;
 
 async function checkMediaDuration(file: File, signal: AbortSignal, kind: "video" | "audio") {
   const url = URL.createObjectURL(file); const element: HTMLMediaElement = kind === "video" ? document.createElement("video") : new Audio(); element.preload = "metadata"; element.src = url;
@@ -30,6 +41,7 @@ async function checkMediaDuration(file: File, signal: AbortSignal, kind: "video"
     });
     const limit = kind === "video" ? MAX_SECONDS : MAX_LOCAL_AUDIO_SECONDS;
     if (!Number.isFinite(duration) || duration <= 0 || duration > limit) throw new Error(kind === "video" ? "Choose a video no longer than 60 seconds." : "Choose audio no longer than 5 minutes.");
+    return duration;
   } finally { element.removeAttribute("src"); element.load(); URL.revokeObjectURL(url); }
 }
 
@@ -147,9 +159,13 @@ function AddMusic() {
   const [checkingVideo, setCheckingVideo] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [preview, setPreview] = useState("");
+  const [videoSeconds, setVideoSeconds] = useState(0), [musicSeconds, setMusicSeconds] = useState(0);
+  const [settingsMessage, setSettingsMessage] = useState(""), [prepareMessage, setPrepareMessage] = useState("");
+  const [settingsLoading, setSettingsLoading] = useState(false), [preparingSettings, setPreparingSettings] = useState(false);
+  const [preparedSettings, setPreparedSettings] = useState<string | null>(null);
   // Settings recorded only when an export succeeds: proof of what the finished
   // MP4 actually contains, not what the controls currently show.
-  const [applied, setApplied] = useState<string | null>(null);
+  const [applied, setApplied] = useState<AppliedMix | null>(null);
   const sourceVideo = useRef<HTMLVideoElement>(null), sourceMusic = useRef<HTMLAudioElement>(null), previewPlayer = useRef<HTMLAudioElement>(null), resultPlayer = useRef<HTMLVideoElement>(null);
   const previewAction = useRef<HTMLButtonElement>(null);
   const exportAction = useRef<HTMLButtonElement>(null);
@@ -162,19 +178,29 @@ function AddMusic() {
   // The draft key is compared with the recorded one on every render, so returning
   // to the same settings drops the note.
   const draft = [delay, offset, volume, originalVolume, fadeIn, fadeOut, quality].join("|");
-  const previous = applied !== null && applied !== draft;
+  const previous = applied !== null && applied.key !== draft;
+  function currentSettings(): MixSettings { return { delay, offset, gain: volume, originalGain: originalVolume, fadeIn, fadeOut, quality }; }
   function clearPreview() { pauseOthers(); setPreview(""); }
-  function clearOutputs() { clearPreview(); setResult(""); setResultBlob(null); setApplied(null); }
+  function editSetting(apply: () => void) { clearPreview(); apply(); }
+  function clearOutputs() {
+    clearPreview(); setResult(""); setResultBlob(null); setApplied(null);
+    // Invalidate any in-flight receipt open/prepare: it must not write settings
+    // or a download URL back onto a different pair of sources.
+    receiptRequest.current++; outputRevision.current++;
+    setPreparedSettings(null); setSettingsMessage(""); setPrepareMessage(""); setSettingsLoading(false); setPreparingSettings(false);
+  }
   const controller = useRef<AbortController | null>(null);
   const musicAbort = useRef<AbortController | null>(null);
   const videoAbort = useRef<AbortController | null>(null);
+  const receiptRequest = useRef(0), outputRevision = useRef(0);
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (musicUrl) URL.revokeObjectURL(musicUrl); }, [musicUrl]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
-  useEffect(() => () => { musicAbort.current?.abort(); videoAbort.current?.abort(); controller.current?.abort(); }, []);
+  useEffect(() => () => { if (preparedSettings) URL.revokeObjectURL(preparedSettings); }, [preparedSettings]);
+  useEffect(() => () => { musicAbort.current?.abort(); videoAbort.current?.abort(); controller.current?.abort(); receiptRequest.current++; outputRevision.current++; }, []);
   async function choose(file: File | undefined, kind: "video" | "audio") {
-    if (!file || controller.current || importing) return;
+    if (!file || controller.current || importing || settingsLoading || preparingSettings) return;
     const isVideo = kind === "video";
     const pending = isVideo ? videoAbort : musicAbort;
     const chooser = isVideo ? videoChooser : musicChooser;
@@ -183,17 +209,21 @@ function AddMusic() {
     pending.current?.abort();
     const abort = new AbortController();
     pending.current = abort;
+    // A new selection invalidates any receipt still being checked.
+    receiptRequest.current++;
+    setSettingsLoading(false);
+    setSettingsMessage("");
     setChecking(true);
     setMessage(`Checking the selected ${kind} on this device…`);
     try {
       if (!file.size || file.size > (isVideo ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES))
         throw new Error(isVideo ? "Choose a video under 128 MB." : "Choose audio under 16 MB.");
-      await checkMediaDuration(file, abort.signal, kind);
+      const length = await checkMediaDuration(file, abort.signal, kind);
       if (pending.current !== abort || abort.signal.aborted) return;
       const url = URL.createObjectURL(file);
       clearOutputs();
-      if (isVideo) { setVideo(file); setVideoUrl(url); }
-      else { setMusic(file); setMusicUrl(url); }
+      if (isVideo) { setVideo(file); setVideoUrl(url); setVideoSeconds(length); }
+      else { setMusic(file); setMusicUrl(url); setMusicSeconds(length); }
       setMessage("");
     } catch (error) {
       if (pending.current !== abort || abort.signal.aborted) return;
@@ -213,7 +243,7 @@ function AddMusic() {
     }
   }
   async function run(mode: "preview" | "export") {
-    if (!video || !music || busy || controller.current || musicAbort.current || videoAbort.current || importing) return;
+    if (!video || !music || busy || controller.current || musicAbort.current || videoAbort.current || importing || settingsLoading || preparingSettings) return;
     // A finished mix stays committed until a repeat actually succeeds, so a
     // cancelled or failed repeat leaves the previous preview, film and exact download intact.
     const abort = new AbortController(); controller.current = abort; pauseOthers(); setBusy(mode);
@@ -221,7 +251,12 @@ function AddMusic() {
     try {
       const blob = await makeFilm(video,music,offset,delay,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",quality,abort.signal,setMessage); check(abort.signal);
       if (mode === "preview") { setPreview(URL.createObjectURL(blob)); setMessage("Audio-only mix preview ready."); }
-      else { setResultBlob(blob); setResult(URL.createObjectURL(blob)); setApplied(draft); setMessage("Your film is ready to play and save."); }
+      else {
+        setResultBlob(blob); setResult(URL.createObjectURL(blob));
+        setApplied({ key: draft, settings: currentSettings(), video, music });
+        setPrepareMessage(""); setPreparedSettings(null);
+        setMessage("Your film is ready to play and save.");
+      }
     } catch (error) { setMessage(error instanceof Error && error.name === "AbortError" ? "Cancelled. Your originals are unchanged." : error instanceof Error ? error.message : "Could not prepare this on your device."); }
     finally { controller.current = null; setBusy(null); }
   }
@@ -233,19 +268,89 @@ function AddMusic() {
       (busy === "preview" ? previewAction : exportAction).current?.focus();
     }
   }
-  const canRun = Boolean(video && music && !importing && !checkingMusic && !checkingVideo);
+  // Opening settings is an explicit, local-only action: prove the saved digests
+  // against the exact chosen bytes, then write only the editable controls. A
+  // new selection invalidates the receipt.
+  async function openSettings(selected: File | undefined) {
+    if (!selected || !video || !music || busy || controller.current || musicAbort.current || videoAbort.current || importing || checkingMusic || checkingVideo || settingsLoading || preparingSettings) return;
+    const chosenVideo = video, chosenMusic = music, videoLength = videoSeconds, musicLength = musicSeconds;
+    const request = ++receiptRequest.current;
+    const stale = () => request !== receiptRequest.current;
+    setSettingsLoading(true);
+    setSettingsMessage("Checking the mix settings against your video and audio on this device…");
+    try {
+      if (!selected.size || selected.size > MAX_MIX_SETTINGS_BYTES)
+        throw new Error(`Choose a mix settings JSON file under ${MAX_MIX_SETTINGS_BYTES / 1024} KB.`);
+      const text = await selected.text();
+      if (stale()) return;
+      const videoSha256 = await sha256Hex(new Uint8Array(await chosenVideo.arrayBuffer()));
+      if (stale()) return;
+      const audioSha256 = await sha256Hex(new Uint8Array(await chosenMusic.arrayBuffer()));
+      if (stale()) return;
+      const restored = parseMixSettings(text, {
+        videoBytes: chosenVideo.size, videoSha256, audioBytes: chosenMusic.size, audioSha256,
+        videoSeconds: videoLength, audioSeconds: musicLength,
+      });
+      if (stale()) return;
+      setDelay(restored.delay); setOffset(restored.offset);
+      setVolume(restored.gain); setOriginalVolume(restored.originalGain);
+      setFadeIn(restored.fadeIn); setFadeOut(restored.fadeOut); setQuality(restored.quality);
+      clearPreview();
+      setSettingsMessage("Mix settings restored for these files. Make MP4 when ready.");
+    } catch (error) {
+      if (!stale()) setSettingsMessage(error instanceof Error ? error.message : "Could not read those mix settings.");
+    } finally {
+      if (!stale()) setSettingsLoading(false);
+    }
+  }
+  // Prepare only from the snapshot of a completed MP4, never the live controls.
+  async function prepareSettings() {
+    if (!applied || busy || settingsLoading || preparingSettings || preparedSettings) return;
+    const snapshot = applied, revision = outputRevision.current;
+    const stale = () => revision !== outputRevision.current;
+    setPreparingSettings(true);
+    setPrepareMessage("Checking the video and audio behind this MP4 on this device…");
+    try {
+      const videoSha256 = await sha256Hex(new Uint8Array(await snapshot.video.arrayBuffer()));
+      if (stale()) return;
+      const audioSha256 = await sha256Hex(new Uint8Array(await snapshot.music.arrayBuffer()));
+      if (stale()) return;
+      const text = mixSettingsJson({
+        videoBytes: snapshot.video.size, videoSha256,
+        audioBytes: snapshot.music.size, audioSha256,
+      }, snapshot.settings);
+      setPreparedSettings(URL.createObjectURL(new Blob([text], { type: "application/json" })));
+      setPrepareMessage("Mix settings receipt ready to save.");
+    } catch {
+      if (!stale()) setPrepareMessage("Could not prepare the mix settings receipt. Your MP4 and download are unchanged.");
+    } finally {
+      if (!stale()) setPreparingSettings(false);
+    }
+  }
+  const canRun = Boolean(video && music && !importing && !checkingMusic && !checkingVideo && !settingsLoading && !preparingSettings);
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Add music to a video</h1><p>Make a new MP4 from your own video and music on this device, without sign-in or paid generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="inputs-title"><h2 id="inputs-title">Choose your files</h2>
-      <label className="trim-file">Video<input ref={videoChooser} type="file" accept="video/mp4,video/webm" disabled={busy !== null || importing} aria-busy={checkingVideo || undefined} onChange={e => void choose(e.target.files?.[0],"video")}/></label>
+      <label className="trim-file">Video<input ref={videoChooser} type="file" accept="video/mp4,video/webm" disabled={busy !== null || importing || settingsLoading || preparingSettings} aria-busy={checkingVideo || undefined} onChange={e => void choose(e.target.files?.[0],"video")}/></label>
       <p className="trim-note">Up to 60 seconds and 128 MB. Original sound is off by default. Raise its volume below to keep it under your added audio.</p>
       {video && <><p><strong>{video.name}</strong></p><video ref={sourceVideo} onPlay={()=>pauseOthers(sourceVideo.current)} className="video-tool-player" src={videoUrl} controls playsInline aria-label="Original video"/></>}
-      <label className="trim-file">Music or spoken audio<input ref={musicChooser} type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing} aria-busy={checkingMusic || undefined} onChange={e => void choose(e.target.files?.[0],"audio")}/></label>
+      <label className="trim-file">Music or spoken audio<input ref={musicChooser} type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing || settingsLoading || preparingSettings} aria-busy={checkingMusic || undefined} onChange={e => void choose(e.target.files?.[0],"audio")}/></label>
       <p className="trim-note">Use audio you have permission to use, up to 5 minutes and 16 MB; decoded audio must fit within 128 MiB on this device. If the added audio ends early, any enabled original sound continues.</p>
       {music && <><p><strong>{music.name}</strong></p><audio ref={sourceMusic} onPlay={()=>pauseOthers(sourceMusic.current)} controls src={musicUrl} aria-label="Added audio"/></>}
-      <div className="trim-fields"><label>Start added audio at video time (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(delay)?"":delay} disabled={busy !== null || importing} onChange={e=>{setDelay(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Skip into added audio (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing} onChange={e=>{setOffset(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing} onChange={e=>{setVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing} onChange={e=>{setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing} onChange={e=>{setFadeIn(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label><label>Added audio fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing} onChange={e=>{setFadeOut(e.target.value === "" ? NaN : Number(e.target.value));clearPreview();}}/></label></div>
+      {video && music && <>
+        <p className="trim-note">Reopen saved timing, volume and fades for the same video and audio.</p>
+        <div className="video-tool-actions">
+          <label className="trim-file">Open mix settings (JSON)<input type="file" accept="application/json,.json" disabled={busy !== null || importing || checkingMusic || checkingVideo || settingsLoading || preparingSettings} onChange={event => {
+            const input = event.currentTarget;
+            void openSettings(input.files?.[0]);
+            input.value = "";
+          }}/></label>
+        </div>
+        <p role="status" aria-live="polite" className="trim-note">{settingsMessage}</p>
+      </>}
+      <div className="trim-fields"><label>Start added audio at video time (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(delay)?"":delay} disabled={busy !== null || importing || settingsLoading || preparingSettings} onChange={e=>editSetting(()=>setDelay(e.target.value === "" ? NaN : Number(e.target.value)))}/></label><label>Skip into added audio (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(offset)?"":offset} disabled={busy !== null || importing || settingsLoading || preparingSettings} onChange={e=>editSetting(()=>setOffset(e.target.value === "" ? NaN : Number(e.target.value)))}/></label><label>Added audio volume (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(volume)?"":volume} disabled={busy !== null || importing || settingsLoading || preparingSettings} onChange={e=>editSetting(()=>setVolume(e.target.value === "" ? NaN : Number(e.target.value)))}/></label><label>Original video sound (%)<input type="number" min="0" max="100" step="1" value={Number.isNaN(originalVolume)?"":originalVolume} disabled={busy !== null || importing || settingsLoading || preparingSettings} onChange={e=>editSetting(()=>setOriginalVolume(e.target.value === "" ? NaN : Number(e.target.value)))}/></label><label>Added audio fade in (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeIn)?"":fadeIn} disabled={busy !== null || importing || settingsLoading || preparingSettings} onChange={e=>editSetting(()=>setFadeIn(e.target.value === "" ? NaN : Number(e.target.value)))}/></label><label>Added audio fade out (seconds)<input type="number" min="0" step="0.01" value={Number.isNaN(fadeOut)?"":fadeOut} disabled={busy !== null || importing || settingsLoading || preparingSettings} onChange={e=>editSetting(()=>setFadeOut(e.target.value === "" ? NaN : Number(e.target.value)))}/></label></div>
       <p className="trim-note">Use video time to place the audio after an opener. Skip into the audio to trim its beginning. Fades must fit within the portion heard in the video.</p>
       <p className="trim-note">If your video has no original sound, only the added audio is heard. Combining loud tracks can distort; lower the volumes and listen before saving.</p>
-      <label>Export quality<select value={quality} disabled={busy !== null || importing} onChange={e=>{setQuality(e.target.value as "standard" | "hd");clearPreview();}}><option value="standard">Standard · smaller file</option><option value="hd">HD · 720p</option></select></label>
+      <label>Export quality<select value={quality} disabled={busy !== null || importing || settingsLoading || preparingSettings} onChange={e=>editSetting(()=>setQuality(e.target.value as "standard" | "hd"))}><option value="standard">Standard · smaller file</option><option value="hd">HD · 720p</option></select></label>
       <p className="trim-note">HD takes longer and uses more memory. The original frame is fitted to your chosen size; bars may be added. Export uses H.264/AAC MP4 in a compatible browser.</p>
       <div className="video-tool-actions">
         <button type="button" className="secondary" ref={previewAction} disabled={!canRun || busy === "export"} aria-disabled={busy === "preview"} onClick={() => void run("preview")}>Preview mix (audio only)</button>
@@ -253,7 +358,13 @@ function AddMusic() {
         {busy && <button type="button" className="secondary" onClick={event => cancelRun(event.currentTarget)}>Cancel {busy === "preview" ? "preview" : "export"}</button>}
       </div>
       {preview && <div className="trim-result"><h2>Audio-only mix preview</h2><p className="trim-note">This is the sound mix, without video. Play the original video above to compare. The MP4 uses AAC encoding, so it may sound slightly different.</p><audio ref={previewPlayer} onPlay={()=>pauseOthers(previewPlayer.current)} src={preview} controls aria-label="Audio-only mix preview"/></div>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>{previous ? "Previous export" : "Your film"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with added audio"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{resultBlob && <div inert={busy !== null || checkingMusic || checkingVideo || undefined}><LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/></div>}</div>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>{previous ? "Previous export" : "Your film"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with added audio"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{applied && <details>
+        <summary>Mix settings receipt</summary>
+        <p className="trim-note">Save the settings and SHA-256 digests of this MP4 and the exact video and audio behind it. It stays on this device until you share it; it is not an upload.</p>
+        <button type="button" className="secondary" disabled={preparingSettings || Boolean(preparedSettings) || busy !== null || settingsLoading} aria-disabled={preparingSettings || Boolean(preparedSettings)} onClick={() => void prepareSettings()}>{preparingSettings ? "Preparing…" : "Prepare mix settings JSON"}</button>
+        <p role="status" aria-live="polite" className="trim-note">{prepareMessage}</p>
+        {preparedSettings && <p><a className="button secondary" href={preparedSettings} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-mix-settings.json`}>Save mix settings JSON</a></p>}
+      </details>}{resultBlob && <div inert={busy !== null || checkingMusic || checkingVideo || settingsLoading || preparingSettings || undefined}><LocalImport key={result} blob={resultBlob} filename={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`} operation="add music" onBusyChange={setImporting}/></div>}</div>}
     </section></main>;
 }
 export function mountAddMusic(container: HTMLElement) { createRoot(container).render(<AddMusic/>); }
