@@ -273,12 +273,9 @@ object and the Worker stopped before saving the key as staged, a retry returned
 an unreferenced object that opt-in cleanup could not find. Staging now records
 the key again on that path, and cleanup removes it.
 
-**Production restore against the real Cloudflare D1/R2 installation is NOT
-VERIFIED.** No production D1 or R2 object was read or written, no deployment was
-performed and no public page was changed. The remaining gate is an owner-run
-export from the real installation followed by a restore into a separate fresh
-D1/R2 installation, with the resulting hashes and editable flows recorded in
-#157.
+**Hosted production restore was verified on 16 November 2026.** A real production export restored into a separate Worker with fresh D1 and R2 resources in the same Cloudflare account. The target API and an independent Wrangler read matched both media files byte for byte. The publication restored privately, its promo brief revision was preserved, and a repeated import reused the result. [Studio #157 receipt](https://github.com/loftwah/composer-media-studio/issues/157#issuecomment-6908133526).
+
+The hosted restore used the API and CLI. The browser form was exercised in the local run below. Export remains CLI-only. Hosted browser and independent-account acceptance stay open. [Studio #2](https://github.com/loftwah/composer-media-studio/issues/2).
 
 The owner browser path was exercised on 16 November 2026 against separate local
 `wrangler dev` installations, in headless Chrome at 1440 px and 390 px: preview
