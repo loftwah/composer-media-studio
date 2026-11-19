@@ -10,6 +10,19 @@ export const SOCIAL_KIT_FORMATS = Object.freeze(["webp", "png"] as const);
 export type SocialKitFormat = (typeof SOCIAL_KIT_FORMATS)[number];
 export type SocialSizeKey = (typeof SOCIAL_SIZES)[number]["key"];
 
+export const SOCIAL_POST_LIMITS = { caption: 1500, altText: 500 } as const;
+export type SocialPostText = Partial<Record<keyof typeof SOCIAL_POST_LIMITS, string>>;
+
+export function socialPostEntries(post?: SocialPostText) {
+  const entries: Array<{ name: string; data: Uint8Array }> = [];
+  const encoder = new TextEncoder();
+  for (const [key, name] of [["caption", "post.txt"], ["altText", "alt.txt"]] as const) {
+    const text = post?.[key]?.slice(0, SOCIAL_POST_LIMITS[key]);
+    if (text?.trim()) entries.push({ name, data: encoder.encode(text) });
+  }
+  return entries;
+}
+
 export function socialSourceEligible(
   mime: string | undefined,
   isPublicPoster: boolean,

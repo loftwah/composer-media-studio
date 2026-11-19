@@ -119,12 +119,15 @@ import {
 import { ImageCover } from "./image-cover.tsx";
 import {
   SOCIAL_KIT_FORMATS,
+  SOCIAL_POST_LIMITS,
   SOCIAL_SIZES,
   defaultSocialKitFormat,
   socialKitCropAnchor,
   socialKitSettings,
+  socialPostEntries,
   socialSourceEligible,
   type SocialKitFormat,
+  type SocialPostText,
   type SocialSizeKey,
 } from "./image-social-kit.ts";
 import { canEncodeWebP } from "./image-encode-support.ts";
@@ -257,6 +260,7 @@ type WorkItem = {
    * position. Editing a choice never rewrites an existing result or download.
    */
   socialCropAnchors?: Partial<Record<SocialSizeKey, CropAnchorKey>>;
+  socialPost?: SocialPostText;
 };
 
 type Rejection = { name: string; message: string };
@@ -1941,6 +1945,14 @@ function Images() {
     setMessage("Web-ready settings applied. Choose Make this image to render.");
   }
 
+  function setSocialPost(itemId: string, field: keyof SocialPostText, text: string): void {
+    setItems((previous) => previous.map((item) =>
+      item.id === itemId
+        ? { ...item, socialPost: { ...item.socialPost, [field]: text.slice(0, SOCIAL_POST_LIMITS[field]) } }
+        : item,
+    ));
+  }
+
   async function makeSocialKit(): Promise<void> {
     if (!selected || runningRef.current || socialController.current || batchExport || addingRef.current) return;
     if (!socialReady) return;
@@ -2038,13 +2050,18 @@ function Images() {
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
         entries.push(manifest);
       }
+      const post = socialPostEntries(item.socialPost);
+      for (const entry of post) total += entry.data.length;
+      if (total > MAX_ZIP_BYTES)
+        throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
+      entries.push(...post);
       if (!alive()) throw abortError();
       const zip = createZip(entries, { date: new Date() });
       if (!zip.ok) throw new Error(zip.error);
       const zipBlob = blobFromBytes(zip.bytes, ZIP_MIME);
       setSocialZip({ url: trackUrl(zipBlob), bytes: zipBlob.size });
       setMessage(
-        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts${publicSource ? " and a public source manifest" : ""}, ${formatBytes(zipBlob.size)} total.`,
+        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts${publicSource ? " and a public source manifest" : ""}, ${formatBytes(zipBlob.size)} total.${post.length ? " Text files included." : ""}`,
       );
     } catch (error) {
       if (!isCurrent()) {
@@ -2822,6 +2839,30 @@ function Images() {
                   Use editor keeps the crop position from the editor. Each choice takes effect on the next
                   Make 4 social sizes; the current downloads stay available until then.
                 </p>
+              </details>
+            )}
+            {socialReady && (
+              <details className="image-social-post">
+                <summary>Add post text</summary>
+                <label>
+                  Caption (optional)
+                  <textarea
+                    rows={3}
+                    value={selected.socialPost?.caption ?? ""}
+                    maxLength={SOCIAL_POST_LIMITS.caption}
+                    onChange={(event) => setSocialPost(selected.id, "caption", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Image alt text (optional)
+                  <textarea
+                    rows={2}
+                    value={selected.socialPost?.altText ?? ""}
+                    maxLength={SOCIAL_POST_LIMITS.altText}
+                    onChange={(event) => setSocialPost(selected.id, "altText", event.target.value)}
+                  />
+                </label>
+                <p className="trim-note">Text stays on this device and goes into the next ZIP as separate text files.</p>
               </details>
             )}
             <div className="image-control-actions">

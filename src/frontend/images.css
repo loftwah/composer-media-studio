@@ -637,14 +637,16 @@
   line-height: 1.5;
 }
 
-.image-social-anchors {
+.image-social-anchors,
+.image-social-post {
   grid-column: 1 / -1;
   min-inline-size: 0;
   border-top: 1px solid var(--line);
   padding-top: 0.75rem;
 }
 
-.image-social-anchors > summary {
+.image-social-anchors > summary,
+.image-social-post > summary {
   cursor: pointer;
   font-weight: 700;
   color: var(--ink);
@@ -670,9 +672,23 @@
   min-inline-size: 0;
 }
 
-.image-social-anchors > .trim-note {
+.image-social-anchors > .trim-note,
+.image-social-post > .trim-note {
   margin: 0.7rem 0 0;
   max-width: 72ch;
+}
+
+.image-social-post label {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.7rem;
+}
+
+.image-social-post textarea {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  font: inherit;
+  resize: vertical;
 }
 
 .image-result .button,

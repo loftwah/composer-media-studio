@@ -10,8 +10,20 @@ import {
   defaultSocialKitFormat,
   socialKitCropAnchor,
   socialKitSettings,
+  socialPostEntries,
   socialSourceEligible,
 } from "../src/frontend/image-social-kit.ts";
+
+test("optional social text preserves entered UTF-8, skips blank fields and is bounded", () => {
+  assert.deepEqual(socialPostEntries(), []);
+  assert.deepEqual(socialPostEntries({ caption: "  ", altText: "\n" }), []);
+  const caption = "First line\nSecond line — café";
+  const entries = socialPostEntries({ caption, altText: "a".repeat(502) });
+  assert.deepEqual(entries.map(({ name, data }) => [name, new TextDecoder().decode(data)]), [
+    ["post.txt", caption],
+    ["alt.txt", "a".repeat(500)],
+  ]);
+});
 import {
   assertSocialReproducible,
   socialFormatForReceipt,
