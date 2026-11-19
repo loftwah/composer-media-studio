@@ -52,14 +52,14 @@ function VideoPlaceholder({ asset }: { asset: MediaAssetV1 }) {
   </span>;
 }
 
-function AssetCard({ asset, comparing, selected, full, previewToken }: { asset: MediaAssetV1; comparing: boolean; selected: boolean; full: boolean; previewToken: number }) {
+function AssetCard({ asset, comparisonKind, selected, full, previewToken }: { asset: MediaAssetV1; comparisonKind: LibraryProps["comparisonKind"]; selected: boolean; full: boolean; previewToken: number }) {
   return <article className="asset">
     <button type="button" className="thumb" data-action="open-asset" data-id={asset.id} aria-label={`Open ${asset.title}`}>
       {asset.kind === "video" ? <VideoPlaceholder asset={asset}/> : asset.kind === "audio" ? <span className="audio-card"><canvas width="240" height="64" data-waveform={asset.file} aria-hidden="true"/><span className="audio-time">{asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : "audio"}</span></span> : <AssetPreview asset={asset} retryToken={previewToken}/>}
       <span className="badge">{asset.kind}</span>
     </button>
     <div className="meta"><strong title={asset.title}>{asset.title}</strong><small>{asset.width && asset.height ? `${asset.width}×${asset.height} · ` : ""}{bytesLabel(asset.bytes)} · {asset.source}</small></div>
-    {comparing && asset.kind === "image" && <button type="button" className="secondary compare-select" data-action="compare-toggle" data-id={asset.id} aria-pressed={selected} aria-label={`${selected ? "Remove" : "Select"} ${asset.title} ${selected ? "from" : "for"} comparison`} disabled={full && !selected}>{selected ? "Selected" : "Compare"}</button>}
+    {asset.kind === comparisonKind && <button type="button" className="secondary compare-select" data-action="compare-toggle" data-id={asset.id} aria-pressed={selected} aria-label={`${selected ? "Remove" : "Select"} ${asset.title} ${selected ? "from" : "for"} comparison`} disabled={full && !selected}>{selected ? "Selected" : "Compare"}</button>}
     <button type="button" data-action="open-asset" data-id={asset.id}>Open</button>
   </article>;
 }
@@ -232,9 +232,11 @@ function PreviewBuilder({ onBuilt }: { onBuilt: () => void }) {
   </details>;
 }
 
-function Library({ projectId, assets, query, filter, canImportShare, canViewStorage, comparing, compareIds }: LibraryProps) {
+function Library({ projectId, assets, query, filter, canImportShare, canViewStorage, comparisonKind, compareIds }: LibraryProps) {
   const [previewToken, setPreviewToken] = useState(0);
-  const selected = compareIds.map(id => assets.find(asset => asset.id === id && asset.kind === "image")).filter((asset): asset is MediaAssetV1 => Boolean(asset));
+  const isVideo = comparisonKind === "video";
+  const selected = compareIds.map(id => assets.find(asset => asset.id === id && asset.kind === comparisonKind))
+    .filter((asset): asset is MediaAssetV1 => Boolean(asset));
   const trimmed = query.trim().toLowerCase();
   const visible = assets.filter(asset => (filter === "all" || asset.kind === filter) && (!trimmed || `${asset.title} ${asset.caption} ${asset.mime} ${asset.source}`.toLowerCase().includes(trimmed)));
   return <div className="library-workspace">
@@ -242,18 +244,43 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
       <label className="sr-only" htmlFor="search">Search media</label>
       <input id="search" type="search" placeholder="Search titles, captions, types…" defaultValue={query} data-input="search" />
       <div className="row" role="group" aria-label="Filter">{(["all", "image", "video", "audio"] as const).map(value => <button key={value} type="button" className="quiet" data-action="filter" data-filter={value} aria-pressed={filter === value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
-    </div><div className="row"><button type="button" className="secondary" data-action="compare-mode" aria-pressed={comparing}>{comparing ? "Close comparison" : "Compare stills"}</button><label className="button secondary library-upload" htmlFor="upload">Upload media<input id="upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" hidden data-input="upload" /></label></div></div>
+    </div><div className="row"><div className="row" role="group" aria-label="Comparison mode"><button type="button" className="secondary" data-action="compare-mode" data-kind="image" aria-pressed={comparisonKind === "image"}>Compare stills</button><button type="button" className="secondary" data-action="compare-mode" data-kind="video" aria-pressed={comparisonKind === "video"}>Compare videos</button></div><label className="button secondary library-upload" htmlFor="upload">Upload media<input id="upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" hidden data-input="upload" /></label></div></div>
     {canViewStorage && <StorageHealthPanel key={projectId} projectId={projectId}/>}
     {canViewStorage && <SavedOutcomes key={`outcomes-${projectId}`} projectId={projectId}/>}
     {canViewStorage && assets.length > 0 && <PreviewBuilder key={`preview-build-${projectId}`} onBuilt={() => setPreviewToken(token => token + 1)}/>}
-    {comparing && <section className="compare-panel" aria-labelledby="compare-title">
-      <div className="spread"><div><h2 id="compare-title">Compare stills</h2><p className="small">Choose two images from this studio to review them side by side. Your originals stay unchanged.</p></div><button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button></div>
-      <p className="sr-only" role="status">{selected.length} of 2 images selected</p>
-      <div className="compare-grid">{[0, 1].map(index => { const asset = selected[index]; return asset ? <figure className="compare-frame" key={asset.id}><img src={asset.file} alt={asset.title}/><figcaption><div><strong>{asset.title}</strong><span className="small">{asset.width && asset.height ? `${asset.width} × ${asset.height} · ` : ""}{asset.source}</span></div><div className="row"><button type="button" className="secondary" data-action="open-asset" data-id={asset.id}>Open</button><button type="button" className="quiet" data-action="compare-toggle" data-id={asset.id} aria-label={`Remove ${asset.title} from comparison`}>Remove</button></div></figcaption></figure> : <div className="compare-empty" key={`empty-${index}`}><strong>{index === 0 ? "Choose the first still" : "Choose another still"}</strong><span>Use Compare on an image below.</span></div>; })}</div>
+    {comparisonKind && <section className="compare-panel" aria-labelledby="compare-title">
+      <div className="spread"><div><h2 id="compare-title">{isVideo ? "Compare videos" : "Compare stills"}</h2><p className="small">Choose two {isVideo ? "clips" : "images"} from this studio to review them side by side. Your originals stay unchanged.</p></div><button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button></div>
+      <p className="sr-only" role="status">{selected.length} of 2 {isVideo ? "videos" : "images"} selected</p>
+      <div className="compare-grid">
+        {[0, 1].map(index => {
+          const asset = selected[index];
+          if (!asset) return <div className="compare-empty" key={index}>
+            <strong>{index === 0 ? `Choose the first ${isVideo ? "clip" : "still"}` : `Choose another ${isVideo ? "clip" : "still"}`}</strong>
+            <span>Use Compare on {isVideo ? "a video" : "an image"} below.</span>
+          </div>;
+          const facts = [
+            asset.width && asset.height ? `${asset.width} × ${asset.height}` : null,
+            asset.source,
+            isVideo && asset.durationMs ? `${(asset.durationMs / 1000).toFixed(1)}s` : null,
+          ].filter(Boolean);
+          return <figure className="compare-frame" key={asset.id}>
+            {isVideo
+              ? <video className="compare-video" src={asset.file} controls playsInline preload="metadata" aria-label={asset.title}/>
+              : <img src={asset.file} alt={asset.title}/>}
+            <figcaption>
+              <div><strong>{asset.title}</strong><span className="small">{facts.join(" · ")}</span></div>
+              <div className="row">
+                <button type="button" className="secondary" data-action="open-asset" data-id={asset.id}>Open</button>
+                <button type="button" className="quiet" data-action="compare-toggle" data-id={asset.id} aria-label={`Remove ${asset.title} from comparison`}>Remove</button>
+              </div>
+            </figcaption>
+          </figure>;
+        })}
+      </div>
     </section>}
     {assets.length === 0 && <div className="card"><h2>Nothing here yet.</h2><p>Upload a photo or a clip to start the library. You can generate new stills once uploads work.</p><button type="button" className="button" data-action="tab" data-tab="create">Make the first image</button></div>}
     {assets.length > 0 && visible.length === 0 && <p className="notice">No media matches that search or filter. <button type="button" className="quiet" data-action="clear-library">Clear search and filters</button></p>}
-    <div className="asset-grid">{visible.map(asset => <AssetCard key={asset.id} asset={asset} comparing={comparing} selected={compareIds.includes(asset.id)} full={compareIds.length >= 2} previewToken={previewToken}/>)}</div>
+    <div className="asset-grid">{visible.map(asset => <AssetCard key={asset.id} asset={asset} comparisonKind={comparisonKind} selected={compareIds.includes(asset.id)} full={selected.length >= 2} previewToken={previewToken}/>)}</div>
     {canImportShare && <ShareImport key={projectId} projectId={projectId}/>}
     <div className="dropzone library-dropzone" id="dropzone"><p><strong>Drop files here</strong> or use Upload media.</p><p className="small">JPEG, PNG, WebP, MP4, WebM, WAV, MP3 or M4A. Images and audio up to 32 MB, video up to 64 MB.</p></div>
   </div>;

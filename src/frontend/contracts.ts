@@ -47,7 +47,8 @@ export interface LibraryProps {
   filter: "all" | "image" | "video" | "audio";
   canImportShare: boolean;
   canViewStorage: boolean;
-  comparing: boolean;
+  /** Which asset kind the comparison panel works on, or null when closed. */
+  comparisonKind: "image" | "video" | null;
   compareIds: string[];
 }
 export interface ViewerProps {

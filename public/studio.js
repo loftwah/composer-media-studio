@@ -45,7 +45,8 @@ let createProjectId = null;
 window.addEventListener("beforeunload", (event) => {
   if (shouldWarnCreateDrafts(projectCreateDrafts, priorCreateDrafts, state.create, projectCreateDefaults.get(createProjectId))) event.preventDefault();
 });
-// Comparison is an in-memory view of existing same-project images, not a saved collection.
+// Comparison is an in-memory view of existing same-project media (stills or
+// clips), not a saved collection. Each project keeps its own kind and selection.
 const comparisons = new Map();
 
 const state = {
@@ -645,11 +646,17 @@ function render() {
 }
 
 function renderReactLibrary() {
-  const comparison = comparisons.get(state.projectId) ?? { active: false, ids: [] };
-  comparison.ids = comparison.ids.filter((id) => state.project.assets.some((asset) => asset.id === id && asset.kind === "image"));
+  const comparison = comparisons.get(state.projectId) ?? { kind: null, ids: [] };
+  const kind = comparison.kind;
+  // A selection only makes sense while its kind is open. Keep ids intact while
+  // closed so reopening the same kind restores the previous choice.
+  if (kind === "image" || kind === "video") {
+    comparison.ids = comparison.ids.filter((id) => state.project.assets.some((asset) => asset.id === id && asset.kind === kind));
+  }
   comparisons.set(state.projectId, comparison);
   creativeHome.renderLibrary(app.querySelector("#creative-media"), {
-    projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter, comparing: comparison.active, compareIds: comparison.ids,
+    projectId: state.projectId, assets: state.project.assets, query: state.query, filter: state.filter,
+    comparisonKind: kind, compareIds: comparison.ids,
     canImportShare: state.woodhouseShare && state.session?.actions.includes("edit"),
     canViewStorage: state.session?.actions.includes("admin") ?? false,
   });
@@ -1621,8 +1628,17 @@ async function handleAction(action, element, keyboard = false) {
       activateProjectTab(element.dataset.tab);
       return;
     case "compare-mode": {
-      const comparison = comparisons.get(state.projectId) ?? { active: false, ids: [] };
-      comparison.active = !comparison.active;
+      const requested = element.dataset.kind;
+      if (requested !== "image" && requested !== "video") return;
+      const comparison = comparisons.get(state.projectId) ?? { kind: null, ids: [] };
+      if (comparison.kind === requested) {
+        // Closing keeps the selection so reopening the same kind restores it.
+        comparison.kind = null;
+      } else {
+        // Switching kinds drops ids that belong to the previous kind.
+        comparison.kind = requested;
+        comparison.ids = comparison.ids.filter((item) => state.project.assets.some((asset) => asset.id === item && asset.kind === requested));
+      }
       comparisons.set(state.projectId, comparison);
       renderReactLibrary();
       drawWaveforms();
@@ -1630,8 +1646,12 @@ async function handleAction(action, element, keyboard = false) {
     }
     case "compare-toggle": {
       const comparison = comparisons.get(state.projectId);
-      const asset = state.project.assets.find((item) => item.id === id && item.kind === "image");
-      if (!comparison || !asset) return;
+      const kind = comparison?.kind;
+      if (!comparison || (kind !== "image" && kind !== "video") || !state.project || state.project.id !== state.projectId) return;
+      // Only an asset of the expected kind from the current, already-loaded
+      // project can be selected; image and video never mix in one comparison.
+      const asset = state.project.assets.find((item) => item.id === id && item.kind === kind);
+      if (!asset) return;
       if (comparison.ids.includes(id)) comparison.ids = comparison.ids.filter((item) => item !== id);
       else if (comparison.ids.length < 2) comparison.ids.push(id);
       renderReactLibrary();
