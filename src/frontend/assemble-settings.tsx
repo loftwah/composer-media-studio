@@ -533,12 +533,27 @@ export function Assemble({
             >
               {compose.editingId ? "Save changes" : "Save storyboard"}
             </button>
+            {compose.editingId && canEdit && (
+              <button
+                className="button secondary"
+                type="button"
+                data-action="compose-copy-draft"
+              >
+                Copy to a new draft
+              </button>
+            )}
             {compose.editingId && (
               <button className="quiet" data-action="compose-new">
                 Start a new storyboard
               </button>
             )}
           </div>
+          {compose.editingId && canEdit && (
+            <p className="small" style={{ margin: 0 }}>
+              The copy keeps your current shots, trims, audio and slate in a separate draft.
+              On save, Studio creates a separate storyboard.
+            </p>
+          )}
           {total > 60000 && (
             <p className="small" style={{ margin: 0, color: "var(--bad)" }}>
               Keep the cut under 60 seconds to stay inside the bounded render.
