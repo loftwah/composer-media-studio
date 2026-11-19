@@ -50,3 +50,14 @@ export function savedRevisionLabel(composition: CompositionV1): string {
     minute: '2-digit',
   })}`;
 }
+
+/** Name the downloaded bytes using the exact saved storyboard and output dimensions. */
+export function localRenderDownloadName(composition: CompositionV1, frame: { width: number; height: number }): string {
+  const slug = composition.title.normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
+  // Fifty code points leave room for the revision and dimensions even in UTF-8.
+  const stem = Array.from(slug).slice(0, 50).join('').replace(/-+$/g, '') || 'studio-local-render';
+  const savedAt = composition.updatedAt ?? composition.createdAt;
+  const revision = /^\d+$/.test(String(savedAt)) ? Number(savedAt) : Date.parse(String(savedAt));
+  const version = Number.isSafeInteger(revision) ? revision : 'saved';
+  return `${stem}-${version}-${frame.width}x${frame.height}.mp4`;
+}
