@@ -9,6 +9,7 @@ import { Assemble, Settings } from "./assemble-settings";
 import { History, Publish } from "./history-publish";
 import { isLocalRenderProvenance, shareImportProvenance } from "../../public/asset-caption.js";
 import { AssetUses, StorageHealthPanel } from "./storage-health";
+import { SavedOutcomes } from "./creator-outcomes";
 import "./library.css";
 
 const bytesLabel = (bytes: number) => !bytes ? "—" : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -242,6 +243,7 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
       <div className="row" role="group" aria-label="Filter">{(["all", "image", "video", "audio"] as const).map(value => <button key={value} type="button" className="quiet" data-action="filter" data-filter={value} aria-pressed={filter === value}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
     </div><div className="row"><button type="button" className="secondary" data-action="compare-mode" aria-pressed={comparing}>{comparing ? "Close comparison" : "Compare stills"}</button><label className="button secondary library-upload" htmlFor="upload">Upload media<input id="upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" hidden data-input="upload" /></label></div></div>
     {canViewStorage && <StorageHealthPanel key={projectId} projectId={projectId}/>}
+    {canViewStorage && <SavedOutcomes key={`outcomes-${projectId}`} projectId={projectId}/>}
     {canViewStorage && assets.length > 0 && <PreviewBuilder key={`preview-build-${projectId}`} onBuilt={() => setPreviewToken(token => token + 1)}/>}
     {comparing && <section className="compare-panel" aria-labelledby="compare-title">
       <div className="spread"><div><h2 id="compare-title">Compare stills</h2><p className="small">Choose two images from this studio to review them side by side. Your originals stay unchanged.</p></div><button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button></div>
