@@ -113,10 +113,12 @@ import {
   stillSourceManifestEntry,
 } from "./image-social-source.ts";
 import {
+  COMPOSER_POST_BRIEF_MAX_BYTES,
   composerArtworkManifestEntry,
   composerArtworkSourceUrl,
   fetchComposerArtwork,
   parseComposerArtworkHash,
+  parseComposerPostBrief,
   type ComposerArtworkRef,
 } from "./composer-artwork.ts";
 import { ImageCover } from "./image-cover.tsx";
@@ -961,6 +963,7 @@ function Images() {
   const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
   const [socialBusy, setSocialBusy] = useState(false);
   const [socialFormat, setSocialFormat] = useState<SocialKitFormat>(defaultSocialKitFormat(WEBP_ENCODABLE));
+  const [postBriefStatus, setPostBriefStatus] = useState<{ bad: boolean; message: string } | null>(null);
   const [stripBusy, setStripBusy] = useState(false);
   const [removeIcc, setRemoveIcc] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -992,6 +995,7 @@ function Images() {
   const batchExportRevision = useRef(0);
   const batchController = useRef<{ controller: AbortController; report: (message: string) => void } | null>(null);
   const socialController = useRef<AbortController | null>(null);
+  const postBriefRequest = useRef(0);
   const makeSocialKitRef = useRef<HTMLButtonElement>(null);
   const cancelSocialKitRef = useRef<HTMLButtonElement>(null);
   const socialSizesRef = useRef<HTMLFieldSetElement>(null);
@@ -1211,12 +1215,15 @@ function Images() {
   }
 
   function clearSocial(): void {
+    postBriefRequest.current++;
+    setPostBriefStatus(null);
     socialController.current?.abort();
     releaseSocial();
   }
 
   useEffect(() => {
     return () => {
+      postBriefRequest.current++;
       revision.current += 1;
       stripRevision.current += 1;
       batchExportRevision.current += 1;
@@ -1530,6 +1537,8 @@ function Images() {
 
   function resetAll(): void {
     if (importing) return;
+    postBriefRequest.current++;
+    setPostBriefStatus(null);
     publicImageRequest.current?.abort();
     publicImageRequest.current = null;
     setPublicImageLoading(false);
@@ -1983,11 +1992,40 @@ function Images() {
   }
 
   function setSocialPost(itemId: string, field: keyof SocialPostText, text: string): void {
+    postBriefRequest.current++;
+    setPostBriefStatus(null);
     setItems((previous) => previous.map((item) =>
       item.id === itemId
         ? { ...item, socialPost: { ...item.socialPost, [field]: text.slice(0, SOCIAL_POST_LIMITS[field]) } }
         : item,
     ));
+  }
+
+  async function applyComposerPostBrief(file?: File): Promise<void> {
+    const item = selected;
+    const source = item?.publicSource;
+    if (!file || !item || source?.kind !== "composer") return;
+    const request = ++postBriefRequest.current;
+    if (file.size > COMPOSER_POST_BRIEF_MAX_BYTES) {
+      setPostBriefStatus({ bad: true, message: "Choose a Composer post brief up to 16 KiB." });
+      return;
+    }
+    setPostBriefStatus({ bad: false, message: "Reading your Composer post brief…" });
+    try {
+      const parsed = parseComposerPostBrief(await file.text(), source.ref);
+      if (request !== postBriefRequest.current) return;
+      if (!parsed.ok) {
+        setPostBriefStatus({ bad: true, message: parsed.reason });
+        return;
+      }
+      setItems(previous => previous.map(candidate => candidate.id === item.id
+        ? { ...candidate, socialPost: { caption: parsed.caption, altText: parsed.altText } }
+        : candidate));
+      setPostBriefStatus({ bad: false, message: "Draft loaded. Review the caption, alt text and reuse rights for your crop." });
+    } catch {
+      if (request === postBriefRequest.current)
+        setPostBriefStatus({ bad: true, message: "Could not read the post brief. Choose the JSON file again." });
+    }
   }
 
   async function makeSocialKit(): Promise<void> {
@@ -2883,6 +2921,24 @@ function Images() {
             {socialReady && (
               <details className="image-social-post">
                 <summary>Add post text</summary>
+                {selected?.publicSource?.kind === "composer" &&
+                  selected.publicSource === publicImageSource && (
+                    <>
+                      <label className="trim-file">
+                        Fill from Composer post brief (JSON)
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          disabled={running || socialBusy || Boolean(batchExport) || adding}
+                          onChange={(event) => {
+                            const input = event.currentTarget;
+                            void applyComposerPostBrief(input.files?.[0]);
+                            input.value = "";
+                          }}
+                        />
+                      </label>
+                    </>
+                  )}
                 <label>
                   Caption (optional)
                   <textarea
@@ -2901,7 +2957,17 @@ function Images() {
                     onChange={(event) => setSocialPost(selected.id, "altText", event.target.value)}
                   />
                 </label>
-                <p className="trim-note">Text stays on this device and goes into the next ZIP as separate text files.</p>
+                <p className="trim-note">
+                  Text stays on this device and goes into the next ZIP as separate text files.
+                </p>
+                {postBriefStatus && (
+                  <p
+                    className={postBriefStatus.bad ? "notice warn" : "trim-note"}
+                    role={postBriefStatus.bad ? "alert" : "status"}
+                  >
+                    {postBriefStatus.message}
+                  </p>
+                )}
               </details>
             )}
             <div className="image-control-actions">

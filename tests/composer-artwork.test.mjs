@@ -3,11 +3,16 @@ import assert from "node:assert/strict";
 import worker from "../src/worker.mjs";
 import {
   COMPOSER_ARTWORK_DOWNLOAD_API,
+  COMPOSER_POST_BRIEF_MAX_BYTES,
+  composerArtworkDownloadUrl,
   composerArtworkManifestEntry,
+  composerArtworkSourceUrl,
   fetchComposerArtwork,
   parseComposerArtworkHash,
+  parseComposerPostBrief,
 } from "../src/frontend/composer-artwork.ts";
 import { MAX_IMAGE_INPUT_BYTES } from "../src/frontend/image-limits.ts";
+import { SOCIAL_POST_LIMITS } from "../src/frontend/image-social-kit.ts";
 
 const assetId = "asset-public-art";
 const revision = "a".repeat(64);
@@ -15,6 +20,32 @@ const ref = { assetId, revision };
 const hash = `#composer-artwork=${assetId}&revision=${revision}`;
 const download = `${COMPOSER_ARTWORK_DOWNLOAD_API}?id=${assetId}&file=0&revision=${revision}`;
 const signal = new AbortController().signal;
+
+// Mirrors the read-only native v1 producer (share-artwork-post.ts). The caption
+// is plain text composed from artwork fields; it may include the canonical URL,
+// which the Studio must treat as text and never follow.
+const canonical = composerArtworkSourceUrl(ref);
+function postBrief(top = {}, art = {}) {
+  return {
+    schema: "app-composer/public-artwork-post",
+    version: 1,
+    status: "draft",
+    caption: "A plain caption\n\nwith a second line",
+    ...top,
+    artwork: {
+      id: assetId,
+      revision,
+      title: "Public art",
+      canonicalUrl: canonical,
+      downloadUrl: download,
+      alt: "Plain alt text",
+      credit: "Studio",
+      sourceUrl: null,
+      reuse: "unconfirmed",
+      ...art,
+    },
+  };
+}
 
 test("accepts only a single exact artwork reference", () => {
   assert.deepEqual(parseComposerArtworkHash(hash), ref);
@@ -96,4 +127,81 @@ test("only the image tools may connect to the exact Composer download path", asy
     const connect = response.headers.get("content-security-policy")?.split("; ").find((part) => part.startsWith("connect-src"));
     assert.equal(connect, expected);
   }
+});
+
+test("accepts the actual v1 contract for the loaded artwork and follows no URL from it", (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("the post brief must not trigger network");
+  });
+  const caption = `See ${canonical}\n\nA café — original artwork 🎨`;
+  const alt = "A plain text alternative";
+  const result = parseComposerPostBrief(JSON.stringify(postBrief({ caption }, { alt })), ref);
+  assert.deepEqual(result, { ok: true, caption, altText: alt });
+  assert.equal(fetch.mock.calls.length, 0);
+});
+
+test("rejects a brief for the wrong asset or revision", () => {
+  for (const art of [{ id: "asset-other" }, { revision: "b".repeat(64) }]) {
+    const result = parseComposerPostBrief(JSON.stringify(postBrief({}, art)), ref);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /different artwork or revision/);
+  }
+});
+
+test("rejects a wrong schema, version, status or reuse state", () => {
+  for (const [brief, pattern] of [
+    [postBrief({ schema: "other/post-brief" }), /not a Composer post brief/],
+    [postBrief({ version: 2 }), /unsupported version/],
+    [postBrief({ status: "published" }), /not a draft/],
+    [postBrief({}, { reuse: "confirmed" }), /reuse as unconfirmed/],
+  ]) {
+    const result = parseComposerPostBrief(JSON.stringify(brief), ref);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, pattern);
+  }
+});
+
+test("rejects a brief whose canonical or download target differs from the exact builders", () => {
+  assert.equal(composerArtworkDownloadUrl(ref), download);
+  for (const art of [
+    { canonicalUrl: "https://elsewhere.example/artwork" },
+    { downloadUrl: `${COMPOSER_ARTWORK_DOWNLOAD_API}?id=${assetId}&file=1&revision=${revision}` },
+  ]) {
+    const result = parseComposerPostBrief(JSON.stringify(postBrief({}, art)), ref);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /different artwork links/);
+  }
+});
+
+test("rejects malformed, non-object and oversized briefs before any text is used", () => {
+  for (const raw of [
+    "",
+    "{not json",
+    "[]",
+    "null",
+    '"a string"',
+    JSON.stringify(postBrief()).padEnd(COMPOSER_POST_BRIEF_MAX_BYTES + 1, " "),
+  ]) {
+    const result = parseComposerPostBrief(raw, ref);
+    assert.equal(result.ok, false);
+    assert.ok(result.reason.length > 0);
+  }
+});
+
+test("enforces the existing social string bounds without silently truncating", () => {
+  const longCaption = parseComposerPostBrief(
+    JSON.stringify(postBrief({ caption: "a".repeat(SOCIAL_POST_LIMITS.caption + 1) })), ref,
+  );
+  assert.equal(longCaption.ok, false);
+  assert.match(longCaption.reason, /caption is over/);
+  const longAlt = parseComposerPostBrief(
+    JSON.stringify(postBrief({}, { alt: "b".repeat(SOCIAL_POST_LIMITS.altText + 1) })), ref,
+  );
+  assert.equal(longAlt.ok, false);
+  assert.match(longAlt.reason, /alt text is over/);
+  const exact = "First line\nSecond — café 🎨";
+  assert.deepEqual(
+    parseComposerPostBrief(JSON.stringify(postBrief({ caption: exact }, { alt: exact })), ref),
+    { ok: true, caption: exact, altText: exact },
+  );
 });

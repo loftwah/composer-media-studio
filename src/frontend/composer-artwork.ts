@@ -1,4 +1,5 @@
 import { MAX_IMAGE_INPUT_BYTES } from "./image-limits.ts";
+import { SOCIAL_POST_LIMITS } from "./image-social-kit.ts";
 
 const COMPOSER = "https://composer.loftwah.com";
 export const COMPOSER_ARTWORK_DOWNLOAD_API = `${COMPOSER}/api/share-artwork-download`;
@@ -68,6 +69,61 @@ export async function fetchComposerArtwork(ref: ComposerArtworkRef, signal: Abor
     reader.releaseLock();
   }
   return new File(chunks, `${ref.assetId}.${extension}`, { type });
+}
+
+const POST_BRIEF_SCHEMA = "app-composer/public-artwork-post";
+
+/** A Composer post brief is read locally only; cap the read well below image limits. */
+export const COMPOSER_POST_BRIEF_MAX_BYTES = 16 * 1024;
+
+export type ComposerPostBriefResult =
+  | { ok: true; caption: string; altText: string }
+  | { ok: false; reason: string };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validate a locally chosen v1 Composer post brief against the exact artwork
+ * reference already loaded in this workbench. This reads strings only: it never
+ * fetches a URL from the brief, publishes anything or infers permission. On any
+ * mismatch it returns an actionable reason and no text, so the caller keeps the
+ * values already in the editable fields.
+ */
+export function parseComposerPostBrief(raw: string, ref: ComposerArtworkRef): ComposerPostBriefResult {
+  if (typeof raw !== "string" || new TextEncoder().encode(raw).byteLength > COMPOSER_POST_BRIEF_MAX_BYTES)
+    return { ok: false, reason: `That brief is larger than ${COMPOSER_POST_BRIEF_MAX_BYTES / 1024} KiB. Choose the original JSON from Composer.` };
+  let brief: unknown;
+  try {
+    brief = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: "That file is not valid JSON. Choose the post brief exported by Composer." };
+  }
+  if (!isPlainObject(brief) || brief.schema !== POST_BRIEF_SCHEMA)
+    return { ok: false, reason: "That is not a Composer post brief. Choose the v1 post brief JSON exported by Composer." };
+  if (brief.version !== 1)
+    return { ok: false, reason: "This brief is from an unsupported version. Export a fresh v1 brief from Composer." };
+  if (brief.status !== "draft")
+    return { ok: false, reason: "This brief is not a draft. Export a fresh draft brief from Composer." };
+  const artwork = brief.artwork;
+  if (!isPlainObject(artwork))
+    return { ok: false, reason: "The brief is missing its artwork details." };
+  if (artwork.reuse !== "unconfirmed")
+    return { ok: false, reason: "This brief does not mark the artwork reuse as unconfirmed. Export a fresh draft from Composer." };
+  if (artwork.id !== ref.assetId || artwork.revision !== ref.revision)
+    return { ok: false, reason: "That brief is for a different artwork or revision. Export a brief for this loaded artwork." };
+  if (artwork.canonicalUrl !== composerArtworkSourceUrl(ref) || artwork.downloadUrl !== composerArtworkDownloadUrl(ref))
+    return { ok: false, reason: "That brief points to different artwork links. Export a fresh brief for this loaded artwork." };
+  const caption = brief.caption;
+  const altText = artwork.alt;
+  if (typeof caption !== "string" || typeof altText !== "string")
+    return { ok: false, reason: "The brief is missing plain caption or alt text." };
+  if (caption.length > SOCIAL_POST_LIMITS.caption)
+    return { ok: false, reason: `The brief's caption is over ${SOCIAL_POST_LIMITS.caption} characters. Enter a shorter version in Studio.` };
+  if (altText.length > SOCIAL_POST_LIMITS.altText)
+    return { ok: false, reason: `The brief's alt text is over ${SOCIAL_POST_LIMITS.altText} characters. Enter a shorter version in Studio.` };
+  return { ok: true, caption, altText };
 }
 
 export function composerArtworkManifestEntry(ref: ComposerArtworkRef, sourceHash: string) {
