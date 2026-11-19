@@ -94,7 +94,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
         vttUrl,
         kitInputBytes: output.blob.size + utf8Bytes(receiptText) + (vtt ? utf8Bytes(vtt) : 0),
       });
-      if (vttUrl) onCaptionReady({ url: vttUrl, english: !clip.captions });
+      if (vttUrl && !clip.captions) onCaptionReady({ url: vttUrl, english: true });
       setMessage(clip.captions && !vtt ? "Receipt ready. No imported cues fall inside this clip." : "Receipt ready to save.");
     } catch {
       if (mounted.current) setMessage("Could not prepare the receipt. You can try again or save the MP4.");
