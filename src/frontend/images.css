@@ -637,6 +637,44 @@
   line-height: 1.5;
 }
 
+.image-social-anchors {
+  grid-column: 1 / -1;
+  min-inline-size: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+
+.image-social-anchors > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.image-social-anchor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 0.6rem 0.8rem;
+  margin-top: 0.7rem;
+}
+
+.image-social-anchor-grid label {
+  display: grid;
+  gap: 0.3rem;
+  min-inline-size: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.image-social-anchor-grid select {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.image-social-anchors > .trim-note {
+  margin: 0.7rem 0 0;
+  max-width: 72ch;
+}
+
 .image-result .button,
 .image-result .button:hover {
   text-decoration: none;
