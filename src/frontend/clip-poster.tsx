@@ -1,8 +1,9 @@
+import type { ClipCaptionTrack } from "./clip-captions";
 import { clipPosterError } from "./clip-poster-eligibility.ts";
 import { useEffect, useRef, useState } from "react";
 
 /** Capture a still from the finished local MP4; never sends or changes its source. */
-export function ClipPoster({ src, filename, captionUrl }: { src: string; filename: string; captionUrl: string }) {
+export function ClipPoster({ src, filename, captionTrack }: { src: string; filename: string; captionTrack: ClipCaptionTrack | null }) {
   const video = useRef<HTMLVideoElement | null>(null);
   const captions = useRef<HTMLTrackElement | null>(null);
   const [showCaptions, setShowCaptions] = useState(false);
@@ -21,7 +22,7 @@ export function ClipPoster({ src, filename, captionUrl }: { src: string; filenam
     tracks.addEventListener("change", sync);
     sync();
     return () => tracks.removeEventListener("change", sync);
-  }, [captionUrl]);
+  }, [captionTrack]);
   function toggleCaptions(show: boolean) {
     const track = captions.current?.track;
     if (!track) return;
@@ -48,11 +49,11 @@ export function ClipPoster({ src, filename, captionUrl }: { src: string; filenam
   }
   return <>
     <video ref={video} className="video-tool-player" src={src} controls playsInline aria-label="Finished video">
-      {captionUrl && <track ref={captions} kind="captions" label="English" srcLang="en" src={captionUrl}/>}
+      {captionTrack && <track ref={captions} kind="captions" label={captionTrack.english ? "English" : "Imported captions"} srcLang={captionTrack.english ? "en" : undefined} src={captionTrack.url}/>}
     </video>
-    {captionUrl && <label className="video-tool-check">
+    {captionTrack && <label className="video-tool-check">
       <input type="checkbox" checked={showCaptions} onChange={event => toggleCaptions(event.currentTarget.checked)}/>
-      Show English captions on preview
+      Show {captionTrack.english ? "English" : "imported"} captions on preview
     </label>}
     <details><summary>Make a poster from this clip</summary><p className="trim-note">Pause the finished clip on the frame you want. Capture makes a separate PNG with the same frame and crop. Choose Save to download it; it stays on this device.</p><button type="button" className="secondary" disabled={working} onClick={capture}>Capture paused frame</button><p role="status" aria-live="polite">{message}</p>{poster && <div><img className="clip-poster-preview" src={poster} alt={`Captured poster at ${time.toFixed(2)} seconds`}/><p className="trim-note">Captured at {time.toFixed(2)} seconds from the finished clip.</p><a className="button secondary" href={poster} download={`${filename}-poster.png`}>Save poster PNG</a></div>}</details></>;
 }
