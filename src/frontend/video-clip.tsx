@@ -15,6 +15,10 @@ import {
   publicVideoRefusal,
   type PublicVideoSource,
 } from "./video-clip-source";
+import {
+  LOCAL_MIX_HANDOFF_MS, localMixReady, localMixTokenFromHash,
+  parseLocalMixDeliver,
+} from "./local-mix-handoff";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, VideoSampleSink } from "mediabunny";
@@ -141,6 +145,7 @@ function VideoClip() {
   const [checking, setChecking] = useState(false);
   // A handoff only offers a source; nothing is fetched until the visitor acts.
   const [publicVideo] = useState(() => publicVideoFromHash(window.location.hash));
+  const [localMixToken] = useState(() => localMixTokenFromHash(window.location.hash));
   const [publicLoading, setPublicLoading] = useState(false);
   const [publicLoaded, setPublicLoaded] = useState(false);
   const publicRequest = useRef<AbortController | null>(null);
@@ -155,6 +160,47 @@ function VideoClip() {
   }, [captionTrack]);
   useEffect(() => () => { current.current++; captionRequest.current++; receiptRequest.current++; void active.current?.cancel(); }, []);
   useEffect(() => () => publicRequest.current?.abort(), []);
+  // Consume only the explicit handoff from the opener that launched this tab.
+  // A ready is announced once; the first verified delivery from that exact
+  // same-origin WindowProxy is the only one accepted, then all listeners go.
+  useEffect(() => {
+    if (!localMixToken) return;
+    history.replaceState(history.state, "", location.pathname + location.search);
+    const opener = window.opener;
+    if (!opener) {
+      setMessage("Choose the MP4 file on this device to open it in Video Clip.");
+      return;
+    }
+    const sourceRevision = current.current;
+    let done = false;
+    let timer = 0;
+    let listener: (event: MessageEvent) => void = () => {};
+    const stop = () => {
+      done = true;
+      window.removeEventListener("message", listener);
+      clearTimeout(timer);
+    };
+    listener = (event: MessageEvent) => {
+      if (done || event.origin !== window.location.origin || event.source !== opener) return;
+      const delivered = parseLocalMixDeliver(event.data, localMixToken);
+      if (!delivered) return;
+      stop();
+      if (sourceRevision === current.current) void choose(delivered);
+    };
+    window.addEventListener("message", listener);
+    timer = window.setTimeout(() => {
+      if (done) return;
+      stop();
+      if (sourceRevision === current.current) setMessage("Video Clip did not receive the mix. Choose the MP4 file on this device.");
+    }, LOCAL_MIX_HANDOFF_MS);
+    try {
+      opener.postMessage(localMixReady(localMixToken), window.location.origin);
+    } catch {
+      stop();
+      setMessage("The local mix handoff could not start. Choose the MP4 file yourself.");
+    }
+    return () => { done = true; window.removeEventListener("message", listener); clearTimeout(timer); };
+  }, [localMixToken]);
   // A finished MP4 outlives draft edits: only a successful replacement, or a
   // valid new source, clears it. The draft key is compared with the recorded
   // one on every render, so returning to the same settings drops the note.
