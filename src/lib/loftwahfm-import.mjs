@@ -1,24 +1,15 @@
 // MIT. A private audio import from LoftwahFM's published media route.
 import { audioInfo, HttpError } from "./util.mjs";
-
-const origin = "https://fm.loftwah.com";
+import { parseLoftwahFmTrackLink } from "./loftwahfm-track-link.ts";
 
 export async function readLoftwahFmTrack(value, limit) {
-  let url, filename, album;
-  try {
-    url = new URL(typeof value === "string" && value.length <= 800 ? value.trim() : "");
-    const match = /^\/media\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([^/]+)$/.exec(url.pathname);
-    if (url.origin !== origin || url.search || url.hash || url.username || url.password || !match) throw Error();
-    [, album] = match;
-    filename = decodeURIComponent(match[2]);
-    if (!/^[^/\\\u0000-\u001f\u007f]{1,160}\.mp3$/i.test(filename) || filename.trim() !== filename) throw Error();
-  } catch {
+  const parsed = parseLoftwahFmTrackLink(value);
+  if (!parsed.ok) {
+    if (parsed.reason === "too-long")
+      throw new HttpError(400, "This audio link is too long to preserve with the track.", "invalid_track_link");
     throw new HttpError(400, "Paste a direct LoftwahFM MP3 link.", "invalid_track_link");
   }
-
-  const source = `${origin}/media/${album}/${encodeURIComponent(filename)}`;
-  if (source.length > 400)
-    throw new HttpError(400, "This audio link is too long to preserve with the track.", "invalid_track_link");
+  const { source, title } = parsed;
   const unavailable = () => new HttpError(502, "LoftwahFM could not supply this MP3. Check the link and try again.", "track_unavailable");
   let stage = "request";
   try {
@@ -60,7 +51,7 @@ export async function readLoftwahFmTrack(value, limit) {
     const audio = audioInfo(bytes);
     if (audio.format !== "mp3" || !Number.isFinite(audio.durationMs) || audio.durationMs < 2000)
       throw new HttpError(415, "Studio could not measure this MP3. Try another track.", "unsupported_type");
-    return { bytes, source, title: filename.slice(0, -4).slice(0, 100) };
+    return { bytes, source, title };
   } catch (error) {
     if (error instanceof HttpError) throw error;
     console.warn("LoftwahFM track transfer error", {

@@ -20,6 +20,7 @@ import { SceneProposalReview } from './scene-proposal-review';
 import { SongCutAudition } from './song-cut-audition';
 import { CaptionImport } from './caption-import-ui';
 import { SongPlanImport, downloadSongPlan } from './song-plan-portability';
+import { parseLoftwahFmTrackLink } from '../lib/loftwahfm-track-link';
 
 type Scene = { id: string; startMs: number; endMs: number; direction: string; referenceAssetId: string | null; selectedTakeId: string | null; subjectOrigin?: { subjectId: string; revision: number; name: string } | null };
 type Cue = { id: string; startMs: number; endMs: number; text: string; speaker: string };
@@ -123,6 +124,7 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard, onAssetSav
   const [count, setCount] = useState('4');
   const [rights, setRights] = useState(false);
   const [trackUrl, setTrackUrl] = useState('');
+  const parsedTrack = parseLoftwahFmTrackLink(trackUrl);
   const [trackRights, setTrackRights] = useState(false);
   const [importingTrack, setImportingTrack] = useState(false);
   const [trackStatus, setTrackStatus] = useState('');
@@ -171,7 +173,7 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard, onAssetSav
   const changeCue = (index: number, patch: Partial<Cue>) => setCues(current => current.map((cue, i) => i === index ? { ...cue, ...patch } : cue));
   const mayLeave = () => !(changedPlan || changedCues || changedDirection || changedReference || changedStarts) || window.confirm('Discard unsaved changes to this plan?');
   const importTrack = async () => {
-    if (!canEdit || !trackRights || importingTrack) return;
+    if (!canEdit || !parsedTrack.ok || !trackRights || importingTrack || busy) return;
     setImportingTrack(true);
     setTrackStatus('');
     setTrackError('');
@@ -194,6 +196,7 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard, onAssetSav
     }
   };
   const selectedSong = songs.find(song => song.id === songId);
+  const pastedTrack = trackUrl.trim() !== '';
   const takeReview = saved?.scenes.map((scene, index) => {
     const take = videos.find(video => video.id === scene.selectedTakeId);
     const raw = sourceStarts[scene.id] ?? '0';
@@ -255,9 +258,16 @@ export function SongPlans({ projectId, assets, canEdit, onStoryboard, onAssetSav
           <p className="small">Paste a direct MP3 link from <a href="https://fm.loftwah.com/" target="_blank" rel="noreferrer">LoftwahFM</a>. Studio keeps a private copy and its source link in this project.</p>
           <form className="stack" onSubmit={event => { event.preventDefault(); void importTrack(); }}>
             <fieldset disabled={importingTrack || busy}>
-              <label>LoftwahFM MP3 link<input type="url" required maxLength={800} value={trackUrl} onChange={event => { setTrackUrl(event.target.value); setTrackRights(false); setTrackError(''); setTrackStatus(''); }} /></label>
+              <label>LoftwahFM MP3 link<input type="url" required maxLength={800} value={trackUrl} aria-describedby="loftwahfm-track-link-status" aria-invalid={pastedTrack && !parsedTrack.ok} onChange={event => { setTrackUrl(event.target.value); setTrackRights(false); setTrackError(''); setTrackStatus(''); }} /></label>
+              <p id="loftwahfm-track-link-status" className="small" role="status">
+                {!pastedTrack ? null : parsedTrack.ok
+                  ? `MP3 link recognised for ${parsedTrack.title}. Confirm permission to import.`
+                  : parsedTrack.reason === 'too-long'
+                    ? 'This audio link is too long to keep with a track. Use a shorter one.'
+                    : 'Paste a direct LoftwahFM MP3 link, such as https://fm.loftwah.com/media/album/Track.mp3.'}
+              </p>
               <label className="song-check"><input type="checkbox" checked={trackRights} onChange={event => setTrackRights(event.target.checked)} /> I own this track or have permission to use it.</label>
-              <button type="submit" className="secondary" disabled={!trackRights || !trackUrl.trim()}>{importingTrack ? 'Importing track…' : 'Import and select track'}</button>
+              <button type="submit" className="secondary" disabled={!parsedTrack.ok || !trackRights || importingTrack || busy}>{importingTrack ? 'Importing track…' : 'Import and select track'}</button>
             </fieldset>
           </form>
           {trackError && <p className="notice" role="alert">{trackError}</p>}
