@@ -108,9 +108,11 @@ import {
   SOCIAL_KIT_FORMATS,
   SOCIAL_SIZES,
   defaultSocialKitFormat,
+  socialKitCropAnchor,
   socialKitSettings,
   socialSourceEligible,
   type SocialKitFormat,
+  type SocialSizeKey,
 } from "./image-social-kit.ts";
 import { canEncodeWebP } from "./image-encode-support.ts";
 import { LocalImport } from "./local-import";
@@ -236,6 +238,12 @@ type WorkItem = {
   cropAspectOverride?: CropAspectKey;
   /** A reversible one-image crop position. Undefined follows the batch. */
   cropAnchorOverride?: CropAnchorKey;
+  /**
+   * Reversible crop positions for the four social kit sizes, held only in this
+   * in-memory item. A missing key is blank and follows the editor's crop
+   * position. Editing a choice never rewrites an existing result or download.
+   */
+  socialCropAnchors?: Partial<Record<SocialSizeKey, CropAnchorKey>>;
 };
 
 type Rejection = { name: string; message: string };
@@ -1828,6 +1836,32 @@ function Images() {
     );
   }
 
+  // One size's social crop position. "Use editor" removes that key, so a blank
+  // choice is indistinguishable from never having made one. Only the in-memory
+  // item changes: finished Edit results, receipts and current social downloads
+  // are snapshots and are not touched.
+  function setSocialCropAnchor(
+    item: WorkItem,
+    key: SocialSizeKey,
+    value: CropAnchorKey | undefined,
+  ): void {
+    if (runningRef.current || addingRef.current || socialController.current) return;
+    setItems((previous) =>
+      previous.map((candidate) => {
+        if (candidate.id !== item.id) return candidate;
+        const choices: Partial<Record<SocialSizeKey, CropAnchorKey>> = {
+          ...(candidate.socialCropAnchors ?? {}),
+        };
+        if (value === undefined) delete choices[key];
+        else choices[key] = value;
+        return {
+          ...candidate,
+          socialCropAnchors: Object.keys(choices).length ? choices : undefined,
+        };
+      }),
+    );
+  }
+
   function applyWebReady(): void {
     if (!selected || runningRef.current || socialController.current) return;
     if (selected.pngOverride) setPngOverride(selected, false);
@@ -1848,6 +1882,7 @@ function Images() {
     if (!socialReady) return;
     const item = selected;
     const snapshot = { ...settings };
+    const sizeAnchors = item.socialCropAnchors;
     const format = socialFormat;
     const trimSnapshot = trim;
     const controller = new AbortController();
@@ -1869,7 +1904,12 @@ function Images() {
           trimSnapshot.flipV === snapshot.flipV
             ? trimSnapshot.rect
             : null;
-        const sizeSettings = socialKitSettings(snapshot, size, WEB_READY_QUALITY, format);
+        const sizeSettings = socialKitSettings(
+          { ...snapshot, cropAnchor: socialKitCropAnchor(sizeAnchors, size.key, snapshot.cropAnchor) },
+          size,
+          WEB_READY_QUALITY,
+          format,
+        );
         const rendered = await renderImage(item, sizeSettings, controller.signal, cropRect);
         if (!alive()) throw abortError();
         const receipt = buildImageReceipt({ sourceHash: item.sourceHash, result: rendered });
@@ -2650,6 +2690,41 @@ function Images() {
                 ))}
               </select>
             </label>
+            {selected && socialReady && (
+              <details className="image-social-anchors">
+                <summary>Crop position for each size</summary>
+                <div className="image-social-anchor-grid">
+                  {SOCIAL_SIZES.map((size) => (
+                    <label key={size.key}>
+                      <span>{size.label}</span>
+                      <select
+                        value={selected.socialCropAnchors?.[size.key] ?? ""}
+                        disabled={running || socialBusy || Boolean(batchExport) || adding}
+                        aria-label={`Crop position for ${size.label}; Use editor keeps the editor crop position`}
+                        onChange={(event) =>
+                          setSocialCropAnchor(
+                            selected,
+                            size.key,
+                            event.target.value === ""
+                              ? undefined
+                              : (event.target.value as CropAnchorKey),
+                          )
+                        }
+                      >
+                        <option value="">Use editor</option>
+                        {Object.entries(CROP_ANCHOR_LABELS).map(([value, label]) => (
+                          <option value={value} key={value}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <p className="trim-note">
+                  Use editor keeps the crop position from the editor. Each choice takes effect on the next
+                  Make 4 social sizes; the current downloads stay available until then.
+                </p>
+              </details>
+            )}
             <div className="image-control-actions">
               <button
                 type="button"

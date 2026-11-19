@@ -8,6 +8,7 @@ export const SOCIAL_SIZES = Object.freeze([
 /** The four-size kit offers one explicit choice; WebP stays the default. */
 export const SOCIAL_KIT_FORMATS = Object.freeze(["webp", "png"] as const);
 export type SocialKitFormat = (typeof SOCIAL_KIT_FORMATS)[number];
+export type SocialSizeKey = (typeof SOCIAL_SIZES)[number]["key"];
 
 export function socialSourceEligible(
   mime: string | undefined,
@@ -28,11 +29,28 @@ export function defaultSocialKitFormat(webpEncodable: boolean): SocialKitFormat 
 }
 
 /**
- * Per-size editor settings. Crop position, rotation, straighten, resampling
- * and adjustments carry over from the current controls; only the aspect and
- * exact output size change. The caller chooses an explicit alpha-safe output
- * format, normally via `defaultSocialKitFormat`. A forced WebP request in a
- * browser without a WebP encoder is still refused by the exporter's byte check.
+ * One size's crop position. A blank choice (undefined, the native "Use editor"
+ * option) keeps the editor's position. A size may pick any of the existing crop
+ * anchors without changing the other three, so story and landscape no longer
+ * have to share one position. Choices are resolved once for a build, before any
+ * encode, so every output and its receipt capture the same four positions.
+ */
+export function socialKitCropAnchor<TAnchor>(
+  choices: Partial<Record<SocialSizeKey, TAnchor>> | undefined,
+  key: SocialSizeKey,
+  editorAnchor: TAnchor,
+): TAnchor {
+  return choices?.[key] ?? editorAnchor;
+}
+
+/**
+ * Per-size editor settings. Rotation, straighten, resampling and adjustments
+ * carry over from the current controls; only the aspect and exact output size
+ * change. The caller resolves each size's crop position into `base` before
+ * calling, so the four outputs can differ while everything else is shared.
+ * The caller chooses an explicit alpha-safe output format, normally via
+ * `defaultSocialKitFormat`. A forced WebP request in a browser without a WebP
+ * encoder is still refused by the exporter's byte check.
  */
 type SocialSize = (typeof SOCIAL_SIZES)[number];
 

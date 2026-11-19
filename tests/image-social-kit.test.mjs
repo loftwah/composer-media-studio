@@ -8,9 +8,14 @@ import {
   SOCIAL_KIT_FORMATS,
   SOCIAL_SIZES,
   defaultSocialKitFormat,
+  socialKitCropAnchor,
   socialKitSettings,
   socialSourceEligible,
 } from "../src/frontend/image-social-kit.ts";
+import {
+  assertSocialReproducible,
+  socialFormatForReceipt,
+} from "../scripts/replay-web-ready-image.mjs";
 import { CROP_ASPECTS, extensionForImageMime, mimeForExport } from "../src/frontend/image-ops.ts";
 import {
   MAX_DECODED_PIXELS,
@@ -168,6 +173,70 @@ test("the typed v1 builder captures each output's exact receipt without new sche
   assert.equal(receipt.transform.settings.cropAnchor, "bottomRight");
   assert.equal(receipt.transform.settings.cropAspect, size.aspect);
   assert.equal(receipt.transform.settings.format, "webp");
+});
+
+test("blank social size choices keep the editor anchor and explicit choices stay independent", () => {
+  const choices = { square: "topLeft", story: "bottomRight" };
+  assert.equal(socialKitCropAnchor(undefined, "square", "centre"), "centre");
+  assert.equal(socialKitCropAnchor({}, "story", "centre"), "centre");
+  assert.equal(socialKitCropAnchor(choices, "square", "centre"), "topLeft");
+  assert.equal(socialKitCropAnchor(choices, "story", "centre"), "bottomRight");
+  assert.equal(socialKitCropAnchor(choices, "portrait", "centre"), "centre");
+  assert.equal(socialKitCropAnchor(choices, "landscape", "centre"), "centre");
+  // Native "Use editor" removes one key without losing the other sizes.
+  const reset = { ...choices, square: undefined };
+  assert.equal(socialKitCropAnchor(reset, "square", "centre"), "centre");
+  assert.equal(socialKitCropAnchor(reset, "story", "centre"), "bottomRight");
+});
+
+test("four sizes carry their own crop anchor into settings, receipts and local replay", () => {
+  const chosen = {
+    square: "topLeft",
+    portrait: "top",
+    story: "bottomRight",
+    landscape: "right",
+  };
+  const receipts = SOCIAL_SIZES.map((size) => {
+    const cropAnchor = socialKitCropAnchor(chosen, size.key, "centre");
+    const settings = socialKitSettings({ ...BASE, cropAnchor }, size, 0.82, "webp");
+    assert.equal(settings.cropAnchor, cropAnchor);
+    assert.equal(settings.cropAspect, size.aspect);
+    assert.equal(settings.exactWidth, size.width);
+    assert.equal(settings.exactHeight, size.height);
+    assert.equal(settings.rotate, BASE.rotate);
+    assert.equal(settings.resample, BASE.resample);
+    assert.deepEqual(settings.adjust, BASE.adjust);
+    assert.equal(settings.format, "webp");
+    assert.equal(settings.targetKiB, null);
+    const receipt = buildImageReceipt({
+      sourceHash: "b".repeat(64),
+      result: {
+        plan: { ok: true, outputWidth: size.width, outputHeight: size.height },
+        settings,
+        width: size.width,
+        height: size.height,
+        mime: "image/webp",
+        bytes: 123456,
+        sha256: "a".repeat(64),
+      },
+    });
+    assert.equal(receipt.version, IMAGE_RECEIPT_VERSION);
+    assert.equal(receipt.transform.settings.cropAnchor, cropAnchor);
+    assert.equal(socialFormatForReceipt(receipt, size), "webp");
+    assert.doesNotThrow(() =>
+      assertSocialReproducible(receipt, structuredClone(receipt), size, "webp"));
+    const wrong = structuredClone(receipt);
+    wrong.transform.settings.cropAnchor = "centre";
+    assert.throws(
+      () => assertSocialReproducible(receipt, wrong, size, "webp"),
+      /settings\.cropAnchor/,
+    );
+    return receipt;
+  });
+  assert.deepEqual(
+    receipts.map((receipt) => receipt.transform.settings.cropAnchor),
+    ["topLeft", "top", "bottomRight", "right"],
+  );
 });
 
 test("the social kit accepts local still PNG, JPEG and WebP and preserves the public poster path", () => {
