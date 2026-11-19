@@ -5,6 +5,10 @@ import { encodeWav } from "../../public/wav.js";
 import { localMixRange } from "./local-mix-range";
 import { musicPlacement } from "./music-fades";
 import { MAX_MIX_SETTINGS_BYTES, mixSettingsJson, parseMixSettings, type MixSettings } from "./mix-settings.ts";
+import {
+  LOCAL_MIX_HANDOFF_MS, VIDEO_MP4,
+  isLocalMixReady, localMixBlobFits, localMixDeliver, localMixToolUrl, newLocalMixToken,
+} from "./local-mix-handoff";
 import { sha256Hex } from "../lib/util.mjs";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -17,6 +21,12 @@ const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 const MAX_SECONDS = 60;
 const FPS = 30;
 function check(signal: AbortSignal) { if (signal.aborted) throw new DOMException("Cancelled", "AbortError"); }
+
+type Handoff = {
+  timer: number;
+  done: boolean;
+  listener: (event: MessageEvent) => void;
+};
 
 // Snapshot of the exact settings and sources behind a successful MP4, so the
 // receipt describes the finished file even after the controls are edited.
@@ -158,6 +168,7 @@ function AddMusic() {
   const [checkingMusic, setCheckingMusic] = useState(false);
   const [checkingVideo, setCheckingVideo] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
+  const [handoffBusy, setHandoffBusy] = useState(false);
   const [preview, setPreview] = useState("");
   const [videoSeconds, setVideoSeconds] = useState(0), [musicSeconds, setMusicSeconds] = useState(0);
   const [settingsMessage, setSettingsMessage] = useState(""), [prepareMessage, setPrepareMessage] = useState("");
@@ -183,7 +194,7 @@ function AddMusic() {
   function clearPreview() { pauseOthers(); setPreview(""); }
   function editSetting(apply: () => void) { clearPreview(); apply(); }
   function clearOutputs() {
-    clearPreview(); setResult(""); setResultBlob(null); setApplied(null);
+    clearPreview(); setResult(""); setResultBlob(null); resultBlobRef.current = null; setApplied(null);
     // Invalidate any in-flight receipt open/prepare: it must not write settings
     // or a download URL back onto a different pair of sources.
     receiptRequest.current++; outputRevision.current++;
@@ -193,12 +204,26 @@ function AddMusic() {
   const musicAbort = useRef<AbortController | null>(null);
   const videoAbort = useRef<AbortController | null>(null);
   const receiptRequest = useRef(0), outputRevision = useRef(0);
+  const resultBlobRef = useRef<Blob | null>(null);
+  const handoff = useRef<Handoff | null>(null);
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   useEffect(() => () => { if (musicUrl) URL.revokeObjectURL(musicUrl); }, [musicUrl]);
   useEffect(() => () => { if (result) URL.revokeObjectURL(result); }, [result]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   useEffect(() => () => { if (preparedSettings) URL.revokeObjectURL(preparedSettings); }, [preparedSettings]);
-  useEffect(() => () => { musicAbort.current?.abort(); videoAbort.current?.abort(); controller.current?.abort(); receiptRequest.current++; outputRevision.current++; }, []);
+  useEffect(() => {
+    return () => {
+      musicAbort.current?.abort(); videoAbort.current?.abort(); controller.current?.abort();
+      receiptRequest.current++; outputRevision.current++;
+      const active = handoff.current;
+      if (active && !active.done) {
+        active.done = true;
+        window.removeEventListener("message", active.listener);
+        clearTimeout(active.timer);
+        handoff.current = null;
+      }
+    };
+  }, []);
   async function choose(file: File | undefined, kind: "video" | "audio") {
     if (!file || controller.current || importing || settingsLoading || preparingSettings) return;
     const isVideo = kind === "video";
@@ -252,7 +277,7 @@ function AddMusic() {
       const blob = await makeFilm(video,music,offset,delay,volume/100,originalVolume/100,fadeIn,fadeOut,mode === "preview",quality,abort.signal,setMessage); check(abort.signal);
       if (mode === "preview") { setPreview(URL.createObjectURL(blob)); setMessage("Audio-only mix preview ready."); }
       else {
-        setResultBlob(blob); setResult(URL.createObjectURL(blob));
+        setResultBlob(blob); resultBlobRef.current = blob; setResult(URL.createObjectURL(blob));
         setApplied({ key: draft, settings: currentSettings(), video, music });
         setPrepareMessage(""); setPreparedSettings(null);
         setMessage("Your film is ready to play and save.");
@@ -268,6 +293,58 @@ function AddMusic() {
       (busy === "preview" ? previewAction : exportAction).current?.focus();
     }
   }
+  function finishHandoff(record: Handoff) {
+    if (record.done) return;
+    record.done = true;
+    window.removeEventListener("message", record.listener);
+    clearTimeout(record.timer);
+    if (handoff.current === record) handoff.current = null;
+    setHandoffBusy(false);
+  }
+
+  // Explicit, local-only action: hand the exact last successful MP4 to a
+  // same-origin Video Clip tab through one bounded postMessage. Every failure
+  // keeps the Save MP4 link and its normal file chooser fully available.
+  function openInVideoClip() {
+    if (!resultBlob || handoffBusy || busy !== null || importing || settingsLoading || preparingSettings) return;
+    const blob = resultBlob;
+    const filename = `${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`;
+    const fallback = (text: string) => setMessage(`${text} Save MP4 below, then choose that file in Video Clip.`);
+    if (!localMixBlobFits(blob)) { fallback("The finished MP4 is not available for a direct handoff."); return; }
+    setHandoffBusy(true);
+    const token = newLocalMixToken();
+    const url = localMixToolUrl(token);
+    if (!url) { setHandoffBusy(false); fallback("Could not start the handoff."); return; }
+    const popup = window.open(url, "_blank");
+    if (!popup || popup.closed) { setHandoffBusy(false); fallback("The Video Clip popup was blocked."); return; }
+
+    const record: Handoff = { timer: 0, done: false, listener: () => {} };
+    record.listener = (event: MessageEvent) => {
+      if (record.done || event.origin !== window.location.origin || event.source !== popup) return;
+      if (!isLocalMixReady(event.data, token)) return;
+      // The first valid ready from this exact popup is the only one accepted.
+      finishHandoff(record);
+      if (resultBlobRef.current !== blob) { setMessage("The finished MP4 changed before the handoff completed. Try again."); return; }
+      try {
+        popup.postMessage(
+          localMixDeliver(new File([blob], filename, { type: VIDEO_MP4 }), token),
+          window.location.origin,
+        );
+        setMessage("Sent the finished MP4 to Video Clip.");
+      } catch {
+        setMessage("Could not send the MP4 to Video Clip. Save MP4 below, then choose that file in Video Clip.");
+      }
+    };
+    handoff.current = record;
+    window.addEventListener("message", record.listener);
+    record.timer = window.setTimeout(() => {
+      if (record.done) return;
+      finishHandoff(record);
+      setMessage("Video Clip did not respond. Save MP4 below, then choose that file in Video Clip.");
+    }, LOCAL_MIX_HANDOFF_MS);
+    setMessage("Waiting for Video Clip to open…");
+  }
+
   // Opening settings is an explicit, local-only action: prove the saved digests
   // against the exact chosen bytes, then write only the editable controls. A
   // new selection invalidates the receipt.
@@ -365,7 +442,7 @@ function AddMusic() {
           <a className="button" href={preview} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-mix.wav`}>Save mix WAV</a>
         </div>
       </div>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>{previous ? "Previous export" : "Your film"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with added audio"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a>{applied && <details>
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result"><h2>{previous ? "Previous export" : "Your film"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<video ref={resultPlayer} onPlay={()=>pauseOthers(resultPlayer.current)} className="video-tool-player" src={result} controls playsInline aria-label="Finished video with added audio"/><a className="button" href={result} download={`${video?.name.replace(/\.[^.]+$/, "") || "video"}-with-music.mp4`}>Save MP4</a><button type="button" className="button secondary" disabled={!resultBlob || handoffBusy || busy !== null || importing || settingsLoading || preparingSettings} aria-disabled={handoffBusy || undefined} onClick={() => void openInVideoClip()}>{handoffBusy ? "Opening Video Clip…" : "Open finished mix in Video Clip"}</button>{applied && <details>
         <summary>Mix settings receipt</summary>
         <p className="trim-note">Save the settings and SHA-256 digests of this MP4 and the exact video and audio behind it. It stays on this device until you share it; it is not an upload.</p>
         <button type="button" className="secondary" disabled={preparingSettings || Boolean(preparedSettings) || busy !== null || settingsLoading} aria-disabled={preparingSettings || Boolean(preparedSettings)} onClick={() => void prepareSettings()}>{preparingSettings ? "Preparing…" : "Prepare mix settings JSON"}</button>
