@@ -200,6 +200,16 @@ type SocialOutput = {
   receiptHref: string;
 };
 
+type SocialZipEntry = { name: string; data: Uint8Array };
+
+type SocialZip = {
+  itemId: string;
+  url: string;
+  bytes: number;
+  manifest: SocialZipEntry | null;
+  post: SocialZipEntry[];
+};
+
 type TrimState = {
   itemId: string;
   rotate: number;
@@ -960,8 +970,9 @@ function Images() {
   const sheetBusy = batchExport === "contact-sheet" || batchExport === "sprite-atlas";
   const [batchMessage, setBatchMessage] = useState("");
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
-  const [socialZip, setSocialZip] = useState<{ url: string; bytes: number } | null>(null);
-  const [socialBusy, setSocialBusy] = useState(false);
+  const [socialZip, setSocialZip] = useState<SocialZip | null>(null);
+  const [socialOperation, setSocialOperation] = useState<"sizes" | "text" | null>(null);
+  const socialBusy = socialOperation !== null;
   const [socialFormat, setSocialFormat] = useState<SocialKitFormat>(defaultSocialKitFormat(WEBP_ENCODABLE));
   const [postBriefStatus, setPostBriefStatus] = useState<{ bad: boolean; message: string } | null>(null);
   const [stripBusy, setStripBusy] = useState(false);
@@ -997,9 +1008,11 @@ function Images() {
   const socialController = useRef<AbortController | null>(null);
   const postBriefRequest = useRef(0);
   const makeSocialKitRef = useRef<HTMLButtonElement>(null);
+  const updateSocialTextRef = useRef<HTMLButtonElement>(null);
+  const socialZipDownloadRef = useRef<HTMLAnchorElement>(null);
   const cancelSocialKitRef = useRef<HTMLButtonElement>(null);
   const socialSizesRef = useRef<HTMLFieldSetElement>(null);
-  const restoreSocialKitFocus = useRef(false);
+  const restoreSocialKitFocus = useRef<"sizes" | "text" | null>(null);
   const stripRevision = useRef(0);
   const didInitSettings = useRef(false);
   const addFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
@@ -1028,6 +1041,15 @@ function Images() {
     selected?.source.mime,
     selected?.publicSource?.kind === "poster",
     selected?.source.webpAnimated,
+  );
+  const socialPost = socialPostEntries(selected?.socialPost);
+  const socialTextChanged = Boolean(
+    socialZip && socialZip.itemId === selected?.id && socialOutputs.length === SOCIAL_SIZES.length &&
+    (socialPost.length !== socialZip.post.length || socialPost.some((entry, index) => {
+      const included = socialZip.post[index];
+      return entry.name !== included.name || entry.data.length !== included.data.length ||
+        entry.data.some((byte, offset) => byte !== included.data[offset]);
+    })),
   );
   const animatedWebp = selected?.source.mime === "image/webp" && Boolean(selected?.source.webpAnimated);
   const publicImageLoaded = Boolean(publicImageSource && items.some((item) => item.publicSource === publicImageSource));
@@ -1294,9 +1316,11 @@ function Images() {
 
   useLayoutEffect(() => {
     if (socialBusy || !restoreSocialKitFocus.current) return;
-    restoreSocialKitFocus.current = false;
-    const button = makeSocialKitRef.current;
-    if (button && !button.disabled && document.activeElement === document.body) button.focus();
+    const trigger = restoreSocialKitFocus.current === "text"
+      ? updateSocialTextRef.current ?? socialZipDownloadRef.current
+      : makeSocialKitRef.current;
+    restoreSocialKitFocus.current = null;
+    if (document.activeElement === document.body) trigger?.focus();
   }, [socialBusy]);
 
   useEffect(() => {
@@ -2028,9 +2052,52 @@ function Images() {
     }
   }
 
-  async function makeSocialKit(): Promise<void> {
+  async function buildSocialZip(
+    item: WorkItem,
+    outputs: SocialOutput[],
+    manifest: SocialZipEntry | null,
+    post: SocialZipEntry[],
+    alive: () => boolean,
+  ): Promise<Blob> {
+    if (!alive()) throw abortError();
+    const stem = safeStem(item.file.name);
+    const entries: SocialZipEntry[] = [];
+    let total = 0;
+    for (const output of outputs) {
+      if (!alive()) throw abortError();
+      const bytes = new Uint8Array(await output.blob.arrayBuffer());
+      total += bytes.length;
+      if (total > MAX_ZIP_BYTES)
+        throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
+      entries.push({
+        name: `${stem}-${output.key}-${output.width}x${output.height}.${extensionForImageMime(output.mime)}`,
+        data: bytes,
+      });
+      const receiptBytes = new TextEncoder().encode(JSON.stringify(output.receipt, null, 2));
+      total += receiptBytes.length;
+      if (total > MAX_ZIP_BYTES)
+        throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
+      entries.push({ name: `${stem}-${output.key}-receipt.json`, data: receiptBytes });
+    }
+    if (manifest) {
+      total += manifest.data.length;
+      entries.push(manifest);
+    }
+    for (const entry of post) total += entry.data.length;
+    if (total > MAX_ZIP_BYTES)
+      throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
+    entries.push(...post);
+    if (!alive()) throw abortError();
+    const zip = createZip(entries, { date: new Date() });
+    if (!zip.ok) throw new Error(zip.error);
+    return blobFromBytes(zip.bytes, ZIP_MIME);
+  }
+
+  async function makeSocialKit(operation: "sizes" | "text" = "sizes"): Promise<void> {
     if (!selected || runningRef.current || socialController.current || batchExport || addingRef.current) return;
-    if (!socialReady) return;
+    const updateText = operation === "text";
+    const previousZip = updateText && socialTextChanged ? socialZip : null;
+    if (!socialReady || (updateText && !previousZip)) return;
     const item = selected;
     const snapshot = { ...settings };
     const sizeAnchors = item.socialCropAnchors;
@@ -2038,12 +2105,24 @@ function Images() {
     const trimSnapshot = trim;
     const controller = new AbortController();
     socialController.current = controller;
-    setSocialBusy(true);
-    setMessage(`Making four ${formatLabelForMime(mimeForExport(format))} sizes from the selected image…`);
+    setSocialOperation(operation);
+    if (updateText && updateSocialTextRef.current === document.activeElement)
+      restoreSocialKitFocus.current = "text";
+    setMessage(updateText ? "Updating post text in the ZIP…" :
+      `Making four ${formatLabelForMime(mimeForExport(format))} sizes from the selected image…`);
     const outputs: SocialOutput[] = [];
     const isCurrent = () => socialController.current === controller;
     const alive = () => isCurrent() && !controller.signal.aborted;
     try {
+      if (previousZip) {
+        const blob = await buildSocialZip(item, socialOutputs, previousZip.manifest, socialPost, alive);
+        if (!alive()) throw abortError();
+        const url = trackUrl(blob);
+        setSocialZip({ ...previousZip, url, bytes: blob.size, post: socialPost });
+        releaseUrl(previousZip.url);
+        setMessage("Post text updated. The ZIP uses the existing four image sizes.");
+        return;
+      }
       for (const size of SOCIAL_SIZES) {
         if (!alive()) throw abortError();
         const cropRect =
@@ -2083,30 +2162,10 @@ function Images() {
         setSocialOutputs([...outputs]);
         setMessage(`Made ${outputs.length} of ${SOCIAL_SIZES.length} sizes on this device.`);
       }
-      if (!alive()) throw abortError();
-      const stem = safeStem(item.file.name);
-      const entries: Array<{ name: string; data: Uint8Array }> = [];
-      let total = 0;
-      for (const output of outputs) {
-        if (!alive()) throw abortError();
-        const bytes = new Uint8Array(await output.blob.arrayBuffer());
-        total += bytes.length;
-        if (total > MAX_ZIP_BYTES)
-          throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
-        entries.push({
-          name: `${stem}-${output.key}-${output.width}x${output.height}.${extensionForImageMime(output.mime)}`,
-          data: bytes,
-        });
-        const receiptBytes = new TextEncoder().encode(JSON.stringify(output.receipt, null, 2));
-        total += receiptBytes.length;
-        if (total > MAX_ZIP_BYTES)
-          throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
-        entries.push({ name: `${stem}-${output.key}-receipt.json`, data: receiptBytes });
-      }
       const publicSource = item.publicSource;
+      let manifest: SocialZipEntry | null = null;
       if (publicSource) {
-        if (!alive()) throw abortError();
-        const manifest = publicSource.kind === "composer"
+        manifest = publicSource.kind === "composer"
           ? composerArtworkManifestEntry(publicSource.ref, item.sourceHash)
           : publicSource.kind === "still"
             ? stillSourceManifestEntry({
@@ -2120,23 +2179,18 @@ function Images() {
               studioOrigin: window.location.origin,
             });
         if (!manifest) throw new Error("The public image source could not be recorded in this ZIP.");
-        total += manifest.data.length;
-        if (total > MAX_ZIP_BYTES)
-          throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
-        entries.push(manifest);
       }
-      const post = socialPostEntries(item.socialPost);
-      for (const entry of post) total += entry.data.length;
-      if (total > MAX_ZIP_BYTES)
-        throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download sizes separately instead.`);
-      entries.push(...post);
+      const zipBlob = await buildSocialZip(item, outputs, manifest, socialPost, alive);
       if (!alive()) throw abortError();
-      const zip = createZip(entries, { date: new Date() });
-      if (!zip.ok) throw new Error(zip.error);
-      const zipBlob = blobFromBytes(zip.bytes, ZIP_MIME);
-      setSocialZip({ url: trackUrl(zipBlob), bytes: zipBlob.size });
+      setSocialZip({
+        itemId: item.id,
+        url: trackUrl(zipBlob),
+        bytes: zipBlob.size,
+        manifest,
+        post: socialPost,
+      });
       setMessage(
-        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts${publicSource ? " and a public source manifest" : ""}, ${formatBytes(zipBlob.size)} total.${post.length ? " Text files included." : ""}`,
+        `Social kit ready: ${outputs.length} ${formatLabelForMime(outputs[0].mime)} sizes with per-size receipts${publicSource ? " and a public source manifest" : ""}, ${formatBytes(zipBlob.size)} total.${socialPost.length ? " Text files included." : ""}`,
       );
     } catch (error) {
       if (!isCurrent()) {
@@ -2148,26 +2202,29 @@ function Images() {
           socialOutputs.some(output => urls.current.has(output.url)) ||
           (socialZip && urls.current.has(socialZip.url))
         );
+        const label = updateText ? "the ZIP text update" : "the social kit";
         setMessage(keptPrevious
-          ? "Stopped the social kit. The previous downloads are still available."
-          : "Stopped the social kit.");
+          ? `Stopped ${label}. The previous downloads are still available.`
+          : `Stopped ${label}.`);
       } else {
-        setMessage(error instanceof Error ? error.message : "Could not make the social kit.");
+        setMessage(error instanceof Error ? error.message :
+          updateText ? "Could not update post text in the ZIP." : "Could not make the social kit.");
       }
     } finally {
       if (isCurrent()) {
-        // Capture focus before Cancel kit unmounts, after the current encode settles.
-        restoreSocialKitFocus.current = controller.signal.aborted &&
-          document.activeElement === cancelSocialKitRef.current;
+        // Capture focus before the cancel button unmounts.
+        if (controller.signal.aborted && document.activeElement === cancelSocialKitRef.current)
+          restoreSocialKitFocus.current = operation;
         socialController.current = null;
-        setSocialBusy(false);
+        setSocialOperation(null);
       }
     }
   }
 
   function cancelSocialKit(): void {
     socialController.current?.abort();
-    setMessage("Stopping after the current size. Completed sizes keep their downloads.");
+    setMessage(socialOperation === "text" ? "Stopping the ZIP text update…" :
+      "Stopping after the current size. Completed sizes keep their downloads.");
   }
 
   function selectItem(id: string): void {
@@ -2960,6 +3017,17 @@ function Images() {
                 <p className="trim-note">
                   Text stays on this device and goes into the next ZIP as separate text files.
                 </p>
+                {socialTextChanged && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={running || socialBusy || Boolean(batchExport) || adding}
+                    ref={updateSocialTextRef}
+                    onClick={() => void makeSocialKit("text")}
+                  >
+                    {socialOperation === "text" ? "Updating post text…" : "Update post text in ZIP"}
+                  </button>
+                )}
                 {postBriefStatus && (
                   <p
                     className={postBriefStatus.bad ? "notice warn" : "trim-note"}
@@ -2979,11 +3047,11 @@ function Images() {
                 ref={makeSocialKitRef}
                 onClick={() => void makeSocialKit()}
               >
-                {socialBusy ? "Making sizes…" : "Make 4 social sizes"}
+                {socialOperation === "sizes" ? "Making sizes…" : "Make 4 social sizes"}
               </button>
               {socialBusy && (
                 <button type="button" className="quiet" ref={cancelSocialKitRef} onClick={cancelSocialKit}>
-                  Cancel kit
+                  {socialOperation === "text" ? "Cancel ZIP update" : "Cancel kit"}
                 </button>
               )}
             </div>
@@ -3034,6 +3102,7 @@ function Images() {
               {socialZip && (
                 <a
                   className="button"
+                  ref={socialZipDownloadRef}
                   href={socialZip.url}
                   download={`${safeStem(selected.file.name)}-social-kit.zip`}
                 >
