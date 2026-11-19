@@ -1,5 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
-import { MAX_CAPTION_BYTES, serializeClipCaptions, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { ClipPoster } from "./clip-poster";
@@ -29,6 +29,19 @@ type Quality = keyof typeof sizes;
 type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
 type CaptionDraft = Readonly<{ name: string; cues: ImportedCue[] }>;
+
+// Accept a decimal-seconds offset only when it is a whole number of
+// milliseconds within the advertised +/- bound. Returns null when invalid so
+// the field can be flagged and export stopped without mutating the draft.
+function parseCaptionOffset(raw: string): number | null {
+  const text = raw.trim();
+  if (!text) return null;
+  const value = Number(text);
+  if (!Number.isFinite(value) || Math.abs(value) > MAX_CAPTION_OFFSET_SECONDS) return null;
+  const ms = value * 1000;
+  const whole = Math.round(ms);
+  return Number.isSafeInteger(whole) && Math.abs(ms - whole) < 1e-6 ? whole : null;
+}
 
 // A playable container header does not prove that the file has any video
 // frames. The same decoder used for export can distinguish a missing frame
@@ -102,6 +115,7 @@ function VideoClip() {
   const [completedClip, setCompletedClip] = useState<CompletedClip | null>(null);
   const [captionTrack, setCaptionTrack] = useState<ClipCaptionTrack | null>(null);
   const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
+  const [captionOffsetRaw, setCaptionOffsetRaw] = useState("0");
   const [captionMessage, setCaptionMessage] = useState("");
   const [captionLoading, setCaptionLoading] = useState(false);
   const [receiptMessage, setReceiptMessage] = useState("");
@@ -110,7 +124,7 @@ function VideoClip() {
   const receiptRequest = useRef(0);
   // Settings recorded only when an export succeeds: proof of what the finished
   // file actually contains, not what the controls currently show.
-  const [applied, setApplied] = useState<{ settings: string; captions: CaptionDraft | null } | null>(null);
+  const [applied, setApplied] = useState<{ settings: string; captions: CaptionDraft | null; captionOffsetMs: number } | null>(null);
   const [duration, setDuration] = useState(0);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
@@ -143,7 +157,10 @@ function VideoClip() {
   // valid new source, clears it. The draft key is compared with the recorded
   // one on every render, so returning to the same settings drops the note.
   const draft = [start, end, shape, quality, fit, mute].join("|");
-  const previous = applied !== null && (applied.settings !== draft || applied.captions !== captionDraft);
+  const captionOffsetMs = captionDraft ? parseCaptionOffset(captionOffsetRaw) : 0;
+  const previous = applied !== null && (
+    applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
+  );
   // A replacement only replaces the current video after it proves readable.
   // Returning focus to the chooser keeps the refusal next to the control that
   // caused it without stealing focus from somewhere the user has moved to.
@@ -183,7 +200,7 @@ function VideoClip() {
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setPublicLoaded(fromPublication);
       captionRequest.current++; receiptRequest.current++;
-      setCaptionDraft(null); setCaptionMessage(""); setCaptionLoading(false);
+      setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionMessage(""); setCaptionLoading(false);
       setReceiptMessage(""); setReceiptLoading(false);
       setResult(""); setCompletedClip(null); setCaptionTrack(null); setApplied(null); setChecking(false);
       setMessage("Choose your clip and frame, then make an MP4.");
@@ -230,6 +247,7 @@ function VideoClip() {
       const cues = parseCaptionFile(await selected.text(), 0, MAX_SOURCE_SECONDS * 1000);
       if (request !== captionRequest.current) return;
       setCaptionDraft({ name: selected.name, cues });
+      setCaptionOffsetRaw("0");
       setCaptionMessage(`Loaded ${cues.length} ${cues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
       if (request === captionRequest.current)
@@ -275,7 +293,7 @@ function VideoClip() {
   }
 
   async function makeClip() {
-    if (!file || busy || checking || captionLoading || receiptLoading) return;
+    if (!file || busy || checking || captionLoading || receiptLoading || captionOffsetMs === null) return;
     if (![start,end].every(Number.isFinite) || start < 0 || end > duration || end <= start || end - start > MAX_CLIP_SECONDS) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
     // A finished clip stays committed until a replacement actually succeeds, so a
     // cancelled or failed repeat leaves the previous poster and exact download intact.
@@ -303,7 +321,8 @@ function VideoClip() {
       const blob = new Blob([target.buffer], { type: "video/mp4" });
       const captions = captionDraft ? {
         name: captionDraft.name,
-        vtt: serializeClipCaptions(captionDraft.cues, start, end),
+        vtt: serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs),
+        ...(captionOffsetMs ? { offsetMs: captionOffsetMs } : {}),
       } : undefined;
       setCompletedClip({
         source: file,
@@ -317,7 +336,7 @@ function VideoClip() {
         english: false,
       } : null);
       setResult(URL.createObjectURL(blob));
-      setApplied({ settings: draft, captions: captionDraft });
+      setApplied({ settings: draft, captions: captionDraft, captionOffsetMs });
       setMessage("Your MP4 is ready to play and save.");
     } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
     finally { active.current = null; input.dispose(); setBusy(false); }
@@ -378,13 +397,28 @@ function VideoClip() {
         {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
           captionRequest.current++;
           setCaptionDraft(null);
+          setCaptionOffsetRaw("0");
           setCaptionLoading(false);
           setCaptionMessage("Captions cleared.");
         }}>Clear captions</button></p>}
+        {captionDraft && <div>
+          <div className="trim-fields">
+            <label>Timing offset (seconds)
+              <input type="number" min={-MAX_CAPTION_OFFSET_SECONDS} max={MAX_CAPTION_OFFSET_SECONDS} step="0.001"
+                value={captionOffsetRaw} disabled={busy || checking || importing || receiptLoading}
+                aria-invalid={captionOffsetMs === null}
+                aria-describedby={captionOffsetMs === null ? "caption-offset-help caption-offset-error" : "caption-offset-help"}
+                onChange={event => setCaptionOffsetRaw(event.target.value)}
+              />
+            </label>
+          </div>
+          <p id="caption-offset-help" className="trim-note">Positive moves captions later. Negative moves them earlier.</p>
+          {captionOffsetMs === null && <p id="caption-offset-error" role="alert" className="trim-note">Enter a value from −{MAX_CAPTION_OFFSET_SECONDS} to {MAX_CAPTION_OFFSET_SECONDS} seconds with up to three decimal places.</p>}
+        </div>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
-      {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
+      {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading || (captionOffsetMs === null)} aria-describedby={captionOffsetMs === null ? "caption-offset-error" : undefined} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionTrack={captionTrack}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
         {completedClip && <>

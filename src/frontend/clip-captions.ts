@@ -1,6 +1,8 @@
 import type { ImportedCue } from "./caption-import";
 
 export const MAX_CAPTION_BYTES = 64 * 1024;
+// A timing offset may move imported cues at most a minute earlier or later.
+export const MAX_CAPTION_OFFSET_SECONDS = 60;
 export type ClipCaptionTrack = Readonly<{ url: string; english: boolean }>;
 
 function stamp(ms: number) {
@@ -10,13 +12,17 @@ function stamp(ms: number) {
   return `${minutes}:${seconds}.${millis}`;
 }
 
-export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number) {
+// offsetMs is applied to every cue before it is clipped and rebased to the
+// selected range: positive moves cues later, negative earlier. The default of
+// 0 leaves the original timing (and therefore the emitted bytes) unchanged.
+export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0) {
   const start = Math.round(startSeconds * 1000);
   const end = Math.round(endSeconds * 1000);
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start) return null;
+  if (!Number.isSafeInteger(offsetMs) || Math.abs(offsetMs) > MAX_CAPTION_OFFSET_SECONDS * 1000) return null;
   const blocks: string[] = [];
   for (const cue of cues) {
-    const from = Math.max(cue.startMs, start), to = Math.min(cue.endMs, end);
+    const from = Math.max(cue.startMs + offsetMs, start), to = Math.min(cue.endMs + offsetMs, end);
     if (from >= to) continue;
     const text = cue.text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
     blocks.push(`${stamp(from - start)} --> ${stamp(to - start)}\n${text}`);
