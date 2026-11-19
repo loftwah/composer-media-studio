@@ -9,6 +9,7 @@ import { Assemble, Settings } from "./assemble-settings";
 import { History, Publish } from "./history-publish";
 import { isLocalRenderProvenance, shareImportProvenance } from "../../public/asset-caption.js";
 import { savedVideoClipUrl } from "./video-clip-source";
+import { comparisonLink } from "../../public/studio-comparison.js";
 import { AssetUses, StorageHealthPanel } from "./storage-health";
 import { SavedOutcomes } from "./creator-outcomes";
 import "./library.css";
@@ -278,6 +279,10 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
   }
   const selected = compareIds.map(id => assets.find(asset => asset.id === id && asset.kind === comparisonKind))
     .filter((asset): asset is MediaAssetV1 => Boolean(asset));
+  // A link exists only for the deliberate two-asset selection. It carries the
+  // opaque ids in the fragment; the session, not the URL, grants access.
+  const comparisonLinkValue = selected.length === 2 ? comparisonLink(projectId, selected.map(asset => asset.id)) : null;
+  const comparisonUrl = comparisonLinkValue ? new URL(comparisonLinkValue, new URL("/studio", location.origin)).href : null;
   const trimmed = query.trim().toLowerCase();
   const visible = assets.filter(asset => (filter === "all" || asset.kind === filter) && (!trimmed || `${asset.title} ${asset.caption} ${asset.mime} ${asset.source}`.toLowerCase().includes(trimmed)));
   return <div className="library-workspace">
@@ -290,7 +295,10 @@ function Library({ projectId, assets, query, filter, canImportShare, canViewStor
     {canViewStorage && <SavedOutcomes key={`outcomes-${projectId}`} projectId={projectId}/>}
     {canViewStorage && assets.length > 0 && <PreviewBuilder key={`preview-build-${projectId}`} onBuilt={() => setPreviewToken(token => token + 1)}/>}
     {comparisonKind && <section className="compare-panel" aria-labelledby="compare-title">
-      <div className="spread"><div><h2 id="compare-title">{isVideo ? "Compare videos" : "Compare stills"}</h2><p className="small">Choose two {isVideo ? "clips" : "images"} from this studio to review them side by side. Your originals stay unchanged.</p></div><button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button></div>
+      <div className="spread"><div><h2 id="compare-title" tabIndex={-1}>{isVideo ? "Compare videos" : "Compare stills"}</h2><p className="small">Choose two {isVideo ? "clips" : "images"} from this studio to review them side by side. Your originals stay unchanged.</p></div><div className="row">
+        {comparisonUrl && <><label className="sr-only" htmlFor="compare-link">Private comparison link</label><input id="compare-link" data-compare-link-field hidden readOnly value={comparisonUrl} onFocus={event => event.currentTarget.select()}/><button type="button" className="secondary" data-action="compare-copy-link">Copy comparison link</button></>}
+        <button type="button" className="quiet" data-action="compare-clear" disabled={selected.length === 0}>Clear selection</button>
+      </div></div>
       <p className="sr-only" role="status">{selected.length} of 2 {isVideo ? "videos" : "images"} selected</p>
       <div className="compare-grid" onPlayCapture={event => {
         const playing = event.target;

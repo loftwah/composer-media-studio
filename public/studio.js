@@ -7,6 +7,7 @@ import { recipeModelCompatible, recipeModelSettings } from "./recipe-selection.j
 import { prepareVoiceDraft, restoreCreateDraft, switchCreateProject, createEventBelongsToProject, hasCreateDraftChanges, shouldWarnCreateDrafts } from "./voice-handoff.js";
 import { derivativeSize } from "./derivative-size.js";
 import { PROJECT_TABS, nextProjectTab, parseStudioHash } from "./studio-route.js";
+import { resolveComparison } from "./studio-comparison.js";
 // MIT. Media Studio client. Vanilla, same-origin, no build step.
 
 const app = document.querySelector("#app");
@@ -325,6 +326,32 @@ function stableHash() {
   return "#/";
 }
 
+// A comparison link is a one-shot instruction in the fragment, not a saved
+// collection. Resolve it against the project already loaded for this tab, then
+// replace the hash with the stable Library route so a later render or a manual
+// Clear cannot silently relaunch the same pair. Unknown, cross-project,
+// duplicate or mixed ids simply leave the ordinary Library in place.
+function consumeComparisonLink(route, openedHash) {
+  if (location.hash !== openedHash ||
+      state.view !== "project" || state.tab !== "library" ||
+      state.project?.id !== route.projectId || state.projectId !== route.projectId) return;
+  const projectId = route.projectId;
+  const restored = resolveComparison(state.project?.assets, route.compareIds);
+  comparisons.set(projectId, restored ?? { kind: null, ids: [] });
+  try { history.replaceState(history.state, "", stableHash()); }
+  catch { /* Keep the page and the restored view when history is unavailable. */ }
+  if (!restored) {
+    notify("This comparison is unavailable. Choose two assets from the library.", "bad");
+    return;
+  }
+  requestAnimationFrame(() => {
+    if (state.projectId !== projectId || state.tab !== "library" || comparisons.get(projectId) !== restored) return;
+    const title = document.getElementById("compare-title");
+    title?.scrollIntoView({ block: "center" });
+    title?.focus({ preventScroll: true });
+  });
+}
+
 // Replace the malformed hash with the route that is actually on screen so a
 // reload or a copied URL no longer repeats the mistake.
 function rejectMalformedHash() {
@@ -447,6 +474,7 @@ async function boot() {
   state.destinations = data.destinations ?? {};
   state.woodhouseShare = data.woodhouseShare === true;
   state.showcase = data.showcase ?? [];
+  const openedHash = location.hash;
   const route = parseHash();
   const invalidRoute = route.view === "invalid";
   const unknownTab = route.unknownTab ?? null;
@@ -458,6 +486,7 @@ async function boot() {
       if (state.view === "asset") state.assetId = route.assetId;
       await loadProject(state.projectId);
       rememberOpenedProject(route);
+      if (route.comparisonLink) consumeComparisonLink(route, openedHash);
     }
     if (state.view === "project" && state.tab === "review") await loadReviewRooms(state.projectId).catch((error) => { state.reviewRooms = []; notify(error.message, "bad"); });
     if (state.view === "home") await creativeModuleReady;
@@ -1664,6 +1693,27 @@ async function handleAction(action, element, keyboard = false) {
       if (comparison) comparison.ids = [];
       renderReactLibrary();
       drawWaveforms();
+      return;
+    }
+    case "compare-copy-link": {
+      // Only a deliberate selection of exactly two current project assets of
+      // one comparable kind can produce a private link. The copied text comes
+      // from the field the library rendered from that same validated pair.
+      const comparison = comparisons.get(state.projectId);
+      if (!comparison || !resolveComparison(state.project?.assets, comparison.ids)) return;
+      const field = app.querySelector("[data-compare-link-field]");
+      const value = field?.value;
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        if (field.isConnected) notify("Private comparison link copied. Open it with a Studio account that has access to this project.");
+      } catch {
+        if (!field.isConnected) return;
+        field.hidden = false;
+        field.focus();
+        field.select();
+        notify("Comparison link selected. Copy it from the field.");
+      }
       return;
     }
     case "filter":
@@ -3635,6 +3685,7 @@ document.querySelector("#signout").addEventListener("click", async () => {
 window.addEventListener("hashchange", async () => {
   viewerClosing = false;
   const route = parseHash();
+  const openedHash = route.comparisonLink ? location.hash : null;
   if (route.view === "invalid") {
     rejectMalformedHash();
     return;
@@ -3669,6 +3720,7 @@ window.addEventListener("hashchange", async () => {
     if (state.projectId !== requestedProject) return;
   }
   rememberOpenedProject(route);
+  if (route.comparisonLink) consumeComparisonLink(route, openedHash);
   if (route.view === "project" && route.tab === "review") {
     try { await loadReviewRooms(route.projectId); }
     catch (error) { if (state.projectId === route.projectId) { state.reviewRooms = []; notify(error.message, "bad"); } }
