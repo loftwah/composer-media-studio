@@ -34,7 +34,7 @@ const sizes = {
 type Quality = keyof typeof sizes;
 type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
-type CaptionDraft = Readonly<{ name: string; cues: ImportedCue[] }>;
+type CaptionDraft = Readonly<{ name: string; sourceSha256: string; cues: ImportedCue[] }>;
 
 // Accept a decimal-seconds offset only when it is a whole number of
 // milliseconds within the advertised +/- bound. Returns null when invalid so
@@ -236,9 +236,13 @@ function VideoClip() {
     try {
       if (!selected.size || selected.size > MAX_CAPTION_BYTES)
         throw new Error("Choose an SRT or WebVTT file up to 64 KB.");
-      const cues = parseCaptionFile(await selected.text(), 0, MAX_SOURCE_SECONDS * 1000);
+      // One bounded read serves both the digest and the UTF-8 decode: the
+      // digest ties any later offset restore to these exact original bytes.
+      const bytes = new Uint8Array(await selected.arrayBuffer());
+      const sourceSha256 = await sha256Hex(bytes);
+      const cues = parseCaptionFile(new TextDecoder().decode(bytes), 0, MAX_SOURCE_SECONDS * 1000);
       if (request !== captionRequest.current) return;
-      setCaptionDraft({ name: selected.name, cues });
+      setCaptionDraft({ name: selected.name, sourceSha256, cues });
       setCaptionOffsetRaw("0");
       setCaptionMessage(`Loaded ${cues.length} ${cues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
@@ -270,14 +274,24 @@ function VideoClip() {
         duration, maxSeconds: MAX_CLIP_SECONDS, sourceBytes: selectedSource.size, sourceSha256,
       });
       if (stale()) return;
-      setStart(restored.startSeconds);
-      setEnd(restored.endSeconds);
-      setShape(restored.frame);
-      setQuality(restored.quality);
-      setFit(restored.fit);
-      setCropAnchor(restored.cropAnchor ?? "center");
-      setMute(restored.muteRequested);
-      setReceiptMessage("Trim and frame settings restored. Make MP4 when ready.");
+      setStart(restored.edit.startSeconds);
+      setEnd(restored.edit.endSeconds);
+      setShape(restored.edit.frame);
+      setQuality(restored.edit.quality);
+      setFit(restored.edit.fit);
+      setCropAnchor(restored.edit.cropAnchor ?? "center");
+      setMute(restored.edit.muteRequested);
+      // A saved offset only moves the controls when the same original caption
+      // file is already selected. A zero offset is restored just like any
+      // other signed value; a mismatch leaves every caption control as it is.
+      if (restored.captions && captionDraft?.sourceSha256 === restored.captions.sourceSha256) {
+        setCaptionOffsetRaw(String(restored.captions.offsetMs / 1000));
+        setReceiptMessage("Trim, frame and caption timing restored. Make MP4 when ready.");
+      } else {
+        setReceiptMessage(restored.captions
+          ? "Trim and frame settings restored. To restore caption timing, choose the original caption file and reopen this receipt."
+          : "Trim and frame settings restored. Make MP4 when ready.");
+      }
     } catch (error) {
       if (!stale()) setReceiptMessage(error instanceof Error ? error.message : "Could not read that receipt.");
     } finally {
@@ -320,6 +334,7 @@ function VideoClip() {
       const blob = new Blob([target.buffer], { type: "video/mp4" });
       const captions = captionDraft ? {
         name: captionDraft.name,
+        sourceSha256: captionDraft.sourceSha256,
         vtt: serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs),
         ...(captionOffsetMs ? { offsetMs: captionOffsetMs } : {}),
       } : undefined;

@@ -5,6 +5,17 @@ export const MAX_CAPTION_BYTES = 64 * 1024;
 export const MAX_CAPTION_OFFSET_SECONDS = 60;
 export type ClipCaptionTrack = Readonly<{ url: string; english: boolean }>;
 
+// A receipt records the source caption file's identity, never its cue text.
+// Zero offset stays absent so earlier receipts keep the same shape.
+export function captionReceiptFields(caption: Readonly<{ name: string; sourceSha256: string; vtt: string | null }>, offsetMs: number) {
+  return {
+    sourceName: caption.name,
+    included: Boolean(caption.vtt),
+    sourceSha256: caption.sourceSha256,
+    ...(offsetMs ? { offsetMs } : {}),
+  };
+}
+
 function stamp(ms: number) {
   const minutes = Math.floor(ms / 60_000).toString().padStart(2, "0");
   const seconds = Math.floor((ms % 60_000) / 1000).toString().padStart(2, "0");

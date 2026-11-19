@@ -1,10 +1,19 @@
 import type { CompletedClip } from "./clip-receipt";
+import { MAX_CAPTION_OFFSET_SECONDS } from "./clip-captions.ts";
 
 export type ReceiptSourceProof = Readonly<{
   duration: number;
   maxSeconds: number;
   sourceBytes: number;
   sourceSha256: string;
+}>;
+
+// Caption timing is a separate, optional restore: it can only be applied when
+// the receipt proves which exact caption file the offset belongs to.
+export type ClipReceiptCaptions = Readonly<{ sourceSha256: string; offsetMs: number }>;
+export type ClipReceiptRestore = Readonly<{
+  edit: CompletedClip["edit"];
+  captions?: ClipReceiptCaptions;
 }>;
 
 export const MAX_RECEIPT_BYTES = 16 * 1024;
@@ -25,11 +34,12 @@ const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): value i
 
 /**
  * Validate a v1 receipt against the already-accepted source and local decoded
- * duration. Returns only the editable settings, or throws a visitor-facing
- * reason. Everything else in the receipt (output digests, captions, Watch URL)
- * stays inert data.
+ * duration. Returns the editable visual settings and, only when the receipt
+ * carries a valid caption hash and bounded offset, a separate caption-only
+ * setting. Old receipts without that supplementary data still restore trim and
+ * frame. Everything else (output digests, cue text, Watch URL) stays inert.
  */
-export function parseClipReceipt(text: string, proof: ReceiptSourceProof): CompletedClip["edit"] {
+export function parseClipReceipt(text: string, proof: ReceiptSourceProof): ClipReceiptRestore {
   const { duration, maxSeconds, sourceBytes, sourceSha256 } = proof;
   if (typeof text !== "string" || new TextEncoder().encode(text).length > MAX_RECEIPT_BYTES)
     fail(`Choose a Clip receipt JSON file under ${MAX_RECEIPT_BYTES / 1024} KB.`);
@@ -63,8 +73,23 @@ export function parseClipReceipt(text: string, proof: ReceiptSourceProof): Compl
   if (typeof muteRequested !== "boolean") fail("The receipt has an invalid mute setting.");
   if (cropAnchor !== undefined && !oneOf(cropAnchor, cropAnchors)) fail("The receipt uses an unsupported crop position.");
 
+  // Supplementary caption data is optional and inert unless both parts are
+  // valid. A missing or malformed hash/offset never supplies a setting to the
+  // caller, so it cannot quietly change the captions already on this device.
+  let captions: ClipReceiptCaptions | undefined;
+  const savedCaptions = parsed.captions;
+  if (record(savedCaptions)) {
+    const { sourceSha256: captionSha256, offsetMs } = savedCaptions;
+    if (typeof captionSha256 === "string" && SHA256.test(captionSha256)
+      && (offsetMs === undefined || (typeof offsetMs === "number" && Number.isSafeInteger(offsetMs) && Math.abs(offsetMs) <= MAX_CAPTION_OFFSET_SECONDS * 1000)))
+      captions = { sourceSha256: captionSha256, offsetMs: offsetMs ?? 0 };
+  }
+
   return {
-    startSeconds, endSeconds, frame, quality, fit, muteRequested,
-    ...(cropAnchor !== undefined ? { cropAnchor } : {}),
+    edit: {
+      startSeconds, endSeconds, frame, quality, fit, muteRequested,
+      ...(cropAnchor !== undefined ? { cropAnchor } : {}),
+    },
+    ...(captions ? { captions } : {}),
   };
 }
