@@ -11,6 +11,11 @@ import {
   openLocalMixHandoff, receiveLocalMix,
   type LocalMixHandoff, type LocalMixHandoffStatus,
 } from "./local-mix-handoff";
+import {
+  PUBLIC_VIDEO_TIMEOUT_MS,
+  fetchPublicVideo,
+  publicVideoFromHash,
+} from "./video-clip-source";
 import { sha256Hex } from "../lib/util.mjs";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -165,6 +170,12 @@ function AddMusic() {
   const [checkingVideo, setCheckingVideo] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [handoffBusy, setHandoffBusy] = useState(false);
+  // A public Watch handoff only offers a source; nothing is fetched until the
+  // visitor explicitly asks. It reuses Clip's one bounded, same-origin read.
+  const [publicVideo] = useState(() => publicVideoFromHash(window.location.hash));
+  const [publicLoading, setPublicLoading] = useState(false);
+  const [publicLoaded, setPublicLoaded] = useState(false);
+  const publicRequest = useRef<AbortController | null>(null);
   // A reverse handoff only offers a source; it never fetches or persists media.
   const [localMixToken] = useState(() => localMixTokenFromHash(window.location.hash));
   const [preview, setPreview] = useState("");
@@ -211,6 +222,7 @@ function AddMusic() {
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   useEffect(() => () => { if (preparedSettings) URL.revokeObjectURL(preparedSettings); }, [preparedSettings]);
   useEffect(() => () => {
+    publicRequest.current?.abort();
     musicAbort.current?.abort(); videoAbort.current?.abort(); controller.current?.abort();
     receiptRequest.current++; outputRevision.current++;
     handoff.current?.close();
@@ -232,10 +244,17 @@ function AddMusic() {
       ); },
     });
   }, [localMixToken]);
-  async function choose(file: File | undefined, kind: "video" | "audio") {
+  async function choose(file: File | undefined, kind: "video" | "audio", fromPublication = false) {
     if (!file || controller.current || importing || settingsLoading || preparingSettings) return;
     const isVideo = kind === "video";
     if (isVideo) videoChoice.current++;
+    // A manual video pick replaces any in-flight published read, so its File
+    // cannot land afterwards on top of the file the person just chose.
+    if (isVideo && !fromPublication && publicRequest.current) {
+      publicRequest.current.abort();
+      publicRequest.current = null;
+      setPublicLoading(false);
+    }
     const pending = isVideo ? videoAbort : musicAbort;
     const chooser = isVideo ? videoChooser : musicChooser;
     const setChecking = isVideo ? setCheckingVideo : setCheckingMusic;
@@ -256,7 +275,7 @@ function AddMusic() {
       if (pending.current !== abort || abort.signal.aborted) return;
       const url = URL.createObjectURL(file);
       clearOutputs();
-      if (isVideo) { setVideo(file); setVideoUrl(url); setVideoSeconds(length); }
+      if (isVideo) { setVideo(file); setVideoUrl(url); setVideoSeconds(length); setPublicLoaded(fromPublication); }
       else { setMusic(file); setMusicUrl(url); setMusicSeconds(length); }
       setMessage("");
     } catch (error) {
@@ -273,6 +292,36 @@ function AddMusic() {
       if (pending.current === abort) {
         pending.current = null;
         setChecking(false);
+      }
+    }
+  }
+  // Explicit, local-only continuation of the Watch handoff. The source link is
+  // already on screen; the MP4 bytes are not requested until this button runs,
+  // and the exact File goes through the same chooser intake as a manual pick.
+  async function loadPublicVideo(): Promise<void> {
+    if (!publicVideo || publicLoading || publicRequest.current || video || busy !== null ||
+      controller.current || importing || checkingVideo || settingsLoading || preparingSettings) return;
+    const request = new AbortController();
+    publicRequest.current = request;
+    setPublicLoading(true);
+    setMessage("Downloading the published video from this Media Studio…");
+    const timeout = AbortSignal.timeout(PUBLIC_VIDEO_TIMEOUT_MS);
+    const signal = AbortSignal.any([request.signal, timeout]);
+    try {
+      const result = await fetchPublicVideo(publicVideo, signal);
+      if (request.signal.aborted) return;
+      if ("reason" in result) { setMessage(result.reason); return; }
+      await choose(result.file, "video", true);
+    } catch (error) {
+      if (!request.signal.aborted) {
+        setMessage(timeout.aborted
+          ? "The download was cancelled after too long. Choose Load published video to try again."
+          : "Could not download this published video. Try again or use the video picker.");
+      }
+    } finally {
+      if (publicRequest.current === request && !request.signal.aborted) {
+        publicRequest.current = null;
+        setPublicLoading(false);
       }
     }
   }
@@ -399,7 +448,21 @@ function AddMusic() {
   const canRun = Boolean(video && music && !importing && !checkingMusic && !checkingVideo && !settingsLoading && !preparingSettings);
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Add music to a video</h1><p>Make a new MP4 from your own video and music on this device, without sign-in or paid generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="inputs-title"><h2 id="inputs-title">Choose your files</h2>
-      <label className="trim-file">Video<input ref={videoChooser} type="file" accept="video/mp4,video/webm" disabled={busy !== null || importing || settingsLoading || preparingSettings} aria-busy={checkingVideo || undefined} onChange={e => void choose(e.target.files?.[0],"video")}/></label>
+      <div className="video-tool-actions">
+        <label className="trim-file">Video<input ref={videoChooser} type="file" accept="video/mp4,video/webm" disabled={busy !== null || importing || settingsLoading || preparingSettings} aria-busy={checkingVideo || undefined} onChange={e => void choose(e.target.files?.[0],"video")}/></label>
+        {publicVideo && (!video || publicLoaded) && (
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy !== null || importing || settingsLoading || preparingSettings}
+            aria-disabled={publicLoading || publicLoaded || checkingVideo || undefined}
+            onClick={() => void loadPublicVideo()}
+          >
+            {publicLoaded ? "Published video loaded" : publicLoading ? "Loading published video…" : "Load published video"}
+          </button>
+        )}
+      </div>
+      {publicVideo && <p className="trim-note"><a href={publicVideo.page}>Published page</a> · The video is downloaded from this Media Studio only when you choose Load published video. It stays on this device.</p>}
       <p className="trim-note">Up to 60 seconds and 128 MB. Original sound is off by default. Raise its volume below to keep it under your added audio.</p>
       {video && <><p><strong>{video.name}</strong></p><video ref={sourceVideo} onPlay={()=>pauseOthers(sourceVideo.current)} className="video-tool-player" src={videoUrl} controls playsInline aria-label="Original video"/></>}
       <label className="trim-file">Music or spoken audio<input ref={musicChooser} type="file" accept="audio/*,.mp3,.wav,.m4a" disabled={busy !== null || importing || settingsLoading || preparingSettings} aria-busy={checkingMusic || undefined} onChange={e => void choose(e.target.files?.[0],"audio")}/></label>

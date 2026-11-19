@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 
 import {
   MAX_PUBLIC_VIDEO_BYTES,
+  publicVideoAddMusicUrl,
   publicVideoClipUrl,
   publicVideoFromHash,
   publicVideoRefusal,
@@ -83,6 +84,35 @@ test("only the whole single-ID fragment resolves, to the fixed media path", () =
   assert.equal(publishedVideoToolUrl("Film_1/media"), null);
   assert.equal(publishedVideoToolUrl("https://elsewhere.example"), null);
   assert.equal(publishedVideoToolUrl(""), null);
+});
+
+test("a short published MP4 is offered to Add Music through the one bounded source", () => {
+  const shortFilm = { ...film, durationMs: 45_000 };
+  const tool = publicVideoAddMusicUrl(shortFilm);
+  assert.equal(tool, "/tools/add-music#public-video=Film_1");
+  // Add Music reuses Clip's whole-fragment hash and fixed /media attachment.
+  assert.deepEqual(publicVideoFromHash(new URL(tool, origin).hash), {
+    page: "/p/Film_1",
+    media: "/p/Film_1/media",
+  });
+  assert.ok(publicPage(shortFilm).includes(`href="${tool}">Mix this video locally</a>`));
+  assert.ok(publicVideoAddMusicUrl({ ...shortFilm, durationMs: 60_000 }));
+  // Clip still offers the longer source; only Add Music needs a known <=60s one.
+  assert.ok(publicPage(film).includes("Clip this video"));
+  assert.doesNotMatch(publicPage(film), /Mix this video locally/);
+  for (const change of [
+    { durationMs: 60_001 },
+    { durationMs: null },
+    { durationMs: 0 },
+    { durationMs: undefined },
+    { kind: "image" },
+    { mime: "video/webm" },
+    { media: "/p/Film_1/download" },
+    { bytes: MAX_PUBLIC_VIDEO_BYTES + 1 },
+  ]) {
+    assert.equal(publicVideoAddMusicUrl({ ...shortFilm, ...change }), null, JSON.stringify(change));
+    assert.doesNotMatch(publicPage({ ...shortFilm, ...change }), /Mix this video locally/, JSON.stringify(change));
+  }
 });
 
 test("a public response that cannot reuse the picker intake returns a reason", () => {
