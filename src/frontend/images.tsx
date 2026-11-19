@@ -118,6 +118,7 @@ import {
   composerArtworkManifestEntry,
   composerArtworkSourceUrl,
   fetchComposerArtwork,
+  formatComposerArtworkDiagnostic,
   parseComposerArtworkHash,
   parseComposerPostBrief,
   type ComposerArtworkRef,
@@ -879,6 +880,11 @@ function drawSample(canvas: HTMLCanvasElement): void {
 }
 
 const PUBLIC_IMAGE_TIMEOUT_MS = 15_000;
+
+const STUDIO_REVISION = typeof document === "undefined"
+  ? ""
+  : document.getElementById("images")?.dataset.studioRevision ?? "";
+
 const POSTER_EXTENSIONS = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -950,6 +956,7 @@ function Images() {
   const [publicImageSource] = useState(publicImageSourceFromHash);
   const publicImageLabel = publicImageSource ? publicImageLabels[publicImageSource.kind].source : "";
   const [publicImageLoading, setPublicImageLoading] = useState(false);
+  const [sourceDiagnostic, setSourceDiagnostic] = useState("");
   const publicImageRequest = useRef<AbortController | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -1364,6 +1371,7 @@ function Images() {
     fromPicker = false,
     publicImage?: PublicImageSource,
     onAdded?: (item: WorkItem) => void,
+    onRejected?: (reason: string, intakeRevision: number) => void,
   ): Promise<void> {
     if (!files.length) return;
     if (addingRef.current || runningRef.current || socialController.current) {
@@ -1455,12 +1463,14 @@ function Images() {
         }
         setMessage(`Checked ${index + 1} of ${candidates.length} on this device.`);
       } catch (error) {
-        localRejections.push({
-          name: file.name,
-          message: publicImage?.kind === "composer"
-            ? "Studio could not decode the Composer image. Try again or download it from the source artwork page."
-            : error instanceof Error ? error.message : "Could not read this image.",
-        });
+        const reason = publicImage?.kind === "composer"
+          ? "Studio could not decode the Composer image. Try again or download it from the source artwork page."
+          : error instanceof Error ? error.message : "Could not read this image.";
+        localRejections.push({ name: file.name, message: reason });
+        // A public Composer file that passed the byte sniff but failed header or
+        // pixel decode gets an invalid-image diagnostic, without touching the
+        // local processing paths or any other source.
+        onRejected?.(reason, currentRevision);
       }
     }
     if (currentRevision === revision.current) {
@@ -1484,7 +1494,14 @@ function Images() {
       runningRef.current || socialController.current || items.length >= MAX_BATCH_IMAGES) return;
     const controller = new AbortController();
     const token = revision.current;
+    const composerRef = publicImageSource.kind === "composer" ? publicImageSource.ref : null;
+    const recordDiagnostic = (error: ComposerArtworkLoadError, expectedRevision = token) => {
+      if (!composerRef || publicImageRequest.current !== controller ||
+        expectedRevision !== revision.current || controller.signal.aborted) return;
+      setSourceDiagnostic(formatComposerArtworkDiagnostic(composerRef, error, STUDIO_REVISION));
+    };
     publicImageRequest.current = controller;
+    setSourceDiagnostic("");
     setPublicImageLoading(true);
     const timeout = AbortSignal.timeout(PUBLIC_IMAGE_TIMEOUT_MS);
     const signal = AbortSignal.any([controller.signal, timeout]);
@@ -1497,13 +1514,25 @@ function Images() {
         setMessage(`The workbench changed while loading the image. Choose Load ${publicImageLabel} to try again.`);
         return;
       }
-      await addFiles([file], false, publicImageSource);
+      await addFiles([file], false, publicImageSource, undefined, (reason, intakeRevision) => {
+        recordDiagnostic(new ComposerArtworkLoadError(reason, { category: "invalid-image" }), intakeRevision);
+      });
     } catch (error) {
       if (!controller.signal.aborted) {
+        if (token !== revision.current || runningRef.current || socialController.current) {
+          return;
+        }
         if (timeout.aborted) {
-          setMessage(`The download timed out. Choose Load ${publicImageLabel} to try again.`);
+          // Local timer only: there is no observed HTTP status to disclose.
+          const failure = new ComposerArtworkLoadError(
+            `The download timed out. Choose Load ${publicImageLabel} to try again.`,
+            { category: "timeout" },
+          );
+          setMessage(failure.message);
+          recordDiagnostic(failure);
         } else if (error instanceof ComposerArtworkLoadError) {
-          setMessage(error.reference ? `${error.message} Request reference ${error.reference}.` : error.message);
+          setMessage(error.message);
+          recordDiagnostic(error);
         } else {
           const fallback =
             publicImageSource.kind === "composer"
@@ -1511,7 +1540,12 @@ function Images() {
               : publicImageSource.kind === "still"
                 ? "Could not download this published image. Try again or use Download image on its page."
                 : "Could not download this public poster. Try again or use Download poster on the film page.";
-          setMessage(error instanceof Error && !(error instanceof TypeError) ? error.message : fallback);
+          const failure = new ComposerArtworkLoadError(
+            error instanceof Error && !(error instanceof TypeError) ? error.message : fallback,
+            { category: "transport-unknown" },
+          );
+          setMessage(failure.message);
+          recordDiagnostic(failure);
         }
       }
     } finally {
@@ -1589,6 +1623,7 @@ function Images() {
     setPostBriefStatus(null);
     publicImageRequest.current?.abort();
     publicImageRequest.current = null;
+    setSourceDiagnostic("");
     setPublicImageLoading(false);
     focusAfterListChange.current = { kind: "picker" };
     revision.current += 1;
@@ -2875,6 +2910,21 @@ function Images() {
         <div role="status" aria-live="polite">
           {sourceNotice && <p className="image-status">{sourceNotice}</p>}
         </div>
+        {sourceDiagnostic && (
+          <details className="image-source-diagnostic">
+            <summary>Local load details</summary>
+            <p className="small">Select and copy these details if you need to report the load failure.</p>
+            <textarea
+              className="image-diagnostic-field"
+              readOnly
+              rows={7}
+              spellCheck={false}
+              aria-label="Local load diagnostic"
+              value={sourceDiagnostic}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </details>
+        )}
         {rejections.length > 0 && (
           <details className="image-rejections" open>
             <summary>{rejections.length} refused file{rejections.length === 1 ? "" : "s"}</summary>

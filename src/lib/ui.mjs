@@ -217,7 +217,7 @@ export function audioTrimPage({ revision = "dev" } = {}) {
 
 export function imagesPage({ revision = "dev" } = {}) {
   return `${head({ title: "Image tools — Media Studio", description: "Resize, crop, convert, batch export and inspect image metadata privately on your device.", extra: `<link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}">` })}
-<body><div id="images"><main id="main"><h1>Image tools</h1><p>JavaScript is required to resize, crop, convert and inspect images on your device.</p></main></div><script type="module" src="/images.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
+<body><div id="images" data-studio-revision="${escapeHtml(revision)}"><main id="main"><h1>Image tools</h1><p>JavaScript is required to resize, crop, convert and inspect images on your device.</p></main></div><script type="module" src="/images.js?v=${encodeURIComponent(revision)}"></script></body></html>`;
 }
 
 export function videoClipPage({ revision = "dev" } = {}) {
