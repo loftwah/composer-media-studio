@@ -1,5 +1,6 @@
 import type { ClipCaptionTrack } from "./clip-captions";
 import { clipPosterError } from "./clip-poster-eligibility.ts";
+import { POSTER_RECEIPT_SCHEMA, POSTER_RECEIPT_VERSION } from "./clip-poster-verify.ts";
 import { MAX_CLIP_KIT_BYTES, type CompletedClip } from "./clip-receipt";
 import { sha256Hex } from "../lib/util.mjs";
 import { useEffect, useRef, useState } from "react";
@@ -115,8 +116,8 @@ export function ClipPoster({ src, filename, captionTrack, output }: {
       ]);
       if (token !== sequence.current) return;
       const receiptText = JSON.stringify({
-        schema: "media-studio/clip-poster-receipt",
-        version: 1,
+        schema: POSTER_RECEIPT_SCHEMA,
+        version: POSTER_RECEIPT_VERSION,
         clip: { bytes: output.blob.size, sha256: clipSha256 },
         capturedSeconds: snapshot.time,
         poster: { width: snapshot.width, height: snapshot.height, bytes: snapshot.blob.size, sha256: pngSha256 },

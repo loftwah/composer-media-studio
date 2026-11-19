@@ -4,6 +4,7 @@ import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
 import { ClipPoster } from "./clip-poster";
+import { ClipPosterVerifyPanel } from "./clip-poster-verify-panel";
 import { sha256Hex } from "../lib/util.mjs";
 import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
@@ -448,6 +449,7 @@ function VideoClip() {
       {publicVideo && <p className="trim-note"><a href={publicVideo.page}>Published page</a> · The video is downloaded from this Media Studio only when you choose Load published video. It stays on this device.</p>}
       {sourceHandoff?.kind === "studio" && <p className="trim-note">Load the saved video using your Studio project access. The edit stays on this device. <a href="/studio">Open Studio</a></p>}
       <p className="trim-note">MP4 or WebM up to 128 MB and 3 minutes; browser support varies. Export up to 60 seconds.</p>
+      <ClipPosterVerifyPanel />
       {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p>
       <p className="trim-note">Reopen a Clip receipt to load the saved edit settings for this video.</p>
       <div className="video-tool-actions">
