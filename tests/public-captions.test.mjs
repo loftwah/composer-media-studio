@@ -70,6 +70,7 @@ test("the exact published film renders a native caption track, captions off by d
 
   const html = await (await get(env, `/p/${SLUG}`)).text();
   assert.ok(html.includes(TRACK), "native captions track on the exact film only");
+  assert.ok(html.includes(`<a href="/p/${SLUG}${PUBLIC_CAPTION_ROUTE}" download="${SLUG}-en.vtt">Download English captions (VTT)</a>`));
   assert.doesNotMatch(html, /<track[^>]*\bdefault\b/i, "captions are off until the viewer enables them");
   assert.ok(
     html.includes(`<source src="/p/${SLUG}/media" type="video/mp4">${TRACK}`),
@@ -95,6 +96,7 @@ test("a wrong media hash yields no track and no caption route", async () => {
 
   const html = await (await get(env, `/p/${SLUG}`)).text();
   assert.doesNotMatch(html, /<track\b/i, "no track on a hash mismatch");
+  assert.doesNotMatch(html, /Download English captions/);
   assert.equal((await get(env, `/p/${SLUG}${PUBLIC_CAPTION_ROUTE}`)).status, 404);
 });
 
