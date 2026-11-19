@@ -205,3 +205,44 @@ test("enforces the existing social string bounds without silently truncating", (
     { ok: true, caption: exact, altText: exact },
   );
 });
+
+test("only the fixed Composer diagnostics reach the artwork recovery message", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch");
+  const reference = "f9e7d97c-6b66-4d7c-9244-a3baddf6b9bb";
+  const marker = "https://example.invalid/private-body-marker";
+  for (const [status, category, request, message, safeReference] of [
+    [400, "invalid-request", reference, /could not read this artwork link/, reference],
+    [503, "catalogue-unavailable", reference, /catalogue is temporarily unavailable/, reference],
+    [502, "file-unavailable", reference, /could not fetch the artwork file/, reference],
+    [502, "file-rejected", reference, /refused the artwork file/, reference],
+    [504, "file-timeout", reference, /timed out fetching the artwork file/, reference],
+    [503, "file-rejected", marker, /could not download the artwork/, null],
+    [502, marker, marker, /could not download the artwork/, null],
+  ]) {
+    fetch.mock.mockImplementationOnce(async () => new Response(marker, {
+      status,
+      headers: { "x-composer-artwork-failure": category, "x-composer-artwork-request": request },
+    }));
+    await assert.rejects(fetchComposerArtwork(ref, signal), (error) => {
+      assert.match(error.message, message);
+      assert.equal(error.reference, safeReference);
+      assert.ok(!error.message.includes(marker));
+      return true;
+    });
+  }
+});
+
+test("artwork recovery preserves cancellation and hides raw transport errors", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch");
+  const marker = "https://example.invalid/private-body-marker";
+  fetch.mock.mockImplementationOnce(async () => { throw new TypeError(marker); });
+  await assert.rejects(fetchComposerArtwork(ref, signal), (error) => {
+    assert.match(error.message, /could not reach or finish reading/);
+    assert.ok(!error.message.includes(marker));
+    return true;
+  });
+  const controller = new AbortController();
+  controller.abort(new DOMException("Stopped", "AbortError"));
+  fetch.mock.mockImplementationOnce(async () => { throw new TypeError(marker); });
+  await assert.rejects(fetchComposerArtwork(ref, controller.signal), { name: "AbortError" });
+});

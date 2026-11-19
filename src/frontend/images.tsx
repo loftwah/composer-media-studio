@@ -114,6 +114,7 @@ import {
 } from "./image-social-source.ts";
 import {
   COMPOSER_POST_BRIEF_MAX_BYTES,
+  ComposerArtworkLoadError,
   composerArtworkManifestEntry,
   composerArtworkSourceUrl,
   fetchComposerArtwork,
@@ -1437,7 +1438,9 @@ function Images() {
       } catch (error) {
         localRejections.push({
           name: file.name,
-          message: error instanceof Error ? error.message : "Could not read this image.",
+          message: publicImage?.kind === "composer"
+            ? "Studio could not decode the Composer image. Try again or download it from the source artwork page."
+            : error instanceof Error ? error.message : "Could not read this image.",
         });
       }
     }
@@ -1480,6 +1483,8 @@ function Images() {
       if (!controller.signal.aborted) {
         if (timeout.aborted) {
           setMessage(`The download timed out. Choose Load ${publicImageLabel} to try again.`);
+        } else if (error instanceof ComposerArtworkLoadError) {
+          setMessage(error.reference ? `${error.message} Request reference ${error.reference}.` : error.message);
         } else {
           const fallback =
             publicImageSource.kind === "composer"

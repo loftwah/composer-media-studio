@@ -29,46 +29,95 @@ export function composerArtworkDownloadUrl(ref: ComposerArtworkRef): string {
   return `${COMPOSER_ARTWORK_DOWNLOAD_API}?${query}`;
 }
 
+export class ComposerArtworkLoadError extends Error {
+  readonly reference: string | null;
+
+  constructor(message: string, reference: string | null = null) {
+    super(message);
+    this.name = "ComposerArtworkLoadError";
+    this.reference = reference;
+  }
+}
+
+function failedDownload(response: Response): ComposerArtworkLoadError {
+  const category = response.headers.get("x-composer-artwork-failure");
+  const reference = response.headers.get("x-composer-artwork-request");
+  const request = reference && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(reference)
+    ? reference : null;
+  const failure = (message: string) => new ComposerArtworkLoadError(message, request);
+  const retry = "Try again or download the image from the source artwork page.";
+
+  switch (response.status) {
+    case 404:
+      return failure("This artwork is no longer available from Composer. Choose another image.");
+    case 409:
+      return failure("This artwork changed. Reopen it in Composer to choose the current image.");
+    case 400:
+      if (category === "invalid-request")
+        return failure("Composer could not read this artwork link. Reopen it in Composer.");
+      break;
+    case 503:
+      if (category === "catalogue-unavailable")
+        return failure(`Composer’s artwork catalogue is temporarily unavailable. ${retry}`);
+      break;
+    case 502:
+      if (category === "file-unavailable") return failure(`Composer could not fetch the artwork file. ${retry}`);
+      if (category === "file-rejected") return failure(`Composer refused the artwork file. ${retry}`);
+      break;
+    case 504:
+      if (category === "file-timeout") return failure(`Composer timed out fetching the artwork file. ${retry}`);
+      break;
+  }
+  return failure(`Composer could not download the artwork. ${retry}`);
+}
+
 export async function fetchComposerArtwork(ref: ComposerArtworkRef, signal: AbortSignal): Promise<File> {
-  const response = await fetch(composerArtworkDownloadUrl(ref), {
-    mode: "cors",
-    credentials: "omit",
-    redirect: "error",
-    cache: "no-store",
-    signal,
-  });
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    if (response.status === 409) throw new Error("This artwork changed. Reopen it in Composer and try again.");
-    if (response.status === 404) throw new Error("This artwork is no longer available from Composer.");
-    throw new Error("Could not download the artwork. Try again or download it from Composer.");
-  }
-
-  const type = response.headers.get("content-type") ?? "";
-  const extension = EXTENSIONS.get(type);
-  if (!extension || !response.body) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error("Composer artwork must be a JPEG, PNG or WebP image.");
-  }
-
-  const reader = response.body.getReader();
-  const chunks: BlobPart[] = [];
-  let total = 0;
   try {
-    if (Number(response.headers.get("content-length")) > MAX_IMAGE_INPUT_BYTES)
-      throw new Error("This Composer artwork exceeds the image size limit.");
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_IMAGE_INPUT_BYTES) throw new Error("This Composer artwork exceeds the image size limit.");
-      chunks.push(new Uint8Array(value));
+    const response = await fetch(composerArtworkDownloadUrl(ref), {
+      mode: "cors",
+      credentials: "omit",
+      redirect: "error",
+      cache: "no-store",
+      signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw failedDownload(response);
     }
-  } finally {
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
+
+    const type = response.headers.get("content-type") ?? "";
+    const extension = EXTENSIONS.get(type);
+    if (!extension || !response.body) {
+      await response.body?.cancel().catch(() => {});
+      throw new ComposerArtworkLoadError("Composer artwork must be a JPEG, PNG or WebP image. Try the source artwork page.");
+    }
+
+    const reader = response.body.getReader();
+    const chunks: BlobPart[] = [];
+    let total = 0;
+    const sizeError = () => new ComposerArtworkLoadError("This Composer artwork exceeds the image size limit.");
+    try {
+      if (Number(response.headers.get("content-length")) > MAX_IMAGE_INPUT_BYTES) throw sizeError();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_IMAGE_INPUT_BYTES) throw sizeError();
+        chunks.push(new Uint8Array(value));
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    if (!total) throw new ComposerArtworkLoadError("Composer returned an empty image. Try again or download it from the source artwork page.");
+    return new File(chunks, `${ref.assetId}.${extension}`, { type });
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof ComposerArtworkLoadError) throw error;
+    if (error instanceof TypeError)
+      throw new ComposerArtworkLoadError("Studio could not reach or finish reading the download. Check your connection and try again, or use the source artwork page.");
+    throw new ComposerArtworkLoadError("Studio could not read the Composer download. Try again or use the source artwork page.");
   }
-  return new File(chunks, `${ref.assetId}.${extension}`, { type });
 }
 
 const POST_BRIEF_SCHEMA = "app-composer/public-artwork-post";
