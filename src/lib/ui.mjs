@@ -6,6 +6,7 @@ import { woodhouseUrl } from "./woodhouse-share.ts";
 import { videoObjectJsonLd } from "./video-object-json-ld.ts";
 import { galleryPageHref, galleryHasFilters, galleryResultCount, galleryAudioEmpty } from "./gallery-query.ts";
 import { galleryCards, galleryDimensions } from "./gallery-cards.ts";
+import { publishedStillToolUrl } from "../frontend/image-social-source.ts";
 
 const mark = `<img class="brand-mark" src="/brand/composer-icon-tile.svg" width="40" height="40" alt="">`;
 
@@ -330,6 +331,13 @@ export function publicPage({
   const posterHandoff = posterDownload === `/p/${slug}/poster` || posterDownload === `/p/${slug}/thumb`
     ? `/tools/images#public-poster=${encodeURIComponent(posterDownload)}`
     : null;
+  // A published still can be opened in the same signed-out workbench, but the
+  // editor only loads its own exact `/media` after the visitor asks it to.
+  const stillHandoff = kind === "image" &&
+    media === `/p/${slug}/media` &&
+    ["image/jpeg", "image/png", "image/webp"].includes(mime)
+    ? publishedStillToolUrl(slug)
+    : null;
   const tablerLicense = (Array.isArray(attribution) && attribution.some((item) => item?.tablerMit === true)) ? `<details><summary>Tabler Icons MIT licence</summary><pre class="licence-copy">${escapeHtml(`MIT License
 
 Copyright (c) 2020-2026 Paweł Kuna
@@ -420,6 +428,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
         <a href="${escapeHtml(postTextDownload)}" download="${escapeHtml(slug)}-post-text.txt">Download post text (TXT)</a>
         ${posterDownload ? `<a href="${escapeHtml(posterDownload)}" download>Download poster</a>` : ""}
         ${posterHandoff ? `<a href="${escapeHtml(posterHandoff)}">Make social sizes</a>` : ""}
+        ${stillHandoff ? `<a href="${escapeHtml(stillHandoff)}">Edit in Image Tools</a>` : ""}
         <a href="${escapeHtml(download)}" download>Download ${isVideo ? "video" : isAudio ? "audio" : "image"}</a>
         ${isVideo && captionSrc ? `<a href="${escapeHtml(captionSrc)}" download="${escapeHtml(slug)}-en.vtt">Download English captions (VTT)</a>` : ""}
       </span>
