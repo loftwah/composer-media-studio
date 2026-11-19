@@ -216,7 +216,7 @@ function Home({
             Trim audio locally
           </a>
           <a className="button secondary" href="/tools/video-clip">
-            Clip video locally
+            Clip and caption video locally
           </a>
           <a className="button secondary" href="/tools/add-music">
             Add music locally
