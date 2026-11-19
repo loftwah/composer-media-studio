@@ -94,7 +94,15 @@ function failedDownload(response: Response): ComposerArtworkLoadError {
   return failure(`Composer could not download the artwork. ${retry}`, "http-refusal");
 }
 
-export async function fetchComposerArtwork(ref: ComposerArtworkRef, signal: AbortSignal): Promise<File> {
+export async function fetchComposerArtwork(
+  ref: ComposerArtworkRef,
+  signal: AbortSignal,
+  /** Reports the status of the observed HTTP response so a later, separate
+   *  byte/header/pixel decode failure can keep it in its diagnostic. Optional
+   *  so existing callers stay unchanged; it fires once, before the body is read,
+   *  and never triggers a second fetch. */
+  onStatus?: (status: number) => void,
+): Promise<File> {
   let status: number | undefined;
   try {
     const response = await fetch(composerArtworkDownloadUrl(ref), {
@@ -105,6 +113,7 @@ export async function fetchComposerArtwork(ref: ComposerArtworkRef, signal: Abor
       signal,
     });
     status = response.status;
+    onStatus?.(status);
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
       throw failedDownload(response);

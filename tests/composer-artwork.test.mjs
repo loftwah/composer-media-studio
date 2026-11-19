@@ -4,6 +4,7 @@ import worker from "../src/worker.mjs";
 import {
   COMPOSER_ARTWORK_DOWNLOAD_API,
   COMPOSER_POST_BRIEF_MAX_BYTES,
+  ComposerArtworkLoadError,
   composerArtworkDownloadUrl,
   composerArtworkManifestEntry,
   composerArtworkSourceUrl,
@@ -86,6 +87,26 @@ test("fetches only the public rendition without cookies and records the source h
     reuse: "unconfirmed",
     sha256: "b".repeat(64),
   });
+});
+
+test("keeps the observed status for a fetched file that fails final decode", async (t) => {
+  // The exact signed-out fixture: HTTP 200, PNG MIME, but no decodable image
+  // bytes. The fetch succeeds; the byte/header/pixel decode happens later.
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const fetch = t.mock.method(globalThis, "fetch", async () => new Response(bytes, {
+    status: 200,
+    headers: { "content-type": "image/png" },
+  }));
+  let observed;
+  const file = await fetchComposerArtwork(ref, signal, (status) => { observed = status; });
+  assert.equal(fetch.mock.calls.length, 1, "no second fetch");
+  assert.equal(file.type, "image/png");
+  assert.equal(observed, 200);
+  // images.tsx threads this status into the failed-decode diagnostic.
+  const error = new ComposerArtworkLoadError("decode failed", { category: "invalid-image", status: observed });
+  const diagnostic = formatComposerArtworkDiagnostic(ref, error, "a".repeat(40));
+  assert.match(diagnostic, /class=invalid-image/);
+  assert.match(diagnostic, /status=200/);
 });
 
 test("stale, unpublished and unusable responses provide actionable feedback", async (t) => {
