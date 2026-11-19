@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { coverAreas, EMPTY_COVER_FIELDS, MAX_COVER_AREAS, type CoverFields, type CoverRegion } from "./image-cover-region.ts";
+import { MAX_IMAGE_INPUT_BYTES } from "./image-limits.ts";
 
 type CoverSource = { blob: Blob; url: string; width: number; height: number };
 type Props = {
   source: CoverSource;
   encodePng: (canvas: HTMLCanvasElement) => Promise<Blob>;
+  addToBatch: (file: File) => Promise<boolean>;
+  canAddToBatch: boolean;
+  batchFull: boolean;
 };
+
+const REDACTED_FILENAME = "media-studio-redacted.png";
 
 const fields = [
   { key: "left", label: "Left (px)", min: 0 },
@@ -25,9 +31,10 @@ function rectangleBetween(a: Point, b: Point): CoverRegion | null {
   return { left, top, width: right - left, height: bottom - top };
 }
 
-export function ImageCover({ source, encodePng }: Props) {
+export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batchFull }: Props) {
   const [coordinates, setCoordinates] = useState<CoverFields>(EMPTY_COVER_FIELDS);
-  const [output, setOutput] = useState("");
+  const [output, setOutput] = useState<{ blob: Blob; url: string } | null>(null);
+  const [addedUrl, setAddedUrl] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [drawing, setDrawing] = useState(false);
@@ -50,7 +57,7 @@ export function ImageCover({ source, encodePng }: Props) {
   function invalidate() {
     if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
     resultUrl.current = "";
-    setOutput("");
+    setOutput(null);
     setMessage("");
   }
 
@@ -176,7 +183,7 @@ export function ImageCover({ source, encodePng }: Props) {
       if (png.type !== "image/png") throw new Error("This browser could not export a PNG.");
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
       resultUrl.current = URL.createObjectURL(png);
-      setOutput(resultUrl.current);
+      setOutput({ blob: png, url: resultUrl.current });
       setMessage("Redacted PNG ready.");
     } catch (error) {
       if (current === generation.current) {
@@ -189,8 +196,20 @@ export function ImageCover({ source, encodePng }: Props) {
     }
   }
 
-  const finishedPreview = drawing ? "" : output;
+  const finished = drawing ? null : output;
+  const finishedPreview = finished?.url ?? "";
   const outlined = finishedPreview ? [] : draft ? [...retained, draft] : areas.regions;
+  const alreadyAdded = finished?.url === addedUrl;
+  const tooLargeToAdd = finished ? finished.blob.size > MAX_IMAGE_INPUT_BYTES : false;
+
+  async function addRedactedPng() {
+    if (!finished || pending || busy || alreadyAdded || !canAddToBatch || tooLargeToAdd || batchFull) return;
+    const added = await addToBatch(new File([finished.blob], REDACTED_FILENAME, { type: "image/png" }));
+    if (added && resultUrl.current === finished.url) {
+      setAddedUrl(finished.url);
+      setMessage("Redacted PNG added to the batch. Open it from the batch to continue editing.");
+    }
+  }
 
   return (
     <details className="image-cover">
@@ -276,9 +295,26 @@ export function ImageCover({ source, encodePng }: Props) {
         <button type="button" className="secondary" disabled={!areas.canExport || pending} aria-disabled={busy || drawing} onClick={() => void make()}>
           {busy ? "Making redacted PNG…" : "Make redacted PNG"}
         </button>
-        {finishedPreview && <a className="button secondary" href={finishedPreview} download="media-studio-redacted.png">Download redacted PNG</a>}
+        {finished && (
+          <>
+            <a className="button secondary" href={finished.url} download={REDACTED_FILENAME}>Download redacted PNG</a>
+            <button
+              className="button secondary"
+              type="button"
+              aria-disabled={busy || pending || alreadyAdded || !canAddToBatch || tooLargeToAdd || batchFull}
+              onClick={() => void addRedactedPng()}
+            >
+              {alreadyAdded ? "Redacted PNG added" : "Add redacted PNG to batch"}
+            </button>
+          </>
+        )}
       </div>
       <p role="status" className="trim-note">{pending ? "Finish or clear the current rectangle before exporting." : message}</p>
+      {finished && (tooLargeToAdd || batchFull) && (
+        <p className="trim-note">
+          {tooLargeToAdd ? `New inputs must be ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MiB or smaller.` : "Remove an image before adding this PNG."}
+        </p>
+      )}
     </details>
   );
 }
