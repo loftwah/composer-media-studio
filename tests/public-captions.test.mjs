@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import worker from "../src/worker.mjs";
-import { PUBLIC_CAPTION_ROUTE, reviewedCaptionFor } from "../src/lib/public-captions.ts";
+import { PUBLIC_CAPTION_ROUTE, clippedCaptionFor, reviewedCaptionFor } from "../src/lib/public-captions.ts";
 import { addAsset, setup } from "./harness.mjs";
 
 const base = "https://studio.test";
@@ -124,4 +124,29 @@ test("no other asset kind gets an indiscriminate track", async () => {
   const html = await (await get(env, "/p/still-image")).text();
   assert.doesNotMatch(html, /<track\b/i);
   assert.equal((await get(env, `/p/still-image${PUBLIC_CAPTION_ROUTE}`)).status, 404);
+});
+
+
+test("a finished public clip gets only its overlapping reviewed English cues", () => {
+  const source = { sha256: SHA, watchUrl: `https://media.loftwah.com/p/${SLUG}` };
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 1, endSeconds: 4 }), `WEBVTT
+
+00:00.000 --> 00:01.050 line:12%
+Bring your AI agent.
+
+00:01.050 --> 00:02.650 line:12%
+Build an app.
+
+00:02.850 --> 00:03.000 line:12%
+[Power-up chime]
+Take it with you.
+`);
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 0, endSeconds: 7.7 }), reviewedCaptionFor(SLUG, SHA));
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 3.65, endSeconds: 3.85 }), null);
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 8, endSeconds: 9 }), null);
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: -0.01, endSeconds: 4 }), null);
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 1, endSeconds: 1 }), null);
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 1, endSeconds: 4, sha256: OTHER_SHA }), null);
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 1, endSeconds: 4, watchUrl: null }), null);
+  assert.equal(clippedCaptionFor({ ...source, startSeconds: 1, endSeconds: 4, watchUrl: `https://example.net/p/${SLUG}` }), null);
 });

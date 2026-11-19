@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { clippedCaptionFor } from "../lib/public-captions";
 import { sha256Hex } from "../lib/util.mjs";
 
 export type CompletedClip = Readonly<{
@@ -17,6 +18,7 @@ export type CompletedClip = Readonly<{
 
 export function ClipReceiptDownload({ clip, filename }: { clip: CompletedClip; filename: string }) {
   const [url, setUrl] = useState("");
+  const [vttUrl, setVttUrl] = useState("");
   const [message, setMessage] = useState("");
   const [preparing, setPreparing] = useState(false);
   const mounted = useRef(false);
@@ -25,6 +27,7 @@ export function ClipReceiptDownload({ clip, filename }: { clip: CompletedClip; f
     return () => { mounted.current = false; };
   }, []);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  useEffect(() => () => { if (vttUrl) URL.revokeObjectURL(vttUrl); }, [vttUrl]);
 
   async function prepare() {
     if (preparing || url) return;
@@ -44,6 +47,16 @@ export function ClipReceiptDownload({ clip, filename }: { clip: CompletedClip; f
         output: { width: output.width, height: output.height, mime: output.blob.type, bytes: output.blob.size, sha256: outputSha },
       };
       setUrl(URL.createObjectURL(new Blob([JSON.stringify(receipt, null, 2) + "\n"], { type: "application/json" })));
+      // The sidecar is a sibling of the receipt, never a burn-in. It is only
+      // offered once this deliberate calculation has proved the original is
+      // the exact registered public film and the edit ties to the finished MP4.
+      const vtt = clippedCaptionFor({
+        sha256: sourceSha,
+        watchUrl,
+        startSeconds: edit.startSeconds,
+        endSeconds: edit.endSeconds,
+      });
+      if (vtt) setVttUrl(URL.createObjectURL(new Blob([vtt], { type: "text/vtt; charset=utf-8" })));
       setMessage("Receipt ready to save.");
     } catch {
       if (mounted.current) setMessage("Could not prepare the receipt. You can try again or save the MP4.");
@@ -58,5 +71,6 @@ export function ClipReceiptDownload({ clip, filename }: { clip: CompletedClip; f
     <button type="button" className="secondary" aria-disabled={preparing || Boolean(url)} onClick={() => void prepare()}>Prepare receipt</button>
     <p role="status" aria-live="polite">{message}</p>
     {url && <a className="button secondary" href={url} download={`${filename}-receipt.json`}>Save receipt JSON</a>}
+    {vttUrl && <p><a className="button secondary" href={vttUrl} download={`${filename}-en.vtt`}>Save English captions (VTT)</a></p>}
   </details>;
 }
