@@ -1,3 +1,4 @@
+import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { ClipPoster } from "./clip-poster";
 import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
@@ -93,7 +94,7 @@ function VideoClip() {
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState("");
   const [result, setResult] = useState("");
-  const [resultBlob, setResultBlob] = useState<Blob | null>(null);
+  const [completedClip, setCompletedClip] = useState<CompletedClip | null>(null);
   // Settings recorded only when an export succeeds: proof of what the finished
   // file actually contains, not what the controls currently show.
   const [applied, setApplied] = useState<string | null>(null);
@@ -165,7 +166,7 @@ function VideoClip() {
       if (revision !== current.current) { URL.revokeObjectURL(url); return; }
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setPublicLoaded(fromPublication);
-      setResult(""); setResultBlob(null); setApplied(null); setChecking(false);
+      setResult(""); setCompletedClip(null); setApplied(null); setChecking(false);
       setMessage("Choose your clip and frame, then make an MP4.");
     } catch (error) {
       URL.revokeObjectURL(url);
@@ -225,7 +226,16 @@ function VideoClip() {
       conversion.onProgress = p => setMessage(`Making MP4 on this device: ${Math.round(p*100)}%`);
       await conversion.execute();
       if (!target.buffer || !target.buffer.byteLength || target.buffer.byteLength > 64 * 1024 * 1024) throw new Error("The result is empty or exceeds the 64 MB output limit.");
-      const blob = new Blob([target.buffer], {type:"video/mp4"}); setResultBlob(blob); setResult(URL.createObjectURL(blob)); setApplied(draft); setMessage("Your MP4 is ready to play and save.");
+      const blob = new Blob([target.buffer], { type: "video/mp4" });
+      setCompletedClip({
+        source: file,
+        watchUrl: publicLoaded && publicVideo ? new URL(publicVideo.page, window.location.origin).href : null,
+        edit: { startSeconds: start, endSeconds: end, frame: shape, quality, fit, muteRequested: mute },
+        output: { blob, width, height },
+      });
+      setResult(URL.createObjectURL(blob));
+      setApplied(draft);
+      setMessage("Your MP4 is ready to play and save.");
     } catch (error) { setMessage(error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError") ? "Export cancelled. Your original is unchanged." : error instanceof Error ? error.message : "Could not make the video on this device."); }
     finally { active.current = null; input.dispose(); setBusy(false); }
   }
@@ -241,6 +251,7 @@ function VideoClip() {
     objectFit: fit,
     background: "#000",
   };
+  const clipFilename = `${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip`;
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Clip and frame a video</h1><p>Choose a short video, set its in and out points and save a new MP4. Editing happens on this device without sign-in or generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2>
       <div className="video-tool-actions">
@@ -266,7 +277,14 @@ function VideoClip() {
       <label>Frame<select value={shape} disabled={busy || importing} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (centre crop)</option></select></label></div>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export. Crop is centred.</p>
       {!busy ? <button type="button" disabled={importing || checking} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
-      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip`}/><a className="button" href={result} download={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`}>Save MP4</a>{resultBlob && <div inert={checking || busy || undefined}><LocalImport key={`import:${result}`} blob={resultBlob} filename={`${file?.name.replace(/\.[^.]+$/, "") || "video"}-clip.mp4`} operation="clip and frame" onBusyChange={setImporting}/></div>}</div>}
+      <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename}/>
+        <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
+        {completedClip && <>
+          <ClipReceiptDownload key={`receipt:${result}`} clip={completedClip} filename={clipFilename}/>
+          <div inert={checking || busy || undefined}>
+            <LocalImport key={`import:${result}`} blob={completedClip.output.blob} filename={`${clipFilename}.mp4`} operation="clip and frame" onBusyChange={setImporting}/>
+          </div>
+        </>}</div>}
     </section></main>;
 }
 export function mountVideoClip(container: HTMLElement) { createRoot(container).render(<VideoClip />); }
