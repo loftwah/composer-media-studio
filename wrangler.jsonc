@@ -59,7 +59,7 @@
     // domain while staying the same Worker and signature check.
     "RENDER_ORIGIN": "https://composer-media-studio.loftwah.workers.dev",
     "COMPOSER_ORIGIN": "https://composer.loftwah.com",
-    "MONTHLY_ALLOWANCE_MICRO": "5000000",
+    "MONTHLY_ALLOWANCE_MICRO": "50000000",
     "PUBLIC_BUILD_URL": "https://composer.loftwah.com/init?start=media-studio",
     "PUBLIC_STORY_URL": "https://composer.loftwah.com/media-studio",
     "WOODHOUSE_SHARE": "true",
