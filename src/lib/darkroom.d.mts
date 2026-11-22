@@ -1,4 +1,5 @@
-// Narrow, type-only declaration for the one Darkroom constant the capability
-// manifest records. Runtime behaviour stays in darkroom.mjs.
+// Types live with the implementation in darkroom.ts, so this file only
+// forwards them and keeps the original darkroom.mjs import path strictly typed
+// for capabilities.ts.
 
-export const DARKROOM_VERSION: string;
+export * from "./darkroom.ts";
