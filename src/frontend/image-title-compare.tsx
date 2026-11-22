@@ -19,6 +19,7 @@ import {
   PAIR_LABELS,
   TITLE_MAX_LENGTH,
   buildTitlePairManifest,
+  bundleFileName,
   coverCropRect,
   exportFileName,
   manifestFileName,
@@ -28,6 +29,7 @@ import {
   type FeedSize,
   type PairId,
 } from "./image-title-compare-plan.ts";
+import { createZip, ZIP_MIME } from "./image-zip.ts";
 import "./image-title-compare.css";
 
 export type { FeedSizeKey } from "./image-title-compare-plan.ts";
@@ -57,7 +59,7 @@ type Pair = {
 };
 
 type ExportEntry = {
-  kind: "png" | "manifest";
+  kind: "png" | "manifest" | "bundle";
   url: string;
   name: string;
   label: string;
@@ -314,13 +316,21 @@ export function TitleCompare() {
         sourceRect: rect,
         png: { fileName: name, bytes: blob.size, sha256 },
       });
-      const manifestBlob = new Blob([`${JSON.stringify(manifest, null, 2)}\n`], {
+      const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+      const manifestBlob = new Blob([manifestText], {
         type: "application/json",
       });
       // The hash may have taken a moment; a superseded run mints no URL.
       if (!current()) return;
       const manifestName = manifestFileName(title || image.fileName, image.fileName, size);
-      replaceExports([
+      // The package reuses the exact bytes this run already made: no second
+      // PNG encode, and the same JSON text the individual download serves, so
+      // the archive matches the manifest's own digest.
+      const bundle = createZip([
+        { name, data: pngBytes },
+        { name: manifestName, data: manifestText },
+      ]);
+      const entries: ExportEntry[] = [
         {
           kind: "png",
           url: trackUrl(blob),
@@ -344,9 +354,24 @@ export function TitleCompare() {
           bytes: manifestBlob.size,
           sha256,
         },
-      ]);
+      ];
+      if (bundle.ok) {
+        const bundleBlob = new Blob([bundle.bytes.buffer as ArrayBuffer], { type: ZIP_MIME });
+        entries.push({
+          kind: "bundle",
+          url: trackUrl(bundleBlob),
+          name: bundleFileName(title || image.fileName, image.fileName, size),
+          label: "pair package",
+          pairLabel: PAIR_LABELS[forPair],
+          anchorLabel: CROP_ANCHOR_LABELS[forAnchor],
+          width: size.width,
+          height: size.height,
+          bytes: bundleBlob.size,
+        });
+      }
+      replaceExports(entries);
       setExportMessage(
-        `Manifest ready for Pair ${PAIR_LABELS[forPair]} · ${CROP_ANCHOR_LABELS[forAnchor].toLowerCase()} crop: it names ${name} at ${size.width} × ${size.height} px, SHA-256 ${sha256.slice(0, 16)}… (full digest inside the JSON).`,
+        `${bundle.ok ? "Manifest and package ready" : "Manifest ready"} for Pair ${PAIR_LABELS[forPair]} · ${CROP_ANCHOR_LABELS[forAnchor].toLowerCase()} crop: the JSON names ${name} at ${size.width} × ${size.height} px, SHA-256 ${sha256.slice(0, 16)}… (full digest inside the JSON).${bundle.ok ? " The ZIP carries that PNG and JSON unchanged." : ""}`,
       );
     } catch (error) {
       if (current()) setExportMessage(error instanceof Error ? error.message : "The export could not be prepared.");
@@ -596,17 +621,31 @@ export function TitleCompare() {
       )}
       <p className="trim-note" role="status" aria-live="polite">
         {exportMessage ||
-          "Exports use the workbench's local encode and download path. The PNG contains the cropped thumbnail pixels only; the manifest names the exact PNG it was encoded with — file name, pixel size and SHA-256 — plus the title and crop. Nothing is uploaded."}
+          "Exports use the workbench's local encode and download path. The PNG contains the cropped thumbnail pixels only; the manifest names the exact PNG it was encoded with — file name, pixel size and SHA-256 — plus the title and crop. The manifest export also offers one ZIP of that same PNG and JSON. Nothing is uploaded."}
       </p>
       {exports.map((entry) => (
         <p className="title-compare-export" key={entry.url}>
-          <a href={entry.url} download={entry.name}>
-            {entry.kind === "manifest" ? `Download ${entry.label} (JSON v${MANIFEST_VERSION})` : `Download ${entry.label} PNG`}
+          <a
+            href={entry.url}
+            download={entry.name}
+            aria-label={
+              entry.kind === "bundle"
+                ? `Download the Pair ${entry.pairLabel} PNG and manifest package (ZIP)`
+                : undefined
+            }
+          >
+            {entry.kind === "manifest"
+              ? `Download ${entry.label} (JSON v${MANIFEST_VERSION})`
+              : entry.kind === "bundle"
+                ? "Download pair package (ZIP)"
+                : `Download ${entry.label} PNG`}
           </a>
           {` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${
             entry.kind === "manifest"
               ? `names a ${entry.width} × ${entry.height} px PNG`
-              : `${entry.width} × ${entry.height} px`
+              : entry.kind === "bundle"
+                ? `exact PNG + JSON v${MANIFEST_VERSION}, unchanged`
+                : `${entry.width} × ${entry.height} px`
           } · ${formatBytes(entry.bytes)} · ${entry.name}`}
           {entry.sha256 && (
             <>

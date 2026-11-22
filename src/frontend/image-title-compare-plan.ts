@@ -169,3 +169,13 @@ export function manifestFileName(
 ): string {
   return `${safeTitleStem(title || fallbackName)}-feed-${size.width}x${size.height}-manifest-v${version}.json`;
 }
+
+/** The package ZIP's download name: the same stem as the pair it carries, so
+ * the archive and the two files inside it stay recognisably one export. */
+export function bundleFileName(
+  title: string,
+  fallbackName: string,
+  size: FeedSize,
+): string {
+  return `${safeTitleStem(title || fallbackName)}-feed-${size.width}x${size.height}-package.zip`;
+}
