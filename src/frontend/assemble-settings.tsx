@@ -295,7 +295,7 @@ export function Assemble({
           plan and its Director lead the page; creating a promo or a footage
           cut follows, so an existing plan is not buried under empty forms. */}
       <SongPlans key={projectId} projectId={projectId} assets={assets} canEdit={canEdit} onStoryboard={onSongStoryboard} onAssetSaved={onAssetSaved} />
-      <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} onVoiceDraft={onVoiceDraft} />
+      <PromoBriefs key={`promo-${projectId}`} projectId={projectId} canEdit={canEdit} onVoiceDraft={onVoiceDraft} desk={{ assets, compositions, generations }} />
       <FootagePlans key={`footage-${projectId}`} projectId={projectId} assets={assets} canEdit={canEdit} onAssetSaved={onAssetSaved} />
       <div className="spread">
         <h2 style={{ margin: 0 }}>Storyboard and assembly</h2>

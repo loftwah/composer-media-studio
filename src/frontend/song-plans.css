@@ -132,3 +132,21 @@
 .scene-caption-context > p { max-width:65ch; }
 .scene-caption-context ol { list-style:none; padding:0; margin:.6rem 0; display:grid; gap:.5rem; }
 .song-scenes .scene-caption-context li { display:grid; gap:.2rem; padding:.5rem 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* Promo desk (#489 first delivery): a read-only strip over saved records. */
+.promo-desk { margin-top: 1.25rem; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 1rem 1rem 0.95rem; }
+.promo-desk-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.promo-desk-head h3 { margin: 0; }
+.promo-desk-stages { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.55rem; }
+.promo-desk-stages li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4rem 0.6rem; min-width: 0; }
+.promo-desk-stages li + li { border-top: 1px solid var(--border); padding-top: 0.55rem; }
+.promo-desk-stages .status { flex: none; }
+.promo-desk-stages strong { flex: none; }
+.promo-desk-detail { color: var(--muted); font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
+.promo-desk-stages a { font-weight: 700; }
+.promo-desk-retry { min-height: 36px; }
+.promo-desk-next { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.35rem 0.6rem; margin: 0.9rem 0 0; padding: 0.7rem 0.85rem; border-radius: 10px; background: var(--accent-soft); }
+.promo-desk-next p,
+.promo-desk-next strong { margin: 0; }
+.promo-desk-next a { font-weight: 700; }
+.promo-desk-note { margin: 0.6rem 0 0; color: var(--muted); max-width: 75ch; }
