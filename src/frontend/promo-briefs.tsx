@@ -13,6 +13,14 @@ const cache = new Map<string, Cache>();
 const copy = <T,>(x:T):T => structuredClone(x);
 const content = (x: Draft) => ({ title:x.title, audience:x.audience, brief:x.brief, cta:x.cta, aspect:x.aspect, targetSeconds:x.targetSeconds, scenes:x.scenes });
 const wordsIn = (value: string) => value.trim() ? value.trim().split(/\s+/u).length : 0;
+const downloadScript = (text: string) => {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'media-studio-spoken-script.txt';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 async function request(path:string, method='GET', body?:unknown) {
   const response=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
   const data=await response.json().catch(()=>({}));
@@ -114,7 +122,7 @@ export function PromoBriefs({projectId,canEdit,onVoiceDraft,desk}:{projectId:str
           <div className="promo-rail-heading"><strong>Script</strong><span className="small">{words} words · ~{estimated}s</span></div>
           <p className="small">Roughly {estimated} seconds at 140 words per minute. Delivery and pauses change the actual duration.</p>
           {script
-            ? <><textarea aria-label="Combined spoken script" readOnly value={script} rows={4} onFocus={event=>event.currentTarget.select()}/><div className="promo-script-actions"><button type="button" disabled={!canEdit||busy} onClick={()=>{const problem=onVoiceDraft(script);if(problem)setError(problem);}}>Open in Studio Voice</button><button type="button" className="secondary" onClick={()=>{if(!navigator.clipboard?.writeText){setError('Copy is unavailable here. Select and copy the script above.');return;} void navigator.clipboard.writeText(script).then(()=>setMessage('Script copied. Paste it into the narration field when ready.')).catch(()=>setError('Could not copy automatically. Select and copy the script above.'));}}>Copy script</button></div></>
+            ? <><textarea aria-label="Combined spoken script" readOnly value={script} rows={4} onFocus={event=>event.currentTarget.select()}/><div className="promo-script-actions"><button type="button" disabled={!canEdit||busy} onClick={()=>{const problem=onVoiceDraft(script);if(problem)setError(problem);}}>Open in Studio Voice</button><button type="button" className="secondary" onClick={()=>{if(!navigator.clipboard?.writeText){setError('Copy is unavailable here. Select and copy the script above.');return;} void navigator.clipboard.writeText(script).then(()=>setMessage('Script copied. Paste it into the narration field when ready.')).catch(()=>setError('Could not copy automatically. Select and copy the script above.'));}}>Copy script</button><button type="button" className="secondary" onClick={()=>downloadScript(script)}>Download script (.txt)</button></div></>
             : <p className="promo-empty">Add spoken words to a scene and they will collect here as one script.</p>}
         </div>
       </aside>
