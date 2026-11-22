@@ -14,6 +14,12 @@ test('duplicate generation and render requests cannot dispatch when allowance is
   assert.ok([initial,second].some(v=>v.status===402));const rows=await env.DB.prepare('SELECT status,cost_reserved_micro FROM generations').all();assert.equal(rows.results.length,1);assert.equal(rows.results[0].status,'failed');assert.equal(rows.results[0].cost_reserved_micro,0);assert.equal((await budgetSnapshot(env,project.id)).reservedMicro,0);
  }
 });
+test('an explicit empty recipeId takes the same no-recipe freeform sentinel as an omitted one',async()=>{
+ const {env,project}=await setup({allowance:10000});
+ const empty=(await createGeneration(env,project,{...input('request_blank_recipe_1'),recipeId:''})).generation;
+ const omitted=(await createGeneration(env,project,input('request_no_recipe_1'))).generation;
+ assert.equal(empty.recipe_id,'freeform');assert.equal(omitted.recipe_id,'freeform');
+});
 test('parallel same-key admissions reserve exactly once and reject changed inputs',async()=>{
  const {env,project}=await setup({allowance:10000});const gate=stallFirstBatch(env);const first=createGeneration(env,project,input());await gate.entered;const winner=await createGeneration(env,project,input());gate.release();const replay=await first;
  assert.equal(winner.created,true);assert.equal(replay.created,false);assert.equal(replay.generation.id,winner.generation.id);assert.equal((await budgetSnapshot(env,project.id)).reservedMicro,winner.generation.cost_reserved_micro);
