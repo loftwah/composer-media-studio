@@ -54,5 +54,10 @@ export interface RetiredModelRecord {
 
 export const imageAspects: string[];
 export const models: Record<string, CatalogueModel>;
+/** Frame dimensions for one aspect, or the reference's own when matching. */
+export function aspectDimensions(
+  aspect: string,
+  reference?: { width?: number | null; height?: number | null } | null,
+): { width: number; height: number };
 export function publicModels(): PublicModelRecord[];
 export function publicRetiredModels(): RetiredModelRecord[];
