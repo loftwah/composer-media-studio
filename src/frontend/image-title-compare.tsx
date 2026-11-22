@@ -72,6 +72,8 @@ export function TitleCompare() {
   const [exports, setExports] = useState<ExportEntry[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
+  const [titleFallback, setTitleFallback] = useState<string | null>(null);
   const [draggingPair, setDraggingPair] = useState<PairId | null>(null);
   const urls = useRef(new Set<string>());
   const exportsRef = useRef<ExportEntry[]>([]);
@@ -80,6 +82,9 @@ export function TitleCompare() {
   const loadRuns = useRef<number[]>(PAIR_IDS.map(() => 0));
   /** One run per export, so unmount or a newer encode cannot mint a stale URL. */
   const exportRun = useRef(0);
+  /** One run per title copy, so a slow write cannot report a title the user has
+   * already left or edited. */
+  const copyRun = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
@@ -90,6 +95,7 @@ export function TitleCompare() {
       // already made are revoked here even if a callback resolves later.
       mounted.current = false;
       exportRun.current += 1;
+      copyRun.current += 1;
       for (const url of held) URL.revokeObjectURL(url);
       held.clear();
       exportsRef.current = [];
@@ -108,6 +114,25 @@ export function TitleCompare() {
 
   function setPair(index: number, patch: Partial<Pair>): void {
     setPairs((current) => current.map((pair, at) => (at === index ? { ...pair, ...patch } : pair)));
+  }
+
+  /** A copy result belongs to the selection it was made for. Selecting another
+   * pair or editing its title retires both the message and any recovery field. */
+  function clearCopyFeedback(): void {
+    copyRun.current += 1;
+    setCopyMessage("");
+    setTitleFallback(null);
+  }
+
+  function selectPair(id: PairId): void {
+    if (id === selectedId) return;
+    clearCopyFeedback();
+    setSelectedId(id);
+  }
+
+  function updateTitle(index: number, title: string): void {
+    if (index === PAIR_IDS.indexOf(selectedId)) clearCopyFeedback();
+    setPair(index, { title });
   }
 
   /** Replace the export list outside the state updater: revoking URLs inside
@@ -259,6 +284,30 @@ export function TitleCompare() {
     }
   }
 
+  /** The selected pair's title as plain text, through the browser Clipboard.
+   * The pair and title are captured for the same reason the export captures
+   * them: a slow write must not report a title the user has already left. */
+  async function copySelectedTitle(): Promise<void> {
+    const forPair = selectedId;
+    const title = pairs[PAIR_IDS.indexOf(forPair)].title;
+    if (!title.trim()) return;
+    const label = `Pair ${PAIR_LABELS[forPair]}`;
+    const run = ++copyRun.current;
+    const current = () => mounted.current && copyRun.current === run;
+    try {
+      await navigator.clipboard.writeText(title);
+      if (!current()) return;
+      setTitleFallback(null);
+      setCopyMessage(`Copied the ${label} title to the clipboard.`);
+    } catch {
+      if (!current()) return;
+      setTitleFallback(title);
+      setCopyMessage(
+        `Could not copy the ${label} title automatically. Select the title in the field below and copy it.`,
+      );
+    }
+  }
+
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
   const selected = pairs[selectedIndex];
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
@@ -308,7 +357,7 @@ export function TitleCompare() {
                     name="image-title-compare-pair"
                     value={id}
                     checked={isSelected}
-                    onChange={() => setSelectedId(id)}
+                    onChange={() => selectPair(id)}
                   />
                   <strong>Pair {PAIR_LABELS[id]}</strong>
                 </label>
@@ -319,7 +368,7 @@ export function TitleCompare() {
                     value={pair.title}
                     maxLength={TITLE_MAX_LENGTH}
                     placeholder={`Title for combination ${PAIR_LABELS[id]}`}
-                    onChange={(event) => setPair(index, { title: event.target.value })}
+                    onChange={(event) => updateTitle(index, event.target.value)}
                   />
                 </label>
                 <label
@@ -420,7 +469,7 @@ export function TitleCompare() {
           })}
         </div>
       </div>
-      <div className="image-control-actions" role="group" aria-label={`Export ${selectedLabel}`}>
+      <div className="image-control-actions" role="group" aria-label={`Actions for ${selectedLabel}`}>
         <button
           type="button"
           className="secondary"
@@ -439,10 +488,34 @@ export function TitleCompare() {
         >
           {exportBusy ? "Encoding…" : `Export ${selectedLabel} card thumbnail (640 × 360)`}
         </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={!selected.title.trim()}
+          aria-disabled={!selected.title.trim()}
+          aria-label={`Copy selected title from ${selectedLabel}`}
+          onClick={() => void copySelectedTitle()}
+        >
+          Copy selected title
+        </button>
       </div>
+      <p className="trim-note" role="status" aria-live="polite">{copyMessage}</p>
+      {titleFallback !== null && (
+        <label className="image-copy-fallback">
+          {selectedLabel} title — select and copy
+          <input
+            readOnly
+            value={titleFallback}
+            spellCheck={false}
+            aria-label={`Exact ${selectedLabel} title to copy`}
+            onFocus={(event) => event.currentTarget.select()}
+            onClick={(event) => event.currentTarget.select()}
+          />
+        </label>
+      )}
       <p className="trim-note" role="status" aria-live="polite">
         {exportMessage ||
-          "Exports use the workbench's local encode and download path. The file contains the cropped thumbnail pixels only; the title stays text you paste yourself."}
+          "Exports use the workbench's local encode and download path. The file contains the cropped thumbnail pixels only; the title stays text you copy separately."}
       </p>
       {exports.map((entry) => (
         <p className="title-compare-export" key={entry.url}>
