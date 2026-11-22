@@ -1,4 +1,5 @@
 // MIT. Durable, project-scoped editorial planning; no provider calls or spend.
+import { maxSongCaptions, readSongCaptionFields } from './song-caption-fields.ts';
 import { HttpError, id, now, safeJson, sha256Hex, text } from './util.mjs';
 import { readSongPlanPack, type PortableSongPlan } from './song-plan-pack.ts';
 
@@ -262,17 +263,22 @@ export async function updateSongPlan(env: SongPlanEnv, project: SongPlanProject,
 // chosen segment's zero point; no external transcription service is used.
 function validateCaptions(captions: CaptionDraft | null | undefined, startMs: number, endMs: number): Captions | null {
   if (!captions) return null;
-  if (captions.source !== 'owner_supplied' || captions.rightsConfirmed !== true || !Array.isArray(captions.cues) || captions.cues.length > 100) fail('Confirm permission for the supplied lyrics and provide at most 100 cues');
+  if (captions.source !== 'owner_supplied' || captions.rightsConfirmed !== true || !Array.isArray(captions.cues) || captions.cues.length > maxSongCaptions) fail('Confirm permission for the supplied lyrics and provide at most 100 cues');
   const seen = new Set<string>();
   const cues = captions.cues.map((cue): CaptionCue => {
     if (!cue || !/^[a-z0-9_]{4,80}$/.test(cue.id ?? '') || seen.has(cue.id)) fail('Each caption needs a unique stable ID');
     seen.add(cue.id);
-    const from = integer(cue.startMs, 'Caption start'), to = integer(cue.endMs, 'Caption end');
-    if (from < startMs || to > endMs || to <= from) fail('Caption times must fit within the chosen song segment');
-    if (typeof cue.text !== 'string' || !cue.text.trim() || cue.text.length > 300 || /[\u0000-\u001f\u007f]/.test(cue.text)) fail('Caption text must be a single line of up to 300 characters');
-    const speaker = cue.speaker ?? '';
-    if (typeof speaker !== 'string' || speaker.length > 80 || /[\u0000-\u001f\u007f]/.test(speaker)) fail('Speaker must be a single line of up to 80 characters');
-    return { id: cue.id, startMs: from, endMs: to, text: cue.text.trim(), speaker: speaker.trim() };
+    const fields = readSongCaptionFields(cue, startMs, endMs);
+    switch (fields.problem) {
+      case 'start': fail('Caption start must be an integer number of milliseconds');
+      case 'end': fail('Caption end must be an integer number of milliseconds');
+      case 'segment':
+      case 'order': fail('Caption times must fit within the chosen song segment');
+      case 'missing_words':
+      case 'words': fail('Caption text must be a single line of up to 300 characters');
+      case 'speaker': fail('Speaker must be a single line of up to 80 characters');
+    }
+    return { id: cue.id, startMs: fields.startMs, endMs: fields.endMs, text: fields.text, speaker: fields.speaker };
   }).sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.id.localeCompare(b.id));
   return { source: 'owner_supplied', rightsConfirmed: true, cues };
 }
