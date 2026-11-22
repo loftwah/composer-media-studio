@@ -10,12 +10,14 @@ import {
   MANIFEST_VERSION,
   TITLE_MAX_LENGTH,
   buildTitlePairManifest,
+  bundleFileName,
   coverCropRect,
   exportFileName,
   manifestFileName,
   objectPositionFor,
   safeTitleStem,
 } from "../src/frontend/image-title-compare-plan.ts";
+import { createZip } from "../src/frontend/image-zip.ts";
 
 const section = readFileSync(new URL("../src/frontend/image-title-compare.tsx", import.meta.url), "utf8");
 const plan = readFileSync(new URL("../src/frontend/image-title-compare-plan.ts", import.meta.url), "utf8");
@@ -256,6 +258,60 @@ test("the manifest download name is versioned and follows the same stem rules", 
   assert.equal(manifestFileName("After Hours", "ignored.png", card), "After-Hours-feed-640x360-manifest-v1.json");
   assert.equal(manifestFileName("", "still_01.png", FEED_SIZES[0]), "still_01-feed-168x94-manifest-v1.json");
   assert.equal(manifestFileName("x", "y.png", card, 2), "x-feed-640x360-manifest-v2.json");
+});
+
+test("the package name follows the pair's stem and stays a plain ZIP basename", () => {
+  const card = FEED_SIZES[1];
+  assert.equal(bundleFileName("After Hours", "ignored.png", card), "After-Hours-feed-640x360-package.zip");
+  assert.equal(bundleFileName("", "still_01.png", FEED_SIZES[0]), "still_01-feed-168x94-package.zip");
+  assert.equal(bundleFileName("shot:v2?", "ignored.png", card), "shot-v2-feed-640x360-package.zip");
+  assert.doesNotMatch(bundleFileName("After Hours", "ignored.png", card), /[/\\]/);
+});
+
+test("the package ZIP carries the exact PNG and manifest bytes under their own names", () => {
+  const card = FEED_SIZES[1];
+  const pngName = exportFileName("After Hours", "still_01.png", card);
+  const manifestName = manifestFileName("After Hours", "still_01.png", card);
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  const manifestText = `${JSON.stringify({ version: MANIFEST_VERSION, png: pngName }, null, 2)}\n`;
+  const result = createZip(
+    [
+      { name: pngName, data: pngBytes },
+      { name: manifestName, data: manifestText },
+    ],
+    { date: new Date(2026, 10, 22, 7, 53) },
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.entries, [pngName, manifestName]);
+  const data = new DataView(result.bytes.buffer, result.bytes.byteOffset, result.bytes.byteLength);
+  const entries = [];
+  let offset = 0;
+  while (offset + 30 <= result.bytes.length && data.getUint32(offset, true) === 0x04034b50) {
+    const size = data.getUint32(offset + 18, true);
+    const nameLength = data.getUint16(offset + 26, true);
+    const extraLength = data.getUint16(offset + 28, true);
+    const name = new TextDecoder().decode(result.bytes.subarray(offset + 30, offset + 30 + nameLength));
+    const start = offset + 30 + nameLength + extraLength;
+    entries.push({ name, data: result.bytes.subarray(start, start + size) });
+    offset = start + size;
+  }
+  assert.deepEqual(entries.map((entry) => entry.name), [pngName, manifestName]);
+  assert.deepEqual(entries[0].data, pngBytes);
+  assert.deepEqual(entries[1].data, new TextEncoder().encode(manifestText));
+});
+
+test("the manifest export offers one ZIP over the bytes it already made", () => {
+  // The same encode feeds the PNG, the manifest digest and the package; the
+  // JSON text is one string used by both the download and the ZIP entry.
+  assert.match(section, /import \{ createZip, ZIP_MIME \} from "\.\/image-zip\.ts"/);
+  assert.match(section, /const manifestText = `\$\{JSON\.stringify\(manifest, null, 2\)\}\\n`/);
+  assert.match(section, /const manifestBlob = new Blob\(\[manifestText\]/);
+  assert.match(section, /createZip\(\[\s*\{ name, data: pngBytes \},\s*\{ name: manifestName, data: manifestText \},?\s*\]\)/);
+  assert.match(section, /bundleFileName\(title \|\| image\.fileName, image\.fileName, size\)/);
+  assert.match(section, /kind: "bundle"/);
+  assert.match(section, /Download pair package \(ZIP\)/);
+  // A package still never adds a second PNG encode.
+  assert.equal(section.match(/await encodeCropPng\(image, size, forAnchor\)/g).length, 2);
 });
 
 test("the selected title can be copied through the browser Clipboard", () => {
