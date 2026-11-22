@@ -18,9 +18,13 @@ import {
   PAIR_IDS,
   PAIR_LABELS,
   TITLE_MAX_LENGTH,
+  buildTitlePairManifest,
   coverCropRect,
   exportFileName,
+  manifestFileName,
+  MANIFEST_VERSION,
   objectPositionFor,
+  type CoverRect,
   type FeedSize,
   type PairId,
 } from "./image-title-compare-plan.ts";
@@ -53,6 +57,7 @@ type Pair = {
 };
 
 type ExportEntry = {
+  kind: "png" | "manifest";
   url: string;
   name: string;
   label: string;
@@ -61,6 +66,8 @@ type ExportEntry = {
   width: number;
   height: number;
   bytes: number;
+  /** Set on manifest entries: the digest of the PNG the manifest names. */
+  sha256?: string;
 };
 
 const emptyPair = (): Pair => ({ title: "", image: null, error: null, busy: false });
@@ -240,30 +247,13 @@ export function TitleCompare() {
     setExportBusy(true);
     setExportMessage("");
     try {
-      const bitmap = await createImageBitmap(image.file);
-      const canvas = document.createElement("canvas");
-      canvas.width = size.width;
-      canvas.height = size.height;
-      // The finally covers the crop plan and the context lookup too, so every
-      // decoded bitmap is closed even when the export fails before drawing.
-      try {
-        const rect = coverCropRect(bitmap.width, bitmap.height, size.width, size.height, forAnchor);
-        if (!rect) throw new Error("The crop could not be planned from this thumbnail.");
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("This browser could not prepare the crop canvas.");
-        context.drawImage(bitmap, rect.left, rect.top, rect.width, rect.height, 0, 0, size.width, size.height);
-      } finally {
-        bitmap.close();
-      }
-      const blob = await canvasToBlob(canvas, "image/png");
-      const encoded = inspectImage(new Uint8Array(await blob.arrayBuffer()));
-      if (encoded.width !== size.width || encoded.height !== size.height)
-        throw new Error(`The encoded file is ${encoded.width} × ${encoded.height}, not the planned ${size.width} × ${size.height}.`);
+      const { blob, pngBytes } = await encodeCropPng(image, size, forAnchor);
       // Unmounted or superseded: do not create a blob URL or publish a result.
       if (!current()) return;
       const name = exportFileName(title || image.fileName, image.fileName, size);
       replaceExports([
         {
+          kind: "png",
           url: trackUrl(blob),
           name,
           label: size.label,
@@ -276,6 +266,87 @@ export function TitleCompare() {
       ]);
       setExportMessage(
         `${size.label === "row" ? "Row" : "Card"} export ready for Pair ${PAIR_LABELS[forPair]} · ${CROP_ANCHOR_LABELS[forAnchor].toLowerCase()} crop: ${formatBytes(blob.size)} of real PNG.`,
+      );
+    } catch (error) {
+      if (current()) setExportMessage(error instanceof Error ? error.message : "The export could not be prepared.");
+    } finally {
+      if (current()) setExportBusy(false);
+    }
+  }
+
+  /** The selected pair as a versioned JSON manifest naming the exact cropped
+   * PNG this same run encodes — its file name, pixel size and SHA-256 — plus
+   * the exact title and the crop plan. The manifest is built from the bytes
+   * the encode produced, so the hash always describes the PNG it ships with.
+   * No work, rights or performance value is claimed: the manifest carries only
+   * what this tab actually captured. */
+  async function exportSelectedPairManifest(size: FeedSize): Promise<void> {
+    const index = PAIR_IDS.indexOf(selectedId);
+    const pair = pairs[index];
+    const image = pair.image;
+    if (!image) return;
+    const run = ++exportRun.current;
+    const forPair = selectedId;
+    const forAnchor = anchor;
+    const title = pair.title;
+    const current = () => mounted.current && exportRun.current === run;
+    setExportBusy(true);
+    setExportMessage("");
+    try {
+      const { rect, blob, pngBytes } = await encodeCropPng(image, size, forAnchor);
+      // Unmounted or superseded: do not hash, let alone publish.
+      if (!current()) return;
+      const name = exportFileName(title || image.fileName, image.fileName, size);
+      const sha256 = await sha256Hex(pngBytes);
+      const manifest = buildTitlePairManifest({
+        generatedAt: new Date().toISOString(),
+        pairId: forPair,
+        title,
+        source: {
+          fileName: image.fileName,
+          mime: image.mime,
+          bytes: image.bytes,
+          width: image.width,
+          height: image.height,
+        },
+        anchor: forAnchor,
+        size,
+        sourceRect: rect,
+        png: { fileName: name, bytes: blob.size, sha256 },
+      });
+      const manifestBlob = new Blob([`${JSON.stringify(manifest, null, 2)}\n`], {
+        type: "application/json",
+      });
+      // The hash may have taken a moment; a superseded run mints no URL.
+      if (!current()) return;
+      const manifestName = manifestFileName(title || image.fileName, image.fileName, size);
+      replaceExports([
+        {
+          kind: "png",
+          url: trackUrl(blob),
+          name,
+          label: size.label,
+          pairLabel: PAIR_LABELS[forPair],
+          anchorLabel: CROP_ANCHOR_LABELS[forAnchor],
+          width: size.width,
+          height: size.height,
+          bytes: blob.size,
+        },
+        {
+          kind: "manifest",
+          url: trackUrl(manifestBlob),
+          name: manifestName,
+          label: `${size.label} manifest`,
+          pairLabel: PAIR_LABELS[forPair],
+          anchorLabel: CROP_ANCHOR_LABELS[forAnchor],
+          width: size.width,
+          height: size.height,
+          bytes: manifestBlob.size,
+          sha256,
+        },
+      ]);
+      setExportMessage(
+        `Manifest ready for Pair ${PAIR_LABELS[forPair]} · ${CROP_ANCHOR_LABELS[forAnchor].toLowerCase()} crop: it names ${name} at ${size.width} × ${size.height} px, SHA-256 ${sha256.slice(0, 16)}… (full digest inside the JSON).`,
       );
     } catch (error) {
       if (current()) setExportMessage(error instanceof Error ? error.message : "The export could not be prepared.");
@@ -491,6 +562,16 @@ export function TitleCompare() {
         <button
           type="button"
           className="secondary"
+          disabled={!selected.image || exportBusy}
+          aria-disabled={!selected.image || exportBusy}
+          aria-label={`Export the ${selectedLabel} packaging manifest (JSON) with the exact card PNG's hash`}
+          onClick={() => void exportSelectedPairManifest(FEED_SIZES[1])}
+        >
+          {exportBusy ? "Encoding…" : `Export ${selectedLabel} manifest (JSON, card 640 × 360)`}
+        </button>
+        <button
+          type="button"
+          className="secondary"
           disabled={!selected.title.trim()}
           aria-disabled={!selected.title.trim()}
           aria-label={`Copy selected title from ${selectedLabel}`}
@@ -515,14 +596,24 @@ export function TitleCompare() {
       )}
       <p className="trim-note" role="status" aria-live="polite">
         {exportMessage ||
-          "Exports use the workbench's local encode and download path. The file contains the cropped thumbnail pixels only; the title stays text you copy separately."}
+          "Exports use the workbench's local encode and download path. The PNG contains the cropped thumbnail pixels only; the manifest names the exact PNG it was encoded with — file name, pixel size and SHA-256 — plus the title and crop. Nothing is uploaded."}
       </p>
       {exports.map((entry) => (
         <p className="title-compare-export" key={entry.url}>
           <a href={entry.url} download={entry.name}>
-            Download {entry.label} PNG
+            {entry.kind === "manifest" ? `Download ${entry.label} (JSON v${MANIFEST_VERSION})` : `Download ${entry.label} PNG`}
           </a>
-          {` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${entry.width} × ${entry.height} px · ${formatBytes(entry.bytes)} · ${entry.name}`}
+          {` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${
+            entry.kind === "manifest"
+              ? `names a ${entry.width} × ${entry.height} px PNG`
+              : `${entry.width} × ${entry.height} px`
+          } · ${formatBytes(entry.bytes)} · ${entry.name}`}
+          {entry.sha256 && (
+            <>
+              {` · SHA-256 ${entry.sha256.slice(0, 16)}…`}
+              <span className="title-compare-export-hash-note"> (full digest inside the manifest)</span>
+            </>
+          )}
         </p>
       ))}
     </section>
@@ -542,4 +633,47 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Blob> {
       reject(error instanceof Error ? error : new Error("This browser could not encode the crop."));
     }
   });
+}
+
+/** The one encode both the PNG download and the manifest use: decode the
+ * chosen file, cover-crop it to the feed size, encode PNG, and verify the
+ * encoded header against the planned size. Returns the exact bytes the
+ * manifest then hashes, so the digest describes the shipped pixels. */
+async function encodeCropPng(
+  image: PairImage,
+  size: FeedSize,
+  anchor: CropAnchorKey,
+): Promise<{ rect: CoverRect; blob: Blob; pngBytes: Uint8Array<ArrayBuffer> }> {
+  const bitmap = await createImageBitmap(image.file);
+  // The finally covers the crop plan and the context lookup too, so every
+  // decoded bitmap is closed even when the export fails before drawing.
+  let rect: CoverRect;
+  let canvas: HTMLCanvasElement;
+  try {
+    const plan = coverCropRect(bitmap.width, bitmap.height, size.width, size.height, anchor);
+    if (!plan) throw new Error("The crop could not be planned from this thumbnail.");
+    rect = plan;
+    canvas = document.createElement("canvas");
+    canvas.width = size.width;
+    canvas.height = size.height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("This browser could not prepare the crop canvas.");
+    context.drawImage(bitmap, plan.left, plan.top, plan.width, plan.height, 0, 0, size.width, size.height);
+  } finally {
+    bitmap.close();
+  }
+  const blob = await canvasToBlob(canvas, "image/png");
+  const pngBytes = new Uint8Array(await blob.arrayBuffer());
+  const encoded = inspectImage(pngBytes);
+  if (encoded.width !== size.width || encoded.height !== size.height)
+    throw new Error(`The encoded file is ${encoded.width} × ${encoded.height}, not the planned ${size.width} × ${size.height}.`);
+  return { rect, blob, pngBytes };
+}
+
+/** SHA-256 over the exact PNG bytes, through the browser's own Web Crypto. */
+async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error("This browser cannot hash the export: Web Crypto is unavailable in this context.");
+  const digest = await subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

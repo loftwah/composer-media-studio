@@ -86,3 +86,86 @@ export function safeTitleStem(name: string): string {
 export function exportFileName(title: string, fallbackName: string, size: FeedSize): string {
   return `${safeTitleStem(title || fallbackName)}-feed-${size.width}x${size.height}.png`;
 }
+
+/** The manifest this slice exports, so a chosen pair can be handed on with the
+ * exact facts this tab actually knows: the title text, the source thumbnail's
+ * own facts, the crop plan and the identity of the PNG the same run encoded.
+ * Version bumps when the field set changes; nothing else here claims a work,
+ * rights or performance value this tab cannot know. */
+export const MANIFEST_SCHEMA = "studio.title-thumbnail-pair-manifest";
+export const MANIFEST_VERSION = 1;
+
+export type ManifestSourceFacts = {
+  fileName: string;
+  mime: string;
+  bytes: number;
+  width: number;
+  height: number;
+};
+
+export type ManifestPngFacts = {
+  fileName: string;
+  bytes: number;
+  sha256: string;
+};
+
+export type TitlePairManifest = {
+  schema: string;
+  version: number;
+  generatedAt: string;
+  generator: string;
+  pair: { id: PairId; label: string };
+  title: { text: string; maxLength: number };
+  source: ManifestSourceFacts;
+  crop: { mode: "cover"; anchor: CropAnchorKey; sourceRect: CoverRect };
+  render: {
+    sizeKey: FeedSizeKey;
+    width: number;
+    height: number;
+    format: "image/png";
+    png: ManifestPngFacts;
+  };
+  local: { uploaded: false; serverInvolved: false };
+};
+
+/** The versioned manifest for one captured pair, built only from facts the
+ * component captured from its own encode. */
+export function buildTitlePairManifest(input: {
+  generatedAt: string;
+  pairId: PairId;
+  title: string;
+  source: ManifestSourceFacts;
+  anchor: CropAnchorKey;
+  size: FeedSize;
+  sourceRect: CoverRect;
+  png: ManifestPngFacts;
+}): TitlePairManifest {
+  return {
+    schema: MANIFEST_SCHEMA,
+    version: MANIFEST_VERSION,
+    generatedAt: input.generatedAt,
+    generator: "Media Studio Image Tools — Title + thumbnail compare (browser-local)",
+    pair: { id: input.pairId, label: PAIR_LABELS[input.pairId] },
+    title: { text: input.title, maxLength: TITLE_MAX_LENGTH },
+    source: input.source,
+    crop: { mode: "cover", anchor: input.anchor, sourceRect: input.sourceRect },
+    render: {
+      sizeKey: input.size.key,
+      width: input.size.width,
+      height: input.size.height,
+      format: "image/png",
+      png: input.png,
+    },
+    local: { uploaded: false, serverInvolved: false },
+  };
+}
+
+/** One manifest's download name, versioned beside the PNG it names. */
+export function manifestFileName(
+  title: string,
+  fallbackName: string,
+  size: FeedSize,
+  version: number = MANIFEST_VERSION,
+): string {
+  return `${safeTitleStem(title || fallbackName)}-feed-${size.width}x${size.height}-manifest-v${version}.json`;
+}
