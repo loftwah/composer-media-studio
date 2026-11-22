@@ -80,6 +80,11 @@ test('MCP song plans respect the project grant and share the real revisioned API
     const file = await worker.fetch(new Request(`https://studio.test/api/projects/${project.id}/song-plans/${planId}/captions?format=srt&download=1`, { headers: { cookie } }), env);
     assert.equal(file.status, 200); assert.match(file.headers.get('content-type'), /application\/x-subrip/); assert.equal(file.headers.get('cache-control'), 'no-store');
     assert.match(await file.text(), /Original fictional words/);
+    const lrc = await client.callTool({ name: 'studio_export_song_captions', arguments: { projectId: project.id, planId, format: 'lrc' } });
+    assert.equal(lrc.structuredContent.content, '[00:01.00]Original fictional words\n');
+    const lrcFile = await worker.fetch(new Request(`https://studio.test/api/projects/${project.id}/song-plans/${planId}/captions?format=lrc&download=1`, { headers: { cookie } }), env);
+    assert.equal(lrcFile.status, 200); assert.match(lrcFile.headers.get('content-type'), /text\/plain/); assert.equal(lrcFile.headers.get('cache-control'), 'no-store'); assert.equal(lrcFile.headers.get('content-disposition'), 'attachment; filename="captions.lrc"');
+    assert.equal(await lrcFile.text(), '[00:01.00]Original fictional words\n');
 
     cookie = scopedCookie;
     const read = await client.callTool({ name: 'studio_list_song_plans', arguments: { projectId: project.id } });

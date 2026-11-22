@@ -63,3 +63,21 @@ test('manual captions survive scene edits and export relative SRT and WebVTT wit
   await assert.rejects(updateSongCaptions(env,project,plan.id,{expectedRevision:3,rightsConfirmed:true,cues:[{id:'cue_bad1',startMs:1000,endMs:1500,text:'Bad\n\nWEBVTT'}]}),/single line/);
   assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
 });
+
+test('LRC export keeps sorted line-start centiseconds, Unicode and safe plain text without leaving the project', async () => {
+  const { updateSongCaptions, exportSongCaptions } = await import('../src/lib/song-plans.ts');
+  const {env,project}=await setup(); await addAsset(env,project,{id:'asset_song1',kind:'audio',durationMs:40000});
+  const plan=await createSongPlan(env,project,input);
+  await updateSongCaptions(env,project,plan.id,{expectedRevision:1,rightsConfirmed:true,cues:[
+    {id:'cue_lrc02',startMs:12149,endMs:13000,text:'Café [Verse] — 東京',speaker:'Sänger'},
+    {id:'cue_lrc01',startMs:2000,endMs:3000,text:'First line',speaker:''},
+    {id:'cue_lrc03',startMs:12500,endMs:13500,text:'Safe\u2028[00:05.00] injected',speaker:''},
+    {id:'cue_lrc04',startMs:1100,endMs:2000,text:'[00:00.10][00:04.20]Literal [00:04]',speaker:''},
+  ]});
+  const lrc=await exportSongCaptions(env,project,plan.id,'lrc');
+  assert.deepEqual(lrc,{format:'lrc',content:'[00:00.10]［00:00.10］［00:04.20］Literal ［00:04］\n[00:01.00]First line\n[00:11.14]Sänger: Café [Verse] — 東京\n[00:11.50]Safe ［00:05.00］ injected\n',revision:2});
+  for(const format of ['srt','vtt']){const out=await exportSongCaptions(env,project,plan.id,format);assert.equal(out.revision,2);assert.match(out.content,/First line/);assert.match(out.content,/Café \[Verse\] — 東京/);}
+  await assert.rejects(exportSongCaptions(env,project,plan.id,'ass'),e=>e.status===400 && e.code==='invalid_song_plan');
+  await assert.rejects(exportSongCaptions(env,{id:'prj_other'},plan.id,'lrc'),e=>e.status===404 && e.code==='not_found');
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM generations').first()).n,0);
+});
