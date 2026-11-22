@@ -7,17 +7,46 @@
 // owned R2 keys, verifies every hash, then commits D1 rows in one batch.
 // Nothing here reads provider credentials or session material.
 
-import { extensionFor, HttpError, id, safeJson, sha256Hex, slug, sniffMedia } from './util.mjs';
+import { extensionFor, HttpError, id, safeJson, slug, sniffMedia } from './util.mjs';
 import { decodePortableArchive, encodePortableArchive } from './portable-archive.ts';
+import {
+  MAX_PORTABLE_ASSET_BYTES,
+  MAX_PORTABLE_BUNDLE_BYTES,
+  MAX_PORTABLE_ASSETS,
+  MAX_PORTABLE_MANIFEST_BYTES,
+  MAX_PORTABLE_RECORDS,
+  PORTABLE_FORMAT,
+  PORTABLE_MAGIC,
+  PORTABLE_SCHEMA_VERSION,
+  PortableError,
+  SHA256_HEX as SHA,
+  canonicalJson,
+  invalid,
+  sealManifest,
+  sha256Bytes,
+  verifyManifestSeal,
+} from './portable-manifest.ts';
 
-export const PORTABLE_FORMAT = 'studio-project-bundle/v1';
-export const PORTABLE_SCHEMA_VERSION = 1;
-export const PORTABLE_MAGIC = 'STUDIO-PROJECT-BUNDLE/1\n';
-export const MAX_PORTABLE_ASSET_BYTES = 64 * 1024 * 1024;
-export const MAX_PORTABLE_BUNDLE_BYTES = 512 * 1024 * 1024;
-export const MAX_PORTABLE_ASSETS = 200;
-export const MAX_PORTABLE_RECORDS = 2000;
-export const MAX_PORTABLE_MANIFEST_BYTES = 1_500_000;
+// The pure sealing core — format/schema constants, PortableError, canonical
+// JSON, the SHA-256 byte helper and the seal/verify pair — lives typed in
+// portable-manifest.ts. These re-exports keep every existing portable-bundle
+// import path and the one PortableError class identity for the CLI, tests,
+// browser restore panel and owner worker.
+export {
+  MAX_PORTABLE_ASSET_BYTES,
+  MAX_PORTABLE_BUNDLE_BYTES,
+  MAX_PORTABLE_ASSETS,
+  MAX_PORTABLE_MANIFEST_BYTES,
+  MAX_PORTABLE_RECORDS,
+  PORTABLE_FORMAT,
+  PORTABLE_MAGIC,
+  PORTABLE_SCHEMA_VERSION,
+  PortableError,
+  canonicalJson,
+  sealManifest,
+  sha256Bytes,
+  verifyManifestSeal,
+} from './portable-manifest.ts';
 
 const IMAGE_BYTES = 32 * 1024 * 1024;
 const AUDIO_BYTES = 32 * 1024 * 1024;
@@ -50,20 +79,6 @@ const ASSET_ID_KEYS = new Set([
 ]);
 const SECRET_KEY = /(api[_-]?key|access[_-]?token|refresh[_-]?token|bearer|session[_-]?(cookie|secret|key)|provider[_-]?key|secret|passphrase|password|authorization|private[_-]?key|fal[_-]?key|client[_-]?secret)/i;
 const SAFE_ID = /^[a-z0-9_:-]{1,100}$/;
-const SHA = /^[a-f0-9]{64}$/;
-
-export class PortableError extends Error {
-  constructor(status, code, message, report = null) {
-    super(message);
-    this.status = status;
-    this.code = code;
-    this.report = report;
-  }
-}
-
-function invalid(message, code = 'invalid_bundle') {
-  throw new PortableError(400, code, message);
-}
 
 function integer(value, label, { min = 0, max = Number.MAX_SAFE_INTEGER, optional = false } = {}) {
   if (optional && (value === null || value === undefined)) return null;
@@ -77,17 +92,6 @@ function string(value, label, max = 2000, { optional = false } = {}) {
   return value;
 }
 
-/** Stable JSON for hashing. Object keys are sorted; array order is meaningful. */
-export function canonicalJson(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
-}
-
-export async function sha256Bytes(bytes) {
-  return sha256Hex(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
-}
-
 function scanSecrets(value, path = '$') {
   if (Array.isArray(value)) {
     value.forEach((entry, index) => scanSecrets(entry, `${path}[${index}]`));
@@ -98,34 +102,6 @@ function scanSecrets(value, path = '$') {
     if (SECRET_KEY.test(key)) invalid(`The bundle contains a credential-shaped field at ${path}.${key}`, 'secret_material_present');
     scanSecrets(entry, `${path}.${key}`);
   }
-}
-
-function contentOf(manifest) {
-  const { bundleId, integrity, ...content } = manifest;
-  return content;
-}
-
-export async function sealManifest(content) {
-  const sealedContent = { ...content, schemaVersion: PORTABLE_SCHEMA_VERSION };
-  const digest = await sha256Bytes(new TextEncoder().encode(canonicalJson(sealedContent)));
-  return {
-    ...sealedContent,
-    bundleId: digest,
-    integrity: { algorithm: 'sha256', contentSha256: digest, treeSha256: digest },
-  };
-}
-
-export async function verifyManifestSeal(manifest) {
-  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) invalid('Send a bundle manifest');
-  if (manifest.format !== PORTABLE_FORMAT) invalid(`Unsupported bundle format ${String(manifest.format)}`);
-  if (manifest.schemaVersion !== PORTABLE_SCHEMA_VERSION) invalid(`Unsupported bundle schema version ${String(manifest.schemaVersion)}`, 'incompatible_schema');
-  const digest = await sha256Bytes(new TextEncoder().encode(canonicalJson(contentOf(manifest))));
-  const tree = manifest.integrity?.treeSha256;
-  if (manifest.integrity?.algorithm !== 'sha256' || !SHA.test(manifest.integrity?.contentSha256 ?? '') || !SHA.test(tree ?? ''))
-    invalid('The bundle integrity record is missing or malformed', 'integrity_failed');
-  if (manifest.integrity.contentSha256 !== digest || tree !== digest || manifest.bundleId !== digest)
-    invalid('The bundle manifest changed after it was sealed', 'integrity_failed');
-  return digest;
 }
 
 /** Build a manifest from D1 metadata. Media bytes are read by the export CLI,
