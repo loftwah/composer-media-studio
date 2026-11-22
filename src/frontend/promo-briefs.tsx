@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { activeSceneAfterAdd, activeSceneAfterRemove, clampScene, conflictBase } from './promo-workbench';
+import { PromoDesk } from './promo-desk.tsx';
+import type { PromoDeskDataV1 } from './contracts';
 import './song-plans.css';
 
 type Scene = { spoken: string; visual: string };
@@ -18,7 +20,7 @@ async function request(path:string, method='GET', body?:unknown) {
   return data;
 }
 
-export function PromoBriefs({projectId,canEdit,onVoiceDraft}:{projectId:string;canEdit:boolean;onVoiceDraft:(script:string)=>string|null}) {
+export function PromoBriefs({projectId,canEdit,onVoiceDraft,desk}:{projectId:string;canEdit:boolean;onVoiceDraft:(script:string)=>string|null;desk:PromoDeskDataV1}) {
   const base=`/api/projects/${encodeURIComponent(projectId)}/promo-briefs`;
   const cached=cache.get(projectId);
   const [draft,setDraft]=useState<Draft>(()=>copy(cached?.draft ?? empty()));
@@ -77,6 +79,8 @@ export function PromoBriefs({projectId,canEdit,onVoiceDraft}:{projectId:string;c
     <div className="song-plans-heading"><div><h2 id="promo-brief-title">Plan a spoken promo</h2><p>Write the brief and direct one scene at a time before making sound. This is a private draft, not a recording, timed storyboard or finished film.</p></div><span className={`promo-save-status ${statusTone}`} role="status">{status}</span></div>
     {!canEdit&&<p className="promo-readonly">Read-only connection: you can review saved briefs and scenes. Editing and saving require project edit access.</p>}
     {error&&<p role="alert" className="notice">{error}</p>}{message&&<p role="status" className="notice calm">{message}</p>}
+
+    <PromoDesk projectId={projectId} brief={saved ? { id: saved.id, title: saved.title, revision: saved.revision, aspect: saved.aspect, targetSeconds: saved.targetSeconds, scenes: saved.scenes } : null} assets={desk.assets} compositions={desk.compositions} generations={desk.generations} />
 
     <div className="promo-workbench">
       <aside className="promo-rail" aria-label="Saved briefs and scenes">

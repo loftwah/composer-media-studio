@@ -782,7 +782,7 @@ function renderReactAssemble() {
       expectedUpdatedAt: composition.updatedAt,
     };
     renderReactAssemble();
-  }, compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social") });
+  }, compose: state.compose, assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations, assemblyCost: renderEstimate("assembly"), socialCost: renderEstimate("social"), desk: { assets: state.project.assets, compositions: state.project.compositions ?? [], generations: state.project.generations } });
 }
 
 function renderReactHistory() {
