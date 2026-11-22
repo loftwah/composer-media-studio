@@ -93,7 +93,7 @@ export async function sharePage(params: URLSearchParams, limit = 24) {
   };
 }
 
-export async function shareOriginal(asset: ShareAsset, limit: number, timeout = 20000): Promise<Uint8Array> {
+export async function shareOriginal(asset: ShareAsset, limit: number, timeout = 20000): Promise<Uint8Array<ArrayBuffer>> {
   const url = woodhouseUrl(asset.original?.url);
   if (!url) throw new HttpError(422, "This artwork has no supported original.");
   const response = await shareFetch(url, timeout);

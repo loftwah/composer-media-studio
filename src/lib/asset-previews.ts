@@ -207,7 +207,7 @@ async function writeAssetPreview(
 export async function storeAssetPreviewUpload(
   env: AssetPreviewEnv,
   asset: PreviewAsset | null | undefined,
-  bytes: Uint8Array,
+  bytes: Uint8Array<ArrayBuffer>,
 ): Promise<StoredAssetPreview> {
   if (!asset?.id) throw new HttpError(400, "Choose an asset to preview", "invalid");
   if (asset.deleted_at) throw new HttpError(404, "Asset not found", "not_found");
