@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -28,6 +29,23 @@ export function resolveSheetColumns(rawColumns) {
   assert(/^\d+$/.test(rawColumns) && Number.isInteger(parsed) && parsed >= 1 && parsed <= CONTACT_SHEET_MAX_COLUMNS,
     `Supply --columns with a whole number from 1 to ${CONTACT_SHEET_MAX_COLUMNS}, or omit it for Auto.`);
   return parsed;
+}
+
+/**
+ * Refuse an occupied destination before reading sources or launching Chrome.
+ * The exclusive link in saveNewPng stays authoritative; this only avoids doing
+ * expensive work that must fail.
+ */
+async function assertNewOutput(path) {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  const error = new Error("The output path already exists. Choose a new path.");
+  error.code = "EEXIST";
+  throw error;
 }
 
 /**
@@ -67,6 +85,7 @@ async function main() {
   assert(values.output, "Supply an explicit --output <new PNG path>.");
   const includeLayout = values["include-layout"] === true;
   const columns = resolveSheetColumns(values.columns);
+  await assertNewOutput(values.output);
 
   const inputs = [];
   for (const path of sourcePaths) inputs.push(await (spriteAtlas ? readLocalPng(path) : readLocalImage(path)));
