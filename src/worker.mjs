@@ -1283,7 +1283,7 @@ async function handleApi(request, env, url, ctx, scopedAgent = null) {
     if (songCaptions && method === "GET") {
       const params = new URL(request.url).searchParams;
       const result = await exportSongCaptions(env, project, songCaptions[1], params.get("format"));
-      if (params.get("download") === "1") return new Response(result.content, { headers: { "content-type": result.format === "vtt" ? "text/vtt; charset=utf-8" : "application/x-subrip; charset=utf-8", "content-disposition": `attachment; filename="captions.${result.format}"`, "cache-control": "no-store" } });
+      if (params.get("download") === "1") return new Response(result.content, { headers: { "content-type": result.format === "vtt" ? "text/vtt; charset=utf-8" : result.format === "lrc" ? "text/plain; charset=utf-8" : "application/x-subrip; charset=utf-8", "content-disposition": `attachment; filename="captions.${result.format}"`, "cache-control": "no-store" } });
       return json(result);
     }
     const songPlanEdit = rest && rest.match(/^song-plans\/([a-z0-9_]+)$/);

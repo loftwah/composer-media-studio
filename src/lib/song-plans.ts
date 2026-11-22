@@ -307,14 +307,27 @@ function stamp(ms: number, format: 'srt' | 'vtt'): string {
   const two: (n: number) => string = n => String(n).padStart(2, '0');
   return `${two(h)}:${two(m)}:${two(s)}${format === 'srt' ? ',' : '.'}${String(fraction).padStart(3, '0')}`;
 }
-export async function exportSongCaptions(env: SongPlanEnv, project: SongPlanProject, planId: string, format: 'srt' | 'vtt'): Promise<{ format: 'srt' | 'vtt'; content: string; revision: number }> {
-  if (!['srt', 'vtt'].includes(format)) fail('Choose SRT or WebVTT');
+// LRC is plain Unicode with a line-start stamp only. Fold every line break into
+// a space so cue text cannot splice in an extra timestamp line, and rewrite any
+// timestamp-shaped bracket to fullwidth so a literal [00:04.20] in the words is
+// not parsed as a second cue. Ordinary brackets such as [Verse] stay as written;
+// the ASCII line-start stamp below is generated separately and left untouched.
+const lrcTimestampBracket = /\[(\s*[+-]?\d+:[^\]\r\n]*)\]/g;
+const lrcText = (value: string): string => value.replace(/[\r\n\u0085\u2028\u2029]+/g, ' ').replace(lrcTimestampBracket, '［$1］').trim();
+function lrcStamp(ms: number): string {
+  const centiseconds = Math.floor(ms / 10), m = Math.floor(centiseconds / 6000), s = Math.floor(centiseconds / 100) % 60;
+  const two: (n: number) => string = n => String(n).padStart(2, '0');
+  return `[${two(m)}:${two(s)}.${two(centiseconds % 100)}]`;
+}
+export async function exportSongCaptions(env: SongPlanEnv, project: SongPlanProject, planId: string, format: 'srt' | 'vtt' | 'lrc'): Promise<{ format: 'srt' | 'vtt' | 'lrc'; content: string; revision: number }> {
+  if (!['srt', 'vtt', 'lrc'].includes(format)) fail('Choose SRT, WebVTT or LRC');
   const row = await planRow(env, project, planId);
   const song = await asset(env, project, row.song_asset_id, 'audio');
   if (song.sha256 !== row.song_sha256) throw new HttpError(409, 'The source song changed. Reload the plan.', 'song_changed');
   const spec = safeJson(row.spec_json, {}) as SongPlanSpec;
   const captions = validateCaptions(spec.captions, spec.startMs, spec.endMs);
   if (!captions || !captions.cues.length) throw new HttpError(404, 'This plan has no saved captions', 'not_found');
+  if (format === 'lrc') return { format, content: `${captions.cues.map(cue => `${lrcStamp(cue.startMs-spec.startMs)}${cue.speaker ? lrcText(cue.speaker) + ': ' : ''}${lrcText(cue.text)}`).join('\n')}\n`, revision: row.revision };
   const blocks = captions.cues.map((cue, i) => `${format === 'srt' ? i + 1 : cue.id}\n${stamp(cue.startMs-spec.startMs, format)} --> ${stamp(cue.endMs-spec.startMs, format)}\n${cue.speaker ? escapeCaption(cue.speaker, format) + ': ' : ''}${escapeCaption(cue.text, format)}\n`).join('\n');
   return { format, content: `${format === 'vtt' ? 'WEBVTT\n\n' : ''}${blocks}`, revision: row.revision };
 }
