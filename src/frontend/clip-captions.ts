@@ -1,4 +1,4 @@
-import type { ImportedCue } from "./caption-import";
+import { parseCaptionFile, type ImportedCue } from "./caption-import.ts";
 
 export const MAX_CAPTION_BYTES = 64 * 1024;
 // A timing offset may move imported cues at most a minute earlier or later.
@@ -39,4 +39,52 @@ export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds
     blocks.push(`${stamp(from - start)} --> ${stamp(to - start)}\n${text}`);
   }
   return blocks.length ? `WEBVTT\n\n${blocks.join("\n\n")}\n` : null;
+}
+
+// SRT stamps carry hours and use a comma before milliseconds; WebVTT omits
+// hours and uses a dot. Both are built from the same relative millisecond cue
+// times, so the two sidecars describe one timeline.
+function srtStamp(ms: number) {
+  const hours = Math.floor(ms / 3_600_000).toString().padStart(2, "0");
+  const minutes = Math.floor((ms % 3_600_000) / 60_000).toString().padStart(2, "0");
+  const seconds = Math.floor((ms % 60_000) / 1000).toString().padStart(2, "0");
+  const millis = (ms % 1000).toString().padStart(3, "0");
+  return `${hours}:${minutes}:${seconds},${millis}`;
+}
+
+// Keep ampersands literal (SRT readers such as FFmpeg show entities verbatim)
+// but neutralise angle brackets so plain text is not mistaken for markup.
+const srtLine = (cue: ImportedCue) => cue.text.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+function serializeSrt(cues: readonly ImportedCue[]) {
+  return cues
+    .map((cue, index) => `${index + 1}\n${srtStamp(cue.startMs)} --> ${srtStamp(cue.endMs)}\n${srtLine(cue)}\n`)
+    .join("\n");
+}
+
+/**
+ * Derive an optional SRT sidecar from the exact trimmed WebVTT the receipt has
+ * already prepared. No second parser is introduced: the same bounded importer
+ * used for caption upload re-reads that VTT at zero offset. The download is
+ * exposed only when that parser yields exact relative millisecond times and
+ * plain text, and agrees with an SRT round-trip. Any parser failure or text
+ * mismatch hides the download rather than falling back to divergent logic.
+ */
+export function srtForClipVtt(vtt: string | null, durationMs: number): string | null {
+  if (!vtt || !Number.isSafeInteger(durationMs) || durationMs <= 0) return null;
+  let cues: ImportedCue[], srt: string, check: ImportedCue[];
+  try {
+    cues = parseCaptionFile(vtt, 0, durationMs);
+    if (!cues.length) return null;
+    srt = serializeSrt(cues);
+    check = parseCaptionFile(srt, 0, durationMs);
+  } catch {
+    return null;
+  }
+  if (check.length !== cues.length) return null;
+  for (let i = 0; i < cues.length; i++) {
+    const source = cues[i]!, roundTrip = check[i]!;
+    if (source.startMs !== roundTrip.startMs || source.endMs !== roundTrip.endMs || source.text !== roundTrip.text || source.speaker !== roundTrip.speaker) return null;
+  }
+  return srt;
 }
