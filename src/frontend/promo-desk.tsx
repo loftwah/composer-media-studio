@@ -109,6 +109,7 @@ export function PromoDesk({
     "review-missing": ["", "Missing"],
     "review-blocked": ["", "Blocked"],
     "review-unavailable": ["unknown", "Unavailable"],
+    "packaging-local": ["", "Local"],
   };
 
   const stage = (key: string, name: string, detail: ReactNode, link?: { href: string; label: string }) => {
@@ -217,6 +218,17 @@ export function PromoDesk({
   } else {
     rows.push(stage("review-blocked", "Review", <>Waiting on a current saved cut</>));
   }
+  // Packaging happens in the signed-out, browser-local Image Tools, not in
+  // Studio: the link carries no project, brief or owner data, and nothing here
+  // claims a packaging status the desk cannot verify.
+  rows.push(
+    stage(
+      "packaging-local",
+      "Packaging (device-local)",
+      <>Title and thumbnail cards are built in Image Tools from files on this device and export as a ZIP — nothing is uploaded, and nothing is saved with this brief</>,
+      { href: "/tools/images#image-title-compare-heading", label: "Open Title + thumbnail compare" },
+    ),
+  );
 
   return (
     <section className="promo-desk" aria-label={`Promo desk for ${brief.title}`}>

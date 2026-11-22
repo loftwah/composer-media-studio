@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -207,4 +208,15 @@ test('the composed desk keeps missing input, waiting, failed, loading and ready 
   assert.equal(loading.review.state, 'loading');
   assert.match(loading.next.text, /still loading/);
   assert.doesNotMatch(loading.next.text, /ready to share/);
+});
+
+test('the desk packaging row links the device-local compare, never project data', () => {
+  const desk = readFileSync(new URL('../src/frontend/promo-desk.tsx', import.meta.url), 'utf8');
+  const row = desk.match(/stage\(\s*"packaging-local",[\s\S]*?"Open Title \+ thumbnail compare"/)[0];
+  assert.match(row, /Packaging \(device-local\)/);
+  assert.doesNotMatch(row, /"ok"|"run"|"bad"|"unknown"/); // no guessed ready status
+  assert.match(row, /href: "\/tools\/images#image-title-compare-heading"/);
+  // The one link carries no project, brief, synthetic or owner-specific data.
+  assert.doesNotMatch(row, /encodeURIComponent|projectId|brief\./);
+  assert.match(row, /nothing is uploaded, and nothing is saved with this brief/);
 });

@@ -95,6 +95,17 @@ export function TitleCompare() {
    * already left or edited. */
   const copyRun = useRef(0);
 
+  // A hash link into this section lands on a page whose heading only exists
+  // after React mounts, so the browser's native fragment scroll misses it
+  // (checked live: the page stays at the top with no focus). Scroll and focus
+  // the heading once on mount instead, for this exact hash only.
+  useEffect(() => {
+    if (window.location.hash !== "#image-title-compare-heading") return;
+    const heading = document.getElementById("image-title-compare-heading");
+    heading?.scrollIntoView({ block: "start" });
+    heading?.focus({ preventScroll: true });
+  }, []);
+
   useEffect(() => {
     mounted.current = true;
     const held = urls.current;
@@ -411,7 +422,7 @@ export function TitleCompare() {
   return (
     <section className="trim-work image-title-compare" aria-labelledby="image-title-compare-heading">
       <div className="image-section-head">
-        <h2 id="image-title-compare-heading">Title + thumbnail compare</h2>
+        <h2 id="image-title-compare-heading" tabIndex={-1}>Title + thumbnail compare</h2>
         <span>{selectedLabel} selected</span>
       </div>
       <p className="trim-note" id="image-title-compare-note">
