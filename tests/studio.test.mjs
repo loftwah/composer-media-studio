@@ -85,6 +85,50 @@ test("image and video bytes are read without trusting the client", () => {
   assert.equal(sniffMedia(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]), "").mime, "image/jpeg");
 });
 
+test("imageSize reads WebP variants, sliced views and rejects truncated bytes", () => {
+  const webp = (kind, width, height) => {
+    const bytes = new Uint8Array(30);
+    bytes.set([...Buffer.from("RIFF")], 0);
+    bytes.set([...Buffer.from("WEBP")], 8);
+    bytes.set([...Buffer.from(kind)], 12);
+    if (kind === "VP8X") {
+      bytes[24] = (width - 1) & 0xff;
+      bytes[25] = ((width - 1) >> 8) & 0xff;
+      bytes[26] = ((width - 1) >> 16) & 0xff;
+      bytes[27] = (height - 1) & 0xff;
+      bytes[28] = ((height - 1) >> 8) & 0xff;
+      bytes[29] = ((height - 1) >> 16) & 0xff;
+    } else if (kind === "VP8L") {
+      const bits = ((width - 1) & 0x3fff) | (((height - 1) & 0x3fff) << 14);
+      bytes[21] = bits & 0xff;
+      bytes[22] = (bits >> 8) & 0xff;
+      bytes[23] = (bits >> 16) & 0xff;
+      bytes[24] = (bits >> 24) & 0xff;
+    } else {
+      bytes[26] = width & 0xff;
+      bytes[27] = (width >> 8) & 0xff;
+      bytes[28] = height & 0xff;
+      bytes[29] = (height >> 8) & 0xff;
+    }
+    return bytes;
+  };
+
+  assert.deepEqual(imageSize(webp("VP8X", 640, 480)), { width: 640, height: 480, format: "webp" });
+  assert.deepEqual(imageSize(webp("VP8L", 100, 50)), { width: 100, height: 50, format: "webp" });
+  assert.deepEqual(imageSize(webp("VP8 ", 320, 240)), { width: 320, height: 240, format: "webp" });
+
+  // A typed-array view with a non-zero byteOffset reads relative to the view.
+  const paddedWebp = new Uint8Array(36);
+  paddedWebp.set(webp("VP8X", 17, 9), 6);
+  assert.deepEqual(imageSize(paddedWebp.subarray(6)), { width: 17, height: 9, format: "webp" });
+  const paddedPng = new Uint8Array(PNG_1x1.length + 4);
+  paddedPng.set(PNG_1x1, 4);
+  assert.deepEqual(imageSize(paddedPng.subarray(4)), { width: 1, height: 1, format: "png" });
+
+  assert.deepEqual(imageSize(PNG_1x1.subarray(0, 12)), { width: null, height: null, format: null });
+  assert.deepEqual(imageSize(new Uint8Array([0, 1, 2, 3])), { width: null, height: null, format: null });
+});
+
 test("video duration and frame come from the MP4 boxes", () => {
   const box = (type, payload) => {
     const bytes = new Uint8Array(8 + payload.length);
