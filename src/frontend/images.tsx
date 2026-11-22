@@ -1046,6 +1046,7 @@ function Images() {
   const snippetField = useRef<HTMLTextAreaElement>(null);
   const latestPaletteCopy = useRef(0);
   const paletteCopyField = useRef<HTMLInputElement>(null);
+  const paletteCopyTextareaField = useRef<HTMLTextAreaElement>(null);
   const currentOutputKey = useRef("");
   const alphaRevision = useRef(0);
 
@@ -1361,7 +1362,10 @@ function Images() {
 
   useEffect(() => {
     if (paletteCopyFallback?.trigger === document.activeElement) {
-      paletteCopyField.current?.focus();
+      const field = paletteCopyFallback.value.includes("\n")
+        ? paletteCopyTextareaField.current
+        : paletteCopyField.current;
+      field?.focus();
     }
   }, [paletteCopyFallback]);
 
@@ -3688,10 +3692,11 @@ function Images() {
                   <button
                     type="button"
                     className="secondary"
-                    onClick={() => void copyValue("palette CSS", paletteToCss(visiblePalette.result.colors), {
-                      echo: false,
-                      fallback: "Could not copy the palette. Download the CSS file instead.",
-                    })}
+                    onClick={(event) => void copyPaletteValue(
+                      event.currentTarget,
+                      "palette CSS",
+                      paletteToCss(visiblePalette.result.colors),
+                    )}
                   >
                     Copy palette CSS
                   </button>
@@ -3779,15 +3784,28 @@ function Images() {
                 {paletteCopyFallback && (
                   <label className="image-copy-fallback">
                     {paletteCopyFallback.label} value — select and copy
-                    <input
-                      readOnly
-                      ref={paletteCopyField}
-                      value={paletteCopyFallback.value}
-                      spellCheck={false}
-                      aria-label={`Exact ${paletteCopyFallback.label} value to copy`}
-                      onFocus={(event) => event.currentTarget.select()}
-                      onClick={(event) => event.currentTarget.select()}
-                    />
+                    {paletteCopyFallback.value.includes("\n") ? (
+                      <textarea
+                        readOnly
+                        ref={paletteCopyTextareaField}
+                        value={paletteCopyFallback.value}
+                        rows={Math.min(12, paletteCopyFallback.value.split("\n").length + 1)}
+                        spellCheck={false}
+                        aria-label={`Exact ${paletteCopyFallback.label} value to copy`}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onClick={(event) => event.currentTarget.select()}
+                      />
+                    ) : (
+                      <input
+                        readOnly
+                        ref={paletteCopyField}
+                        value={paletteCopyFallback.value}
+                        spellCheck={false}
+                        aria-label={`Exact ${paletteCopyFallback.label} value to copy`}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onClick={(event) => event.currentTarget.select()}
+                      />
+                    )}
                   </label>
                 )}
               </>
