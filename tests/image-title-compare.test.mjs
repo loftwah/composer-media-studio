@@ -6,14 +6,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   FEED_SIZES,
+  MANIFEST_SCHEMA,
+  MANIFEST_VERSION,
   TITLE_MAX_LENGTH,
+  buildTitlePairManifest,
   coverCropRect,
   exportFileName,
+  manifestFileName,
   objectPositionFor,
   safeTitleStem,
 } from "../src/frontend/image-title-compare-plan.ts";
 
 const section = readFileSync(new URL("../src/frontend/image-title-compare.tsx", import.meta.url), "utf8");
+const plan = readFileSync(new URL("../src/frontend/image-title-compare-plan.ts", import.meta.url), "utf8");
 const workbench = readFileSync(new URL("../src/frontend/images.tsx", import.meta.url), "utf8");
 const stylesheet = readFileSync(new URL("../src/frontend/image-title-compare.css", import.meta.url), "utf8");
 
@@ -150,9 +155,15 @@ test("the section keeps the workbench's local-only and keyboard promises", () =>
 });
 
 test("decoded bitmaps are closed on every outcome, not just a successful draw", () => {
-  // The inner finally covers the crop-plan and context failures too.
-  assert.match(section, /try \{\s*const rect = coverCropRect\([\s\S]*?\} finally \{\s*bitmap\.close\(\);\s*\}/);
+  // The helper's finally covers the crop-plan and context failures too, and
+  // both the PNG and the manifest export go through the same encode.
+  assert.match(
+    section,
+    /let rect: CoverRect;\s*let canvas: HTMLCanvasElement;\s*(?:\/\/[^\n]*\n\s*)?try \{\s*const plan = coverCropRect\([\s\S]*?\} finally \{\s*bitmap\.close\(\);\s*\}/,
+  );
   assert.match(section, /const bitmap = await createImageBitmap\(image\.file\)/);
+  // Both the PNG and the manifest export encode through the same helper.
+  assert.equal(section.match(/await encodeCropPng\(image, size, forAnchor\)/g).length, 2);
 });
 
 test("stale intake and export runs are ignored after a newer choice or unmount", () => {
@@ -171,7 +182,80 @@ test("the export revokes URLs outside the state updater and labels the captured 
   assert.match(section, /setExports\(next\)/);
   assert.match(section, /pairLabel: PAIR_LABELS\[forPair\]/);
   assert.match(section, /anchorLabel: CROP_ANCHOR_LABELS\[forAnchor\]/);
-  assert.match(section, /coverCropRect\(bitmap\.width, bitmap\.height, size\.width, size\.height, forAnchor\)/);
+  assert.match(section, /coverCropRect\(bitmap\.width, bitmap\.height, size\.width, size\.height, anchor\)/);
+});
+
+test("the manifest names the exact PNG the same run encoded, hashed over those bytes", () => {
+  // One encode feeds both the header check and the digest, so the SHA-256
+  // always describes the shipped pixels.
+  assert.match(section, /const encoded = inspectImage\(pngBytes\)/);
+  assert.match(section, /const sha256 = await sha256Hex\(pngBytes\)/);
+  assert.match(section, /subtle\.digest\("SHA-256", bytes\)/);
+  assert.match(section, /png: \{ fileName: name, bytes: blob\.size, sha256 \}/);
+  assert.match(section, /type: "application\/json"/);
+  assert.match(section, /manifestFileName\(title \|\| image\.fileName, image\.fileName, size\)/);
+});
+
+test("a stale or unmounted manifest run never hashes for publication or mints a URL", () => {
+  // The shared export run guard: encode → staleness check → hash → rebuild →
+  // staleness check → publish.
+  assert.match(section, /if \(!current\(\)\) return;\s*const name = exportFileName\([\s\S]{0,200}?const sha256 = await sha256Hex\(pngBytes\)/);
+  assert.match(section, /if \(!current\(\)\) return;\s*const manifestName = manifestFileName/);
+  assert.doesNotMatch(section, /trackUrl\((?:blob|manifestBlob)\)[\s\S]*?if \(!current\(\)\) return;\s*replaceExports/);
+});
+
+test("the manifest button stays honest about what it exports", () => {
+  assert.match(section, /Export \$\{selectedLabel\} manifest \(JSON, card 640 × 360\)/);
+  assert.match(section, /void exportSelectedPairManifest\(FEED_SIZES\[1\]\)/);
+  assert.match(section, /MANIFEST_VERSION/);
+  // The manifest carries only locally captured facts: no work, rights or
+  // performance claims this tab cannot know.
+  assert.match(plan, /local: \{ uploaded: false, serverInvolved: false \}/);
+});
+
+test("the manifest builder records the captured facts under a versioned schema", () => {
+  assert.equal(MANIFEST_SCHEMA, "studio.title-thumbnail-pair-manifest");
+  assert.equal(MANIFEST_VERSION, 1);
+  const size = FEED_SIZES[1];
+  const manifest = buildTitlePairManifest({
+    generatedAt: "2026-11-22T07:00:00.000Z",
+    pairId: "b",
+    title: "After Hours — trailer",
+    source: { fileName: "still_01.png", mime: "image/png", bytes: 42_000, width: 1920, height: 1080 },
+    anchor: "bottom",
+    size,
+    sourceRect: { left: 0, top: 0, width: 1920, height: 1080 },
+    png: { fileName: "After-Hours-trailer-feed-640x360.png", bytes: 51_234, sha256: "a".repeat(64) },
+  });
+  assert.deepEqual(manifest, {
+    schema: "studio.title-thumbnail-pair-manifest",
+    version: 1,
+    generatedAt: "2026-11-22T07:00:00.000Z",
+    generator: "Media Studio Image Tools — Title + thumbnail compare (browser-local)",
+    pair: { id: "b", label: "B" },
+    title: { text: "After Hours — trailer", maxLength: 200 },
+    source: { fileName: "still_01.png", mime: "image/png", bytes: 42_000, width: 1920, height: 1080 },
+    crop: { mode: "cover", anchor: "bottom", sourceRect: { left: 0, top: 0, width: 1920, height: 1080 } },
+    render: {
+      sizeKey: "card",
+      width: 640,
+      height: 360,
+      format: "image/png",
+      png: { fileName: "After-Hours-trailer-feed-640x360.png", bytes: 51_234, sha256: "a".repeat(64) },
+    },
+    local: { uploaded: false, serverInvolved: false },
+  });
+  const serialized = JSON.stringify(manifest);
+  for (const invented of ["rights", "assetId", "workId", "score", "uplift", "views", "claim"]) {
+    assert.ok(!serialized.includes(invented), `the manifest must not invent "${invented}"`);
+  }
+});
+
+test("the manifest download name is versioned and follows the same stem rules", () => {
+  const card = FEED_SIZES[1];
+  assert.equal(manifestFileName("After Hours", "ignored.png", card), "After-Hours-feed-640x360-manifest-v1.json");
+  assert.equal(manifestFileName("", "still_01.png", FEED_SIZES[0]), "still_01-feed-168x94-manifest-v1.json");
+  assert.equal(manifestFileName("x", "y.png", card, 2), "x-feed-640x360-manifest-v2.json");
 });
 
 test("the selected title can be copied through the browser Clipboard", () => {

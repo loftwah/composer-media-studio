@@ -167,6 +167,11 @@
 
 .title-compare-export {
   margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.title-compare-export-hash-note {
+  color: var(--muted);
 }
 
 /* Phone: the pair controls and the previews stack, and the row preview keeps
