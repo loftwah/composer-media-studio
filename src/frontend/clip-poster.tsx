@@ -18,6 +18,7 @@ export function ClipPoster({ src, filename, captionTrack, output }: {
   const video = useRef<HTMLVideoElement | null>(null);
   const captions = useRef<HTMLTrackElement | null>(null);
   const [showCaptions, setShowCaptions] = useState(false);
+  const [trackProblem, setTrackProblem] = useState("");
   const sequence = useRef(0);
   const [poster, setPoster] = useState<Poster | null>(null);
   const [message, setMessage] = useState("");
@@ -46,6 +47,22 @@ export function ClipPoster({ src, filename, captionTrack, output }: {
     sync();
     return () => tracks.removeEventListener("change", sync);
   }, [captionTrack]);
+  // The native <track> loads and fails on its own. A failure is reported next
+  // to the toggle. A successful load or a new track clears the status.
+  useEffect(() => {
+    setTrackProblem("");
+    const track = captions.current;
+    if (!track) return;
+    const failed = () => setTrackProblem("Couldn’t load captions in this preview. Make MP4 again to retry.");
+    const loaded = () => setTrackProblem("");
+    track.addEventListener("error", failed);
+    track.addEventListener("load", loaded);
+    if (track.readyState === HTMLTrackElement.ERROR) failed();
+    return () => {
+      track.removeEventListener("error", failed);
+      track.removeEventListener("load", loaded);
+    };
+  }, [src, captionTrack]);
   function toggleCaptions(show: boolean) {
     const track = captions.current?.track;
     if (!track) return;
@@ -146,6 +163,7 @@ export function ClipPoster({ src, filename, captionTrack, output }: {
       <input type="checkbox" checked={showCaptions} onChange={event => toggleCaptions(event.currentTarget.checked)}/>
       Show {captionTrack.english ? "English" : "imported"} captions on preview
     </label>}
+    {captionTrack && showCaptions && trackProblem && <p className="trim-note" role="status">{trackProblem}</p>}
     <details>
       <summary>Make a poster from this clip</summary>
       <p className="trim-note">Pause the finished clip on the frame you want. Capture makes a separate PNG with the same frame and crop on this device.</p>
