@@ -174,6 +174,39 @@ test("the export revokes URLs outside the state updater and labels the captured 
   assert.match(section, /coverCropRect\(bitmap\.width, bitmap\.height, size\.width, size\.height, forAnchor\)/);
 });
 
+test("the selected title can be copied through the browser Clipboard", () => {
+  assert.match(section, /async function copySelectedTitle\(\): Promise<void>/);
+  assert.match(section, /navigator\.clipboard\.writeText\(title\)/);
+  assert.match(section, /Copy selected title/);
+  assert.match(section, /aria-label=\{`Copy selected title from \$\{selectedLabel\}`\}/);
+  assert.match(section, /disabled=\{!selected\.title\.trim\(\)\}/);
+});
+
+test("a refused clipboard leaves the exact title selectable in the same panel", () => {
+  assert.match(section, /setTitleFallback\(title\)/);
+  assert.match(section, /className="image-copy-fallback"/);
+  assert.match(section, /readOnly/);
+  assert.match(section, /value=\{titleFallback\}/);
+  assert.match(section, /aria-label=\{`Exact \$\{selectedLabel\} title to copy`\}/);
+  assert.match(section, /event\.currentTarget\.select\(\)/);
+});
+
+test("copy feedback is retired when the selected pair or its title changes", () => {
+  assert.match(
+    section,
+    /function clearCopyFeedback\(\): void \{\s*copyRun\.current \+= 1;\s*setCopyMessage\(""\);\s*setTitleFallback\(null\);/,
+  );
+  assert.match(
+    section,
+    /function selectPair\(id: PairId\): void \{\s*if \(id === selectedId\) return;\s*clearCopyFeedback\(\);\s*setSelectedId\(id\);/,
+  );
+  assert.match(
+    section,
+    /function updateTitle\(index: number, title: string\): void \{\s*if \(index === PAIR_IDS\.indexOf\(selectedId\)\) clearCopyFeedback\(\);\s*setPair\(index, \{ title \}\);/,
+  );
+  assert.match(section, /copyRun\.current === run/);
+});
+
 test("the stylesheet renders real pixel boxes and real truncation", () => {
   assert.match(stylesheet, /aspect-ratio: 16 \/ 9/);
   assert.match(stylesheet, /max-width: 640px/);
