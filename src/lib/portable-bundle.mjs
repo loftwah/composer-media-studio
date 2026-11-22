@@ -183,7 +183,12 @@ export async function exportProjectManifest(env, project) {
       compositionId: row.composition_id ?? null,
       clientRequestId: row.client_request_id,
       kind: row.kind,
-      recipeId: row.recipe_id,
+      // A legacy blank recipe_id means the same thing the writer records when
+      // a request omits its recipe: no selected recipe. Normalize exactly that
+      // blank to the existing freeform sentinel so old rows still export. A
+      // missing custom recipe (rcp_) is untouched and stays a missing
+      // dependency; the stored row is never rewritten.
+      recipeId: row.recipe_id === '' ? 'freeform' : row.recipe_id,
       provider: row.provider,
       model: row.model,
       modelVersion: row.model_version,

@@ -238,6 +238,27 @@ test('restore into a fresh installation preserves bytes, references and editable
   assert.equal((await decodePortableBundle(archive)).manifest.bundleId, manifest.bundleId);
 });
 
+test('a legacy blank recipe id exports as the freeform sentinel and a truly missing custom recipe still refuses', async () => {
+  const { env, project } = await fixture();
+  // A pre-existing row with an empty recipe_id: legacy "no selected recipe".
+  await insertGeneration(env, project, { id: 'gen_blank', kind: 'image', recipeId: '', status: 'saved' });
+  const stored = await env.DB.prepare('SELECT recipe_id FROM generations WHERE id=?1').bind('gen_blank').first();
+  assert.equal(stored.recipe_id, '');
+
+  const { manifest, blobs } = await bundleOf(env, project);
+  assert.equal(manifest.generations.find((row) => row.id === 'gen_blank').recipeId, 'freeform');
+
+  const fresh = emptyEnv();
+  const { committed } = await restore(fresh, manifest, blobs);
+  const restored = await fresh.DB.prepare('SELECT recipe_id FROM generations WHERE id=?1').bind(committed.map.generations.gen_blank).first();
+  assert.equal(restored.recipe_id, 'freeform');
+
+  // A custom recipe id that is not in the bundle is a missing dependency, never silently freeform.
+  await insertGeneration(env, project, { id: 'gen_orphan', kind: 'image', recipeId: 'rcp_gone', status: 'saved' });
+  await assert.rejects(exportProjectManifest(env, await env.DB.prepare('SELECT * FROM projects WHERE id=?1').bind(project.id).first()),
+    (error) => error instanceof PortableError && error.code === 'missing_dependency');
+});
+
 test('tampered manifest or media is refused without creating a project', async () => {
   const { env, project } = await fixture();
   const { manifest, blobs, archive } = await bundleOf(env, project);

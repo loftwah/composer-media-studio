@@ -229,6 +229,9 @@ export async function createGeneration(env, project, input) {
   if (model.restyle && settings.maxCostMicro < cost) throw new HttpError(409, "The estimate exceeds the amount you reviewed. Measure and review it again.", "estimate_changed");
   const generationId = id("gen");
   const timestamp = now();
+  // An explicit empty recipeId is the same no-recipe request as an omitted
+  // one; both take the existing freeform sentinel instead of a blank row.
+  const recipeId = String(input.recipeId ?? "").slice(0, 80) || "freeform";
   const insert = env.DB.prepare(
       `INSERT INTO generations(id,project_id,client_request_id,kind,recipe_id,provider,model,request_json,status,cost_estimate_micro,cost_reserved_micro,created_at,updated_at,error_code)
        SELECT ?1,?2,?3,?4,?5,?6,?7,?8,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?13 AND reserved_micro+spent_micro+?10<=allowance_micro) THEN 'admitted' ELSE 'failed' END,?9,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?13 AND reserved_micro+spent_micro+?10<=allowance_micro) THEN ?10 ELSE 0 END,?11,?12,CASE WHEN EXISTS(SELECT 1 FROM budgets WHERE project_id=?2 AND period=?13 AND reserved_micro+spent_micro+?10<=allowance_micro) THEN NULL ELSE 'budget_exhausted' END`,
@@ -238,7 +241,7 @@ export async function createGeneration(env, project, input) {
         project.id,
         clientRequestId,
         model.kind,
-        String(input.recipeId ?? "freeform").slice(0, 80),
+        recipeId,
         model.provider,
         model.id,
         JSON.stringify({
