@@ -70,7 +70,7 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     finally { if (captionSampleTask.current === task) { captionSampleTask.current = null; setCaptionSampleBusy(false); } }
   };
   const start = async () => {
-    if (busy || controller.current) return;
+    if (busy || controller.current || saveState === 'saving') return;
     setError(''); setStatus('Checking the saved storyboard…'); setBusy(true);
     const task = new AbortController(); controller.current = task;
     const chosenFraming = { ...framing }, chosenCaptionStyle = captionStyle;
@@ -110,7 +110,12 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
     finally { if (controller.current === task) controller.current = null; setBusy(false); }
   };
   const save = async () => {
-    if (!result || (saveState !== 'idle' && saveState !== 'reauth') || saveAttempt.current) return;
+    // An uncertain save may have committed; retrying with the same receipt and
+    // bytes is idempotent because the receipt binds one output asset id. A
+    // result with no receipt (for example one rendered read-only) has nothing
+    // to reconcile against, so it is never retried after an unconfirmed save.
+    const retryable = saveState === 'idle' || saveState === 'reauth' || (saveState === 'uncertain' && Boolean(result?.receiptId));
+    if (!result || !retryable || saveAttempt.current) return;
     saveAttempt.current = true;
     setSaveState('saving'); setError('');
     const form = new FormData();
@@ -129,8 +134,9 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
       }
       if (!response.ok || !data.asset?.id) throw new Error(data?.error?.message ?? `Save could not be confirmed (${response.status}).`);
       onAssetSaved(data.asset); setSavedAssetId(data.asset.id); setSaveState('saved');
-    } catch (err) { setError(`${(err as Error).message || 'Save could not be confirmed.'} Check the library before trying again; your download remains available.`); setSaveState('uncertain'); }
+    } catch (err) { setError(`${(err as Error).message || 'Save could not be confirmed.'} Check the library before trying again; your download remains available.`); setSaveState('uncertain'); saveAttempt.current = false; }
   };
+  const canRetryUncertain = saveState === 'uncertain' && Boolean(result?.receiptId);
   const firstAsset = assets.find(asset => asset.id === composition.shots[0]?.assetId);
   const selectedShot = composition.shots[previewIndex] ?? composition.shots[0];
   const selectedAsset = assets.find(asset => asset.id === selectedShot?.assetId && asset.kind === 'video');
@@ -170,9 +176,9 @@ export function LocalRenderer({ projectId, composition, assets, canEdit, onAsset
         {canEdit && saveState === 'reauth' &&
           <a className="button secondary" href="/studio" target="_blank" rel="noopener noreferrer">Open Studio sign-in in another tab</a>}
         {canEdit && saveState !== 'saved' && <button type="button" className="secondary"
-          disabled={busy || (saveState !== 'idle' && saveState !== 'reauth')}
+          disabled={busy || (saveState !== 'idle' && saveState !== 'reauth' && !canRetryUncertain)}
           onClick={() => void save()}>
-          {saveState === 'saving' ? 'Saving…' : saveState === 'reauth' ? 'Retry save to library' : 'Save to library'}
+          {saveState === 'saving' ? 'Saving…' : saveState === 'reauth' || canRetryUncertain ? 'Retry save to library' : 'Save to library'}
         </button>}
         {savedAssetId && <a href={`#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(savedAssetId)}`}>Open saved video</a>}
       </div>
