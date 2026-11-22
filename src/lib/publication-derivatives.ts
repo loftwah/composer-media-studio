@@ -127,7 +127,7 @@ export function inspectDerivative(
 export async function storeDerivative(
   env: DerivativeEnv,
   publication: DerivativePublication,
-  bytes: Uint8Array,
+  bytes: Uint8Array<ArrayBuffer>,
 ): Promise<StoredDerivative> {
   const inspected = inspectDerivative(bytes);
   const key = derivativeKey(publication.project_id, publication.id, inspected.mime);
@@ -314,7 +314,7 @@ export async function storePosterUpload(
   env: DerivativeEnv,
   publication: DerivativePublication,
   posterAsset: DerivativePosterAsset | null | undefined,
-  bytes: Uint8Array,
+  bytes: Uint8Array<ArrayBuffer>,
 ): Promise<StoredPosterDerivative> {
   if (!posterAsset || posterAsset.kind !== "image" || posterAsset.deleted_at)
     throw new HttpError(404, "No poster for this page", "not_found");
