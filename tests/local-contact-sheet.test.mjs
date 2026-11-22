@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -90,6 +90,36 @@ test("the CLI refuses an invalid --columns before Chrome or any output is writte
       },
     );
     await assert.rejects(readFile(output), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the CLI refuses an occupied output before reading sources or launching Chrome", async () => {
+  const root = await mkdtemp(join(tmpdir(), "studio-output-occupied-"));
+  try {
+    const output = join(root, "atlas.png");
+    const existing = Buffer.from("keep this file");
+    await writeFile(output, existing);
+    const dangling = join(root, "dangling-atlas.png");
+    await symlink(join(root, "missing-target.png"), dangling);
+    // Missing sources prove the destination is checked before any source read.
+    for (const occupied of [output, dangling]) {
+      await assert.rejects(
+        run(process.execPath, [
+          command, "--sprite-atlas",
+          "--source", join(root, "missing-a.png"),
+          "--source", join(root, "missing-b.png"),
+          "--output", occupied,
+        ], { cwd }),
+        error => {
+          assert.equal(error.code, 1);
+          assert.match(error.stderr, /output path already exists/i);
+          return true;
+        },
+      );
+    }
+    assert.deepEqual(await readFile(output), existing);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
