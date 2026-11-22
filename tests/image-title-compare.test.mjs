@@ -355,3 +355,13 @@ test("the stylesheet renders real pixel boxes and real truncation", () => {
   assert.match(stylesheet, /prefers-reduced-motion/);
   assert.match(stylesheet, /max-width: 820px/);
 });
+
+test("the section catches a deep link that lands before React mounts", () => {
+  // Proven gap: the heading only exists after React mounts, so the browser's
+  // native fragment scroll never runs and the heading is not focusable.
+  assert.match(section, /<h2 id="image-title-compare-heading" tabIndex=\{-1\}>/);
+  assert.match(
+    section,
+    /if \(window\.location\.hash !== "#image-title-compare-heading"\) return;\s*const heading = document\.getElementById\("image-title-compare-heading"\);\s*heading\?\.scrollIntoView\(\{ block: "start" \}\);\s*heading\?\.focus\(\{ preventScroll: true \}\);/,
+  );
+});
