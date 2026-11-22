@@ -26,7 +26,7 @@ export function text(
 
 export function money(micro: number): string;
 
-export function extensionFor(mime: string): string;
+export { extensionFor, sniffMedia } from "./media-sniff.ts";
 
 export function escapeHtml(value: unknown): string;
 
@@ -39,8 +39,3 @@ export function imageSize(bytes: Uint8Array): {
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 
 export function constantTimeEqual(a: string, b: string): boolean;
-
-export function sniffMedia(bytes: Uint8Array, declaredMime?: string): {
-  mime: string;
-  kind: string | null;
-};
