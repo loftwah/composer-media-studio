@@ -1,4 +1,4 @@
-import { captionReceiptFields, type ClipCaptionTrack } from "./clip-captions";
+import { captionReceiptFields, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import type { CropAnchor } from "./clip-crop";
 import { useEffect, useRef, useState } from "react";
 import { clippedCaptionFor } from "../lib/public-captions";
@@ -31,6 +31,7 @@ type Prepared = Readonly<{
   receiptUrl: string;
   vttText: string | null;
   vttUrl: string | null;
+  srtUrl: string | null;
   kitInputBytes: number;
 }>;
 
@@ -58,6 +59,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
   // receipt/VTT URLs that the individual links still point at.
   useEffect(() => () => { if (prepared?.receiptUrl) URL.revokeObjectURL(prepared.receiptUrl); }, [prepared?.receiptUrl]);
   useEffect(() => () => { if (prepared?.vttUrl) URL.revokeObjectURL(prepared.vttUrl); }, [prepared?.vttUrl]);
+  useEffect(() => () => { if (prepared?.srtUrl) URL.revokeObjectURL(prepared.srtUrl); }, [prepared?.srtUrl]);
   useEffect(() => () => { if (kitUrl) URL.revokeObjectURL(kitUrl); }, [kitUrl]);
 
   async function prepare() {
@@ -88,13 +90,20 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
         startSeconds: edit.startSeconds,
         endSeconds: edit.endSeconds,
       });
+      // The SRT is derived from this same prepared VTT at zero offset, so it
+      // shares its exact trimmed cue set and timeline. The shared parser decides
+      // whether an equivalent plain-text SRT can be produced at all.
+      const durationMs = Math.round(edit.endSeconds * 1000) - Math.round(edit.startSeconds * 1000);
+      const srt = srtForClipVtt(vtt, durationMs);
       const receiptUrl = URL.createObjectURL(new Blob([receiptText], { type: "application/json" }));
       const vttUrl = vtt ? URL.createObjectURL(new Blob([vtt], { type: "text/vtt; charset=utf-8" })) : null;
+      const srtUrl = srt ? URL.createObjectURL(new Blob([srt], { type: "application/x-subrip; charset=utf-8" })) : null;
       setPrepared({
         receiptText,
         receiptUrl,
         vttText: vtt,
         vttUrl,
+        srtUrl,
         kitInputBytes: output.blob.size + utf8Bytes(receiptText) + (vtt ? utf8Bytes(vtt) : 0),
       });
       if (vttUrl && !clip.captions) onCaptionReady({ url: vttUrl, english: true });
@@ -144,6 +153,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
     {prepared && <>
       <a className="button secondary" href={prepared.receiptUrl} download={`${filename}-receipt.json`}>Save receipt JSON</a>
       {prepared.vttUrl && <p><a className="button secondary" href={prepared.vttUrl} download={captionFile}>Save {clip.captions ? "imported" : "English"} captions (VTT)</a></p>}
+      {prepared.srtUrl && <p><a className="button secondary" href={prepared.srtUrl} download={`${filename}-${clip.captions ? "captions" : "en"}.srt`}>Save {clip.captions ? "imported" : "English"} captions (SRT)</a></p>}
       {kitAvailable ? <>
         <button
           type="button"
