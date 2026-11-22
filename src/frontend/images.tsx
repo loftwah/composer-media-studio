@@ -124,6 +124,7 @@ import {
   type ComposerArtworkRef,
 } from "./composer-artwork.ts";
 import { ImageCover } from "./image-cover.tsx";
+import { TitleCompare } from "./image-title-compare.tsx";
 import {
   SOCIAL_KIT_FORMATS,
   SOCIAL_POST_LIMITS,
@@ -4506,6 +4507,8 @@ function Images() {
           follows the batch position.
         </p>
       </section>
+
+      <TitleCompare />
     </main>
   );
 }
