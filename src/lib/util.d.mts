@@ -30,11 +30,7 @@ export { extensionFor, sniffMedia } from "./media-sniff.ts";
 
 export function escapeHtml(value: unknown): string;
 
-export function imageSize(bytes: Uint8Array): {
-  width: number | null;
-  height: number | null;
-  format: string | null;
-};
+export { imageSize } from "./media-metadata.ts";
 
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 
