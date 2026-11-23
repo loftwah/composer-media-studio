@@ -24,6 +24,7 @@ import {
   bundleFileName,
   coverCropRect,
   describeExportAnchors,
+  duplicateTargetPair,
   exportFileName,
   manifestFileName,
   MANIFEST_VERSION,
@@ -35,6 +36,7 @@ import {
   type FeedSize,
   type FeedSizeKey,
   type PairId,
+  type PairOccupancy,
 } from "./image-title-compare-plan.ts";
 import { createZip, ZIP_MIME, type ZipEntryInput } from "./image-zip.ts";
 import "./image-title-compare.css";
@@ -109,6 +111,18 @@ type ExportEntry = {
 
 const emptyPair = (): Pair => ({ title: "", note: "", image: null, error: null, busy: false });
 
+/** The occupancy facts the duplicate planner reads; the image itself is not
+ * needed to know whether a pair is free. */
+function pairOccupancy(pair: Pair, anchor: CropAnchorKey): PairOccupancy {
+  return {
+    title: pair.title,
+    note: pair.note,
+    hasImage: pair.image !== null,
+    busy: pair.busy,
+    anchor,
+  };
+}
+
 type TitleClipState = Record<string, boolean>;
 
 /** Title fit is a fact about the rendered box: a two-line clamp that hides
@@ -158,6 +172,9 @@ export function TitleCompare({
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  /** The last duplicate confirmation. A status message, not pair state: the
+   * copied title, note, crop and URL live in the pairs themselves. */
+  const [duplicateMessage, setDuplicateMessage] = useState("");
   const [titleFallback, setTitleFallback] = useState<string | null>(null);
   const [draggingPair, setDraggingPair] = useState<PairId | null>(null);
   const [titleClips, setTitleClips] = useState<TitleClipState>({});
@@ -406,6 +423,46 @@ export function TitleCompare({
     discardExports();
     releaseUrl(pairs[index].image?.url);
     setPair(index, { image: null, error: null, busy: false });
+  }
+
+  /** Copy the selected complete pair into the first empty pair, then select
+   * it. The source keeps its title, note, preference, thumbnail and crop. The
+   * copy carries the same validated File bytes under its own object URL, the
+   * same crop anchor, the same title and an empty note. The target must be
+   * empty at click time, so a named, imaged, noted or pending pair is never
+   * overwritten. */
+  function duplicateSelectedPair(): void {
+    const source = pairs[PAIR_IDS.indexOf(selectedId)];
+    if (!source || !completePair(source)) return;
+    const sourceImage = source.image;
+    if (!sourceImage) return;
+    const sourceAnchor = anchors[selectedId];
+    const target = duplicateTarget;
+    if (!target) return;
+    const targetIndex = PAIR_IDS.indexOf(target);
+    // A fresh URL over the same immutable File bytes gives each pair its own
+    // URL, so removing or replacing either pair revokes only that pair's
+    // thumbnail and never the other's.
+    const url = trackUrl(sourceImage.file);
+    setPairs((current) =>
+      current.map((pair, at) =>
+        at === targetIndex
+          ? {
+              title: source.title,
+              note: "",
+              image: { ...sourceImage, url },
+              error: null,
+              busy: false,
+            }
+          : pair,
+      ),
+    );
+    setAnchors((current) => ({ ...current, [target]: sourceAnchor }));
+    clearCopyFeedback();
+    setSelectedId(target);
+    setDuplicateMessage(
+      `Duplicated Pair ${PAIR_LABELS[selectedId]} into Pair ${PAIR_LABELS[target]}. Pair ${PAIR_LABELS[target]} is selected; its note starts empty.`,
+    );
   }
 
   /** The selected pair's thumbnail, baked to one feed size as PNG by the same
@@ -690,6 +747,19 @@ export function TitleCompare({
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
   const selected = pairs[selectedIndex];
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
+  // The duplicate action names the exact empty pair it would create. It stays
+  // inactive — with visible copy saying why — when the source is incomplete or
+  // every other pair holds work.
+  const duplicateTarget = duplicateTargetPair(
+    pairs.map((pair, index) => pairOccupancy(pair, anchors[PAIR_IDS[index]])), selectedId,
+  );
+  const duplicateSourceComplete = completePair(selected);
+  const canDuplicatePair = duplicateSourceComplete && duplicateTarget !== null;
+  const duplicateNote = !duplicateSourceComplete
+    ? `Add a title and thumbnail to ${selectedLabel} to duplicate it.`
+    : duplicateTarget
+      ? "Copies the title, thumbnail and crop. The new pair starts with an empty note."
+      : "To free a pair, clear its title, note and thumbnail and set its crop to Centre.";
   const prepared = readyPairs();
   const preparedCount = prepared.length;
   const preparedImageTooLarge =
@@ -895,6 +965,35 @@ export function TitleCompare({
               </div>
             );
           })}
+          <div className="title-compare-duplicate" data-title-compare-duplicate-group>
+            <button
+              type="button"
+              className="secondary"
+              data-title-compare-duplicate
+              data-title-compare-duplicate-state={
+                canDuplicatePair ? "ready" : duplicateSourceComplete ? "no-empty" : "incomplete"
+              }
+              data-title-compare-duplicate-target={duplicateTarget ?? undefined}
+              disabled={!canDuplicatePair}
+              aria-disabled={!canDuplicatePair}
+              aria-describedby="image-title-compare-duplicate-note"
+              onClick={duplicateSelectedPair}
+            >
+              {duplicateTarget
+                ? `Duplicate ${selectedLabel} into Pair ${PAIR_LABELS[duplicateTarget]}`
+                : `Duplicate ${selectedLabel}`}
+            </button>
+            <p
+              className="trim-note"
+              id="image-title-compare-duplicate-note"
+              data-title-compare-duplicate-note
+            >
+              {duplicateNote}
+            </p>
+            <p className="trim-note" role="status" aria-live="polite">
+              {duplicateMessage}
+            </p>
+          </div>
         </fieldset>
         <div className="title-compare-previews" aria-label="Feed previews">
           {PAIR_IDS.map((id) => {

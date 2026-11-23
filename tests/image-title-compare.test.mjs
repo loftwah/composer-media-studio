@@ -14,11 +14,13 @@ import {
   bundleFileName,
   coverCropRect,
   describeExportAnchors,
+  duplicateTargetPair,
   exportFileName,
   manifestFileName,
   normalizeCreatorNote,
   objectPositionFor,
   pairArchiveFileNames,
+  pairIsEmpty,
   preferredPairForExport,
   preparedPairsBundleFileName,
   safeTitleStem,
@@ -657,4 +659,119 @@ test("the full-size framing preview is a bounded, honest browser-local overlay",
   assert.match(stylesheet, /max-height: min\(65vh, 34rem\)/);
   assert.match(stylesheet, /\.title-compare-full-viewport/);
   assert.match(stylesheet, /\.title-compare-full-crop/);
+});
+
+const emptyOccupancy = { title: "", note: "", hasImage: false, busy: false, anchor: "centre" };
+
+test("only an empty pair can receive a duplicate", () => {
+  assert.equal(pairIsEmpty(emptyOccupancy), true);
+  assert.equal(pairIsEmpty({ ...emptyOccupancy, title: "   " }), true);
+  assert.equal(pairIsEmpty({ ...emptyOccupancy, note: " \n " }), true);
+  assert.equal(pairIsEmpty({ ...emptyOccupancy, title: "After Hours" }), false);
+  assert.equal(pairIsEmpty({ ...emptyOccupancy, note: "keep the safe area" }), false);
+  assert.equal(pairIsEmpty({ ...emptyOccupancy, hasImage: true }), false);
+  assert.equal(pairIsEmpty({ ...emptyOccupancy, busy: true }), false);
+  assert.equal(pairIsEmpty({ ...emptyOccupancy, anchor: "right" }), false);
+});
+
+test("the duplicate target is the first empty other pair in A/B/C order", () => {
+  assert.equal(duplicateTargetPair([emptyOccupancy, emptyOccupancy, emptyOccupancy], "a"), "b");
+  assert.equal(duplicateTargetPair([emptyOccupancy, emptyOccupancy, emptyOccupancy], "b"), "a");
+  assert.equal(duplicateTargetPair([emptyOccupancy, emptyOccupancy, emptyOccupancy], "c"), "a");
+  const named = { ...emptyOccupancy, title: "Named" };
+  assert.equal(duplicateTargetPair([emptyOccupancy, named, emptyOccupancy], "a"), "c");
+  assert.equal(duplicateTargetPair([emptyOccupancy, named, emptyOccupancy], "c"), "a");
+  // A pending decode or an existing crop, image or note keeps its pair.
+  for (const occupied of [
+    { ...emptyOccupancy, busy: true },
+    { ...emptyOccupancy, anchor: "right" },
+    { ...emptyOccupancy, hasImage: true },
+    { ...emptyOccupancy, note: "rationale" },
+  ]) {
+    assert.equal(duplicateTargetPair([emptyOccupancy, occupied, occupied], "a"), null);
+  }
+});
+
+test("the duplicate action copies one complete pair into an empty pair and selects it", () => {
+  assert.match(section, /function duplicateSelectedPair\(\): void \{/);
+  const start = section.indexOf("function duplicateSelectedPair");
+  const end = section.indexOf("\n  }", start);
+  assert.ok(start >= 0 && end > start);
+  const duplicate = section.slice(start, end);
+  assert.match(duplicate, /if \(!source \|\| !completePair\(source\)\) return;/);
+  assert.match(duplicate, /const target = duplicateTarget;/);
+  assert.match(duplicate, /if \(!target\) return;/);
+  assert.match(duplicate, /title: source\.title,/);
+  assert.match(duplicate, /note: "",/);
+  assert.match(duplicate, /image: \{ \.\.\.sourceImage, url \},/);
+  assert.match(duplicate, /setAnchors\(\(current\) => \(\{ \.\.\.current, \[target\]: sourceAnchor \}\)\);/);
+  assert.match(duplicate, /setSelectedId\(target\);/);
+  // The original keeps its preference and creator rationale; the copy's note
+  // starts empty and no other pair is edited.
+  assert.doesNotMatch(duplicate, /setPreferredId|clearPreferenceFor|note: source\.note/);
+});
+
+test("a duplicated thumbnail gets its own URL and never revokes the source's", () => {
+  const start = section.indexOf("function duplicateSelectedPair");
+  const end = section.indexOf("\n  }", start);
+  const duplicate = section.slice(start, end);
+  // A fresh URL over the same immutable File bytes, tracked by the same set.
+  assert.match(duplicate, /const url = trackUrl\(sourceImage\.file\);/);
+  assert.doesNotMatch(duplicate, /sourceImage\.url|releaseUrl|URL\.revokeObjectURL/);
+  assert.match(duplicate, /image: \{ \.\.\.sourceImage, url \},/);
+  // The existing remove paths revoke only the URL the named pair owns.
+  assert.match(section, /releaseUrl\(pairs\[index\]\.image\?\.url\)/);
+  assert.match(
+    section,
+    /function releaseUrl\(url: string \| undefined\): void \{\s*if \(url && urls\.current\.delete\(url\)\) URL\.revokeObjectURL\(url\);/,
+  );
+});
+
+test("the duplicate action names its target and shows a clear inactive state", () => {
+  assert.match(section, /const duplicateTarget = duplicateTargetPair\(\s*pairs\.map\(\(pair, index\) => pairOccupancy\(pair, anchors\[PAIR_IDS\[index\]\]\)\), selectedId,\s*\);/);
+  assert.match(section, /const canDuplicatePair = duplicateSourceComplete && duplicateTarget !== null;/);
+  assert.match(section, /data-title-compare-duplicate-group/);
+  assert.match(section, /data-title-compare-duplicate\n/);
+  assert.match(section, /data-title-compare-duplicate-state=\{/);
+  assert.match(section, /canDuplicatePair \? "ready" : duplicateSourceComplete \? "no-empty" : "incomplete"/);
+  assert.match(section, /data-title-compare-duplicate-target=\{duplicateTarget \?\? undefined\}/);
+  assert.match(section, /disabled=\{!canDuplicatePair\}/);
+  assert.match(section, /aria-describedby="image-title-compare-duplicate-note"/);
+  assert.match(section, /id="image-title-compare-duplicate-note"/);
+  assert.match(section, /onClick=\{duplicateSelectedPair\}/);
+  assert.match(section, /Duplicate \$\{selectedLabel\} into Pair \$\{PAIR_LABELS\[duplicateTarget\]\}/);
+  assert.match(section, /To free a pair, clear its title, note and thumbnail and set its crop to Centre/);
+  assert.match(section, /Add a title and thumbnail to \$\{selectedLabel\} to duplicate it/);
+  assert.match(section, /Copies the title, thumbnail and crop/);
+  assert.match(stylesheet, /\.title-compare-duplicate/);
+});
+
+test("a duplicate keeps the source bytes, crop and title, with a note-free manifest", () => {
+  const input = noteManifestInput();
+  const source = buildTitlePairManifest({
+    ...input,
+    pairId: "a",
+    title: "Shared title",
+    anchor: "top",
+    note: "Original rationale",
+  });
+  const copy = buildTitlePairManifest({ ...input, pairId: "b", title: "Shared title", anchor: "top" });
+  // Same source facts, title, crop plan and PNG facts; only the pair identity
+  // differs and the copy carries no note until its creator writes one.
+  assert.deepEqual(copy.source, source.source);
+  assert.deepEqual(copy.title, source.title);
+  assert.deepEqual(copy.crop, source.crop);
+  assert.deepEqual(copy.render, source.render);
+  assert.deepEqual(copy.pair, { id: "b", label: "B" });
+  assert.equal(Object.hasOwn(copy, "note"), false);
+  assert.equal(source.note, "Original rationale");
+  assert.equal(copy.preferredPairId, undefined);
+  // The action copies the validated File and the source's own anchor; it does
+  // not re-pick, re-decode or re-encode anything.
+  const start = section.indexOf("function duplicateSelectedPair");
+  const end = section.indexOf("\n  }", start);
+  const duplicate = section.slice(start, end);
+  assert.match(duplicate, /const sourceAnchor = anchors\[selectedId\];/);
+  assert.match(duplicate, /image: \{ \.\.\.sourceImage, url \},/);
+  assert.doesNotMatch(duplicate, /chooseImage|usePreparedImage|toBlob|createImageBitmap|canvas/);
 });
