@@ -16,20 +16,22 @@ export function captionReceiptFields(caption: Readonly<{ name: string; sourceSha
   };
 }
 
-function stamp(ms: number) {
+export function clipTimeStamp(ms: number) {
   const minutes = Math.floor(ms / 60_000).toString().padStart(2, "0");
   const seconds = Math.floor((ms % 60_000) / 1000).toString().padStart(2, "0");
   const millis = (ms % 1000).toString().padStart(3, "0");
   return `${minutes}:${seconds}.${millis}`;
 }
 
-type ClippedCaptionCue = Readonly<{ from: number; to: number; text: string }>;
+type ClippedCaptionCue = Readonly<{ from: number; to: number; sourceStartMs: number; text: string }>;
 
+// The shared projection for every trimmed-caption surface: serialization, the
+// preflight count and the review list. Times are trim-relative milliseconds.
 // offsetMs is applied to every cue before it is clipped and rebased to the
 // selected range: positive moves cues later, negative earlier. The default of
 // 0 leaves the original timing unchanged. null means these values cannot be
 // projected at all; an empty array means valid values with no surviving cues.
-function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0): ClippedCaptionCue[] | null {
+export function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0): ClippedCaptionCue[] | null {
   const start = Math.round(startSeconds * 1000);
   const end = Math.round(endSeconds * 1000);
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start) return null;
@@ -38,7 +40,7 @@ function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: number, end
   for (const cue of cues) {
     const from = Math.max(cue.startMs + offsetMs, start), to = Math.min(cue.endMs + offsetMs, end);
     if (from >= to) continue;
-    kept.push({ from: from - start, to: to - start, text: cue.text });
+    kept.push({ from: from - start, to: to - start, sourceStartMs: from, text: cue.text });
   }
   return kept;
 }
@@ -48,7 +50,7 @@ export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds
   if (!kept) return null;
   const blocks = kept.map(({ from, to, text }) => {
     const plain = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-    return `${stamp(from)} --> ${stamp(to)}\n${plain}`;
+    return `${clipTimeStamp(from)} --> ${clipTimeStamp(to)}\n${plain}`;
   });
   return blocks.length ? `WEBVTT\n\n${blocks.join("\n\n")}\n` : null;
 }
