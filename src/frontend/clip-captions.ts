@@ -3,7 +3,10 @@ import { parseCaptionFile, type ImportedCue } from "./caption-import.ts";
 export const MAX_CAPTION_BYTES = 64 * 1024;
 // A timing offset may move imported cues at most a minute earlier or later.
 export const MAX_CAPTION_OFFSET_SECONDS = 60;
-export type ClipCaptionTrack = Readonly<{ url: string; english: boolean }>;
+// Browser-only preview track. `local` marks an authored/mixed draft so the
+// finished preview can say "Captions" instead of "Imported captions"; it is
+// never part of a saved or exported receipt.
+export type ClipCaptionTrack = Readonly<{ url: string; english: boolean; local?: true }>;
 
 // A receipt records the source caption file's identity, never its cue text.
 // Zero offset stays absent so earlier receipts keep the same shape.

@@ -504,6 +504,7 @@ function VideoClip() {
         sourceSha256: captionDraft.sourceSha256,
         vtt: serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs),
         ...(captionOffsetMs ? { offsetMs: captionOffsetMs } : {}),
+        ...(captionDraft.local ? { local: true as const } : {}),
       } : undefined;
       setCompletedClip({
         source: file,
@@ -516,6 +517,7 @@ function VideoClip() {
       setCaptionTrack(captions?.vtt ? {
         url: URL.createObjectURL(new Blob([captions.vtt], { type: "text/vtt; charset=utf-8" })),
         english: false,
+        ...(captions.local ? { local: true as const } : {}),
       } : null);
       setResult(URL.createObjectURL(blob));
       setApplied({ settings: draft, captions: captionDraft, captionOffsetMs });
