@@ -10,5 +10,5 @@
     "noEmitOnError": true,
     "outDir": "output/launcher-build"
   },
-  "files": ["src/browser/launcher.ts", "src/browser/gallery-focus.ts", "src/browser/public-piece.ts", "src/browser/compare.ts"]
+  "files": ["src/browser/launcher.ts", "src/browser/gallery-focus.ts", "src/browser/public-piece.ts", "src/browser/compare.ts", "src/browser/review.ts"]
 }

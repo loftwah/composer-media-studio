@@ -15,6 +15,7 @@ const assets = [
   { source: 'src/browser/gallery-focus.ts', output: 'public/gallery-focus.js', header: '// Generated from src/browser/gallery-focus.ts; edit that source.\n' },
   { source: 'src/browser/public-piece.ts', output: 'public/public-piece.js', header: '// Generated from src/browser/public-piece.ts; edit that source.\n' },
   { source: 'src/browser/compare.ts', output: 'public/compare.js', header: '// Generated from src/browser/compare.ts; edit that source.\n' },
+  { source: 'src/browser/review.ts', output: 'public/review.js', header: '// Generated from src/browser/review.ts; edit that source.\n' },
 ];
 
 export function launcherAsset({ write = false } = {}) {
