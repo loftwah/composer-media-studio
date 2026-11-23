@@ -1,5 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
-import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, survivingClipCaptionCount, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -82,6 +82,11 @@ function VideoClip() {
   const [captionOffsetRaw, setCaptionOffsetRaw] = useState("0");
   const [captionMessage, setCaptionMessage] = useState("");
   const [captionLoading, setCaptionLoading] = useState(false);
+  const [showSourceCaptions, setShowSourceCaptions] = useState(false);
+  const [sourceCaptionTrack, setSourceCaptionTrack] = useState<{ vtt: string; url: string } | null>(null);
+  const [sourceTrackProblem, setSourceTrackProblem] = useState("");
+  const sourceVideo = useRef<HTMLVideoElement>(null);
+  const sourceCaptions = useRef<HTMLTrackElement>(null);
   const [receiptMessage, setReceiptMessage] = useState("");
   const [receiptLoading, setReceiptLoading] = useState(false);
   const captionRequest = useRef(0);
@@ -167,6 +172,44 @@ function VideoClip() {
   const previous = applied !== null && (
     applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
   );
+
+  const sourceVtt = showSourceCaptions && captionDraft
+    ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs)
+    : null;
+  useEffect(() => {
+    if (!sourceVtt) {
+      setSourceCaptionTrack(null);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([sourceVtt], { type: "text/vtt; charset=utf-8" }));
+    setSourceCaptionTrack({ vtt: sourceVtt, url });
+    return () => URL.revokeObjectURL(url);
+  }, [sourceVtt]);
+  const sourceCaptionUrl = sourceCaptionTrack?.vtt === sourceVtt ? sourceCaptionTrack.url : null;
+  useEffect(() => {
+    setSourceTrackProblem("");
+    if (!sourceCaptionUrl) return;
+    const element = sourceCaptions.current;
+    const track = element?.track;
+    const tracks = sourceVideo.current?.textTracks;
+    if (!track || !tracks) {
+      setSourceTrackProblem("This browser cannot preview captions on the original video. You can still download the caption files with your clip.");
+      return;
+    }
+    const failed = () => setSourceTrackProblem("Couldn’t load the caption preview. Turn it off and back on to retry.");
+    const sync = () => { if (track.mode !== "showing") setShowSourceCaptions(false); };
+    element.addEventListener("error", failed);
+    track.mode = "showing";
+    tracks.addEventListener("change", sync);
+    return () => {
+      element.removeEventListener("error", failed);
+      tracks.removeEventListener("change", sync);
+    };
+  }, [sourceCaptionUrl]);
+  const sourcePreviewNote = !showSourceCaptions ? ""
+    : captionOffsetMs === null ? "Enter a valid timing offset to preview captions."
+    : !sourceVtt ? "No imported cues fit the original video at this offset."
+    : sourceTrackProblem;
   // A replacement only replaces the current video after it proves readable.
   // Returning focus to the chooser keeps the refusal next to the control that
   // caused it without stealing focus from somewhere the user has moved to.
@@ -207,6 +250,7 @@ function VideoClip() {
       setLoadedHandoff(fromHandoff);
       captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionMessage(""); setCaptionLoading(false);
+      setShowSourceCaptions(false);
       setCropAnchor("center");
       setReceiptMessage(""); setReceiptLoading(false);
       setResult(""); setCompletedClip(null); setCaptionTrack(null); setApplied(null); setChecking(false);
@@ -471,13 +515,15 @@ function VideoClip() {
       </div>
       <p role="status" className="trim-note">{receiptMessage}</p>
       <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
-      <video className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}/>
+      <video ref={sourceVideo} className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}>
+        {sourceCaptionUrl && <track ref={sourceCaptions} kind="captions" label="Imported captions · original video" src={sourceCaptionUrl}/>}
+      </video>
       <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
       <label>Frame<select value={shape} disabled={busy || importing || receiptLoading} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing || receiptLoading} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing || receiptLoading} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (crop)</option></select></label>
       {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
       <details>
         <summary>Use your own captions</summary>
-        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. You can preview them after making the clip.</p>
+        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. Preview them on the original video or the finished clip.</p>
         <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading} onChange={event => {
           const input = event.currentTarget;
           void chooseCaptions(input.files?.[0]);
@@ -488,6 +534,7 @@ function VideoClip() {
           setCaptionDraft(null);
           setCaptionOffsetRaw("0");
           setCaptionLoading(false);
+          setShowSourceCaptions(false);
           setCaptionMessage("Captions cleared.");
         }}>Clear captions</button></p>}
         {captionDraft && <div>
@@ -510,6 +557,12 @@ function VideoClip() {
                 : `${survivingCaptionCount} caption ${survivingCaptionCount === 1 ? "cue" : "cues"} inside this trim.`}
             </p>
           )}
+          <label className="video-tool-check">
+            <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>
+            Preview imported captions on original video
+          </label>
+          <p className="trim-note">The preview uses the full video and the timing offset above. The cue count applies to the trimmed MP4.</p>
+          {sourcePreviewNote && <p className="trim-note" role="status">{sourcePreviewNote}</p>}
         </div>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>

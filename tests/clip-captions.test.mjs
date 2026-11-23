@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { captionReceiptFields, serializeClipCaptions, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { captionReceiptFields, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
 
 test('imported caption cues are trimmed, rebased and escaped as plain WebVTT', () => {
   const cues = parseCaptionFile('1\n00:00:00,500 --> 00:00:02,000\nA & B\n\n2\n00:00:02,100 --> 00:00:05,200\n&lt;Next&gt;\n', 0, 180_000);
@@ -23,6 +23,26 @@ test('timing offset shifts cues before clipping and rebasing; default 0 keeps th
   assert.equal(serializeClipCaptions(cues, 2, 10, 1500), 'WEBVTT\n\n00:00.500 --> 00:06.500\nA\n\n00:07.500 --> 00:08.000\nB\n');
   // -1.5s moves every cue earlier: A ends sooner, B starts inside the range.
   assert.equal(serializeClipCaptions(cues, 2, 10, -1500), 'WEBVTT\n\n00:00.000 --> 00:03.500\nA\n\n00:04.500 --> 00:08.000\nB\n');
+});
+
+test('the original-video preview spans the full source timebase at the draft offset', () => {
+  const cues = [
+    { startMs: 1000, endMs: 7000, text: 'A & B', speaker: '' },
+    { startMs: 8000, endMs: 12000, text: '<Next>', speaker: '' },
+  ];
+  // No trim rebasing: cues keep their original source timestamps.
+  assert.equal(sourcePreviewVtt(cues, 15, 0),
+    'WEBVTT\n\n00:01.000 --> 00:07.000\nA &amp; B\n\n00:08.000 --> 00:12.000\n&lt;Next&gt;\n');
+  // The draft offset moves cues on that same source timeline.
+  assert.equal(sourcePreviewVtt(cues, 15, 1500),
+    'WEBVTT\n\n00:02.500 --> 00:08.500\nA &amp; B\n\n00:09.500 --> 00:13.500\n&lt;Next&gt;\n');
+  // Only the source duration clips a cue; invalid or missing timing yields no track.
+  assert.equal(sourcePreviewVtt(cues, 9, 0),
+    'WEBVTT\n\n00:01.000 --> 00:07.000\nA &amp; B\n\n00:08.000 --> 00:09.000\n&lt;Next&gt;\n');
+  assert.equal(sourcePreviewVtt(cues, 15, null), null);
+  assert.equal(sourcePreviewVtt(cues, 15, 61_000), null);
+  assert.equal(sourcePreviewVtt(cues, 0, 0), null);
+  assert.equal(sourcePreviewVtt(cues, Number.NaN, 0), null);
 });
 
 test('the preflight count uses the same clamp/offset/filter projection as serialization', () => {
