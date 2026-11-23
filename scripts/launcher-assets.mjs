@@ -17,6 +17,8 @@ const assets = [
   { source: 'src/browser/public-piece.ts', output: 'public/public-piece.js', header: '// Generated from src/browser/public-piece.ts; edit that source.\n' },
   { source: 'src/browser/compare.ts', output: 'public/compare.js', header: '// Generated from src/browser/compare.ts; edit that source.\n' },
   { source: 'src/browser/review.ts', output: 'public/review.js', header: '// Generated from src/browser/review.ts; edit that source.\n' },
+  { source: 'src/browser/recipe-selection.ts', output: 'public/recipe-selection.js', header: '// Generated from src/browser/recipe-selection.ts; edit that source.\n' },
+  { source: 'src/browser/voice-handoff.ts', output: 'public/voice-handoff.js', header: '// Generated from src/browser/voice-handoff.ts; edit that source.\n' },
   { source: 'src/browser/studio-comparison.ts', output: 'public/studio-comparison.js', header: '// Generated from src/browser/studio-comparison.ts; edit that source.\n' },
   { source: 'src/browser/studio-route.ts', output: 'public/studio-route.js', header: '// Generated from src/browser/studio-route.ts; edit that source.\n' },
   { source: 'src/browser/studio-login-return.ts', output: 'public/studio-login-return.js', header: '// Generated from src/browser/studio-login-return.ts; edit that source.\n' },
