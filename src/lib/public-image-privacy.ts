@@ -167,7 +167,7 @@ export async function checkPublicImage(
   env: PublicImageEnv,
   asset: PublicImageAsset,
   requestJson?: string | null,
-): Promise<Uint8Array | null> {
+): Promise<Uint8Array<ArrayBuffer> | null> {
   if (asset.kind !== "image" || !asset.generation_id) return null;
   if (requestJson === undefined) {
     const generation = await env.DB.prepare("SELECT request_json FROM generations WHERE id=?1 AND project_id=?2")
