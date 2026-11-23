@@ -7,28 +7,20 @@
 // owned R2 keys, verifies every hash, then commits D1 rows in one batch.
 // Nothing here reads provider credentials or session material.
 
-import { extensionFor, HttpError, id, safeJson, slug, sniffMedia } from './util.mjs';
+import { extensionFor, id, safeJson, slug, sniffMedia } from './util.mjs';
 import { decodePortableArchive, encodePortableArchive } from './portable-archive.ts';
 import {
   ASSET_ID_KEYS,
   AUDIO_BYTES,
   IMAGE_BYTES,
-  scanSecrets,
   validateManifest,
 } from './portable-validation.ts';
 import {
   MAX_PORTABLE_ASSET_BYTES,
-  MAX_PORTABLE_BUNDLE_BYTES,
-  MAX_PORTABLE_ASSETS,
   MAX_PORTABLE_MANIFEST_BYTES,
-  MAX_PORTABLE_RECORDS,
-  PORTABLE_FORMAT,
   PORTABLE_MAGIC,
-  PORTABLE_SCHEMA_VERSION,
   PortableError,
-  SHA256_HEX as SHA,
   canonicalJson,
-  sealManifest,
   sha256Bytes,
 } from './portable-manifest.ts';
 
@@ -63,216 +55,10 @@ export { describeBundle, portableInventory } from './portable-inventory.ts';
 // for the worker, CLI, archive container and tests.
 export { validateManifest };
 
-/** Build a manifest from D1 metadata. Media bytes are read by the export CLI,
- * which verifies each stored hash before writing it into the archive. */
-export async function exportProjectManifest(env, project) {
-  const rows = async (sql, ...bind) => (await env.DB.prepare(sql).bind(...bind).all()).results;
-  const assets = await rows('SELECT * FROM assets WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-  const generations = await rows('SELECT * FROM generations WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-  const compositions = await rows('SELECT * FROM compositions WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-  const recipes = await rows('SELECT * FROM recipes WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-  const subjects = await rows('SELECT * FROM subject_versions WHERE project_id=?1 ORDER BY subject_id ASC,revision ASC', project.id);
-  const songPlans = await rows('SELECT * FROM song_plans WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-  const footagePlans = await rows('SELECT * FROM footage_plans WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-  const publications = await rows('SELECT * FROM publications WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-  const promoBriefs = await rows('SELECT * FROM promo_briefs WHERE project_id=?1 ORDER BY created_at ASC,id ASC', project.id);
-
-  if (assets.length > MAX_PORTABLE_ASSETS) throw new HttpError(413, `A portable bundle carries at most ${MAX_PORTABLE_ASSETS} asset records.`, 'bundle_too_large');
-  const recordCount = generations.length + compositions.length + recipes.length + subjects.length + songPlans.length + footagePlans.length + publications.length + promoBriefs.length;
-  if (recordCount > MAX_PORTABLE_RECORDS) throw new HttpError(413, `A portable bundle carries at most ${MAX_PORTABLE_RECORDS} record rows.`, 'bundle_too_large');
-  const blobs = new Map();
-  const assetRecords = [];
-  for (const asset of assets) {
-    const media = asset.deleted_at === null;
-    const blobSha = media ? String(asset.sha256 ?? '') : null;
-    if (media && !SHA.test(blobSha)) throw new HttpError(409, `Asset ${asset.id} has no usable fingerprint.`, 'asset_without_hash');
-    const entryLimit = asset.kind === 'video' ? MAX_PORTABLE_ASSET_BYTES : asset.kind === 'audio' ? AUDIO_BYTES : IMAGE_BYTES;
-    if (media && Number(asset.bytes) > entryLimit) throw new HttpError(413, `Asset ${asset.id} is larger than one archive entry allows.`, 'bundle_too_large');
-    if (media) {
-      const existing = blobs.get(blobSha);
-      if (existing && (existing.bytes !== Number(asset.bytes) || existing.mime !== asset.mime))
-        throw new HttpError(409, `Asset ${asset.id} disagrees with another copy of the same bytes.`, 'asset_mime_conflict');
-      if (!existing) blobs.set(blobSha, { sha256: blobSha, path: `assets/${blobSha}`, bytes: Number(asset.bytes), mime: asset.mime });
-    }
-    assetRecords.push({
-      id: asset.id,
-      kind: asset.kind,
-      mime: asset.mime,
-      bytes: Number(asset.bytes),
-      blobSha256: media ? blobSha : null,
-      content: media ? 'media' : 'tombstone',
-      width: asset.width,
-      height: asset.height,
-      durationMs: asset.duration_ms,
-      sampleRate: asset.sample_rate ?? null,
-      channels: asset.channels ?? null,
-      sha256: asset.sha256,
-      title: asset.title,
-      caption: asset.caption,
-      source: asset.source,
-      parentAssetId: asset.parent_asset_id,
-      generationId: asset.generation_id,
-      createdAt: asset.created_at,
-      updatedAt: asset.updated_at,
-      deletedAt: asset.deleted_at,
-      deleteRevision: asset.delete_revision,
-    });
-  }
-
-  const totalBlobBytes = [...blobs.values()].reduce((sum, blob) => sum + blob.bytes, 0);
-  if (totalBlobBytes > MAX_PORTABLE_BUNDLE_BYTES) throw new HttpError(413, 'This project is larger than one portable archive allows.', 'bundle_too_large');
-
-  const content = {
-    format: PORTABLE_FORMAT,
-    project: {
-      id: project.id,
-      name: project.name,
-      slug: project.slug,
-      creativeDirection: project.creative_direction,
-      references: safeJson(project.references_json, []),
-      visibility: project.visibility,
-      defaults: safeJson(project.defaults_json, {}),
-      createdAt: project.created_at,
-      updatedAt: project.updated_at,
-    },
-    blobs: [...blobs.values()].sort((a, b) => a.sha256.localeCompare(b.sha256)),
-    assets: assetRecords,
-    generations: generations.map((row) => ({
-      id: row.id,
-      compositionId: row.composition_id ?? null,
-      clientRequestId: row.client_request_id,
-      kind: row.kind,
-      // A legacy blank recipe_id means the same thing the writer records when
-      // a request omits its recipe: no selected recipe. Normalize exactly that
-      // blank to the existing freeform sentinel so old rows still export. A
-      // missing custom recipe (rcp_) is untouched and stays a missing
-      // dependency; the stored row is never rewritten.
-      recipeId: row.recipe_id === '' ? 'freeform' : row.recipe_id,
-      provider: row.provider,
-      model: row.model,
-      modelVersion: row.model_version,
-      request: safeJson(row.request_json, {}),
-      providerRequestId: null,
-      providerStatusUrl: null,
-      providerResponseUrl: null,
-      status: row.status,
-      errorCode: row.error_code,
-      errorDetail: row.error_detail,
-      retainedBytes: row.retained_bytes,
-      retainedMime: row.retained_mime,
-      outputAssetId: row.output_asset_id,
-      costEstimateMicro: row.cost_estimate_micro,
-      costReservedMicro: row.cost_reserved_micro,
-      costAllocatedMicro: row.cost_allocated_micro,
-      providerChargedMicro: row.provider_charged_micro ?? null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      submittedAt: row.submitted_at,
-      completedAt: row.completed_at,
-      cancelledAt: row.cancelled_at,
-      deletedAt: row.deleted_at,
-      deleteRevision: row.delete_revision,
-    })),
-    compositions: compositions.map((row) => ({
-      id: row.id,
-      title: row.title,
-      spec: safeJson(row.spec_json, {}),
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    })),
-    recipes: recipes.map((row) => ({
-      id: row.id,
-      slug: row.slug,
-      title: row.title,
-      description: row.description,
-      kind: row.kind,
-      promptTemplate: row.prompt_template,
-      controls: safeJson(row.controls_json, []),
-      version: row.version,
-      createdAt: row.created_at,
-    })),
-    subjects: subjects.map((row) => ({
-      subjectId: row.subject_id,
-      revision: row.revision,
-      spec: safeJson(row.spec_json, {}),
-      referenceAssetId: row.reference_asset_id,
-      referenceSha256: row.reference_sha256,
-      createdAt: row.created_at,
-    })),
-    songPlans: songPlans.map((row) => ({
-      id: row.id,
-      songAssetId: row.song_asset_id,
-      songSha256: row.song_sha256,
-      spec: safeJson(row.spec_json, {}),
-      revision: row.revision,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    })),
-    footagePlans: footagePlans.map((row) => ({
-      id: row.id,
-      sourceAssetId: row.source_asset_id,
-      sourceSha256: row.source_sha256,
-      spec: safeJson(row.spec_json, {}),
-      revision: row.revision,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    })),
-    publications: publications.map((row) => ({
-      id: row.id,
-      assetId: row.asset_id,
-      posterAssetId: row.poster_asset_id,
-      slug: row.slug,
-      title: row.title,
-      description: row.description,
-      assetRevision: row.asset_revision,
-      listed: row.listed,
-      hidden: row.hidden,
-      attribution: safeJson(row.attribution_json, []),
-      createdAt: row.created_at,
-      revokedAt: row.revoked_at,
-    })),
-    promoBriefs: promoBriefs.map((row) => ({
-      id: row.id,
-      spec: safeJson(row.spec_json, {}),
-      revision: row.revision,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    })),
-    excluded: [
-      'Studio provider keys, worker secrets, session cookies and bearer tokens',
-      'Composer workspace binding and grant checks',
-      'MCP OAuth clients, codes, tokens and spend reservations',
-      'Monthly budget reservations (restore never invents bills)',
-      'Signed media URLs, render links, local-render and footage-export receipts',
-      'Installation-wide publication policies (restored publications stay private)',
-    ],
-    limits: {
-      maxAssetBytes: MAX_PORTABLE_ASSET_BYTES,
-      maxBundleBytes: MAX_PORTABLE_BUNDLE_BYTES,
-      maxAssets: MAX_PORTABLE_ASSETS,
-      maxRecords: MAX_PORTABLE_RECORDS,
-    },
-    stats: {
-      assets: assetRecords.length,
-      mediaAssets: assetRecords.filter((asset) => asset.content === 'media').length,
-      tombstones: assetRecords.filter((asset) => asset.content === 'tombstone').length,
-      blobs: blobs.size,
-      contentBytes: totalBlobBytes,
-      generations: generations.length,
-      compositions: compositions.length,
-      recipes: recipes.length,
-      subjects: subjects.length,
-      songPlans: songPlans.length,
-      footagePlans: footagePlans.length,
-      publications: publications.length,
-      promoBriefs: promoBriefs.length,
-    },
-  };
-  scanSecrets(content);
-  const sealed = await sealManifest(content);
-  await validateManifest(sealed);
-  return sealed;
-}
+// The read-only export lives typed in portable-export.ts. Re-exporting the
+// same function keeps the owner worker, CLI, API and fixture tests on their
+// existing portable-bundle import path with no behaviour change.
+export { exportProjectManifest } from './portable-export.ts';
 
 function repoKey(projectId, assetId, mime) {
   return `projects/${projectId}/assets/${assetId}/original.${extensionFor(mime)}`;
