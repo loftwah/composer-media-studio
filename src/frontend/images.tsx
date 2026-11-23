@@ -88,6 +88,7 @@ import {
   contactSheetPlacement,
   type ContactSheetColumns,
   type ContactSheetTile,
+  type ContactSheetTileSize,
 } from "./image-contact-sheet.ts";
 import {
   atlasBoundsProblem,
@@ -296,7 +297,7 @@ type ListFocus =
   | { kind: "row-action"; id: string; offset: -1 | 1 }
   | { kind: "picker" };
 
-type ContactSheet = { url: string; layoutUrl: string; count: number; columns: number; width: number; height: number; mode: SheetMode };
+type ContactSheet = { url: string; layoutUrl: string; count: number; columns: number; tileSize: number; width: number; height: number; mode: SheetMode };
 type SheetMode = "contact-sheet" | "sprite-atlas";
 
 const DEFAULT_SETTINGS: Settings = {
@@ -977,6 +978,7 @@ function Images() {
   const [zipBytes, setZipBytes] = useState(0);
   const [contactSheet, setContactSheet] = useState<ContactSheet | null>(null);
   const [sheetColumns, setSheetColumns] = useState<ContactSheetColumns>("auto");
+  const [sheetTile, setSheetTile] = useState<ContactSheetTileSize>(CONTACT_SHEET_TILE);
   const [sheetMode, setSheetMode] = useState<SheetMode>("contact-sheet");
   const [batchExport, setBatchExport] = useState<"zip" | SheetMode | null>(null);
   const zipBusy = batchExport === "zip";
@@ -1905,7 +1907,8 @@ function Images() {
       setBatchMessage(atlasProblem);
       return;
     }
-    const layout = isAtlas ? atlas : contactSheetLayout(entries.length, sheetColumns);
+    const contactLayout = isAtlas ? null : contactSheetLayout(entries.length, sheetColumns, sheetTile);
+    const layout = isAtlas ? atlas : contactLayout;
     if (!layout) return;
     if (atlas) {
       const problem = atlasBoundsProblem(atlas);
@@ -1936,7 +1939,8 @@ function Images() {
             rect = atlasPlacement(atlas, index, bitmap.width, bitmap.height);
             context.drawImage(bitmap, rect.x, rect.y);
           } else {
-            rect = contactSheetPlacement(layout, index, bitmap.width, bitmap.height);
+            if (!contactLayout) throw new Error(`This browser could not make the ${name}.`);
+            rect = contactSheetPlacement(contactLayout, index, bitmap.width, bitmap.height);
             context.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height);
           }
           tiles.push({
@@ -1967,15 +1971,27 @@ function Images() {
       const sheetHash = await sha256Hex(await blob.arrayBuffer());
       if (attempt !== batchExportRevision.current) return;
       const sheet = { sha256: sheetHash, bytes: blob.size };
-      const layoutDocument = atlas
-        ? atlasDocument(atlas, sheet, tiles)
-        : contactSheetDocument(layout, sheet, tiles);
+      const layoutDocument = contactLayout
+        ? contactSheetDocument(contactLayout, sheet, tiles)
+        : atlas
+          ? atlasDocument(atlas, sheet, tiles)
+          : null;
+      if (!layoutDocument) throw new Error(`This browser could not describe the ${name} layout.`);
       const layoutBlob = new Blob([JSON.stringify(layoutDocument)], { type: "application/json" });
       const url = trackUrl(blob);
       const layoutUrl = trackUrl(layoutBlob);
       releaseUrl(contactSheet?.url);
       releaseUrl(contactSheet?.layoutUrl);
-      setContactSheet({ url, layoutUrl, count: layout.count, columns: layout.columns, width: layout.width, height: layout.height, mode: sheetMode });
+      setContactSheet({
+        url,
+        layoutUrl,
+        count: layout.count,
+        columns: layout.columns,
+        tileSize: contactLayout?.tileSize ?? CONTACT_SHEET_TILE,
+        width: layout.width,
+        height: layout.height,
+        mode: sheetMode,
+      });
       const skipped = isAtlas ? doneItems.length - entries.length : 0;
       const skippedNote = skipped ? ` (${skipped} non-PNG result${skipped === 1 ? "" : "s"} skipped)` : "";
       setBatchMessage(`${isAtlas ? "Sprite atlas" : "Contact sheet"} ready: ${layout.count} ${isAtlas ? "PNGs" : "images"}${skippedNote} · ${layout.width} × ${layout.height} px.`);
@@ -4207,7 +4223,7 @@ function Images() {
           <select value={sheetMode} disabled={running || sheetBusy} onChange={(event) =>
             setSheetMode(event.target.value === "sprite-atlas" ? "sprite-atlas" : "contact-sheet")
           }>
-            <option value="contact-sheet">Contact sheet · 240 px fit</option>
+            <option value="contact-sheet">Contact sheet · fitted tiles</option>
             <option value="sprite-atlas">Sprite atlas · native size</option>
           </select>
         </label>
@@ -4228,6 +4244,21 @@ function Images() {
             <option value="4">4</option>
           </select>
         </label>
+        {!isAtlasMode && (
+          <label className="image-sheet-columns">
+            Contact sheet tile size
+            <select
+              value={sheetTile}
+              disabled={running || sheetBusy}
+              onChange={(event) =>
+                setSheetTile(Number(event.target.value) as ContactSheetTileSize)
+              }>
+              <option value="120">Compact · 120 px</option>
+              <option value="240">Standard · 240 px</option>
+              <option value="360">Large · 360 px</option>
+            </select>
+          </label>
+        )}
         {isAtlasMode && (
           <p id="image-atlas-preflight"
             className={atlasProblem ? "image-plan is-error" : "trim-note"}
@@ -4324,7 +4355,7 @@ function Images() {
               </p>
             ) : (
               <p className="trim-note">
-                The layout uses {CONTACT_SHEET_TILE} px transparent tiles across {contactSheet.columns} column{contactSheet.columns === 1 ? "" : "s"} in batch order.
+                The layout uses {contactSheet.tileSize} px transparent tiles across {contactSheet.columns} column{contactSheet.columns === 1 ? "" : "s"} in batch order.
               </p>
             )}
           </>
