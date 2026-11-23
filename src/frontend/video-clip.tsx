@@ -2,7 +2,7 @@ import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
-import { appendManualClipCue, canMergeClipDraftCues, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, removeClipDraftCue, replaceClipDraftCue } from "./clip-manual-cue";
+import { appendManualClipCue, canMergeClipDraftCues, canSplitClipDraftCue, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -107,6 +107,11 @@ function VideoClip() {
   const [manualCueStart, setManualCueStart] = useState("");
   const [manualCueEnd, setManualCueEnd] = useState("");
   const [manualCueMessage, setManualCueMessage] = useState("");
+  // Split is an optional part of the open edit. The midpoint time and nearest
+  // word boundary are only editable starting points; the entered values are
+  // not applied until the creator chooses Split cue.
+  const [cueSplitAt, setCueSplitAt] = useState("");
+  const [cueSplitWord, setCueSplitWord] = useState(1);
   // The exact draft the edit was opened against. Any import, removal, undo,
   // replacement or source change replaces that draft (or clears it), so a
   // stale edit can never overwrite newer cues with an old index.
@@ -208,6 +213,16 @@ function VideoClip() {
     ? clipCaptionCues(captionDraft.cues, start, end, captionOffsetMs)
     : null;
   const survivingCaptionCount = trimmedCaptionCues?.length ?? null;
+  // Split reads the saved draft cue, not the unsaved edit fields, so its Undo
+  // and digest describe exactly the cue the review row opened. The chosen
+  // boundary is clamped for display if a different cue or text replaced it.
+  const editingCue = cueEditing && captionDraft && cueEditing.draft === captionDraft
+    ? captionDraft.cues[cueEditing.sourceIndex] ?? null
+    : null;
+  const editingCueWords = editingCue ? editingCue.text.trim().split(/\s+/u) : [];
+  const cueSplitBoundary = Math.min(Math.max(cueSplitWord, 1), Math.max(1, editingCueWords.length - 1));
+  const cueSplitPreview = editingCue ? clipCueSplitParts(editingCue.text, cueSplitBoundary) : null;
+  const canSplitEditingCue = canSplitClipDraftCue(editingCue);
   const previous = applied !== null && (
     applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
   );
@@ -438,6 +453,8 @@ function VideoClip() {
     setManualCueText("");
     setManualCueStart("");
     setManualCueEnd("");
+    setCueSplitAt("");
+    setCueSplitWord(1);
   }
   // One plain-text cue at original-video seconds. Validation and overlap checks
   // run before any state change, then the accepted cue joins the current draft
@@ -478,6 +495,9 @@ function VideoClip() {
     setManualCueText(cue.text);
     setManualCueStart((cue.startMs / 1000).toFixed(3));
     setManualCueEnd((cue.endMs / 1000).toFixed(3));
+    const split = defaultClipCueSplit(cue);
+    setCueSplitAt(split?.atSeconds ?? "");
+    setCueSplitWord(split?.wordBoundary ?? 1);
     setManualCueMessage(`Editing the cue at ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} in the original video.`);
   }
   function cancelCueEdit() {
@@ -514,6 +534,46 @@ function VideoClip() {
     } catch (error) {
       if (request === captionRequest.current)
         setManualCueMessage(error instanceof Error ? error.message : "Could not update the cue in this browser.");
+    } finally {
+      if (request === captionRequest.current) setCaptionLoading(false);
+    }
+  }
+  // Split the saved cue the editor opened against. The entered original-video
+  // time becomes the exact shared edge; the chosen word boundary names the two
+  // text parts. Validation runs before any draft change, then the same edited
+  // track digest and exact prior-draft Undo as Update cue apply.
+  async function splitEditedCue() {
+    if (!captionDraft || !cueEditing || busy || checking || importing || receiptLoading || captionLoading) return;
+    const sourceCue = captionDraft.cues[cueEditing.sourceIndex];
+    if (cueEditing.draft !== captionDraft || !sourceCue) {
+      resetCueEditor();
+      setManualCueMessage("The caption draft changed. Choose Edit again.");
+      return;
+    }
+    if (manualCueText !== sourceCue.text ||
+      Number(manualCueStart) !== sourceCue.startMs / 1000 ||
+      Number(manualCueEnd) !== sourceCue.endMs / 1000) {
+      setManualCueMessage("Save your cue edits with Update cue before splitting.");
+      return;
+    }
+    const previousDraft = captionDraft;
+    const split = splitClipDraftCue(previousDraft.cues, cueEditing.sourceIndex, {
+      atSeconds: cueSplitAt, wordBoundary: cueSplitBoundary,
+    }, Math.round(duration * 1000));
+    if ("problem" in split) { setManualCueMessage(split.problem); return; }
+    const request = ++captionRequest.current;
+    setCaptionLoading(true);
+    setManualCueMessage("Splitting the cue in this draft…");
+    try {
+      const updated = await editedCaptionDraft(previousDraft, split.cues);
+      if (request !== captionRequest.current) return;
+      setCaptionDraft(updated);
+      setCaptionUndo(previousDraft);
+      resetCueEditor();
+      setManualCueMessage(`Split one cue into two. This draft now has ${split.cues.length} ${split.cues.length === 1 ? "cue" : "cues"}. Undo is available below.`);
+    } catch (error) {
+      if (request === captionRequest.current)
+        setManualCueMessage(error instanceof Error ? error.message : "Could not split the cue in this browser.");
     } finally {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
@@ -874,6 +934,33 @@ function VideoClip() {
               <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading} onClick={cancelCueEdit}>Cancel</button>
             </> : <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void addManualCue()}>Add cue</button>}
           </div>
+          {canSplitEditingCue && editingCue && (
+            <details className="trim-cue-split">
+              <summary>Split this cue</summary>
+              <p id="cue-split-help" className="trim-note">Original-video seconds, before the timing offset.</p>
+              <div className="trim-fields">
+                <label>Split at (seconds)<input type="number" min={editingCue.startMs / 1000} max={editingCue.endMs / 1000} step="0.001"
+                  aria-describedby="cue-split-help"
+                  value={cueSplitAt}
+                  disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                  onChange={event => setCueSplitAt(event.currentTarget.value)}
+                /></label>
+                <label>Word boundary<select value={cueSplitBoundary}
+                  aria-describedby="cue-split-help"
+                  disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                  onChange={event => setCueSplitWord(Number(event.currentTarget.value))}>
+                  {editingCueWords.slice(1).map((_, index) => {
+                    const boundary = index + 1;
+                    return <option key={boundary} value={boundary}>After “{editingCueWords[boundary - 1]}”</option>;
+                  })}
+                </select></label>
+              </div>
+              {cueSplitPreview && <p className="trim-note trim-cue-split-preview" aria-live="polite">{cueSplitPreview.first} | {cueSplitPreview.second}</p>}
+              <button type="button" className="secondary"
+                disabled={!file || !cueSplitAt.trim() || busy || checking || importing || receiptLoading || captionLoading}
+                onClick={() => void splitEditedCue()}>Split cue</button>
+            </details>
+          )}
           {manualCueMessage && <p role="status" aria-live="polite" className="trim-note">{manualCueMessage}</p>}
         </details>
         {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
