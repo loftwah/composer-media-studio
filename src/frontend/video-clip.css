@@ -25,3 +25,30 @@
 .trim-cue-split > summary { cursor:pointer; font-weight:700; min-height:44px; align-content:center; }
 .trim-cue-split[open] > summary { margin-bottom:.4rem; }
 .trim-cue-split-preview { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.clip-waveform { display:grid; gap:.65rem; border:1px solid var(--line); border-radius:var(--radius); padding:clamp(.8rem,2vw,1.1rem); background:var(--surface); }
+.clip-waveform p { margin:0; }
+.clip-waveform-head { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:.3rem .9rem; }
+.clip-waveform-head h3 { margin:0; font-size:1.05rem; letter-spacing:-.01em; }
+.clip-waveform-window { color:var(--muted); font-size:.82rem; font-variant-numeric:tabular-nums; }
+.clip-waveform-plot-wrap { display:grid; gap:.3rem; }
+.clip-waveform-plot { display:block; width:100%; height:clamp(88px,18vw,120px); background:var(--paper-deep); border:1px solid var(--line); border-radius:8px; }
+.clip-waveform-baseline { stroke:var(--line); stroke-width:1; vector-effect:non-scaling-stroke; }
+.clip-waveform-bar { fill:var(--ink-soft); }
+.clip-waveform-bar[data-silent] { fill:var(--muted); opacity:.75; }
+.clip-waveform-marker { stroke:var(--accent); stroke-width:2; vector-effect:non-scaling-stroke; }
+.clip-waveform-axis { display:flex; justify-content:space-between; gap:.5rem; color:var(--muted); font-size:.78rem; line-height:1.4; font-variant-numeric:tabular-nums; }
+.clip-waveform-axis span:nth-child(2) { text-align:center; }
+.clip-waveform-progress { display:flex; align-items:center; gap:.75rem; }
+.clip-waveform-progress progress { flex:1; height:.6rem; accent-color:var(--accent); }
+.clip-waveform-keys { display:flex; flex-wrap:wrap; gap:1rem; color:var(--muted); font-size:.82rem; }
+.clip-waveform-key { display:inline-flex; align-items:center; gap:.4rem; }
+.clip-waveform-key::before { content:""; width:.8rem; height:.45rem; border-radius:2px; background:var(--ink-soft); }
+.clip-waveform-key-silence::before { height:2px; background:var(--muted); }
+.clip-waveform-seek { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:.6rem .8rem; }
+.clip-waveform-seek label { font-weight:600; }
+.clip-waveform-seek input[type=range] { width:100%; accent-color:var(--accent); }
+.clip-waveform-seek output { min-width:6.5rem; text-align:right; font-variant-numeric:tabular-nums; }
+@media (max-width:600px) {
+  .clip-waveform-seek { grid-template-columns:minmax(0,1fr) auto; }
+  .clip-waveform-seek label { grid-column:1/-1; }
+}
