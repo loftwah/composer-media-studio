@@ -476,6 +476,17 @@ function VideoClip() {
     video.pause();
     video.currentTime = Math.min(sourceStartMs / 1000, duration);
   }
+  // Copy the original video's current playhead into one cue field only. The
+  // native player is read but never paused, seeked or restarted, and no other
+  // state (draft, trim, offset, preview, result) is touched.
+  function fillCueTimeFromPlayhead(field: "start" | "end") {
+    const video = sourceVideo.current;
+    if (!video || !file || !Number.isFinite(video.currentTime)) return;
+    const ms = Math.min(Math.max(Math.round(video.currentTime * 1000), 0), Math.round(duration * 1000));
+    const seconds = (ms / 1000).toFixed(3);
+    if (field === "start") setManualCueStart(seconds);
+    else setManualCueEnd(seconds);
+  }
 
   // Opening a receipt is an explicit, local-only action. It proves the saved
   // digest against the exact bytes already accepted as the source, then writes
@@ -710,16 +721,28 @@ function VideoClip() {
             onChange={event => setManualCueText(event.currentTarget.value)}
           /></label>
           <div className="trim-fields">
-            <label>Cue start (seconds)<input type="number" min="0" max={duration} step="0.001"
-              value={manualCueStart}
-              disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
-              onChange={event => setManualCueStart(event.currentTarget.value)}
-            /></label>
-            <label>Cue end (seconds)<input type="number" min="0" max={duration} step="0.001"
-              value={manualCueEnd}
-              disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
-              onChange={event => setManualCueEnd(event.currentTarget.value)}
-            /></label>
+            <div>
+              <label>Cue start (seconds)<input type="number" min="0" max={duration} step="0.001"
+                value={manualCueStart}
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                onChange={event => setManualCueStart(event.currentTarget.value)}
+              /></label>
+              <button type="button" className="secondary"
+                aria-label="Fill Cue start from the original video playhead"
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                onClick={() => fillCueTimeFromPlayhead("start")}>Use playhead</button>
+            </div>
+            <div>
+              <label>Cue end (seconds)<input type="number" min="0" max={duration} step="0.001"
+                value={manualCueEnd}
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                onChange={event => setManualCueEnd(event.currentTarget.value)}
+              /></label>
+              <button type="button" className="secondary"
+                aria-label="Fill Cue end from the original video playhead"
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                onClick={() => fillCueTimeFromPlayhead("end")}>Use playhead</button>
+            </div>
           </div>
           <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void addManualCue()}>Add cue</button>
           {manualCueMessage && <p role="status" aria-live="polite" className="trim-note">{manualCueMessage}</p>}
