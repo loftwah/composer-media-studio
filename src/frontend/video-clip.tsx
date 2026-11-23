@@ -1,6 +1,7 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
+import { fullSourceCaptionDownload } from "./clip-full-source-captions";
 import { appendManualClipCue, manualCaptionSourceName, manualCaptionTrackVtt, removeClipDraftCue, replaceClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
@@ -25,7 +26,7 @@ import {
   openLocalMixHandoff, receiveLocalMix,
   type LocalMixHandoff, type LocalMixHandoffStatus,
 } from "./local-mix-handoff";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, VideoSampleSink } from "mediabunny";
 import "./audio-trim.css";
@@ -245,6 +246,29 @@ function VideoClip() {
     ? draftCaptionFile : null;
   const draftCaptionUrl = currentDraftFile?.vttUrl ?? null;
   const draftSrtUrl = currentDraftFile?.srtUrl ?? null;
+  // The full-source draft is the canonical VTT for every cue, with its original
+  // times and text. It is independent of the trim and the timing offset, so a
+  // creator can save and re-import it before encoding. The same content-match
+  // guard and revoke-on-change lifecycle as the trim sidecar keeps a stale link
+  // from downloading an older draft.
+  const fullSourceCaption = useMemo(
+    () => captionDraft ? fullSourceCaptionDownload(captionDraft.cues) : null,
+    [captionDraft],
+  );
+  const fullSourceCaptionVtt = fullSourceCaption && "vtt" in fullSourceCaption ? fullSourceCaption.vtt : null;
+  const fullSourceCaptionProblem = fullSourceCaption && "problem" in fullSourceCaption ? fullSourceCaption.problem : "";
+  const [fullSourceCaptionFile, setFullSourceCaptionFile] = useState<{ vtt: string; url: string } | null>(null);
+  useEffect(() => {
+    if (!fullSourceCaptionVtt) {
+      setFullSourceCaptionFile(null);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([fullSourceCaptionVtt], { type: "text/vtt; charset=utf-8" }));
+    setFullSourceCaptionFile({ vtt: fullSourceCaptionVtt, url });
+    return () => URL.revokeObjectURL(url);
+  }, [fullSourceCaptionVtt]);
+  const currentFullSourceCaptionFile = fullSourceCaptionFile?.vtt === fullSourceCaptionVtt ? fullSourceCaptionFile : null;
+  const fullSourceCaptionUrl = currentFullSourceCaptionFile?.url ?? null;
   const sourceVtt = showSourceCaptions && captionDraft
     ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs)
     : null;
@@ -884,6 +908,13 @@ function VideoClip() {
               </ol>
             </details>
           )}
+          {fullSourceCaptionUrl && (
+            <div>
+              <p><a className="button secondary" href={fullSourceCaptionUrl} download={`${clipFilename}-full-source-captions.vtt`} aria-describedby="full-source-captions-note">Save full-source caption draft (VTT)</a></p>
+              <p id="full-source-captions-note" className="trim-note">Keeps every cue at its original video time, including cues outside this trim. To edit them again, open the VTT with Choose captions.</p>
+            </div>
+          )}
+          {fullSourceCaptionProblem && <p className="trim-note" role="status">{fullSourceCaptionProblem}</p>}
           {draftCaptionUrl && <div>
             <p><a className="button secondary" href={draftCaptionUrl} download={`${clipFilename}-draft-captions.vtt`} aria-describedby="draft-captions-note">Save draft trim captions (VTT)</a></p>
             {draftSrtUrl && <p><a className="button secondary" href={draftSrtUrl} download={`${clipFilename}-draft-captions.srt`} aria-describedby="draft-captions-note">Save draft trim captions (SRT)</a></p>}
