@@ -1,5 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
-import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, survivingClipCaptionCount, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -159,6 +159,11 @@ function VideoClip() {
   // one on every render, so returning to the same settings drops the note.
   const draft = [start, end, shape, quality, fit, fit === "cover" ? cropAnchor : "center", mute].join("|");
   const captionOffsetMs = captionDraft ? parseCaptionOffset(captionOffsetRaw) : 0;
+  const validTrim = Number.isFinite(start) && Number.isFinite(end)
+    && start >= 0 && end <= duration && end > start && end - start <= MAX_CLIP_SECONDS;
+  const survivingCaptionCount = captionDraft && validTrim && captionOffsetMs !== null
+    ? survivingClipCaptionCount(captionDraft.cues, start, end, captionOffsetMs)
+    : null;
   const previous = applied !== null && (
     applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
   );
@@ -316,7 +321,7 @@ function VideoClip() {
 
   async function makeClip() {
     if (!file || busy || checking || captionLoading || receiptLoading || captionOffsetMs === null) return;
-    if (![start,end].every(Number.isFinite) || start < 0 || end > duration || end <= start || end - start > MAX_CLIP_SECONDS) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
+    if (!validTrim) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
     // A finished clip stays committed until a replacement actually succeeds, so a
     // cancelled or failed repeat leaves the previous poster and exact download intact.
     cancelRequested.current = false; setBusy(true); setMessage("Checking this browser’s video and audio codecs…");
@@ -498,6 +503,13 @@ function VideoClip() {
           </div>
           <p id="caption-offset-help" className="trim-note">Positive moves captions later. Negative moves them earlier.</p>
           {captionOffsetMs === null && <p id="caption-offset-error" role="alert" className="trim-note">Enter a value from −{MAX_CAPTION_OFFSET_SECONDS} to {MAX_CAPTION_OFFSET_SECONDS} seconds with up to three decimal places.</p>}
+          {survivingCaptionCount !== null && (
+            <p className="trim-note">
+              {survivingCaptionCount === 0
+                ? "No caption cues will fit this trim. Adjust the timing offset or trim to include them."
+                : `${survivingCaptionCount} caption ${survivingCaptionCount === 1 ? "cue" : "cues"} inside this trim.`}
+            </p>
+          )}
         </div>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
