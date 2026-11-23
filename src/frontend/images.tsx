@@ -100,7 +100,6 @@ import { createZip, ZIP_MIME } from "./image-zip.ts";
 import {
   IMAGE_QUALITY_MAX_PERCENT,
   IMAGE_QUALITY_MIN_PERCENT,
-  canExportImageAsPng,
   imageQualityIsValid,
   settingsForImage,
   type ExportFormat,
@@ -266,8 +265,8 @@ type WorkItem = {
   result?: RenderedImage;
   stripped?: StrippedImage;
   error?: string;
-  /** A reversible one-image choice: export this PNG source as lossless PNG. */
-  pngOverride?: boolean;
+  /** A reversible one-image export format. Undefined follows the batch. */
+  formatOverride?: ExportFormat;
   /** A reversible one-image long edge in px. Undefined follows the batch. */
   longEdgeOverride?: number;
   /** A reversible one-image quality in whole percent. Undefined follows the batch. */
@@ -1098,11 +1097,12 @@ function Images() {
     ? settingsForImage(
         settings,
         selected.source.mime,
-        Boolean(selected.pngOverride),
+        false,
         selected.longEdgeOverride,
         selected.cropAspectOverride,
         selected.cropAnchorOverride,
         selected.qualityOverride,
+        selected.formatOverride,
       )
     : settings;
   const plan = selected ? makePlan(selected.source, selectedSettings, activeTrim) : null;
@@ -1137,7 +1137,7 @@ function Images() {
       : false;
   const hasItemOverride = items.some(
     (item) =>
-      item.pngOverride ||
+      item.formatOverride !== undefined ||
       item.longEdgeOverride !== undefined ||
       item.qualityOverride !== undefined ||
       item.cropAspectOverride !== undefined ||
@@ -1147,8 +1147,26 @@ function Images() {
     (item) =>
       item.longEdgeOverride !== undefined && !itemLongEdgeIsValid(item.longEdgeOverride),
   );
-  const canSetRowQuality = (item: WorkItem) => settings.format !== "png" &&
-    settings.targetKiB === null && !item.pngOverride;
+  // Every row decision flows through the same effective settings as the render,
+  // so its format, target and quality never drift from what the encoder uses.
+  const rowSettings = (item: WorkItem) =>
+    settingsForImage(
+      settings,
+      item.source.mime,
+      false,
+      item.longEdgeOverride,
+      item.cropAspectOverride,
+      item.cropAnchorOverride,
+      item.qualityOverride,
+      item.formatOverride,
+    );
+  const rowIsLossy = (item: WorkItem) => rowSettings(item).format !== "png";
+  const rowUsesTargetBytes = (item: WorkItem) =>
+    targetBytesFor(rowSettings(item)) !== null;
+  const canSetRowQuality = (item: WorkItem) => {
+    const effective = rowSettings(item);
+    return effective.format !== "png" && effective.targetKiB === null;
+  };
   const hasInvalidQuality = (item: WorkItem) => canSetRowQuality(item) &&
     item.qualityOverride !== undefined && !imageQualityIsValid(item.qualityOverride);
   const invalidQualityItem = items.find(hasInvalidQuality);
@@ -1159,11 +1177,9 @@ function Images() {
     requestedTargetBytes === null
       ? null
       : targetSizeProblem(selectedSettings.format, requestedTargetBytes);
-  // A PNG override drops the byte target for that image only. The batch is
-  // blocked by an unusable target only when at least one image still uses it.
-  const batchUsesTarget = items.some(
-    (item) => !canExportImageAsPng(item.source.mime, settings.format) || !item.pngOverride,
-  );
+  // A PNG row drops the byte target for that image only. The batch is blocked
+  // by an unusable target only when at least one row still uses one.
+  const batchUsesTarget = items.some(rowUsesTargetBytes);
   const batchTargetProblem = batchUsesTarget
     ? targetSizeProblem(settings.format, targetBytesFor(settings))
     : null;
@@ -1738,11 +1754,12 @@ function Images() {
         const itemSettings = settingsForImage(
           snapshot,
           item.source.mime,
-          Boolean(item.pngOverride),
+          false,
           item.longEdgeOverride,
           item.cropAspectOverride,
           item.cropAnchorOverride,
           item.qualityOverride,
+          item.formatOverride,
         );
         const rendered = await renderImage(item, itemSettings, controller.signal, cropRect);
         if (controller.signal.aborted) {
@@ -2014,12 +2031,14 @@ function Images() {
     }));
   }
 
-  function setPngOverride(item: WorkItem, enabled: boolean): void {
+  function setFormatOverride(item: WorkItem, value: ExportFormat | undefined): void {
     if (runningRef.current || addingRef.current) return;
-    if (enabled && !canExportImageAsPng(item.source.mime, settings.format)) return;
+    // The browser probe is the only honest gate for a WebP row. The encoder's
+    // byte-level MIME check remains the final guard if a value ever gets here.
+    if (value === "webp" && !WEBP_ENCODABLE) return;
     setItems((previous) =>
       previous.map((candidate) =>
-        candidate.id === item.id ? { ...candidate, pngOverride: enabled } : candidate,
+        candidate.id === item.id ? { ...candidate, formatOverride: value } : candidate,
       ),
     );
   }
@@ -2103,7 +2122,7 @@ function Images() {
 
   function applyWebReady(): void {
     if (!selected || runningRef.current || socialController.current) return;
-    if (selected.pngOverride) setPngOverride(selected, false);
+    if (selected.formatOverride !== undefined) setFormatOverride(selected, undefined);
     if (selected.longEdgeOverride !== undefined) setLongEdgeOverride(selected, undefined);
     if (selected.qualityOverride !== undefined) setQualityOverride(selected, undefined);
     setSettings((previous) => ({
@@ -2394,14 +2413,14 @@ function Images() {
     setSettings(DEFAULT_SETTINGS);
     setItems((previous) =>
       previous.map((item) =>
-        item.pngOverride ||
+        item.formatOverride !== undefined ||
         item.longEdgeOverride !== undefined ||
         item.qualityOverride !== undefined ||
         item.cropAspectOverride !== undefined ||
         item.cropAnchorOverride !== undefined
           ? {
               ...item,
-              pngOverride: false,
+              formatOverride: undefined,
               longEdgeOverride: undefined,
               qualityOverride: undefined,
               cropAspectOverride: undefined,
@@ -4402,19 +4421,34 @@ function Images() {
                     </span>
                     {item.error && <span className="image-list-error">{item.error}</span>}
                   </button>
-                  {canExportImageAsPng(item.source.mime, settings.format) && (
-                    <label className="image-list-override">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(item.pngOverride)}
-                        disabled={running || adding}
-                        aria-label={`Export ${item.file.name} as PNG`}
-                        aria-describedby="image-batch-note"
-                        onChange={(event) => setPngOverride(item, event.target.checked)}
-                      />
-                      Export this image as PNG
-                    </label>
-                  )}
+                  <label className="image-list-override">
+                    <select
+                      value={item.formatOverride ?? ""}
+                      disabled={running || adding}
+                      aria-label={`Export format for ${item.file.name}; Use batch keeps the batch format`}
+                      aria-describedby="image-batch-note"
+                      onChange={(event) =>
+                        setFormatOverride(
+                          item,
+                          event.target.value === ""
+                            ? undefined
+                            : (event.target.value as ExportFormat),
+                        )
+                      }
+                    >
+                      <option value="">Use batch</option>
+                      {FORMATS.map(({ value, label }) => (
+                        <option
+                          value={value}
+                          key={value}
+                          disabled={value === "webp" && !WEBP_ENCODABLE}
+                        >
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    Format for this image
+                  </label>
                   <label className="image-list-override">
                     <input
                       type="number"
@@ -4451,7 +4485,7 @@ function Images() {
                         blank to use the batch resize.
                       </span>
                     )}
-                  {(settings.format === "jpeg" || settings.format === "webp") && (
+                  {rowIsLossy(item) && (
                     <label className="image-list-override">
                       <input
                         type="number"
@@ -4580,13 +4614,16 @@ function Images() {
           decoded and encoded one at a time. ZIPs and contact sheets follow this list order. Cancelling
           stops after the current encode, and already completed downloads stay in the
           list. ZIP export uses a small store-only writer in this page, not a server
-          archive. <strong>Export this image as PNG</strong> applies only to that checked
-          PNG and uses no byte target; unchecked images keep the batch format.
+          archive. <strong>Format for this image</strong> offers Use batch, PNG, JPEG or
+          WebP for that row only; Use batch follows the batch format. A PNG row is
+          lossless and uses no byte target. A JPEG row is flattened onto the chosen
+          matte. WebP is unavailable when this browser cannot encode it, and a format
+          mismatch is reported rather than saved under another name.
           <strong> Long edge for this image</strong> resizes only that row; leave it blank
           to follow the batch resize. <strong>Quality for this image</strong> sets a whole
           percent from {IMAGE_QUALITY_MIN_PERCENT} to {IMAGE_QUALITY_MAX_PERCENT} for that
-          row only. Leave it blank to follow the batch quality. It applies to JPEG and
-          WebP when the target size is blank. <strong>Crop aspect for this image</strong> changes
+          row only. Leave it blank to follow the batch quality. It applies when that row's
+          format is JPEG or WebP and no byte target is set. <strong>Crop aspect for this image</strong> changes
           only that row; <strong>Use batch</strong> follows the batch aspect.
           <strong> Crop position for this image</strong> overrides the shared position for
           that row while its effective aspect is not Original; <strong>Use batch</strong>

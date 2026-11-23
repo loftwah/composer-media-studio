@@ -11,6 +11,7 @@ import {
   IMAGE_RECEIPT_VERSION,
   buildImageReceipt,
 } from "../src/frontend/image-receipt.ts";
+import { extensionForImageMime } from "../src/frontend/image-ops.ts";
 
 const SOURCE_HASH = "d".repeat(64);
 
@@ -262,5 +263,247 @@ test("JPEG and WebP quality overrides apply to one row while PNG and byte target
       assert.equal(imageQualityIsValid(invalid), false);
       assert.equal(row(invalid), batch);
     }
+  }
+});
+
+test("a blank per-row format keeps the exact batch object", () => {
+  for (const format of ["png", "jpeg", "webp"]) {
+    const settings = batchSettings({
+      format,
+      targetKiB: format === "png" ? null : 120,
+    });
+    assert.equal(
+      settingsForImage(
+        settings,
+        "image/jpeg",
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ),
+      settings,
+    );
+  }
+});
+
+test("each row can choose PNG, JPEG or WebP without changing the batch", () => {
+  const settings = batchSettings({ format: "jpeg", targetKiB: null });
+  for (const format of ["png", "jpeg", "webp"]) {
+    const effective = settingsForImage(
+      settings,
+      "image/png",
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      format,
+    );
+    assert.equal(effective.format, format);
+    assert.equal(settings.format, "jpeg", "the batch format is unchanged");
+    if (format === "png") assert.equal(effective.targetKiB, null);
+    else assert.equal(effective.targetKiB, settings.targetKiB);
+  }
+
+  const original = JSON.stringify(settings);
+  const row = settingsForImage(
+    settings,
+    "image/png",
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "webp",
+  );
+  assert.equal(row.format, "webp");
+  assert.equal(
+    settingsForImage(settings, "image/png", false, undefined, undefined, undefined, undefined, undefined),
+    settings,
+    "Use batch restores the exact batch settings",
+  );
+  assert.equal(JSON.stringify(settings), original);
+});
+
+test("a PNG row has no byte target while a lossy row keeps a lossy batch target", () => {
+  const lossy = batchSettings({ format: "jpeg", targetKiB: 120 });
+  const pngRow = settingsForImage(
+    lossy,
+    "image/jpeg",
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "png",
+  );
+  assert.equal(pngRow.format, "png");
+  assert.equal(pngRow.targetKiB, null);
+
+  for (const format of ["jpeg", "webp"]) {
+    const lossyRow = settingsForImage(
+      lossy,
+      "image/jpeg",
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      format,
+    );
+    assert.equal(lossyRow.format, format);
+    assert.equal(lossyRow.targetKiB, 120, "a lossy batch target still applies");
+  }
+});
+
+test("a lossy row in a PNG batch does not revive a stale hidden target", () => {
+  for (const format of ["jpeg", "webp"]) {
+    const clean = batchSettings({ format: "png", targetKiB: null });
+    const cleanRow = settingsForImage(
+      clean,
+      "image/png",
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      format,
+    );
+    assert.equal(cleanRow.format, format);
+    assert.equal(cleanRow.targetKiB, null);
+
+    const stale = batchSettings({ format: "png", targetKiB: 120 });
+    const staleRow = settingsForImage(
+      stale,
+      "image/png",
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      format,
+    );
+    assert.equal(staleRow.format, format);
+    assert.equal(staleRow.targetKiB, null, "the hidden target stays out of the row");
+    assert.equal(stale.targetKiB, 120, "the batch object is untouched");
+  }
+});
+
+test("per-row quality applies to a lossy format override and is ignored for PNG", () => {
+  const pngBatch = batchSettings({ format: "png", targetKiB: null, quality: 0.9 });
+  const jpegRow = settingsForImage(
+    pngBatch,
+    "image/png",
+    false,
+    undefined,
+    undefined,
+    undefined,
+    70,
+    "jpeg",
+  );
+  assert.equal(jpegRow.format, "jpeg");
+  assert.equal(jpegRow.targetKiB, null);
+  assert.equal(jpegRow.quality, 0.7);
+
+  const pngRow = settingsForImage(
+    pngBatch,
+    "image/png",
+    false,
+    undefined,
+    undefined,
+    undefined,
+    70,
+    "png",
+  );
+  assert.equal(pngRow.quality, 0.9, "lossless PNG keeps the batch quality value unused");
+
+  const target = batchSettings({ format: "jpeg", targetKiB: 120 });
+  const targeted = settingsForImage(
+    target,
+    "image/jpeg",
+    false,
+    undefined,
+    undefined,
+    undefined,
+    70,
+    "webp",
+  );
+  assert.equal(targeted.quality, target.quality, "a byte target keeps its own search");
+});
+
+test("the older PNG flag still works and an explicit row format wins", () => {
+  const batch = batchSettings({ format: "jpeg" });
+  const png = settingsForImage(batch, "image/png", true);
+  assert.equal(png.format, "png");
+  assert.equal(png.targetKiB, null);
+
+  const explicit = settingsForImage(
+    batch,
+    "image/png",
+    true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "webp",
+  );
+  assert.equal(explicit.format, "webp");
+  assert.equal(explicit.targetKiB, 120);
+});
+
+test("the row format composes with its own long edge, crop and quality", () => {
+  const settings = batchSettings({ format: "jpeg", targetKiB: null });
+  const effective = settingsForImage(
+    settings,
+    "image/jpeg",
+    false,
+    640,
+    "square",
+    "top",
+    70,
+    "webp",
+  );
+  assert.equal(effective.format, "webp");
+  assert.equal(effective.longEdge, 640);
+  assert.equal(effective.resizeMode, "long-edge");
+  assert.equal(effective.cropAspect, "square");
+  assert.equal(effective.cropAnchor, "top");
+  assert.equal(effective.quality, 0.7);
+  assert.equal(settings.longEdge, 1600);
+  assert.equal(settings.cropAspect, "original");
+});
+
+test("a per-row format result keeps the v1 receipt and its exact MIME extension", () => {
+  const settings = batchSettings({ format: "jpeg" });
+  for (const [format, mime, extension] of [
+    ["png", "image/png", "png"],
+    ["jpeg", "image/jpeg", "jpg"],
+    ["webp", "image/webp", "webp"],
+  ]) {
+    const row = settingsForImage(
+      settings,
+      "image/png",
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      format,
+    );
+    const receipt = buildImageReceipt(receiptInput(row, { mime }));
+
+    assert.equal(IMAGE_RECEIPT_VERSION, 1);
+    assert.equal(receipt.version, 1);
+    assert.deepEqual(
+      Object.keys(receipt.transform.settings),
+      Object.keys(buildImageReceipt(receiptInput(settings, { mime: "image/jpeg" })).transform.settings),
+      "the row format adds no receipt setting",
+    );
+    assert.equal(receipt.transform.settings.format, format);
+    assert.equal(receipt.output.mime, mime);
+    assert.equal(extensionForImageMime(receipt.output.mime), extension);
+    assert.equal(receipt.transform.settings.targetKiB, format === "png" ? null : 120);
   }
 });
