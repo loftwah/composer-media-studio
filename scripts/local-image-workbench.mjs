@@ -102,7 +102,7 @@ export async function runLocalImages(source, run) {
       return route.abort();
     });
     await page.goto(origin);
-    await page.locator(".image-drop input[type=file]").setInputFiles(localSelections(source));
+    await page.locator(".image-drop input[type=file][multiple]").setInputFiles(localSelections(source));
     const result = await run(page);
     assert.equal(blocked, 0, "The workbench tried to access an unexpected resource.");
     return { browser: browser.version(), ...result, networkRequestsPassedThrough: 0 };
