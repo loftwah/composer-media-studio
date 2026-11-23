@@ -6,11 +6,15 @@ import {
   MAX_MANUAL_CAPTION_CUES,
   appendManualClipCue,
   canMergeClipDraftCues,
+  canSplitClipDraftCue,
+  clipCueSplitParts,
+  defaultClipCueSplit,
   manualCaptionSourceName,
   manualCaptionTrackVtt,
   mergeClipDraftCues,
   removeClipDraftCue,
   replaceClipDraftCue,
+  splitClipDraftCue,
 } from '../src/frontend/clip-manual-cue.ts';
 
 const cue = (startMs, endMs, text = 'Line') => ({ startMs, endMs, text, speaker: '' });
@@ -18,6 +22,8 @@ const add = (cues, text, startSeconds, endSeconds, durationMs = 10_000) =>
   appendManualClipCue(cues, { text, startSeconds, endSeconds }, durationMs);
 const replace = (cues, sourceIndex, text, startSeconds, endSeconds, durationMs = 10_000) =>
   replaceClipDraftCue(cues, sourceIndex, { text, startSeconds, endSeconds }, durationMs);
+const split = (cues, sourceIndex, atSeconds, wordBoundary, durationMs = 10_000) =>
+  splitClipDraftCue(cues, sourceIndex, { atSeconds, wordBoundary }, durationMs);
 const accepted = result => {
   assert.ok(!('problem' in result), result.problem);
   return result.cues;
@@ -254,6 +260,104 @@ test('an invalid or stale edit is refused without changing the cue list', () => 
   // The 64 KB edited-track bound still applies to a replacement.
   const multibyte = full.slice(0, 80).map(item => ({ ...item, text: '界'.repeat(300) }));
   assert.match(problem(replace(multibyte, 0, '界'.repeat(300), '0', '1', 100_000)), /64 KB/);
+  assert.deepEqual(cues, snapshot);
+});
+
+test('splitting one cue uses the entered original-video time and chosen word boundary', () => {
+  const before = cue(500, 900, 'Before');
+  const selected = { startMs: 1000, endMs: 4000, text: 'Hello bright world', speaker: 'Singer' };
+  const after = cue(5000, 6000, 'After');
+  const cues = [before, selected, after];
+  const snapshot = structuredClone(cues);
+  const next = accepted(split(cues, 1, '2.250', 1));
+  assert.deepEqual(next, [
+    before,
+    { startMs: 1000, endMs: 2250, text: 'Hello', speaker: 'Singer' },
+    { startMs: 2250, endMs: 4000, text: 'bright world', speaker: 'Singer' },
+    after,
+  ]);
+  // The exact edited track is the canonical full-source VTT used for its digest.
+  assert.equal(manualCaptionTrackVtt(next),
+    'WEBVTT\n\n00:00.500 --> 00:00.900\nBefore\n\n00:01.000 --> 00:02.250\nHello\n\n00:02.250 --> 00:04.000\nbright world\n\n00:05.000 --> 00:06.000\nAfter\n');
+  // Atomic: the caller's draft and the selected cue are unchanged.
+  assert.deepEqual(cues, snapshot);
+  assert.equal(selected.text, 'Hello bright world');
+  // The other interior boundary keeps the same outer start and end.
+  assert.deepEqual(accepted(split(cues, 1, '2.250', 2)).slice(1, 3), [
+    { startMs: 1000, endMs: 2250, text: 'Hello bright', speaker: 'Singer' },
+    { startMs: 2250, endMs: 4000, text: 'world', speaker: 'Singer' },
+  ]);
+});
+
+test('split defaults are only offered for a real multi-word cue', () => {
+  const selected = { startMs: 1000, endMs: 4501, text: 'Hello, bright world!', speaker: 'Singer' };
+  assert.deepEqual(defaultClipCueSplit(selected), { atSeconds: '2.750', wordBoundary: 2 });
+  assert.equal(canSplitClipDraftCue(selected), true);
+  assert.equal(canSplitClipDraftCue({ ...selected, text: 'Single' }), false);
+  assert.equal(canSplitClipDraftCue({ ...selected, text: '   ' }), false);
+  assert.equal(canSplitClipDraftCue({ ...selected, endMs: 1001 }), false);
+  assert.equal(canSplitClipDraftCue(null), false);
+  assert.equal(canSplitClipDraftCue(undefined), false);
+  // Only the chosen whitespace divides the words; the exact parts stay intact.
+  assert.deepEqual(clipCueSplitParts('Hello  bright world', 1), { first: 'Hello', second: 'bright world' });
+  assert.equal(clipCueSplitParts('Hello  bright world', 0), null);
+  assert.equal(clipCueSplitParts('Hello  bright world', 3), null);
+});
+
+test('a split keeps cues hidden by the trim and the same offset projection', () => {
+  const before = cue(500, 900, 'Before');
+  const selected = { startMs: 3000, endMs: 5000, text: 'Hello bright world', speaker: '' };
+  const after = cue(9000, 9800, 'After');
+  const cues = [before, selected, after];
+  const next = accepted(split(cues, 1, '4.000', 1));
+  assert.deepEqual(next, [
+    before,
+    { startMs: 3000, endMs: 4000, text: 'Hello', speaker: '' },
+    { startMs: 4000, endMs: 5000, text: 'bright world', speaker: '' },
+    after,
+  ]);
+  // Untouched cues keep their original times, so the selected trim and offset
+  // still project the split pair into the same review window.
+  assert.deepEqual(clipCaptionCues(next, 2, 7, 500), [
+    { from: 1500, to: 2500, sourceStartMs: 3500, text: 'Hello', sourceIndex: 1 },
+    { from: 2500, to: 3500, sourceStartMs: 4500, text: 'bright world', sourceIndex: 2 },
+  ]);
+});
+
+test('a split refuses an invalid time, boundary, count, overlap or size without changing the draft', () => {
+  const selected = { startMs: 1000, endMs: 4000, text: 'Hello bright world', speaker: '' };
+  const cues = [cue(0, 900, 'Before'), selected, cue(5000, 6000, 'After')];
+  const snapshot = structuredClone(cues);
+  assert.match(problem(split(cues, 1, '', 1)), /three decimal places/);
+  assert.match(problem(split(cues, 1, 'abc', 1)), /three decimal places/);
+  assert.match(problem(split(cues, 1, '1.2345', 1)), /three decimal places/);
+  assert.match(problem(split(cues, 1, '10.001', 1)), /within this video/);
+  // The entered time must be strictly inside the cue, not at either edge.
+  assert.match(problem(split(cues, 1, '1', 1)), /after the cue start and before its end/);
+  assert.match(problem(split(cues, 1, '4', 1)), /after the cue start and before its end/);
+  assert.match(problem(split(cues, 1, '0.5', 1)), /after the cue start and before its end/);
+  assert.match(problem(split(cues, 1, '2', 0)), /between two words/);
+  assert.match(problem(split(cues, 1, '2', 3)), /between two words/);
+  assert.match(problem(split(cues, 1, '2', 1.5)), /between two words/);
+  assert.match(problem(split([cue(0, 1000, 'Single')], 0, '0.5', 1)), /between two words/);
+  assert.equal(problem(split([{ ...selected, startMs: 0, endMs: 2000, text: 'Two\u0000words' }], 0, '1', 1)),
+    'Use plain text up to 300 characters without control characters.');
+  for (const index of [-1, cues.length, 1.5])
+    assert.match(problem(split(cues, index, '2', 1)), /no longer in this draft/);
+  assert.match(problem(split(cues, 1, '2', 1, 0)), /no usable duration/);
+  const full = [
+    { startMs: 0, endMs: 1000, text: 'Two words', speaker: '' },
+    ...Array.from({ length: 99 }, (_, index) => cue((index + 1) * 1000, (index + 2) * 1000)),
+  ];
+  assert.match(problem(split(full, 0, '0.5', 1, 100_000)), /already has 100 cues/);
+  // A final track that would overlap is still read back through the importer.
+  const overlapping = [cue(0, 3000, 'Hello bright'), cue(2000, 4000, 'Other')];
+  assert.match(problem(split(overlapping, 0, '1', 1)), /overlaps another cue/);
+  // The 64 KB edited-track bound applies even though each text part is short.
+  const bulky = Array.from({ length: 90 }, (_, index) =>
+    cue(index * 2000, (index + 1) * 2000, '界'.repeat(300)))
+    .map((item, index) => index === 0 ? { ...item, text: `${'界'.repeat(149)} ${'界'.repeat(149)}` } : item);
+  assert.match(problem(split(bulky, 0, '1', 1, 200_000)), /64 KB/);
   assert.deepEqual(cues, snapshot);
 });
 

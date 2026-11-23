@@ -17,3 +17,11 @@
 .trim-cue-edit, .trim-cue-merge, .trim-cue-remove { align-self:stretch; }
 .trim-cue-time { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .trim-cue-text { overflow-wrap:anywhere; }
+@media (max-width:600px) {
+  .trim-cue-jump { grid-template-columns:minmax(0,1fr); gap:.25rem; align-content:start; }
+  .trim-cue-time { white-space:normal; overflow-wrap:anywhere; }
+}
+.trim-cue-split { border-top:1px solid var(--line); padding-top:.75rem; }
+.trim-cue-split > summary { cursor:pointer; font-weight:700; min-height:44px; align-content:center; }
+.trim-cue-split[open] > summary { margin-bottom:.4rem; }
+.trim-cue-split-preview { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
