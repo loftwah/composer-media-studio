@@ -296,7 +296,7 @@ type ListFocus =
   | { kind: "row-action"; id: string; offset: -1 | 1 }
   | { kind: "picker" };
 
-type ContactSheet = { url: string; layoutUrl: string; count: number; columns: number; tileSize: number; width: number; height: number; mode: SheetMode };
+type ContactSheet = { url: string; blob: Blob; layoutUrl: string; count: number; columns: number; tileSize: number; width: number; height: number; mode: SheetMode };
 type SheetMode = "contact-sheet" | "sprite-atlas";
 
 const DEFAULT_SETTINGS: Settings = {
@@ -1007,6 +1007,7 @@ function Images() {
     trigger: HTMLButtonElement;
   } | null>(null);
   const [outputCopy, setOutputCopy] = useState<{ key: string; message: string } | null>(null);
+  const [sheetCopy, setSheetCopy] = useState<{ key: string; message: string } | null>(null);
   const [outputHashFallback, setOutputHashFallback] = useState<{
     key: string;
     hash: string;
@@ -1048,6 +1049,7 @@ function Images() {
   const pickCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragIdRef = useRef("");
   const latestOutputCopy = useRef(0);
+  const latestSheetCopy = useRef(0);
   const latestSnippetCopy = useRef(0);
   const snippetField = useRef<HTMLTextAreaElement>(null);
   const latestPaletteCopy = useRef(0);
@@ -1055,6 +1057,7 @@ function Images() {
   const paletteCopyTextareaField = useRef<HTMLTextAreaElement>(null);
   const outputHashFallbackField = useRef<HTMLInputElement>(null);
   const currentOutputKey = useRef("");
+  const currentSheetKey = useRef("");
   const alphaRevision = useRef(0);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
@@ -1116,6 +1119,13 @@ function Images() {
     currentOutputKey.current = outputResultKey;
     latestOutputCopy.current += 1;
   }, [outputResultKey]);
+  // Copy feedback belongs to one exact sheet blob. Replacing the sheet or
+  // clearing the batch retires any in-flight message for the earlier PNG.
+  const sheetKey = contactSheet?.url ?? "";
+  useLayoutEffect(() => {
+    currentSheetKey.current = sheetKey;
+    latestSheetCopy.current += 1;
+  }, [sheetKey]);
   // An alpha profile belongs to one exact finished result. Selecting another
   // row or regenerating can never leave an earlier result's counts on screen.
   const visibleAlpha =
@@ -1267,6 +1277,8 @@ function Images() {
 
   function clearBatchExports(): void {
     batchExportRevision.current += 1;
+    latestSheetCopy.current += 1;
+    setSheetCopy(null);
     const nextMessage = zipBusy ? "The batch changed. Prepare the ZIP again." :
       sheetBusy ? `The batch changed. Make the ${sheetMode === "sprite-atlas" ? "sprite atlas" : "contact sheet"} again.` : "";
     setBatchMessage(nextMessage);
@@ -2001,6 +2013,7 @@ function Images() {
       releaseUrl(contactSheet?.layoutUrl);
       setContactSheet({
         url,
+        blob,
         layoutUrl,
         count: layout.count,
         columns: layout.columns,
@@ -2510,6 +2523,31 @@ function Images() {
       report("PNG copied.");
     } catch {
       report("Could not copy the PNG. Use Download PNG instead.");
+    }
+  }
+
+  // One action for both prepared sheets: the exact encoded PNG blob held for
+  // the current download also goes to the clipboard, with no re-encode.
+  function sheetCopyAttemptFor(key: string) {
+    const attempt = ++latestSheetCopy.current;
+    const stillCurrent = () =>
+      attempt === latestSheetCopy.current && key === currentSheetKey.current;
+    const report = (message: string) => {
+      if (stillCurrent()) setSheetCopy({ key, message });
+    };
+    return { report, stillCurrent };
+  }
+
+  async function copySheetPng(): Promise<void> {
+    const sheet = contactSheet;
+    if (!sheet || !canCopyPng) return;
+    const { report } = sheetCopyAttemptFor(sheet.url);
+    try {
+      const png = new window.ClipboardItem({ "image/png": sheet.blob });
+      await navigator.clipboard.write([png]);
+      report("PNG copied.");
+    } catch {
+      report(`Could not copy the PNG. Use Download ${sheet.mode === "sprite-atlas" ? "sprite atlas" : "contact sheet"} PNG instead.`);
     }
   }
 
@@ -4355,7 +4393,19 @@ function Images() {
               </a>
             </>
           )}
+          {contactSheet && canCopyPng && (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => void copySheetPng()}
+            >
+              Copy PNG
+            </button>
+          )}
         </div>
+        {sheetCopy?.key === sheetKey && (
+          <p className="image-status" role="status" aria-live="polite">{sheetCopy.message}</p>
+        )}
         <p className="image-status" role="status" aria-live="polite">{batchMessage}</p>
         {contactSheet && (
           <>
