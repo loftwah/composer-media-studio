@@ -95,6 +95,22 @@
   justify-self: start;
 }
 
+/* A finished Image Tools result is only offered here; the pair changes after
+   the explicit button, never from the surrounding selection or a new result. */
+.title-compare-prepared {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.title-compare-prepared button {
+  justify-self: start;
+}
+
+.title-compare-prepared .trim-note,
+.title-compare-prepared .notice {
+  margin: 0;
+}
+
 /* Feed previews. The sizes are the claim, so the row box is fixed pixels and
    the card box scales with the column without ever exceeding 640 × 360. */
 

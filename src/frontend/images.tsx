@@ -124,7 +124,7 @@ import {
   type ComposerArtworkRef,
 } from "./composer-artwork.ts";
 import { ImageCover } from "./image-cover.tsx";
-import { TitleCompare } from "./image-title-compare.tsx";
+import { TitleCompare, type PreparedTitleImage } from "./image-title-compare.tsx";
 import {
   SOCIAL_KIT_FORMATS,
   SOCIAL_POST_LIMITS,
@@ -1258,6 +1258,19 @@ function Images() {
   const imageReceiptHref = imageReceipt
     ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(imageReceipt))}`
     : "";
+  // The exact finished result is offered to the packaging compare below. It is
+  // only an offer: TitleCompare changes a pair after the creator's explicit
+  // Use prepared image action, with no re-encode, upload or automatic replace.
+  const preparedTitleImage: PreparedTitleImage | null = selected?.result
+    ? {
+        blob: selected.result.blob,
+        filename: renderedFileName(selected.file.name, selected.result),
+        mime: selected.result.mime,
+        bytes: selected.result.bytes,
+        width: selected.result.width,
+        height: selected.result.height,
+      }
+    : null;
 
   function trackUrl(blob: Blob): string {
     const url = URL.createObjectURL(blob);
@@ -4681,7 +4694,7 @@ function Images() {
         </p>
       </section>
 
-      <TitleCompare />
+      <TitleCompare preparedImage={preparedTitleImage} />
     </main>
   );
 }

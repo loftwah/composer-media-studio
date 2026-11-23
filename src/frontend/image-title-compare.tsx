@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   IMAGE_ACCEPT_ATTRIBUTE,
+  MAX_IMAGE_INPUT_BYTES,
   imageInputProblem,
   imagePixelProblem,
 } from "./image-limits.ts";
@@ -74,6 +75,19 @@ type PreparedPair = {
   image: PairImage;
 };
 
+/** A finished Image Tools result the creator can explicitly use as one pair's
+ * thumbnail. The blob is the exact encoded result; the handoff only wraps it
+ * in a File with its safe output name, so no canvas or provider step runs. */
+export type PreparedTitleImage = {
+  blob: Blob;
+  /** The safe output/download name of the finished result. */
+  filename: string;
+  mime: string;
+  bytes: number;
+  width: number;
+  height: number;
+};
+
 type ExportEntry = {
   kind: "png" | "manifest" | "bundle" | "set";
   url: string;
@@ -116,7 +130,11 @@ function sameTitleClips(current: TitleClipState, next: TitleClipState): boolean 
   );
 }
 
-export function TitleCompare() {
+export function TitleCompare({
+  preparedImage = null,
+}: {
+  preparedImage?: PreparedTitleImage | null;
+}) {
   const [pairs, setPairs] = useState<Pair[]>(() => PAIR_IDS.map(emptyPair));
   const [selectedId, setSelectedId] = useState<PairId>("a");
   /** The package preference is deliberately separate from the preview
@@ -321,8 +339,7 @@ export function TitleCompare() {
         );
       }
       if (!current()) return;
-      // The pair now points at different pixels, so a preference for this
-      // index must not silently follow the replaced artefact.
+      // A new thumbnail needs its own preference decision.
       clearPreferenceFor(index);
       discardExports();
       const previous = pairs[index].image;
@@ -344,6 +361,19 @@ export function TitleCompare() {
     } catch (error) {
       fail(error instanceof Error ? error.message : "Could not read this image.");
     }
+  }
+
+  /** Use the finished Image Tools result as this pair's thumbnail through the
+   * same intake a picked file uses: declared facts, byte sniff, header
+   * inspect, pixel limits, decoder probe, run guard and URL ownership all stay
+   * in chooseImage. The File carries the exact blob bytes and its safe output
+   * name; nothing here re-encodes, uploads or saves. */
+  function usePreparedImage(index: number): void {
+    if (!preparedImage || preparedImage.bytes > MAX_IMAGE_INPUT_BYTES) return;
+    const file = new File([preparedImage.blob], preparedImage.filename, {
+      type: preparedImage.mime || preparedImage.blob.type,
+    });
+    void chooseImage(index, file);
   }
 
   function removeImage(index: number): void {
@@ -638,6 +668,8 @@ export function TitleCompare() {
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
   const prepared = readyPairs();
   const preparedCount = prepared.length;
+  const preparedImageTooLarge =
+    preparedImage !== null && preparedImage.bytes > MAX_IMAGE_INPUT_BYTES;
   const preferredForSet = preferredPairForExport(
     preferredId,
     prepared.map((pair) => pair.id),
@@ -685,6 +717,15 @@ export function TitleCompare() {
               ))}
             </select>
           </label>
+          {preparedImage && (
+            <p
+              className="trim-note title-compare-prepared-offer"
+              id="title-compare-prepared-offer"
+              data-title-compare-prepared-offer
+            >
+              {`Prepared image: ${preparedImage.filename} · ${preparedImage.width} × ${preparedImage.height} px · ${formatBytes(preparedImage.bytes)}`}
+            </p>
+          )}
           {PAIR_IDS.map((id) => {
             const index = PAIR_IDS.indexOf(id);
             const pair = pairs[index];
@@ -765,6 +806,44 @@ export function TitleCompare() {
                 </label>
                 {pair.error && (
                   <p className="notice warn" role="alert">{pair.error}</p>
+                )}
+                {isSelected && preparedImage && (
+                  <div className="title-compare-prepared" data-title-compare-prepared-pair={id}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      data-title-compare-prepared-use={id}
+                      disabled={pair.busy || preparedImageTooLarge}
+                      aria-disabled={pair.busy || preparedImageTooLarge}
+                      aria-describedby={[
+                        "title-compare-prepared-offer",
+                        ...(pair.image ? [`title-compare-prepared-replace-${id}`] : []),
+                        ...(preparedImageTooLarge ? [`title-compare-prepared-too-large-${id}`] : []),
+                      ].join(" ")}
+                      onClick={() => usePreparedImage(index)}
+                    >
+                      {pair.image
+                        ? `Use prepared image for Pair ${PAIR_LABELS[id]} (replaces current thumbnail)`
+                        : `Use prepared image for Pair ${PAIR_LABELS[id]}`}
+                    </button>
+                    {pair.image && (
+                      <p
+                        className="trim-note title-compare-prepared-replace"
+                        id={`title-compare-prepared-replace-${id}`}
+                      >
+                        {`Replaces ${pair.image.fileName}.${isPreferred ? " Replacing the thumbnail clears this pair’s preference." : ""}`}
+                      </p>
+                    )}
+                    {preparedImageTooLarge && (
+                      <p
+                        className="notice warn"
+                        id={`title-compare-prepared-too-large-${id}`}
+                        role="alert"
+                      >
+                        {`This finished result is ${formatBytes(preparedImage.bytes)}. A thumbnail input must be ${formatBytes(MAX_IMAGE_INPUT_BYTES)} or smaller.`}
+                      </p>
+                    )}
+                  </div>
                 )}
                 {pair.image && (
                   <button
