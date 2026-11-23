@@ -367,7 +367,12 @@ function VideoClip() {
       } : null);
       setResult(URL.createObjectURL(blob));
       setApplied({ settings: draft, captions: captionDraft, captionOffsetMs });
-      setMessage("Your MP4 is ready to play and save.");
+      // Imported captions whose cues all sit outside the trim produce a null VTT.
+      // Keep the usual success wording unless the creator supplied captions that
+      // this clip could not include, then point them at the offset/trim controls.
+      setMessage(captionDraft && !captions?.vtt
+        ? "Your MP4 is ready to play and save. No imported cues fall inside this clip. Change the caption offset or trim and make the MP4 again to include cues."
+        : "Your MP4 is ready to play and save.");
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Could not make the video on this device.";
       if (error instanceof Error && (error.name === "ConversionCanceledError" || error.name === "AbortError")) {
