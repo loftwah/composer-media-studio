@@ -15,6 +15,7 @@ import { inspectImage, sniffLocalImage, type ImageMetadataSummary } from "./imag
 import { CROP_ANCHOR_LABELS, type CropAnchorKey } from "./image-ops.ts";
 import {
   FEED_SIZES,
+  NOTE_MAX_LENGTH,
   PAIR_IDS,
   PAIR_LABELS,
   TITLE_MAX_LENGTH,
@@ -56,16 +57,19 @@ type PairImage = {
 
 type Pair = {
   title: string;
+  /** Optional browser-local creator note. Written only into the manifest. */
+  note: string;
   image: PairImage | null;
   error: string | null;
   busy: boolean;
 };
 
-/** A pair captured for the set export: the exact title and local image the
- * run will encode, taken before the first await. */
+/** A pair captured for the set export: the exact title, note and local image
+ * the run will encode, taken before the first await. */
 type PreparedPair = {
   id: PairId;
   title: string;
+  note: string;
   image: PairImage;
 };
 
@@ -85,7 +89,7 @@ type ExportEntry = {
   preferredPairLabel?: string;
 };
 
-const emptyPair = (): Pair => ({ title: "", image: null, error: null, busy: false });
+const emptyPair = (): Pair => ({ title: "", note: "", image: null, error: null, busy: false });
 
 type TitleClipState = Record<string, boolean>;
 
@@ -232,7 +236,7 @@ export function TitleCompare() {
     return PAIR_IDS.flatMap((id, index) => {
       const pair = pairs[index];
       if (pair.busy || !pair.image || pair.title.trim() === "") return [];
-      return [{ id, title: pair.title, image: pair.image }];
+      return [{ id, title: pair.title, note: pair.note, image: pair.image }];
     });
   }
 
@@ -394,8 +398,10 @@ export function TitleCompare() {
 
   /** The selected pair as a versioned JSON manifest naming the exact cropped
    * PNG this same run encodes — its file name, pixel size and SHA-256 — plus
-   * the exact title and the crop plan. The manifest is built from the bytes
-   * the encode produced, so the hash always describes the PNG it ships with.
+   * the exact title, the crop plan and (when present) the creator note. The
+   * manifest is built from the bytes the encode produced, so the hash always
+   * describes the PNG it ships with. Title and note are captured with the pair
+   * before the first await, so a later edit cannot change this prepared file.
    * No work, rights or performance value is claimed: the manifest carries only
    * what this tab actually captured. */
   async function exportSelectedPairManifest(size: FeedSize): Promise<void> {
@@ -407,6 +413,7 @@ export function TitleCompare() {
     const forPair = selectedId;
     const forAnchor = anchor;
     const title = pair.title;
+    const note = pair.note;
     const current = () => mounted.current && exportRun.current === run;
     setExportBusy(true);
     setExportMessage("");
@@ -420,6 +427,7 @@ export function TitleCompare() {
         generatedAt: new Date().toISOString(),
         pairId: forPair,
         title,
+        note,
         source: {
           fileName: image.fileName,
           mime: image.mime,
@@ -497,13 +505,14 @@ export function TitleCompare() {
   }
 
   /** Every titled pair with a local thumbnail — at least two, at most the
-   * three this section holds — in one flat ZIP. The titles, image facts and
-   * crop anchor are captured before the first encode, so a later edit cannot
-   * relabel the package. Each pair reuses the single-pair card encode, manifest
-   * builder, SHA-256 and store-only ZIP writer; its prefixed entry names keep
-   * same-title pairs distinct, and each manifest names and hashes the exact
-   * PNG bytes the archive stores. The preference is captured with the same
-   * snapshot and written only if that pair is actually in this archive. */
+   * three this section holds — in one flat ZIP. The titles, creator notes,
+   * image facts and crop anchor are captured before the first encode, so a
+   * later edit cannot relabel the package. Each pair reuses the single-pair
+   * card encode, manifest builder, SHA-256 and store-only ZIP writer; its
+   * prefixed entry names keep same-title pairs distinct, and each manifest
+   * names and hashes the exact PNG bytes the archive stores and carries only
+   * that pair's note. The preference is captured with the same snapshot and
+   * written only if that pair is actually in this archive. */
   async function exportPreparedPairs(): Promise<void> {
     const size = FEED_SIZES[1];
     const forAnchor = anchor;
@@ -534,6 +543,7 @@ export function TitleCompare() {
           generatedAt,
           pairId: prepared.id,
           title: prepared.title,
+          note: prepared.note,
           source: {
             fileName: image.fileName,
             mime: image.mime,
@@ -643,7 +653,9 @@ export function TitleCompare() {
         them, and thumbnails show the real cover crop at the chosen position.
         Nothing is uploaded, and the arrow keys switch the compared pair. A
         complete pair can be marked preferred for the prepared-set manifests
-        without changing which pair is compared or exported.
+        without changing which pair is compared or exported. An optional
+        creator note stays with its pair and is written only into that pair's
+        exported manifest.
       </p>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
@@ -697,6 +709,16 @@ export function TitleCompare() {
                     maxLength={TITLE_MAX_LENGTH}
                     placeholder={`Title for combination ${PAIR_LABELS[id]}`}
                     onChange={(event) => updateTitle(index, event.target.value)}
+                  />
+                </label>
+                <label className="title-compare-note">
+                  Creator note {PAIR_LABELS[id]} (optional)
+                  <textarea
+                    value={pair.note}
+                    maxLength={NOTE_MAX_LENGTH}
+                    rows={2}
+                    spellCheck={false}
+                    onChange={(event) => setPair(index, { note: event.target.value })}
                   />
                 </label>
                 <label
@@ -906,7 +928,7 @@ export function TitleCompare() {
       )}
       <p className="trim-note" role="status" aria-live="polite">
         {exportMessage ||
-          "Exports use the workbench's local encode and download path. The PNG contains the cropped thumbnail pixels only; the manifest names the exact PNG it was encoded with — file name, pixel size and SHA-256 — plus the title and crop. The manifest export also offers one ZIP of that same PNG and JSON. Nothing is uploaded."}
+          "Exports use the workbench's local encode and download path. The PNG contains the cropped thumbnail pixels only; the manifest names the exact PNG it was encoded with — file name, pixel size and SHA-256 — plus the title, crop and any creator note. The manifest export also offers one ZIP of that same PNG and JSON. Nothing is uploaded."}
       </p>
       {exports.map((entry) => (
         <p className="title-compare-export" key={entry.url}>

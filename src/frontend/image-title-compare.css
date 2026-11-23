@@ -21,6 +21,18 @@
   max-width: 14rem;
 }
 
+/* The optional creator note is plain text scoped to one pair. The workbench
+   tokens already cover focus, contrast and resizing; this only sizes the box. */
+.title-compare-note {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.title-compare-note textarea {
+  width: 100%;
+  min-height: 4rem;
+}
+
 .title-compare-pair {
   display: grid;
   gap: 0.75rem;

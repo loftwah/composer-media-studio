@@ -26,6 +26,32 @@ export type FeedSize = (typeof FEED_SIZES)[number];
 
 export const TITLE_MAX_LENGTH = 200;
 
+/** Creator notes are optional, bounded plain text. This is the exact cap used
+ * by the pair editor and enforced again before a note reaches a manifest, so a
+ * note can never make the exported JSON unbounded. */
+export const NOTE_MAX_LENGTH = 240;
+
+/**
+ * Normalise a raw note to bounded plain text: CRLF becomes LF, C0/C1 controls
+ * and DEL are dropped, the text is trimmed and finally capped. Empty or
+ * whitespace-only input yields `undefined`, so an absent note adds no field to
+ * the manifest — the same rule preferredPairId uses.
+ */
+export function normalizeCreatorNote(
+  raw: string,
+  maxLength: number = NOTE_MAX_LENGTH,
+): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const cleaned = raw
+    .replace(/\r\n?/g, "\n")
+    // Deliberately strip control characters from free text; newlines survive.
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+    .trim()
+    .slice(0, maxLength)
+    .trimEnd();
+  return cleaned === "" ? undefined : cleaned;
+}
+
 export type CoverRect = { left: number; top: number; width: number; height: number };
 
 function anchorFractions(anchor: CropAnchorKey): { x: number; y: number } {
@@ -118,6 +144,9 @@ export type TitlePairManifest = {
   /** Additive V1 metadata: present only when a prepared-set snapshot shows a
    * preference and that pair is in the set it names. */
   preferredPairId?: PairId;
+  /** Additive V1 metadata, like preferredPairId: present only when the captured
+   * pair carried a nonempty creator note. Bounded plain text, browser-local. */
+  note?: string;
   title: { text: string; maxLength: number };
   source: ManifestSourceFacts;
   crop: { mode: "cover"; anchor: CropAnchorKey; sourceRect: CoverRect };
@@ -145,7 +174,11 @@ export function buildTitlePairManifest(input: {
   /** Omit it when no pair is preferred, so older releases' manifest shape and
    * bytes stay unchanged. */
   preferredPairId?: PairId;
+  /** Omit it when the pair has no note, so no-note manifest bytes stay exactly
+   * as they were before this optional field existed. */
+  note?: string;
 }): TitlePairManifest {
+  const note = normalizeCreatorNote(input.note ?? "");
   return {
     schema: MANIFEST_SCHEMA,
     version: MANIFEST_VERSION,
@@ -153,6 +186,7 @@ export function buildTitlePairManifest(input: {
     generator: "Media Studio Image Tools — Title + thumbnail compare (browser-local)",
     pair: { id: input.pairId, label: PAIR_LABELS[input.pairId] },
     ...(input.preferredPairId ? { preferredPairId: input.preferredPairId } : {}),
+    ...(note ? { note } : {}),
     title: { text: input.title, maxLength: TITLE_MAX_LENGTH },
     source: input.source,
     crop: { mode: "cover", anchor: input.anchor, sourceRect: input.sourceRect },

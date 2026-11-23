@@ -8,12 +8,14 @@ import {
   FEED_SIZES,
   MANIFEST_SCHEMA,
   MANIFEST_VERSION,
+  NOTE_MAX_LENGTH,
   TITLE_MAX_LENGTH,
   buildTitlePairManifest,
   bundleFileName,
   coverCropRect,
   exportFileName,
   manifestFileName,
+  normalizeCreatorNote,
   objectPositionFor,
   pairArchiveFileNames,
   preferredPairForExport,
@@ -256,6 +258,70 @@ test("the manifest builder records the captured facts under a versioned schema",
   for (const invented of ["rights", "assetId", "workId", "score", "uplift", "views", "claim"]) {
     assert.ok(!serialized.includes(invented), `the manifest must not invent "${invented}"`);
   }
+});
+
+function noteManifestInput() {
+  return {
+    generatedAt: "2026-11-23T09:00:00.000Z",
+    pairId: "b",
+    title: "Quiet margin",
+    source: { fileName: "still.png", mime: "image/png", bytes: 900, width: 640, height: 360 },
+    anchor: "centre",
+    size: FEED_SIZES[1],
+    sourceRect: { left: 0, top: 0, width: 640, height: 360 },
+    png: { fileName: "Quiet-margin-feed-640x360.png", bytes: 1200, sha256: "b".repeat(64) },
+  };
+}
+
+test("a creator note is bounded plain text and absent when empty", () => {
+  assert.equal(NOTE_MAX_LENGTH, 240);
+  assert.equal(normalizeCreatorNote(""), undefined);
+  assert.equal(normalizeCreatorNote("   \n\t "), undefined);
+  assert.equal(normalizeCreatorNote("  check the safe area  "), "check the safe area");
+  assert.equal(normalizeCreatorNote("line one\r\nline two"), "line one\nline two");
+  // C0/C1 controls and DEL never reach the JSON as invisible bytes.
+  assert.equal(normalizeCreatorNote("a\u0001b\u007fc\u0085d"), "abcd");
+  assert.equal(normalizeCreatorNote("x".repeat(NOTE_MAX_LENGTH + 50))?.length, NOTE_MAX_LENGTH);
+});
+
+test("the manifest carries a bounded note only when one was captured", () => {
+  const base = noteManifestInput();
+  const without = buildTitlePairManifest(base);
+  assert.equal(Object.hasOwn(without, "note"), false);
+  // An empty or whitespace-only note leaves the no-note manifest bytes exact.
+  for (const empty of ["", "   ", "\n\t "]) {
+    assert.equal(JSON.stringify(buildTitlePairManifest({ ...base, note: empty })), JSON.stringify(without));
+  }
+  const withNote = buildTitlePairManifest({ ...base, note: "  Watch the crop on small screens  " });
+  assert.equal(withNote.note, "Watch the crop on small screens");
+  const { note, ...rest } = withNote;
+  assert.deepEqual(rest, without);
+  assert.equal(buildTitlePairManifest({ ...base, note: "x".repeat(NOTE_MAX_LENGTH + 10) }).note?.length, NOTE_MAX_LENGTH);
+  // Additive V1 metadata composes with the existing preference field.
+  const both = buildTitlePairManifest({ ...base, preferredPairId: "a", note: "hello" });
+  assert.equal(both.preferredPairId, "a");
+  assert.equal(both.note, "hello");
+  assert.equal(both.version, MANIFEST_VERSION);
+});
+
+test("each pair editor writes a local note that only reaches its manifest", () => {
+  assert.match(section, /Creator note \{PAIR_LABELS\[id\]\}/);
+  assert.match(section, /<textarea\s+value=\{pair\.note\}\s+maxLength=\{NOTE_MAX_LENGTH\}/);
+  assert.match(section, /onChange=\{\(event\) => updateNote\(index, event\.target\.value\)\}/);
+  assert.match(
+    section,
+    /function updateNote\(index: number, note: string\): void \{\s*setPair\(index, \{ note \}\);\s*\}/,
+  );
+  // Both note and title are captured before either export's first await.
+  assert.match(section, /const title = pair\.title;\s*const note = pair\.note;/);
+  assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, image: pair\.image \}\];/);
+  // The single-pair and prepared-set paths feed their captured note to the
+  // same builder whose bytes are reused unchanged in the package ZIPs.
+  assert.match(section, /pairId: forPair,\s*title,\s*note,\s*source:/);
+  assert.match(section, /pairId: prepared\.id,\s*title: prepared\.title,\s*note: prepared\.note,\s*source:/);
+  // The note never enters the PNG pixels or the clipboard title copy.
+  assert.doesNotMatch(section, /writeText\([^)]*note/);
+  assert.doesNotMatch(section, /context\.[a-z]+\([^)]*note/);
 });
 
 test("the manifest download name is versioned and follows the same stem rules", () => {
