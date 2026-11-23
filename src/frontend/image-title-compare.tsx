@@ -25,11 +25,13 @@ import {
   manifestFileName,
   MANIFEST_VERSION,
   objectPositionFor,
+  pairArchiveFileNames,
+  preparedPairsBundleFileName,
   type CoverRect,
   type FeedSize,
   type PairId,
 } from "./image-title-compare-plan.ts";
-import { createZip, ZIP_MIME } from "./image-zip.ts";
+import { createZip, ZIP_MIME, type ZipEntryInput } from "./image-zip.ts";
 import "./image-title-compare.css";
 
 export type { FeedSizeKey } from "./image-title-compare-plan.ts";
@@ -58,8 +60,16 @@ type Pair = {
   busy: boolean;
 };
 
+/** A pair captured for the set export: the exact title and local image the
+ * run will encode, taken before the first await. */
+type PreparedPair = {
+  id: PairId;
+  title: string;
+  image: PairImage;
+};
+
 type ExportEntry = {
-  kind: "png" | "manifest" | "bundle";
+  kind: "png" | "manifest" | "bundle" | "set";
   url: string;
   name: string;
   label: string;
@@ -183,6 +193,17 @@ export function TitleCompare() {
 
   function setPair(index: number, patch: Partial<Pair>): void {
     setPairs((current) => current.map((pair, at) => (at === index ? { ...pair, ...patch } : pair)));
+  }
+
+  /** The snapshot a set export may bundle: a real title and a local thumbnail
+   * that is not mid-replacement, with the exact pair id and image object the
+   * run captures before its first await. */
+  function readyPairs(): PreparedPair[] {
+    return PAIR_IDS.flatMap((id, index) => {
+      const pair = pairs[index];
+      if (pair.busy || !pair.image || pair.title.trim() === "") return [];
+      return [{ id, title: pair.title, image: pair.image }];
+    });
   }
 
   /** A copy result belongs to the selection it was made for. Selecting another
@@ -440,6 +461,97 @@ export function TitleCompare() {
     }
   }
 
+  /** Every titled pair with a local thumbnail — at least two, at most the
+   * three this section holds — in one flat ZIP. The titles, image facts and
+   * crop anchor are captured before the first encode, so a later edit cannot
+   * relabel the package. Each pair reuses the single-pair card encode, manifest
+   * builder, SHA-256 and store-only ZIP writer; its prefixed entry names keep
+   * same-title pairs distinct, and each manifest names and hashes the exact
+   * PNG bytes the archive stores. */
+  async function exportPreparedPairs(): Promise<void> {
+    const size = FEED_SIZES[1];
+    const forAnchor = anchor;
+    const generatedAt = new Date().toISOString();
+    const captured = readyPairs();
+    if (captured.length < 2) return;
+    const run = ++exportRun.current;
+    const current = () => mounted.current && exportRun.current === run;
+    setExportBusy(true);
+    setExportMessage("");
+    try {
+      const zipEntries: ZipEntryInput[] = [];
+      const pairLabels: string[] = [];
+      for (const prepared of captured) {
+        const image = prepared.image;
+        const { rect, pngBytes } = await encodeCropPng(image, size, forAnchor);
+        // Unmounted or superseded: no hash, no ZIP and no URL.
+        if (!current()) return;
+        const sha256 = await sha256Hex(pngBytes);
+        if (!current()) return;
+        const names = pairArchiveFileNames(prepared.id, size);
+        const manifest = buildTitlePairManifest({
+          generatedAt,
+          pairId: prepared.id,
+          title: prepared.title,
+          source: {
+            fileName: image.fileName,
+            mime: image.mime,
+            bytes: image.bytes,
+            width: image.width,
+            height: image.height,
+          },
+          anchor: forAnchor,
+          size,
+          sourceRect: rect,
+          // The name and digest describe the exact PNG bytes added below.
+          png: { fileName: names.png, bytes: pngBytes.byteLength, sha256 },
+        });
+        zipEntries.push(
+          { name: names.png, data: pngBytes },
+          { name: names.manifest, data: `${JSON.stringify(manifest, null, 2)}\n` },
+        );
+        pairLabels.push(PAIR_LABELS[prepared.id]);
+      }
+      if (!current()) return;
+      const bundle = createZip(zipEntries);
+      if (!bundle.ok) throw new Error(bundle.error);
+      // A renamed entry would leave its manifest naming a file the ZIP does
+      // not carry. The pair prefixes prevent that; fail loudly if it happens.
+      const expectedNames = zipEntries.map((entry) => entry.name);
+      if (
+        bundle.entries.length !== expectedNames.length ||
+        expectedNames.some((name, index) => bundle.entries[index] !== name)
+      )
+        throw new Error("The archive renamed a pair file, so its manifest could not name the exact PNG.");
+      if (!current()) return;
+      const bundleBlob = new Blob([bundle.bytes.buffer as ArrayBuffer], { type: ZIP_MIME });
+      const name = preparedPairsBundleFileName(size, captured.length);
+      replaceExports([
+        {
+          kind: "set",
+          url: trackUrl(bundleBlob),
+          name,
+          label: `${captured.length} pairs, ${zipEntries.length} files`,
+          pairLabel: pairLabels.join(", "),
+          anchorLabel: CROP_ANCHOR_LABELS[forAnchor],
+          width: size.width,
+          height: size.height,
+          bytes: bundleBlob.size,
+        },
+      ]);
+      setExportMessage(
+        `ZIP ready for pairs ${pairLabels.join(", ")}. It contains ${captured.length} thumbnails and their manifests.`,
+      );
+    } catch (error) {
+      if (current())
+        setExportMessage(
+          error instanceof Error ? error.message : "The prepared pairs package could not be prepared.",
+        );
+    } finally {
+      if (current()) setExportBusy(false);
+    }
+  }
+
   /** The selected pair's title as plain text, through the browser Clipboard.
    * The pair and title are captured for the same reason the export captures
    * them: a slow write must not report a title the user has already left. */
@@ -467,6 +579,7 @@ export function TitleCompare() {
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
   const selected = pairs[selectedIndex];
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
+  const preparedCount = readyPairs().length;
 
   return (
     <section ref={sectionRef} className="trim-work image-title-compare" aria-labelledby="image-title-compare-heading">
@@ -682,6 +795,23 @@ export function TitleCompare() {
           Copy selected title
         </button>
       </div>
+      <div className="image-control-actions" role="group" aria-label="Prepared pairs">
+        <button
+          type="button"
+          className="secondary"
+          disabled={preparedCount < 2 || exportBusy}
+          aria-disabled={preparedCount < 2 || exportBusy}
+          aria-describedby="image-title-compare-set-note"
+          onClick={() => void exportPreparedPairs()}
+        >
+          {exportBusy ? "Encoding…" : "Export prepared pairs (ZIP)"}
+        </button>
+      </div>
+      <p className="trim-note" id="image-title-compare-set-note">
+        {preparedCount < 2
+          ? `Add a title and thumbnail to at least two pairs. ${preparedCount} of ${PAIR_IDS.length} ready.`
+          : `${preparedCount} pairs ready. The ZIP includes each 640 × 360 PNG and its manifest.`}
+      </p>
       <p className="trim-note" role="status" aria-live="polite">{copyMessage}</p>
       {titleFallback !== null && (
         <label className="image-copy-fallback">
@@ -708,22 +838,28 @@ export function TitleCompare() {
             aria-label={
               entry.kind === "bundle"
                 ? `Download the Pair ${entry.pairLabel} PNG and manifest package (ZIP)`
-                : undefined
+                : entry.kind === "set"
+                  ? `Download the prepared pairs package (ZIP) with ${entry.label}`
+                  : undefined
             }
           >
             {entry.kind === "manifest"
               ? `Download ${entry.label} (JSON v${MANIFEST_VERSION})`
               : entry.kind === "bundle"
                 ? "Download pair package (ZIP)"
-                : `Download ${entry.label} PNG`}
+                : entry.kind === "set"
+                  ? "Download prepared pairs package (ZIP)"
+                  : `Download ${entry.label} PNG`}
           </a>
-          {` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${
-            entry.kind === "manifest"
-              ? `names a ${entry.width} × ${entry.height} px PNG`
-              : entry.kind === "bundle"
-                ? `exact PNG + JSON v${MANIFEST_VERSION}, unchanged`
-                : `${entry.width} × ${entry.height} px`
-          } · ${formatBytes(entry.bytes)} · ${entry.name}`}
+          {entry.kind === "set"
+            ? ` · Pairs ${entry.pairLabel} · ${entry.anchorLabel} crop · ${entry.width} × ${entry.height} px PNGs with per-pair manifests · ${formatBytes(entry.bytes)} · ${entry.name}`
+            : ` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${
+                entry.kind === "manifest"
+                  ? `names a ${entry.width} × ${entry.height} px PNG`
+                  : entry.kind === "bundle"
+                    ? `exact PNG + JSON v${MANIFEST_VERSION}, unchanged`
+                    : `${entry.width} × ${entry.height} px`
+              } · ${formatBytes(entry.bytes)} · ${entry.name}`}
           {entry.sha256 && (
             <>
               {` · SHA-256 ${entry.sha256.slice(0, 16)}…`}
