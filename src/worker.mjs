@@ -88,8 +88,9 @@ import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.
 import { PUBLIC_CACHE_SECONDS, publicOrigin, publicSitemap, robotsTxt } from "./lib/sitemap.ts";
 import { checkPublicImage } from "./lib/public-image-privacy.ts";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
-import { matchesEtag, servePosterPreview, servePublicationThumb } from "./lib/public-derivative-responses.ts";
+import { servePosterPreview, servePublicationThumb } from "./lib/public-derivative-responses.ts";
 import { publicCatalogue, relatedWorks } from "./lib/public-catalogue.ts";
+import { parseRange, rangeHeaders, servePublished } from "./lib/public-media.ts";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.ts";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.ts";
@@ -197,34 +198,6 @@ async function rawPortableBody(request, limit = 64 * 1024 * 1024) {
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.byteLength > limit) throw new HttpError(413, "That media is too large for one bundle entry.", "too_large");
   return bytes;
-}
-
-function rangeHeaders(range, size) {
-  return {
-    "accept-ranges": "bytes",
-    "content-length": String(range ? range.length : size),
-    ...(range ? { "content-range": `bytes ${range.start}-${range.end}/${size}` } : {}),
-  };
-}
-
-/** Parse one byte range. Range playback is a real media feature, not a label. */
-function parseRange(header, size) {
-  if (!header) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header).trim());
-  if (!match) return { invalid: true };
-  let start = match[1] ? Number(match[1]) : null;
-  let end = match[2] ? Number(match[2]) : null;
-  if (start === null && end === null) return { invalid: true };
-  if (start === null) {
-    start = Math.max(0, size - end);
-    end = size - 1;
-  } else if (end === null) {
-    end = size - 1;
-  }
-  end = Math.min(end, size - 1);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start > end)
-    return { invalid: true };
-  return { offset: start, length: end - start + 1, start, end };
 }
 
 function assetView(asset, extra = {}) {
@@ -2609,58 +2582,6 @@ async function handlePublic(request, env, url) {
   return new Response(notFoundPage(), {
     status: 404,
     headers: { "content-type": "text/html; charset=utf-8" },
-  });
-}
-
-async function servePublished(request, env, assetId, download) {
-  const asset = await env.DB.prepare("SELECT * FROM assets WHERE id=?1").bind(assetId).first();
-  if (!asset || asset.deleted_at) throw new HttpError(404, "Not found", "not_found");
-  const inspected = await checkPublicImage(env, asset).catch((error) => {
-    if (error.code !== "publication_metadata_unverified") throw error;
-    throw new HttpError(404, "This media is not available for public sharing", "not_found");
-  });
-  const range = parseRange(request.headers.get("range"), asset.bytes);
-  if (range?.invalid)
-    return new Response(null, {
-      status: 416,
-      headers: { "content-range": `bytes */${asset.bytes}`, "accept-ranges": "bytes" },
-    });
-  const etag = `"${asset.sha256.slice(0, 32)}"`;
-  // The tag comes from the stored bytes and the caller already resolved a live
-  // publication, so an unchanged copy can be reused without sending it again.
-  // The short max-age stays: a withdrawn page stops resolving at the next check.
-  if (!range && matchesEtag(request.headers.get("if-none-match"), etag))
-    return new Response(null, {
-      status: 304,
-      headers: { etag, "cache-control": "public, max-age=60" },
-    });
-  let body = inspected;
-  if (inspected) {
-    if (range) body = inspected.subarray(range.start, range.end + 1);
-  } else {
-    const object = await env.MEDIA.get(
-      asset.r2_key,
-      range ? { range: { offset: range.offset, length: range.length } } : undefined,
-    );
-    if (!object) throw new HttpError(410, "This media is no longer available", "unavailable");
-    body = object.body;
-  }
-  const headers = {
-    "content-type": asset.mime,
-    ...rangeHeaders(range, asset.bytes),
-    // A withdrawn publication must stop resolving quickly, so public media is
-    // only briefly cacheable rather than cached for a day.
-    "cache-control": "public, max-age=60",
-    "x-content-type-options": "nosniff",
-    "content-security-policy": "default-src 'none'; sandbox",
-    "cross-origin-resource-policy": "cross-origin",
-    etag,
-  };
-  if (download)
-    headers["content-disposition"] = `attachment; filename="published-${asset.id}.${extensionFor(asset.mime)}"`;
-  return new Response(request.method === "HEAD" ? null : body, {
-    status: range ? 206 : 200,
-    headers,
   });
 }
 
