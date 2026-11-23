@@ -95,6 +95,20 @@
   justify-self: start;
 }
 
+/* Duplicating is pair management, not an export: it sits with the
+   combinations and names the empty pair it would create. */
+.title-compare-duplicate {
+  display: grid;
+  gap: 0.4rem;
+  justify-items: start;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.title-compare-duplicate .trim-note {
+  margin: 0;
+}
+
 /* A finished Image Tools result is only offered here; the pair changes after
    the explicit button, never from the surrounding selection or a new result. */
 .title-compare-prepared {

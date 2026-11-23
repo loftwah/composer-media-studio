@@ -13,6 +13,46 @@ export const PAIR_LABELS: Readonly<Record<PairId, string>> = Object.freeze({
   c: "C",
 });
 
+/** What a pair currently holds, as the duplicate action needs to judge it. The
+ * thumbnail is a boolean because the decision is about occupancy, not bytes. */
+export type PairOccupancy = {
+  title: string;
+  note: string;
+  hasImage: boolean;
+  busy: boolean;
+  anchor: CropAnchorKey;
+};
+
+/** An empty pair has no title, note, thumbnail, pending decode or crop edit. */
+export function pairIsEmpty(pair: PairOccupancy): boolean {
+  return (
+    !pair.busy &&
+    !pair.hasImage &&
+    pair.anchor === "centre" &&
+    pair.title.trim() === "" &&
+    pair.note.trim() === ""
+  );
+}
+
+/**
+ * The first empty pair other than the source, in A/B/C order; null when every
+ * other pair is occupied. Occupancy is read in PAIR_IDS order, the same order
+ * the compare grid and its previews use.
+ */
+export function duplicateTargetPair(
+  occupancy: readonly PairOccupancy[],
+  sourceId: PairId,
+): PairId | null {
+  const sourceIndex = PAIR_IDS.indexOf(sourceId);
+  if (sourceIndex < 0) return null;
+  for (const [index, id] of PAIR_IDS.entries()) {
+    if (index === sourceIndex) continue;
+    const pair = occupancy[index];
+    if (pair && pairIsEmpty(pair)) return id;
+  }
+  return null;
+}
+
 /** The two representative feed scales this slice previews. The card box is
  * exactly 16:9; the row box is the common rounded listing size, a hair
  * taller than 16:9 — which is why the crop plan, not the aspect label, is
