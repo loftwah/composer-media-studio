@@ -304,14 +304,44 @@ test("the manifest carries a bounded note only when one was captured", () => {
   assert.equal(both.version, MANIFEST_VERSION);
 });
 
-test("each pair editor writes a local note that only reaches its manifest", () => {
-  assert.match(section, /Creator note \{PAIR_LABELS\[id\]\}/);
-  assert.match(section, /<textarea\s+value=\{pair\.note\}\s+maxLength=\{NOTE_MAX_LENGTH\}/);
-  assert.match(section, /onChange=\{\(event\) => updateNote\(index, event\.target\.value\)\}/);
-  assert.match(
-    section,
-    /function updateNote\(index: number, note: string\): void \{\s*setPair\(index, \{ note \}\);\s*\}/,
+test("the note-bearing manifest bytes are the exact bytes carried in the package ZIP", () => {
+  const size = FEED_SIZES[1];
+  const base = noteManifestInput();
+  const manifest = buildTitlePairManifest({ ...base, note: "Keep the safe area clear." });
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  assert.match(manifestText, /"note": "Keep the safe area clear\."/);
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
+  const pngName = exportFileName(base.title, base.source.fileName, size);
+  const manifestName = manifestFileName(base.title, base.source.fileName, size);
+  const result = createZip(
+    [
+      { name: pngName, data: pngBytes },
+      { name: manifestName, data: manifestText },
+    ],
+    { date: new Date(2026, 10, 23, 9, 0) },
   );
+  assert.equal(result.ok, true);
+  const data = new DataView(result.bytes.buffer, result.bytes.byteOffset, result.bytes.byteLength);
+  const found = new Map();
+  let offset = 0;
+  while (offset + 30 <= result.bytes.length && data.getUint32(offset, true) === 0x04034b50) {
+    const length = data.getUint32(offset + 18, true);
+    const nameLength = data.getUint16(offset + 26, true);
+    const extraLength = data.getUint16(offset + 28, true);
+    const name = new TextDecoder().decode(result.bytes.subarray(offset + 30, offset + 30 + nameLength));
+    const start = offset + 30 + nameLength + extraLength;
+    found.set(name, result.bytes.subarray(start, start + length));
+    offset = start + length;
+  }
+  assert.deepEqual(found.get(pngName), pngBytes);
+  assert.deepEqual(found.get(manifestName), new TextEncoder().encode(manifestText));
+  assert.match(new TextDecoder().decode(found.get(manifestName)), /"note": "Keep the safe area clear\."/);
+});
+
+test("each pair editor writes a local note that only reaches its manifest", () => {
+  assert.match(section, /Creator note \{PAIR_LABELS\[id\]\} \(optional\)/);
+  assert.match(section, /<textarea\s+value=\{pair\.note\}\s+maxLength=\{NOTE_MAX_LENGTH\}/);
+  assert.match(section, /onChange=\{\(event\) => setPair\(index, \{ note: event\.target\.value \}\)\}/);
   // Both note and title are captured before either export's first await.
   assert.match(section, /const title = pair\.title;\s*const note = pair\.note;/);
   assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, image: pair\.image \}\];/);
