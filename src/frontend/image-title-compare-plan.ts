@@ -179,3 +179,16 @@ export function bundleFileName(
 ): string {
   return `${safeTitleStem(title || fallbackName)}-feed-${size.width}x${size.height}-package.zip`;
 }
+
+/** Stable flat archive names keep different pairs and long titles unambiguous. */
+export function pairArchiveFileNames(pairId: PairId, size: FeedSize): { png: string; manifest: string } {
+  const stem = `pair-${pairId}-feed-${size.width}x${size.height}`;
+  return { png: `${stem}.png`, manifest: `${stem}-manifest-v${MANIFEST_VERSION}.json` };
+}
+
+/** The one package of prepared pairs. It carries the same store-only flat ZIP
+ * the single-pair package uses; the count only keeps separate downloads
+ * distinguishable. */
+export function preparedPairsBundleFileName(size: FeedSize, count: number): string {
+  return `prepared-pairs-${count}-feed-${size.width}x${size.height}-package.zip`;
+}

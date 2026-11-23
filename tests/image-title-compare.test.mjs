@@ -15,6 +15,8 @@ import {
   exportFileName,
   manifestFileName,
   objectPositionFor,
+  pairArchiveFileNames,
+  preparedPairsBundleFileName,
   safeTitleStem,
 } from "../src/frontend/image-title-compare-plan.ts";
 import { createZip } from "../src/frontend/image-zip.ts";
@@ -164,8 +166,8 @@ test("decoded bitmaps are closed on every outcome, not just a successful draw", 
     /let rect: CoverRect;\s*let canvas: HTMLCanvasElement;\s*(?:\/\/[^\n]*\n\s*)?try \{\s*const plan = coverCropRect\([\s\S]*?\} finally \{\s*bitmap\.close\(\);\s*\}/,
   );
   assert.match(section, /const bitmap = await createImageBitmap\(image\.file\)/);
-  // Both the PNG and the manifest export encode through the same helper.
-  assert.equal(section.match(/await encodeCropPng\(image, size, forAnchor\)/g).length, 2);
+  // PNG, single-pair manifest and prepared-set export share the encode helper.
+  assert.equal(section.match(/await encodeCropPng\(image, size, forAnchor\)/g).length, 3);
 });
 
 test("stale intake and export runs are ignored after a newer choice or unmount", () => {
@@ -303,15 +305,17 @@ test("the package ZIP carries the exact PNG and manifest bytes under their own n
 test("the manifest export offers one ZIP over the bytes it already made", () => {
   // The same encode feeds the PNG, the manifest digest and the package; the
   // JSON text is one string used by both the download and the ZIP entry.
-  assert.match(section, /import \{ createZip, ZIP_MIME \} from "\.\/image-zip\.ts"/);
+  assert.match(section, /import \{ createZip, ZIP_MIME(?:, type ZipEntryInput)? \} from "\.\/image-zip\.ts"/);
   assert.match(section, /const manifestText = `\$\{JSON\.stringify\(manifest, null, 2\)\}\\n`/);
   assert.match(section, /const manifestBlob = new Blob\(\[manifestText\]/);
   assert.match(section, /createZip\(\[\s*\{ name, data: pngBytes \},\s*\{ name: manifestName, data: manifestText \},?\s*\]\)/);
   assert.match(section, /bundleFileName\(title \|\| image\.fileName, image\.fileName, size\)/);
   assert.match(section, /kind: "bundle"/);
   assert.match(section, /Download pair package \(ZIP\)/);
-  // A package still never adds a second PNG encode.
-  assert.equal(section.match(/await encodeCropPng\(image, size, forAnchor\)/g).length, 2);
+  const start = section.indexOf("async function exportSelectedPairManifest");
+  const end = section.indexOf("async function exportPreparedPairs", start + 1);
+  assert.ok(start >= 0 && end > start);
+  assert.equal(section.slice(start, end).match(/await encodeCropPng\(image, size, forAnchor\)/g).length, 1);
 });
 
 test("the selected title can be copied through the browser Clipboard", () => {
@@ -373,4 +377,16 @@ test("the section catches a deep link that lands before React mounts", () => {
     section,
     /if \(window\.location\.hash !== "#image-title-compare-heading"\) return;\s*const heading = document\.getElementById\("image-title-compare-heading"\);\s*heading\?\.scrollIntoView\(\{ block: "start" \}\);\s*heading\?\.focus\(\{ preventScroll: true \}\);/,
   );
+});
+
+test("prepared pairs keep distinct stable names inside the packaging ZIP", () => {
+  const size = FEED_SIZES[1];
+  const a = pairArchiveFileNames("a", size);
+  const b = pairArchiveFileNames("b", size);
+  const names = [a.png, a.manifest, b.png, b.manifest];
+  assert.equal(new Set(names).size, 4);
+  const archive = createZip(names.map(name => ({ name, data: "fixture" })));
+  assert.equal(archive.ok, true);
+  assert.deepEqual(archive.entries, names);
+  assert.equal(preparedPairsBundleFileName(size, 2), "prepared-pairs-2-feed-640x360-package.zip");
 });
