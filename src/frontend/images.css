@@ -378,6 +378,21 @@
   resize: vertical;
 }
 
+/* Keep a denied hash copy beside its action, narrow enough for phone widths. */
+.image-hash-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  max-inline-size: 100%;
+}
+
+.image-hash-copy .image-copy-fallback {
+  flex: 0 1 22rem;
+  margin-top: 0;
+  min-inline-size: 0;
+}
+
 .image-eyedropper {
   display: grid;
   gap: 0.4rem;
