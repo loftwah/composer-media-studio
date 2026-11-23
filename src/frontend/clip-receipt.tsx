@@ -20,7 +20,9 @@ export type CompletedClip = Readonly<{
     muteRequested: boolean;
   }>;
   output: Readonly<{ blob: Blob; width: number; height: number }>;
-  captions?: Readonly<{ name: string; sourceSha256: string; vtt: string | null; offsetMs?: number }>;
+  // `local` is a browser-only snapshot flag: captionReceiptFields below picks
+  // the stored/exported receipt fields, so no local marker reaches that JSON.
+  captions?: Readonly<{ name: string; sourceSha256: string; vtt: string | null; offsetMs?: number; local?: true }>;
 }>;
 
 // One snapshot keeps the offered bytes and their URLs in step: the ZIP reuses
@@ -107,7 +109,11 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
         kitInputBytes: output.blob.size + utf8Bytes(receiptText) + (vtt ? utf8Bytes(vtt) : 0),
       });
       if (vttUrl && !clip.captions) onCaptionReady({ url: vttUrl, english: true });
-      setMessage(clip.captions && !vtt ? "Receipt ready. No imported cues fall inside this clip." : "Receipt ready to save.");
+      setMessage(clip.captions && !vtt
+        ? clip.captions.local
+          ? "Receipt ready. No captions fall inside this clip."
+          : "Receipt ready. No imported cues fall inside this clip."
+        : "Receipt ready to save.");
     } catch {
       if (mounted.current) setMessage("Could not prepare the receipt. You can try again or save the MP4.");
     } finally {
@@ -152,8 +158,8 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
     <p role="status" aria-live="polite">{message}</p>
     {prepared && <>
       <a className="button secondary" href={prepared.receiptUrl} download={`${filename}-receipt.json`}>Save receipt JSON</a>
-      {prepared.vttUrl && <p><a className="button secondary" href={prepared.vttUrl} download={captionFile}>Save {clip.captions ? "imported" : "English"} captions (VTT)</a></p>}
-      {prepared.srtUrl && <p><a className="button secondary" href={prepared.srtUrl} download={`${filename}-${clip.captions ? "captions" : "en"}.srt`}>Save {clip.captions ? "imported" : "English"} captions (SRT)</a></p>}
+      {prepared.vttUrl && <p><a className="button secondary" href={prepared.vttUrl} download={captionFile}>{clip.captions ? (clip.captions.local ? "Save captions (VTT)" : "Save imported captions (VTT)") : "Save English captions (VTT)"}</a></p>}
+      {prepared.srtUrl && <p><a className="button secondary" href={prepared.srtUrl} download={`${filename}-${clip.captions ? "captions" : "en"}.srt`}>{clip.captions ? (clip.captions.local ? "Save captions (SRT)" : "Save imported captions (SRT)") : "Save English captions (SRT)"}</a></p>}
       {kitAvailable ? <>
         <button
           type="button"

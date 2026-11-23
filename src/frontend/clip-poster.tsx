@@ -157,11 +157,11 @@ export function ClipPoster({ src, filename, captionTrack, output }: {
   }
   return <>
     <video ref={video} className="video-tool-player" src={src} controls playsInline aria-label="Finished video">
-      {captionTrack && <track ref={captions} kind="captions" label={captionTrack.english ? "English" : "Imported captions"} srcLang={captionTrack.english ? "en" : undefined} src={captionTrack.url}/>}
+      {captionTrack && <track ref={captions} kind="captions" label={captionTrack.english ? "English" : captionTrack.local ? "Captions" : "Imported captions"} srcLang={captionTrack.english ? "en" : undefined} src={captionTrack.url}/>}
     </video>
     {captionTrack && <label className="video-tool-check">
       <input type="checkbox" checked={showCaptions} onChange={event => toggleCaptions(event.currentTarget.checked)}/>
-      Show {captionTrack.english ? "English" : "imported"} captions on preview
+      {captionTrack.english ? "Show English captions on preview" : captionTrack.local ? "Show captions on preview" : "Show imported captions on preview"}
     </label>}
     {captionTrack && showCaptions && trackProblem && <p className="trim-note" role="status">{trackProblem}</p>}
     <details>
