@@ -1,7 +1,7 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
-import { appendManualClipCue, manualCaptionSourceName, manualCaptionTrackVtt } from "./clip-manual-cue";
+import { appendManualClipCue, manualCaptionSourceName, manualCaptionTrackVtt, removeClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -40,6 +40,17 @@ type Quality = keyof typeof sizes;
 type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
 type CaptionDraft = Readonly<{ name: string; sourceSha256: string; cues: ImportedCue[]; local: boolean }>;
+
+async function editedCaptionDraft(previous: CaptionDraft | null, cues: ImportedCue[]): Promise<CaptionDraft> {
+  const source = manualCaptionTrackVtt(cues);
+  if (!source) throw new Error("The cue times do not fit this video.");
+  return {
+    name: manualCaptionSourceName(previous),
+    sourceSha256: await sha256Hex(new TextEncoder().encode(source)),
+    cues,
+    local: true,
+  };
+}
 
 // Accept a decimal-seconds offset only when it is a whole number of
 // milliseconds within the advertised +/- bound. Returns null when invalid so
@@ -81,6 +92,14 @@ function VideoClip() {
   const [completedClip, setCompletedClip] = useState<CompletedClip | null>(null);
   const [captionTrack, setCaptionTrack] = useState<ClipCaptionTrack | null>(null);
   const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
+  // One-step snapshot of the exact draft before the most recent cue removal.
+  // Any later caption change or source change clears it, so Undo cannot replace
+  // newer work with stale cues or a stale source name and digest.
+  const [captionUndo, setCaptionUndo] = useState<CaptionDraft | null>(null);
+  const captionUndoButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (captionUndo && document.activeElement === document.body) captionUndoButton.current?.focus();
+  }, [captionUndo]);
   const [captionOffsetRaw, setCaptionOffsetRaw] = useState("0");
   const [captionText, setCaptionText] = useState("");
   const [manualCueText, setManualCueText] = useState("");
@@ -298,7 +317,7 @@ function VideoClip() {
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setLoadedHandoff(fromHandoff);
       captionRequest.current++; receiptRequest.current++;
-      setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
+      setCaptionDraft(null); setCaptionUndo(null); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
       setManualCueText(""); setManualCueStart(""); setManualCueEnd(""); setManualCueMessage("");
       setShowSourceCaptions(false);
       setCropAnchor("center");
@@ -357,6 +376,7 @@ function VideoClip() {
       const cues = parseCaptionFile(new TextDecoder().decode(bytes), 0, MAX_SOURCE_SECONDS * 1000);
       if (request !== captionRequest.current) return;
       setCaptionDraft({ name: selected.name, sourceSha256, cues, local: false });
+      setCaptionUndo(null);
       setCaptionOffsetRaw("0");
       setManualCueMessage("");
       setCaptionMessage(`Loaded ${cues.length} ${cues.length === 1 ? "cue" : "cues"}.`);
@@ -391,16 +411,10 @@ function VideoClip() {
     setCaptionLoading(true);
     setManualCueMessage("Adding the cue to this draft…");
     try {
-      const source = manualCaptionTrackVtt(added.cues);
-      if (!source) throw new Error("The cue times do not fit this video.");
-      const sourceSha256 = await sha256Hex(new TextEncoder().encode(source));
+      const updated = await editedCaptionDraft(captionDraft, added.cues);
       if (request !== captionRequest.current) return;
-      setCaptionDraft({
-        name: manualCaptionSourceName(captionDraft),
-        sourceSha256,
-        cues: added.cues,
-        local: true,
-      });
+      setCaptionDraft(updated);
+      setCaptionUndo(null);
       setManualCueText("");
       setManualCueStart("");
       setManualCueEnd("");
@@ -411,6 +425,49 @@ function VideoClip() {
     } finally {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
+  }
+  // Removal follows the same edited-track path as adding: remove the exact
+  // draft cue named by the projection, rebuild the canonical full-source VTT,
+  // then record the edited name and digest. An offset, trim, native preview and
+  // draft sidecar all read the resulting draft, so they update together. The
+  // last cue removes the draft and track but keeps the snapshot for Undo.
+  async function removeTrimmedCue(sourceIndex: number) {
+    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading) return;
+    const previousDraft = captionDraft;
+    const nextCues = removeClipDraftCue(previousDraft.cues, sourceIndex);
+    if (!nextCues) return;
+    const request = ++captionRequest.current;
+    setCaptionLoading(true);
+    setCaptionMessage("Removing the cue from this draft…");
+    try {
+      if (!nextCues.length) {
+        if (request !== captionRequest.current) return;
+        setCaptionDraft(null);
+        setCaptionUndo(previousDraft);
+        setCaptionMessage("Removed the last cue. The caption track is removed; Undo is available below.");
+        return;
+      }
+      const updated = await editedCaptionDraft(previousDraft, nextCues);
+      if (request !== captionRequest.current) return;
+      setCaptionDraft(updated);
+      setCaptionUndo(previousDraft);
+      setCaptionMessage(`Removed one cue. This draft now has ${nextCues.length} ${nextCues.length === 1 ? "cue" : "cues"}.`);
+    } catch (error) {
+      if (request === captionRequest.current)
+        setCaptionMessage(error instanceof Error ? error.message : "Could not remove the cue in this browser.");
+    } finally {
+      if (request === captionRequest.current) setCaptionLoading(false);
+    }
+  }
+  // Restore the exact draft, name and digest saved before that removal. Any
+  // later add, replacement, clear or source change already dropped the snapshot.
+  function undoCaptionRemoval() {
+    if (!captionUndo || busy || checking || importing || receiptLoading || captionLoading) return;
+    captionRequest.current++;
+    setCaptionDraft(captionUndo);
+    setCaptionUndo(null);
+    setCaptionLoading(false);
+    setCaptionMessage("Restored the removed cue and caption track.");
   }
   // Pause on the projected source time and keep keyboard focus on the cue.
   function jumpToOriginalCue(sourceStartMs: number) {
@@ -670,6 +727,7 @@ function VideoClip() {
         {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
           captionRequest.current++;
           setCaptionDraft(null);
+          setCaptionUndo(null);
           setCaptionOffsetRaw("0");
           setCaptionText("");
           setManualCueText("");
@@ -705,8 +763,8 @@ function VideoClip() {
               <summary>Review cues in this trim ({trimmedCaptionCues.length})</summary>
               <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Turn on Preview draft captions on original video to see the original caption there.</p>
               <ol className="trim-cue-list" aria-label="Caption cues in this trim">
-                {trimmedCaptionCues.map((cue, index) => (
-                  <li key={`${cue.from}-${cue.to}-${index}`}>
+                {trimmedCaptionCues.map(cue => (
+                  <li key={cue.sourceStartMs} className="trim-cue-row">
                     <button type="button" className="secondary trim-cue-jump"
                       aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
                       disabled={busy || checking || importing || receiptLoading || captionLoading}
@@ -714,6 +772,10 @@ function VideoClip() {
                       <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
                       <span className="trim-cue-text">{cue.text}</span>
                     </button>
+                    <button type="button" className="secondary trim-cue-remove"
+                      aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                      disabled={busy || checking || importing || receiptLoading || captionLoading}
+                      onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
                   </li>
                 ))}
               </ol>
@@ -731,6 +793,9 @@ function VideoClip() {
           <p className="trim-note">The preview uses the full video and the timing offset above. The cue count applies to the trimmed MP4.</p>
           {sourcePreviewNote && <p className="trim-note" role="status">{sourcePreviewNote}</p>}
         </div>}
+        {captionUndo && <p>
+          <button ref={captionUndoButton} type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading} onClick={undoCaptionRemoval}>Undo last cue removal</button>
+        </p>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export.</p>

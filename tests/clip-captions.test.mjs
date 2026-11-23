@@ -69,8 +69,8 @@ test('cue review rows expose trim-relative times and add trim start for original
   ];
   const trimmed = clipCaptionCues(cues, 2, 10, 1500);
   assert.deepEqual(trimmed, [
-    { from: 500, to: 6500, sourceStartMs: 2500, text: 'A & B' },
-    { from: 7500, to: 8000, sourceStartMs: 9500, text: '<Next>' },
+    { from: 500, to: 6500, sourceStartMs: 2500, text: 'A & B', sourceIndex: 0 },
+    { from: 7500, to: 8000, sourceStartMs: 9500, text: '<Next>', sourceIndex: 1 },
   ]);
   assert.deepEqual(trimmed.map(cue => clipTimeStamp(cue.from)), ['00:00.500', '00:07.500']);
   // The same projection still backs the VTT and count.
@@ -79,11 +79,11 @@ test('cue review rows expose trim-relative times and add trim start for original
   // A cue already running before the trim is clamped to the trim start, so its
   // source seek includes the trim start rather than the earlier source time.
   const clipped = clipCaptionCues(cues, 2.0006, 10);
-  assert.deepEqual(clipped?.[0], { from: 0, to: 4999, sourceStartMs: 2001, text: 'A & B' });
+  assert.deepEqual(clipped?.[0], { from: 0, to: 4999, sourceStartMs: 2001, text: 'A & B', sourceIndex: 0 });
   const earlier = clipCaptionCues(cues, 2, 10, -1500);
   assert.deepEqual(earlier, [
-    { from: 0, to: 3500, sourceStartMs: 2000, text: 'A & B' },
-    { from: 4500, to: 8000, sourceStartMs: 6500, text: '<Next>' },
+    { from: 0, to: 3500, sourceStartMs: 2000, text: 'A & B', sourceIndex: 0 },
+    { from: 4500, to: 8000, sourceStartMs: 6500, text: '<Next>', sourceIndex: 1 },
   ]);
   // Invalid values stay indistinguishable from the serializer's null result.
   assert.deepEqual(clipCaptionCues(cues, 12.5, 14), []);
