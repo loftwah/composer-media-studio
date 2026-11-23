@@ -250,6 +250,11 @@ test("gallery facets expose only listed projects and capabilities, and every fil
   const combined = await (await get(env, "/gallery?project=alpha-studio&kind=video&capability=assembled")).text();
   assert.deepEqual(slugs(combined), ["alpha-assembled"]);
   assert.match(combined, /data-total="1">1 work</);
+  assert.match(combined, /aria-label="Active filters"/);
+  assert.match(combined, /Project: <a href="\/gallery\?kind=video&amp;capability=assembled&amp;page=1#gallery-results"[^>]*>Alpha Studio/);
+  assert.match(combined, /Type: <a href="\/gallery\?project=alpha-studio&amp;capability=assembled&amp;page=1#gallery-results"[^>]*>Video/);
+  assert.match(combined, /Creation: <a href="\/gallery\?project=alpha-studio&amp;kind=video&amp;page=1#gallery-results"[^>]*>Assembled/);
+  assert.doesNotMatch(allHtml, /Active filters|gallery-active-filters/);
 
   const noMatch = await (await get(env, "/gallery?project=alpha-studio&kind=image&capability=assembled")).text();
   assert.deepEqual(slugs(noMatch), []);
