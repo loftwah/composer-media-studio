@@ -2,7 +2,7 @@ import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
-import { appendManualClipCue, manualCaptionSourceName, manualCaptionTrackVtt, removeClipDraftCue, replaceClipDraftCue } from "./clip-manual-cue";
+import { appendManualClipCue, canMergeClipDraftCues, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, removeClipDraftCue, replaceClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -553,6 +553,35 @@ function VideoClip() {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
   }
+  // Merge the two visible adjacent cues named by the review projection. The
+  // first original start and next original end are kept, and the exact texts
+  // join with one space. Validation runs before any draft change, then the same
+  // edited-track digest and exact prior-draft Undo as removal and editing apply.
+  async function mergeTrimmedCues(firstSourceIndex: number, nextSourceIndex: number) {
+    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading) return;
+    const previousDraft = captionDraft;
+    const merged = mergeClipDraftCues(previousDraft.cues, firstSourceIndex, nextSourceIndex, Math.round(duration * 1000));
+    if ("problem" in merged) {
+      setCaptionMessage(merged.problem);
+      return;
+    }
+    const request = ++captionRequest.current;
+    setCaptionLoading(true);
+    setCaptionMessage("Merging the two cues in this draft…");
+    try {
+      const updated = await editedCaptionDraft(previousDraft, merged.cues);
+      if (request !== captionRequest.current) return;
+      setCaptionDraft(updated);
+      setCaptionUndo(previousDraft);
+      if (cueEditing) resetCueEditor();
+      setCaptionMessage(`Merged two cues. This draft now has ${merged.cues.length} ${merged.cues.length === 1 ? "cue" : "cues"}. Undo is available below.`);
+    } catch (error) {
+      if (request === captionRequest.current)
+        setCaptionMessage(error instanceof Error ? error.message : "Could not merge the cues in this browser.");
+    } finally {
+      if (request === captionRequest.current) setCaptionLoading(false);
+    }
+  }
   // Restore the exact draft, name and digest saved before that removal or edit.
   // Any later add, replacement, clear or source change already dropped it.
   function undoCaptionRemoval() {
@@ -882,29 +911,37 @@ function VideoClip() {
           {trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
             <details className="trim-cue-review">
               <summary>Review cues in this trim ({trimmedCaptionCues.length})</summary>
-              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Edit writes the cue's original-video text and times into the form above; Remove deletes just that cue. Turn on Preview draft captions on original video to see the original caption there.</p>
+              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Edit writes the cue's original-video text and times into the form above; Merge with next joins it with the next visible adjacent cue; Remove deletes just that cue. Turn on Preview draft captions on original video to see the original caption there.</p>
               <ol className="trim-cue-list" aria-label="Caption cues in this trim">
-                {trimmedCaptionCues.map(cue => (
-                  <li key={cue.sourceIndex} className="trim-cue-row">
-                    <button type="button" className="secondary trim-cue-jump"
-                      aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
-                      disabled={busy || checking || importing || receiptLoading || captionLoading}
-                      onClick={() => jumpToOriginalCue(cue.sourceStartMs)}>
-                      <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
-                      <span className="trim-cue-text">{cue.text}</span>
-                    </button>
-                    <div className="trim-cue-actions">
-                      <button type="button" className="secondary trim-cue-edit"
-                        aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                {trimmedCaptionCues.map((cue, index) => {
+                  const nextCue = trimmedCaptionCues[index + 1];
+                  const canMerge = nextCue !== undefined && canMergeClipDraftCues(captionDraft.cues, cue.sourceIndex, nextCue.sourceIndex);
+                  return (
+                    <li key={cue.sourceIndex} className="trim-cue-row">
+                      <button type="button" className="secondary trim-cue-jump"
+                        aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
                         disabled={busy || checking || importing || receiptLoading || captionLoading}
-                        onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
-                      <button type="button" className="secondary trim-cue-remove"
-                        aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
-                        disabled={busy || checking || importing || receiptLoading || captionLoading}
-                        onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
-                    </div>
-                  </li>
-                ))}
+                        onClick={() => jumpToOriginalCue(cue.sourceStartMs)}>
+                        <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
+                        <span className="trim-cue-text">{cue.text}</span>
+                      </button>
+                      <div className="trim-cue-actions">
+                        <button type="button" className="secondary trim-cue-edit"
+                          aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading}
+                          onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
+                        {canMerge && nextCue && <button type="button" className="secondary trim-cue-merge"
+                          aria-label={`Merge cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text} with the next cue ${clipTimeStamp(nextCue.from)}–${clipTimeStamp(nextCue.to)}. ${nextCue.text}`}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading}
+                          onClick={() => void mergeTrimmedCues(cue.sourceIndex, nextCue.sourceIndex)}>Merge with next</button>}
+                        <button type="button" className="secondary trim-cue-remove"
+                          aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading}
+                          onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ol>
             </details>
           )}
