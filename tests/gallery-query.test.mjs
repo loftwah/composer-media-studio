@@ -6,6 +6,7 @@ import {
   galleryIsFiltered,
   galleryResultCount,
   galleryAudioEmpty,
+  galleryActiveFilters,
 } from '../src/lib/gallery-query.ts';
 import { publicGallery } from '../src/lib/ui.mjs';
 
@@ -69,4 +70,49 @@ test('the renderer keeps the audio notice and the clear-filters link decisions',
   assert.match(publicGallery({ items: [], total: 0, kind: 'audio', page: 1 }), /No audio work has been published to the gallery yet\./);
   assert.match(publicGallery({ items: [], total: 0, kind: 'audio', query: 'song', page: 1 }), /No published work matches these filters\./);
   assert.match(publicGallery({ items: [{ slug: 'still', kind: 'image', title: 'Still' }], total: 1 }), /data-total="1">1 work</);
+});
+
+test('every active filter clears just itself, keeps the other filters and sort, and returns to page 1', () => {
+  const filters = galleryActiveFilters(
+    state({ search: 'Night Signal', project: 'alpha', kind: 'video', capability: 'assembled', order: 'oldest', page: 3 }),
+    [{ value: 'alpha', label: 'Alpha Studio' }],
+  );
+  assert.deepEqual(filters.map(({ key, label, value }) => ({ key, label, value })), [
+    { key: 'search', label: 'Search', value: 'Night Signal' },
+    { key: 'project', label: 'Project', value: 'Alpha Studio' },
+    { key: 'kind', label: 'Type', value: 'Video' },
+    { key: 'capability', label: 'Creation', value: 'Assembled' },
+  ]);
+  assert.deepEqual(filters.map((filter) => filter.href), [
+    '/gallery?project=alpha&kind=video&capability=assembled&order=oldest&page=1#gallery-results',
+    '/gallery?q=Night+Signal&kind=video&capability=assembled&order=oldest&page=1#gallery-results',
+    '/gallery?q=Night+Signal&project=alpha&capability=assembled&order=oldest&page=1#gallery-results',
+    '/gallery?q=Night+Signal&project=alpha&kind=video&order=oldest&page=1#gallery-results',
+  ]);
+  assert.deepEqual(galleryActiveFilters(state()), []);
+});
+
+test('the catalogue lists active filters below the controls and escapes their text and links', () => {
+  const html = publicGallery({
+    items: [],
+    total: 0,
+    projects: [{ value: 'alpha', label: 'Alpha & <Studio>' }],
+    query: 'Night & <Signal>',
+    project: 'alpha',
+    kind: 'video',
+    capability: 'assembled',
+    order: 'oldest',
+    page: 2,
+  });
+  assert.match(html, /class="row small gallery-active-filters" aria-label="Active filters"/);
+  assert.ok(html.indexOf('class="gallery-controls"') < html.indexOf('aria-label="Active filters"'));
+  assert.ok(html.indexOf('aria-label="Active filters"') < html.indexOf('id="gallery-results"'));
+  assert.match(html, /Search: <a href="\/gallery\?project=alpha&amp;kind=video&amp;capability=assembled&amp;order=oldest&amp;page=1#gallery-results" aria-label="Clear search filter: Night &amp; &lt;Signal&gt;">Night &amp; &lt;Signal&gt;<span aria-hidden="true"> ×<\/span><\/a>/);
+  assert.match(html, /Project: <a href="\/gallery\?q=Night\+%26\+%3CSignal%3E&amp;kind=video&amp;capability=assembled&amp;order=oldest&amp;page=1#gallery-results" aria-label="Clear project filter: Alpha &amp; &lt;Studio&gt;">Alpha &amp; &lt;Studio&gt;<span aria-hidden="true"> ×<\/span><\/a>/);
+  assert.match(html, /Type: <a href="[^"]+" aria-label="Clear type filter: Video">Video<span aria-hidden="true"> ×<\/span><\/a>/);
+  assert.match(html, /Creation: <a href="[^"]+" aria-label="Clear creation filter: Assembled">Assembled<span aria-hidden="true"> ×<\/span><\/a>/);
+  assert.match(html, /No published work matches these filters\. <a href="\/gallery">Clear filters<\/a>/);
+
+  assert.doesNotMatch(publicGallery({ items: [], total: 0 }), /Active filters|gallery-active-filters/);
+  assert.doesNotMatch(publicGallery({ home: true, query: 'night', kind: 'video' }), /Active filters|gallery-active-filters/);
 });

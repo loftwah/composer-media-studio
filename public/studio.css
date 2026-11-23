@@ -420,6 +420,7 @@ dialog h2 { margin: 0; }
 .gallery-controls input, .gallery-controls select { width:100%; min-height:44px; max-width:100%; }
 .gallery-controls button, .gallery-controls a { min-height:44px; }
 .gallery-controls a { display:inline-flex; align-items:center; }
+.gallery-active-filters { list-style:none; margin:-1rem 0 1.5rem; padding:0; }
 .gallery-count { margin:.45rem 0 0; color:var(--muted); font-variant-numeric:tabular-nums; }
 
 /* Model chooser. Saved work, side by side, with the money split into three
