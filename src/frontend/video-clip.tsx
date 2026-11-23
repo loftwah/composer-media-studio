@@ -1,5 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
-import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -173,24 +173,40 @@ function VideoClip() {
     applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
   );
 
-  // Draft sidecar: the same serializer the MP4 export uses, over the live trim,
-  // offset and cue count, so no video has to be encoded. An invalid trim or
-  // offset, or no surviving cue, produces no download at all.
+  // Draft sidecars: the same serializer the MP4 export uses, over the live trim,
+  // offset and cue count, so no video has to be encoded. The SRT is derived from
+  // that exact VTT over the current trim length in milliseconds; the shared
+  // helper decides whether an equivalent plain-text sidecar can be offered at
+  // all. An invalid trim or offset, or no surviving cue, yields no download.
   const draftCaptionVtt = captionDraft && validTrim && captionOffsetMs !== null
     && survivingCaptionCount !== null && survivingCaptionCount > 0
     ? serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs)
     : null;
-  const [draftCaptionFile, setDraftCaptionFile] = useState<{ vtt: string; url: string } | null>(null);
+  const draftCaptionSrt = draftCaptionVtt
+    ? srtForClipVtt(draftCaptionVtt, Math.round(end * 1000) - Math.round(start * 1000))
+    : null;
+  const [draftCaptionFile, setDraftCaptionFile] = useState<{ vtt: string; vttUrl: string; srt: string | null; srtUrl: string | null } | null>(null);
   useEffect(() => {
     if (!draftCaptionVtt) {
       setDraftCaptionFile(null);
       return;
     }
-    const url = URL.createObjectURL(new Blob([draftCaptionVtt], { type: "text/vtt; charset=utf-8" }));
-    setDraftCaptionFile({ vtt: draftCaptionVtt, url });
-    return () => URL.revokeObjectURL(url);
-  }, [draftCaptionVtt]);
-  const draftCaptionUrl = draftCaptionFile?.vtt === draftCaptionVtt ? draftCaptionFile.url : null;
+    const vttUrl = URL.createObjectURL(new Blob([draftCaptionVtt], { type: "text/vtt; charset=utf-8" }));
+    const srtUrl = draftCaptionSrt
+      ? URL.createObjectURL(new Blob([draftCaptionSrt], { type: "application/x-subrip; charset=utf-8" }))
+      : null;
+    setDraftCaptionFile({ vtt: draftCaptionVtt, vttUrl, srt: draftCaptionSrt, srtUrl });
+    return () => {
+      URL.revokeObjectURL(vttUrl);
+      if (srtUrl) URL.revokeObjectURL(srtUrl);
+    };
+  }, [draftCaptionVtt, draftCaptionSrt]);
+  // Each link stays live only while its URL belongs to the exact serialized
+  // content on screen, so a changed trim or offset cannot download a stale file.
+  const currentDraftFile = draftCaptionFile?.vtt === draftCaptionVtt && draftCaptionFile.srt === draftCaptionSrt
+    ? draftCaptionFile : null;
+  const draftCaptionUrl = currentDraftFile?.vttUrl ?? null;
+  const draftSrtUrl = currentDraftFile?.srtUrl ?? null;
   const sourceVtt = showSourceCaptions && captionDraft
     ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs)
     : null;
@@ -577,7 +593,8 @@ function VideoClip() {
           )}
           {draftCaptionUrl && <div>
             <p><a className="button secondary" href={draftCaptionUrl} download={`${clipFilename}-draft-captions.vtt`} aria-describedby="draft-captions-note">Save draft trim captions (VTT)</a></p>
-            <p id="draft-captions-note" className="trim-note">This file uses the current trim and timing offset. Finished clips keep their original caption files.</p>
+            {draftSrtUrl && <p><a className="button secondary" href={draftSrtUrl} download={`${clipFilename}-draft-captions.srt`} aria-describedby="draft-captions-note">Save draft trim captions (SRT)</a></p>}
+            <p id="draft-captions-note" className="trim-note">These files use the current trim and timing offset. Finished clips keep their original caption files.</p>
           </div>}
           <label className="video-tool-check">
             <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>
