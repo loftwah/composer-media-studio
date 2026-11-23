@@ -1006,6 +1006,11 @@ function Images() {
     trigger: HTMLButtonElement;
   } | null>(null);
   const [outputCopy, setOutputCopy] = useState<{ key: string; message: string } | null>(null);
+  const [outputHashFallback, setOutputHashFallback] = useState<{
+    key: string;
+    hash: string;
+    trigger: HTMLButtonElement;
+  } | null>(null);
   const [snippets, setSnippets] = useState<SnippetState | null>(null);
   const [snippetKind, setSnippetKind] = useState<SnippetKind>("dataUri");
   const [snippetBusy, setSnippetBusy] = useState(false);
@@ -1047,6 +1052,7 @@ function Images() {
   const latestPaletteCopy = useRef(0);
   const paletteCopyField = useRef<HTMLInputElement>(null);
   const paletteCopyTextareaField = useRef<HTMLTextAreaElement>(null);
+  const outputHashFallbackField = useRef<HTMLInputElement>(null);
   const currentOutputKey = useRef("");
   const alphaRevision = useRef(0);
 
@@ -1106,6 +1112,7 @@ function Images() {
   const outputResultKey = selected?.result?.url ?? "";
   useLayoutEffect(() => {
     currentOutputKey.current = outputResultKey;
+    latestOutputCopy.current += 1;
   }, [outputResultKey]);
   // An alpha profile belongs to one exact finished result. Selecting another
   // row or regenerating can never leave an earlier result's counts on screen.
@@ -1302,6 +1309,7 @@ function Images() {
     setSnippetMessage("");
     setAlphaInspect(null);
     setAlphaMessage("");
+    setOutputHashFallback(null);
   }, [selected?.result?.url]);
 
   // One list focus lifecycle serves removals and reorders: the pending target
@@ -1367,7 +1375,10 @@ function Images() {
         : paletteCopyField.current;
       field?.focus();
     }
-  }, [paletteCopyFallback]);
+    if (outputHashFallback?.trigger === document.activeElement) {
+      outputHashFallbackField.current?.focus();
+    }
+  }, [paletteCopyFallback, outputHashFallback]);
 
   useEffect(() => () => publicImageRequest.current?.abort(), []);
 
@@ -2444,18 +2455,20 @@ function Images() {
 
   // Both controls report in one place. An older write cannot replace the
   // latest feedback, and a new rendered blob has its own object URL.
-  function copyAttemptFor(key: string): (message: string) => void {
+  function copyAttemptFor(key: string) {
     const attempt = ++latestOutputCopy.current;
-    return (message) => {
-      if (attempt === latestOutputCopy.current && key === currentOutputKey.current)
-        setOutputCopy({ key, message });
+    const stillCurrent = () =>
+      attempt === latestOutputCopy.current && key === currentOutputKey.current;
+    const report = (message: string) => {
+      if (stillCurrent()) setOutputCopy({ key, message });
     };
+    return { report, stillCurrent };
   }
 
   async function copyResultPng(item: WorkItem): Promise<void> {
     const result = item.result;
     if (!result || result.mime !== "image/png") return;
-    const report = copyAttemptFor(result.url);
+    const { report } = copyAttemptFor(result.url);
     try {
       const png = new window.ClipboardItem({ "image/png": result.blob });
       await navigator.clipboard.write([png]);
@@ -2463,6 +2476,21 @@ function Images() {
     } catch {
       report("Could not copy the PNG. Use Download PNG instead.");
     }
+  }
+
+  async function copyOutputHash(
+    button: HTMLButtonElement,
+    key: string,
+    hash: string,
+  ): Promise<void> {
+    const { report, stillCurrent } = copyAttemptFor(key);
+    const copied = await copyValue("output SHA-256", hash, {
+      echo: false,
+      fallback: "Clipboard unavailable. Select the exact hash beside this button and copy it.",
+      report,
+    });
+    if (!stillCurrent()) return;
+    setOutputHashFallback(copied ? null : { key, hash, trigger: button });
   }
 
   async function copySnippet(button: HTMLButtonElement): Promise<void> {
@@ -3623,20 +3651,29 @@ function Images() {
                 Download image receipt (.json)
               </a>
               {outputHash && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => {
-                    const report = copyAttemptFor(outputResultKey);
-                    void copyValue("output SHA-256", outputHash, {
-                      echo: false,
-                      fallback: "Copy unavailable. Download the image receipt to get the full hash.",
-                      report,
-                    });
-                  }}
-                >
-                  Copy output SHA-256
-                </button>
+                <div className="image-hash-copy">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={(event) => void copyOutputHash(event.currentTarget, outputResultKey, outputHash)}
+                  >
+                    Copy output SHA-256
+                  </button>
+                  {outputHashFallback?.key === outputResultKey && (
+                    <label className="image-copy-fallback">
+                      Exact output SHA-256 — select and copy
+                      <input
+                        readOnly
+                        ref={outputHashFallbackField}
+                        value={outputHashFallback.hash}
+                        spellCheck={false}
+                        aria-label="Exact output SHA-256 value to copy"
+                        onFocus={(event) => event.currentTarget.select()}
+                        onClick={(event) => event.currentTarget.select()}
+                      />
+                    </label>
+                  )}
+                </div>
               )}
               <p className="trim-note" role="status">
                 {outputCopy?.key === outputResultKey ? outputCopy?.message : ""}
