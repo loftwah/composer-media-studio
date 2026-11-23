@@ -22,6 +22,13 @@ export type ManualCueSplit = Readonly<{
   wordBoundary: number;
 }>;
 
+export type ManualCueTimes = Readonly<{
+  startSeconds: string;
+  endSeconds: string;
+}>;
+
+export type ManualCueNudge = ManualCueTimes | Readonly<{ problem: string }>;
+
 // Seconds are accepted only when they name a whole millisecond, matching the
 // timing offset field and the existing caption parser's precision.
 function wholeMilliseconds(raw: string): number | null {
@@ -32,6 +39,38 @@ function wholeMilliseconds(raw: string): number | null {
   const ms = seconds * 1000;
   const whole = Math.round(ms);
   return Number.isSafeInteger(whole) && Math.abs(ms - whole) < 1e-6 ? whole : null;
+}
+
+/**
+ * Move both entered source times of the manual cue editor by the same whole
+ * millisecond step, so the cue keeps its exact duration and original-video
+ * meaning. The shared whole-millisecond parser and the same video bound used
+ * by Add cue / Update cue decide what is allowed; a refusal leaves the caller's
+ * fields untouched. Accepted times are always written back with three decimals
+ * so a later nudge, playhead fill or save sees exactly the same milliseconds.
+ */
+export function nudgeManualCueTimes(input: ManualCueTimes, deltaMs: number, durationMs: number): ManualCueNudge {
+  if (!Number.isSafeInteger(deltaMs) || deltaMs === 0)
+    return { problem: "Choose a whole-millisecond nudge step." };
+  if (!Number.isSafeInteger(durationMs) || durationMs <= 0)
+    return { problem: "This video has no usable duration for captions." };
+  const startMs = wholeMilliseconds(input.startSeconds);
+  const endMs = wholeMilliseconds(input.endSeconds);
+  if (startMs === null || endMs === null)
+    return { problem: "Enter start and end seconds with up to three decimal places." };
+  if (startMs < 0 || endMs > durationMs)
+    return { problem: `Choose a start and end within this video (0 to ${clipTimeStamp(durationMs)}).` };
+  if (endMs <= startMs) return { problem: "The end must be after the start." };
+
+  const nextStartMs = startMs + deltaMs, nextEndMs = endMs + deltaMs;
+  if (nextStartMs < 0)
+    return { problem: `Cannot move ${Math.abs(deltaMs)} ms earlier: the cue would start before the video (0 to ${clipTimeStamp(durationMs)}).` };
+  if (nextEndMs > durationMs)
+    return { problem: `Cannot move ${Math.abs(deltaMs)} ms later: the cue would end after the video (0 to ${clipTimeStamp(durationMs)}).` };
+  return {
+    startSeconds: (nextStartMs / 1000).toFixed(3),
+    endSeconds: (nextEndMs / 1000).toFixed(3),
+  };
 }
 
 /**

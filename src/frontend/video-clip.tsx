@@ -3,7 +3,7 @@ import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
-import { appendManualClipCue, canMergeClipDraftCues, canSplitClipDraftCue, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
+import { appendManualClipCue, canMergeClipDraftCues, canSplitClipDraftCue, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, nudgeManualCueTimes, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -780,6 +780,21 @@ function VideoClip() {
     if (field === "start") setManualCueStart(seconds);
     else setManualCueEnd(seconds);
   }
+  // Nudge only the two entered source times, together and by exactly one step,
+  // through the same whole-millisecond parser and video bound as Add cue / Update
+  // cue. The saved draft, its Undo, the offset, trim, other cues, preview and any
+  // finished export are untouched; Add cue / Update cue still applies the edit.
+  function nudgeCueTimes(deltaMs: number) {
+    const nudged = nudgeManualCueTimes(
+      { startSeconds: manualCueStart, endSeconds: manualCueEnd },
+      deltaMs,
+      Math.round(duration * 1000),
+    );
+    if ("problem" in nudged) { setManualCueMessage(nudged.problem); return; }
+    setManualCueStart(nudged.startSeconds);
+    setManualCueEnd(nudged.endSeconds);
+    setManualCueMessage(`Moved both cue times ${Math.abs(deltaMs)} ms ${deltaMs < 0 ? "earlier" : "later"}. Choose ${cueEditing ? "Update cue" : "Add cue"} to save this edit.`);
+  }
 
   // Opening a receipt is an explicit, local-only action. It proves the saved
   // digest against the exact bytes already accepted as the source, then writes
@@ -1007,7 +1022,7 @@ function VideoClip() {
         <button type="button" className="secondary" disabled={!file || !captionText.trim() || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={() => void applyCaptionText()}>Apply captions</button>
         <details ref={manualCueDetails}>
           <summary>{cueEditing ? "Edit cue" : "Write a cue"}</summary>
-          <p id="manual-cue-help" className="trim-note">Use seconds from the start of the original video, with up to three decimal places. The timing offset applies to every cue.</p>
+          <p id="manual-cue-help" className="trim-note">Use seconds from the start of the original video, with up to three decimal places. The timing offset applies to every cue. Move earlier / later shifts both entered times together without changing the cue’s length, only while it stays inside the video; choose Add cue or Update cue to save.</p>
           <label>Caption text<input ref={manualCueTextInput} type="text" spellCheck={false} maxLength={300}
             aria-describedby="manual-cue-help"
             value={manualCueText}
@@ -1037,6 +1052,16 @@ function VideoClip() {
                 disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                 onClick={() => fillCueTimeFromPlayhead("end")}>Use playhead</button>
             </div>
+          </div>
+          <div className="video-tool-actions" role="group" aria-label="Nudge both cue times">
+            <button type="button" className="secondary"
+              aria-label="Move both the entered cue start and end 100 ms earlier together"
+              disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+              onClick={() => nudgeCueTimes(-100)}>−100 ms earlier</button>
+            <button type="button" className="secondary"
+              aria-label="Move both the entered cue start and end 100 ms later together"
+              disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+              onClick={() => nudgeCueTimes(100)}>+100 ms later</button>
           </div>
           <div className="video-tool-actions">
             {cueEditing ? <>
