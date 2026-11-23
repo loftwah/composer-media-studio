@@ -1,0 +1,202 @@
+// MIT. The model chooser page. Moved verbatim out of ui.mjs for #198; the
+// rendered bytes, branch order, escaping, defaults, timestamps, money
+// formatting and the blind-review data attributes are unchanged. ui.mjs
+// re-exports comparePage, so the Worker route and the focused comparison tests
+// keep the same import path. page-head.ts owns the document chrome,
+// studio-shell.ts owns the shared header and its session shape, util.mjs
+// supplies escapeHtml, and comparisons.ts owns the saved take, cost, job,
+// verdict and weakness shapes this module only reads.
+
+import { escapeHtml } from "./util.mjs";
+import { head } from "./page-head.ts";
+import { studioHeader as header } from "./studio-shell.ts";
+import type { StudioShellSession } from "./studio-shell.ts";
+import type {
+  CatalogueJob,
+  CostBreakdown,
+  Entry,
+  Model,
+  TakeSettings,
+  Verdict,
+  Weakness,
+} from "./comparisons.ts";
+
+/** A saved take as this page renders it: the comparison entry plus the preview
+ *  path the Worker adds. The nullable metadata Entry already carries stays
+ *  optional here, because a narrow fixture may omit fields this page only
+ *  prints when present. */
+export interface ComparePageEntry
+  extends Partial<Pick<Entry, "generationId" | "briefKey" | "createdAt" | "prompt" | "width" | "height" | "durationMs" | "sha256">> {
+  model: string;
+  kind: string;
+  settings?: TakeSettings | null;
+  cost: CostBreakdown;
+  previewUrl?: string | null;
+}
+
+/** A job tab reads only its id, label and served model count. */
+export type ComparePageJobTab = Pick<CatalogueJob, "id" | "label" | "models">;
+
+/** The job heading reads the catalogue copy; a note is optional. */
+export type ComparePageJob = Pick<CatalogueJob, "id" | "label" | "purpose" | "settings"> & {
+  note?: string | null;
+};
+
+/** Only the project facts this page prints. The Worker passes its D1 row. */
+export interface ComparePageProject {
+  id: string;
+  name: string;
+}
+
+/** The served model facts the page labels a take with. */
+export type ComparePageModels = Record<string, Pick<Model, "label">> | null;
+
+/** The verdict copy the Worker chooses for this project. */
+export type ComparePageVerdict = Pick<Verdict, "headline" | "detail">;
+
+/** The measured weakness the Worker routes, as far as this page states it. */
+export type ComparePageWeakness = Pick<Weakness, "reason" | "owner" | "next">;
+
+/** Everything the chooser renders comes from saved work the Worker passes. */
+export interface ComparePageOptions {
+  revision?: string;
+  jobs?: readonly ComparePageJobTab[];
+  job?: ComparePageJob | null;
+  project?: ComparePageProject | null;
+  projects?: readonly ComparePageProject[];
+  entries?: readonly ComparePageEntry[];
+  excluded?: readonly ComparePageEntry[];
+  briefNote?: string | null;
+  verdict?: ComparePageVerdict | null;
+  weakness?: ComparePageWeakness | null;
+  session?: StudioShellSession | null;
+  composerOrigin?: string | null;
+  storyUrl?: string | null;
+  woodhouseShare?: boolean;
+  models?: ComparePageModels;
+}
+
+/**
+ * The model chooser. Everything on this page comes from saved work, so opening it
+ * never calls a provider. Two takes are shown beside each other because that is
+ * the only honest way to answer "which should I use".
+ */
+export function comparePage({ revision = "dev", jobs = [], job = null, project = null, projects = [], entries = [], excluded = [], briefNote = null, verdict = null, weakness = null, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, models = {} }: ComparePageOptions): string {
+  const money = (micro: number | null | undefined) => (micro === null || micro === undefined || !Number.isFinite(Number(micro)) ? "unknown" : `$${(Number(micro) / 1_000_000).toFixed(Number(micro) < 10_000 ? 4 : 2)}`);
+  const when = (value: number | null | undefined) => (value ? new Date(Number(value)).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "unknown");
+  const label = (id: string) => escapeHtml(models?.[id]?.label ?? id);
+  const projectQuery = project?.id ? `project=${encodeURIComponent(project.id)}&` : "";
+  const tab = (entry: ComparePageJobTab) =>
+    `<a class="cmp-tab${entry.id === job?.id ? " is-current" : ""}" href="/compare?${projectQuery}job=${encodeURIComponent(entry.id)}"${entry.id === job?.id ? ' aria-current="page"' : ""}>${escapeHtml(entry.label)}<span>${entry.models.length} model${entry.models.length === 1 ? "" : "s"}</span></a>`;
+  const take = (entry: ComparePageEntry, index: number) => `
+    <article class="cmp-take" data-take="${escapeHtml(entry.model)}" data-generation="${escapeHtml(entry.generationId ?? "")}" data-brief="${escapeHtml(entry.briefKey ?? "")}" data-created="${escapeHtml(String(entry.createdAt ?? ""))}">
+      <header>
+        <div>
+          <h3><span class="cmp-model-name">${label(entry.model)}</span><span class="cmp-blind-name">Take ${String.fromCharCode(65 + index)}</span></h3>
+          <p class="small">${escapeHtml(entry.kind)} · saved ${when(entry.createdAt)}</p>
+        </div>
+        <span class="cmp-badge" data-take-badge hidden>Your pick</span>
+      </header>
+      ${entry.settings?.reference ? `<a class="cmp-source" href="/api/assets/${encodeURIComponent(entry.settings.reference)}/file" target="_blank" rel="noreferrer"><img src="/api/assets/${encodeURIComponent(entry.settings.reference)}/file" alt="Source still used for this take" loading="lazy" decoding="async"><span>Source still</span></a>` : ""}
+      <div class="cmp-media">
+        ${
+          entry.previewUrl
+            ? entry.kind === "video"
+              ? `<video src="${escapeHtml(entry.previewUrl)}" controls preload="metadata" playsinline></video>`
+              : entry.kind === "audio"
+                ? `<audio src="${escapeHtml(entry.previewUrl)}" controls preload="metadata"></audio>`
+                : `<img src="${escapeHtml(entry.previewUrl)}" alt="${escapeHtml(entry.prompt || `A still generated by ${models?.[entry.model]?.label ?? entry.model}`)}" loading="lazy" decoding="async">`
+            : `<p class="notice warn">The saved bytes for this take are not available.</p>`
+        }
+      </div>
+      ${entry.prompt ? `<p class="cmp-prompt"><span class="small">Brief</span>${escapeHtml(entry.prompt)}</p>` : ""}
+      <dl class="cmp-facts">
+        <div class="cmp-cost"><dt>Estimate</dt><dd>${money(entry.cost.estimateMicro)}</dd></div>
+        <div class="cmp-cost"><dt>Allocated</dt><dd>${money(entry.cost.allocatedMicro)}</dd></div>
+        <div class="cmp-cost"><dt>Provider charge</dt><dd>${entry.cost.providerChargedMicro === null ? "not reported" : money(entry.cost.providerChargedMicro)}</dd></div>
+        ${entry.width && entry.height ? `<div><dt>Size</dt><dd>${entry.width}×${entry.height}</dd></div>` : ""}
+        ${entry.durationMs ? `<div><dt>Length</dt><dd>${(entry.durationMs / 1000).toFixed(1)}s</dd></div>` : ""}
+        ${entry.sha256 ? `<div class="cmp-hash"><dt>Output hash</dt><dd><code>${escapeHtml(String(entry.sha256).slice(0, 18))}…</code></dd></div>` : ""}
+      </dl>
+      <div class="cmp-vote">
+        <button type="button" class="secondary" data-pick="${escapeHtml(entry.model)}" aria-pressed="false">I would use this take</button>
+        <button type="button" class="quiet" data-reject="${escapeHtml(entry.model)}" aria-pressed="false">Not this one</button>
+        <label class="cmp-field"><span class="small">Why, or the moment it breaks</span><input type="text" maxlength="240" data-reason="${escapeHtml(entry.model)}" placeholder="Short note"></label>
+        <label class="cmp-field cmp-field-time"><span class="small">At</span><input type="text" maxlength="32" data-at="${escapeHtml(entry.model)}" placeholder="0:04"></label>
+      </div>
+    </article>`;
+
+  return `${head({
+    title: "Which model should do this job — Media Studio",
+    description: "Compare retained takes for the same job, with the estimate, the allocation and the provider charge kept separate.",
+    extra: `<meta name="robots" content="noindex"><link rel="stylesheet" href="/studio.css?v=${encodeURIComponent(revision)}">`,
+  })}
+<body>
+<a class="skip" href="#main">Skip to content</a>
+${header({ session, composerOrigin, storyUrl, woodhouseShare })}
+<main id="main" class="cmp-page" tabindex="-1">
+  <p class="eyebrow">Choose a model</p>
+  <h1>Which model should do this job?</h1>
+  <p class="lede">A comparison only makes sense inside one job. These takes were already saved${project ? ` in <strong>${escapeHtml(project.name)}</strong>` : ""}, so nothing here generates, spends or calls a provider.</p>
+
+  ${projects.length && !project ? `<section class="cmp-section" aria-labelledby="cmp-projects-title">
+    <h2 id="cmp-projects-title">Choose a studio</h2>
+    <p>Saved takes belong to the studio that made them. Choose one to review its matched outputs.</p>
+    <ul class="cmp-projects">${projects.map((choice) => `<li><a href="/compare?project=${encodeURIComponent(choice.id)}"><span>${escapeHtml(choice.name)}</span><span class="small">Open comparison</span></a></li>`).join("")}</ul>
+  </section>` : ""}
+
+  ${entries.length > 0 ? `<label class="cmp-blind-toggle"><input type="checkbox" data-blind-mode checked> <span>Blind review: hide model names and costs until you choose a take</span></label>` : ""}
+
+  <nav class="cmp-tabs" aria-label="Jobs">${jobs.map(tab).join("")}</nav>
+
+  ${
+    verdict
+      ? `<section class="cmp-verdict" aria-labelledby="verdict-title" data-verdict><p class="eyebrow">Verdict</p><h2 id="verdict-title" data-verdict-title>${escapeHtml(verdict.headline)}</h2><p data-verdict-detail>${escapeHtml(verdict.detail)}</p></section>`
+      : ""
+  }
+
+  ${
+    job
+      ? `<section class="cmp-section" aria-labelledby="job-title"><h2 id="job-title">${escapeHtml(job.label)}</h2><p>${escapeHtml(job.purpose)}</p><p class="small">Matched settings: ${escapeHtml(job.settings)}</p>${job.note ? `<p class="notice warn">${escapeHtml(job.note)}</p>` : ""}</section>`
+      : ""
+  }
+
+  ${briefNote ? `<p class="notice warn" role="note">${escapeHtml(briefNote)}</p>` : ""}
+
+  ${entries.length > 0 ? `<div class="cmp-grid is-blind">${entries.map(take).join("")}</div>` : `<p class="notice calm">No saved takes for this job yet. Create one from the studio, then come back: a comparison is built from work you already kept.</p>`}
+
+  ${
+    excluded.length > 0
+      ? `<section class="cmp-section" aria-labelledby="excluded-title"><h2 id="excluded-title">Saved, but not comparable</h2><p>These takes did the same kind of job with a different brief or different settings, so they are not ranked against the ones above.</p><ul>${excluded
+          .map(
+            (entry) =>
+              `<li><strong>${label(entry.model)}</strong> <span class="small">${escapeHtml(entry.settings?.aspect ?? "aspect unknown")} · ${entry.settings?.durationSeconds ? `${entry.settings.durationSeconds}s` : "length unknown"} · ${entry.prompt ? escapeHtml(entry.prompt.slice(0, 90)) : "no brief recorded"}</span></li>`,
+          )
+          .join("")}</ul></section>`
+      : ""
+  }
+
+  ${
+    weakness
+      ? `<section class="cmp-section" aria-labelledby="weak-title"><h2 id="weak-title">One weakness, and who owns it</h2><p>${escapeHtml(weakness.reason)}</p><p class="small">Owner: ${escapeHtml(weakness.owner)}. Next: ${escapeHtml(weakness.next)}</p></section>`
+      : ""
+  }
+
+  <section class="cmp-section" aria-labelledby="limits-title">
+    <h2 id="limits-title">What this page does not claim</h2>
+    <ul>
+      <li>The provider charge stays “not reported” unless a provider actually told us what it billed. An allocation is the studio's own budget figure, never an invoice.</li>
+      <li>These are the newest saved takes per model, not repeated trials. A difference you can see is a difference in one take, not a reliability score.</li>
+      <li>Takes are only compared when they share the same instruction and settings. Anything generated from a different brief is listed separately.</li>
+      <li>The source still is shown with each take. A clip can run for the requested length and still replace the subject; that is a review finding, not a hidden pass.</li>
+      <li>Your pick and your note are stored in this browser only and bound to the exact saved take. They are private by default and are not published anywhere.</li>
+      <li>Opening this page never calls a model, so it cannot add a take. New comparisons need a fresh run from the studio.</li>
+    </ul>
+    <p class="small" id="cmp-status" role="status" aria-live="polite"></p>
+    <div class="row"><button type="button" class="secondary" id="cmp-copy">Copy this review as JSON</button><a class="quiet" href="${project?.id ? `/#/p/${encodeURIComponent(project.id)}/history` : "/"}">Back to the studio</a></div>
+  </section>
+</main>
+<script type="module" src="/compare.js?v=${encodeURIComponent(revision)}"></script>
+</body>
+</html>`;
+}
