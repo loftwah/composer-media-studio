@@ -1,156 +1,18 @@
 // MIT. Server-rendered shells. The studio itself is progressive, same-origin JS.
 
 import { escapeHtml } from "./util.mjs";
-import { composerShare } from "./composer-share.ts";
 import { videoObjectJsonLd } from "./video-object-json-ld.ts";
-import { head, brandMark as mark, brandByline } from "./page-head.ts";
-
-// Optional installation identity for the Director. This is public display copy,
-// never a secret. An unset or blank value keeps the neutral "Creative Director";
-// the Worker shell publishes it for the browser without changing any prompt.
-function normalizeDirectorName(value) {
-  if (typeof value !== "string") return null;
-  const plain = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
-  const name = Array.from(plain).slice(0, 40).join("").trim();
-  if (!name || ["undefined", "null", "false", "none"].includes(name.toLowerCase())) return null;
-  return name;
-}
-
-function directorNameFromEnv() {
-  try {
-    return typeof process !== "undefined" ? normalizeDirectorName(process.env?.DIRECTOR_NAME) : null;
-  } catch {
-    return null;
-  }
-}
-
-function header({ session, composerOrigin, storyUrl, buildUrl, woodhouseShare, helpHref = "/help" }) {
-  const bridged = session?.mode === "bridge";
-  let launcherHome = null;
-  try {
-    const candidate = new URL(composerOrigin);
-    if (candidate.protocol === "https:" && !candidate.username && !candidate.password) {
-      launcherHome = candidate.origin + "/";
-    }
-  } catch { /* The launcher is optional when no valid Composer origin is configured. */ }
-  const context = session
-    ? `<p class="session-context"><span>${bridged ? "Opened from App Composer" : "Standalone owner session"}</span>${
-        session.actorName ? ` · ${escapeHtml(session.actorName)}` : ""
-      }${session.workspaceName && session.workspaceName !== session.actorName ? ` · ${escapeHtml(session.workspaceName)}` : ""}${
-        session.project ? ` · project ${escapeHtml(session.project)}` : ""
-      }</p>`
-    : "";
-  return `<header class="site-header">
-  <a class="wordmark" href="#/" aria-label="Media Studio home">${mark}<span>Media Studio</span>${brandByline()}</a>
-  <nav class="header-nav" aria-label="Studio">
-    ${bridged && launcherHome ? `<a class="quiet" href="${escapeHtml(launcherHome)}">App Composer</a>` : ""}
-    ${storyUrl ? `<a class="quiet" href="${escapeHtml(storyUrl)}">Read the story</a>` : ""}
-    <a href="#/">Projects</a>
-    ${session ? `<a href="/compare">Compare models</a>` : ""}
-    ${woodhouseShare ? `<a href="${composerShare}">Share artwork</a>` : ""}
-    <a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener">Help</a>
-    ${launcherHome ? `<div class="app-launcher">
-      <button type="button" class="secondary apps-trigger" data-open-apps aria-controls="app-navigation" aria-label="Open apps" title="Apps and shortcuts (Ctrl/Cmd+K)" aria-haspopup="dialog"><span>Apps</span><kbd>Ctrl K</kbd></button>
-      <dialog data-composer-home="${escapeHtml(launcherHome)}" data-launcher-scope="local" id="app-navigation" aria-labelledby="app-navigation-title">
-        <div class="dialog-heading"><h2 id="app-navigation-title">Apps and shortcuts</h2><button type="button" data-close-apps autofocus>Close</button></div>
-        <label>Find an app or task<input type="search" placeholder="App name, gallery, compare…" autocomplete="off"></label>
-        <p class="small" role="status" aria-live="polite"></p>
-        <ul>
-          <li data-destination data-local-launcher-group="studio"><a href="#/"><span>Studio projects<small>Private work in this studio</small></span></a></li>
-          <li data-destination data-local-launcher-group="studio"><a href="/gallery"><span>Public gallery<small>Work published from studios</small></span></a></li>
-          ${session ? '<li data-destination data-local-launcher-group="studio"><a href="/compare"><span>Compare models<small>Saved takes for the same job</small></span></a></li>' : ""}
-          ${woodhouseShare ? `<li data-destination data-local-launcher-group="studio"><a href="${composerShare}"><span>Share artwork<small>App Composer Share originals</small></span></a></li>` : ""}
-          <li data-destination data-local-launcher-group="studio"><a href="${escapeHtml(helpHref)}" target="_blank" rel="noopener"><span>Help<small>Studio guides and limits</small></span></a></li>
-          <li data-destination data-local-launcher-group="studio" data-keywords="image editor image workbench resize crop convert rotate batch export"><a href="/tools/images"><span>Edit images<small>Image tools: resize, crop, convert and batch-export local images</small></span></a></li>
-          <li data-destination data-local-launcher-group="apps" data-keywords="favicon favicons site icon app icon make create pwa maskable"><a href="https://composer-launch-kit.loftwah.workers.dev/?operation=icons" target="_blank" rel="noopener"><span>Make site icons<small>Open Launch Kit in a new tab</small></span></a></li>
-        </ul>
-      </dialog>
-    </div>` : ""}
-    <button class="quiet" id="signout" type="button">Sign out</button>
-    <button class="quiet theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="false">Dark</button>
-  </nav>
-  ${context}
-</header>${launcherHome ? '<script src="/brand/launcher.js" defer></script>' : ""}`;
-}
-
-export function shell({ revision, session = null, composerOrigin = null, storyUrl = null, woodhouseShare = false, directorName = directorNameFromEnv() }) {
-  const configuredDirectorName = normalizeDirectorName(directorName);
-  const directorMeta = configuredDirectorName
-    ? `<meta name="studio-director-name" content="${escapeHtml(configuredDirectorName)}">`
-    : "";
-  return `${head({
-    title: "Media Studio — make, assemble and keep images, video and sound",
-    description:
-      "An independent studio for uploads, image generation, reference variations, masked fills, background removal, upscaling, image-to-video, generated music, narration and effects, bounded multi-track assembly, saved compositions and deliberate publishing.",
-    extra: `${directorMeta}<meta name="robots" content="noindex"><link rel="stylesheet" href="/creative/home.css?v=${encodeURIComponent(revision)}"><link rel="stylesheet" href="/review.css"><link rel="stylesheet" href="/brand/launcher.css">`,
-  })}
-<body>
-<a class="skip" href="#main">Skip to content</a>
-${header({ session, composerOrigin, storyUrl, woodhouseShare })}
-<main id="main" tabindex="-1">
-  <div id="app">
-    <p class="notice calm">Loading your studio…</p>
-  </div>
-  <noscript><p class="notice warn">Media Studio needs JavaScript for the studio screens. Published pages still work without it.</p></noscript>
-</main>
-<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-<dialog id="confirm" aria-labelledby="confirm-title">
-  <form method="dialog" class="dialog-body" id="confirm-form">
-    <h2 id="confirm-title">Confirm</h2>
-    <div id="confirm-copy"></div>
-    <div class="row end">
-      <button value="cancel" class="secondary" formnovalidate>Cancel</button>
-      <button value="ok" class="button">Continue</button>
-    </div>
-  </form>
-</dialog>
-<script type="module" src="/studio.js?v=${encodeURIComponent(revision)}"></script>
-</body>
-</html>`;
-}
-
-export function loginPage({ next = "/", revision = "dev", bridged = false, composerOrigin = null, storyUrl = null, woodhouseShare = false }) {
-  return `${head({
-    title: "Sign in — Media Studio",
-    description: "Owner sign-in for an independent Media Studio.",
-    extra: `<meta name="robots" content="noindex">`,
-  })}
-<body>
-<div class="login">
-  <main class="card" id="main">
-    <div class="mark">${mark}</div>
-    <div>
-      <p class="eyebrow">${bridged ? "App Composer · Media Studio" : "Independent studio"}</p>
-      <h1 style="font-size:2rem">Your media, kept here.</h1>
-    </div>
-    <p>Upload and organise images, video and sound, make and edit new work with a funded model, and publish deliberately. Uploads and the library work without any AI account.</p>
-    ${bridged ? `<p class="notice calm">Open this studio from App Composer. Your existing Composer sign-in carries you in; there is no second password.</p>
-    <p><a class="button" data-composer-sign-in href="${escapeHtml(composerOrigin || "https://composer.loftwah.com")}/media-studio/studio">Continue with App Composer</a></p>
-    ${storyUrl ? `<p class="small"><a href="${escapeHtml(storyUrl)}">Read how this studio was built</a></p>` : ""}
-    <details><summary>Standalone owner sign-in</summary>` : ""}
-    <form id="login-form" class="stack">
-      <label>Owner passphrase
-        <input name="username" type="text" autocomplete="username" value="owner" hidden>
-        <input name="passphrase" type="password" autocomplete="current-password" required minlength="16" autofocus>
-      </label>
-      <input type="hidden" name="next" value="${escapeHtml(next)}">
-      <button class="button" type="submit">${bridged ? "Sign in with the owner passphrase" : "Open the studio"}</button>
-      <p class="small" role="status" id="login-status"></p>
-    </form>
-    ${bridged ? "</details>" : ""}
-    ${woodhouseShare ? `<p><a href="${composerShare}">Browse Share artwork</a></p>` : ""}
-    <p><a href="/tools/images">Resize, crop and convert images</a> · <a href="/tools/audio-trim">Trim a song</a> · <a href="/tools/video-clip">Clip and frame a video</a> · <a href="/tools/add-music">Add music</a> · no sign-in needed</p>
-    <p class="small">Your media stays in this studio. The owner passphrase is separate from your App Composer password.</p>
-  </main>
-</div>
-<script type="module" src="/login.js?v=${encodeURIComponent(revision)}"></script>
-</body>
-</html>`;
-}
+import { head } from "./page-head.ts";
+import { studioHeader as header } from "./studio-shell.ts";
 
 // The public VideoObject JSON-LD builder is owned by video-object-json-ld.ts.
 // Re-exported so existing ui.mjs import callers keep the exact same module path.
 export { videoObjectJsonLd };
+
+// The studio shell, login page and their shared header are owned by
+// studio-shell.ts under strict TypeScript. Re-exported so existing ui.mjs
+// import callers (the Worker and the focused tests) keep the same module path.
+export { shell, loginPage } from "./studio-shell.ts";
 
 // The public gallery page is owned by public-gallery.ts under strict
 // TypeScript. Re-exported so existing ui.mjs import callers (the Worker and the
