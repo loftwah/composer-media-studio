@@ -146,7 +146,7 @@ export function ClipReceiptDownload({ clip, filename, onCaptionReady }: {
 
   const kitAvailable = Boolean(prepared && prepared.kitInputBytes <= MAX_CLIP_KIT_BYTES);
   return <details>
-    <summary>Clip receipt</summary>
+    <summary>{clip.captions?.vtt ? "Captions and clip receipt" : "Clip receipt"}</summary>
     <p className="trim-note">Save the settings and SHA-256 digests of this export and its source. The receipt includes the original filename and stays on this device until you share it.</p>
     <button type="button" className="secondary" aria-disabled={preparing || Boolean(prepared)} onClick={() => void prepare()}>Prepare receipt</button>
     <p role="status" aria-live="polite">{message}</p>
