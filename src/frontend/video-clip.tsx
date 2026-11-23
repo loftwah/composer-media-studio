@@ -2,6 +2,7 @@ import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
+import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
 import { appendManualClipCue, canMergeClipDraftCues, canSplitClipDraftCue, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
@@ -123,6 +124,18 @@ function VideoClip() {
   }, [cueEditing]);
   const [captionMessage, setCaptionMessage] = useState("");
   const [captionLoading, setCaptionLoading] = useState(false);
+  // Caption draft JSON is a separate local-file action. It never participates
+  // in trim, crop, export or the receipt, and a source change always drops its
+  // in-flight read and any prepared download.
+  const [captionFileLoading, setCaptionFileLoading] = useState(false);
+  const [captionFileMessage, setCaptionFileMessage] = useState("");
+  const [preparedCaptionFile, setPreparedCaptionFile] = useState<{
+    file: File;
+    draft: CaptionDraft;
+    offsetMs: number;
+    text: string;
+    url: string;
+  } | null>(null);
   const [showSourceCaptions, setShowSourceCaptions] = useState(false);
   const [sourceCaptionTrack, setSourceCaptionTrack] = useState<{ vtt: string; url: string } | null>(null);
   const [sourceTrackProblem, setSourceTrackProblem] = useState("");
@@ -131,6 +144,7 @@ function VideoClip() {
   const [receiptMessage, setReceiptMessage] = useState("");
   const [receiptLoading, setReceiptLoading] = useState(false);
   const captionRequest = useRef(0);
+  const captionFileRequest = useRef(0);
   const receiptRequest = useRef(0);
   // Settings recorded only when an export succeeds: proof of what the finished
   // file actually contains, not what the controls currently show.
@@ -175,9 +189,15 @@ function VideoClip() {
   useEffect(() => () => {
     if (captionTrack && !captionTrack.english) URL.revokeObjectURL(captionTrack.url);
   }, [captionTrack]);
+  useEffect(() => () => {
+    if (preparedCaptionFile?.url) URL.revokeObjectURL(preparedCaptionFile.url);
+  }, [preparedCaptionFile?.url]);
+  // Drop a prepared JSON download as soon as the cues or offset it described
+  // change, so no earlier link can survive into newer work.
+  useEffect(() => { setPreparedCaptionFile(null); }, [captionDraft, captionOffsetRaw]);
   useEffect(() => { completedClipRef.current = completedClip; }, [completedClip]);
   useEffect(() => () => {
-    current.current++; captionRequest.current++; receiptRequest.current++;
+    current.current++; captionRequest.current++; captionFileRequest.current++; receiptRequest.current++;
     void active.current?.cancel();
     handoff.current?.close();
   }, []);
@@ -205,6 +225,14 @@ function VideoClip() {
   // one on every render, so returning to the same settings drops the note.
   const draft = [start, end, shape, quality, fit, fit === "cover" ? cropAnchor : "center", mute].join("|");
   const captionOffsetMs = captionDraft ? parseCaptionOffset(captionOffsetRaw) : 0;
+  // A prepared JSON download stays offered only for the exact source file,
+  // draft object and offset it was built from. Any cue, offset or source change
+  // hides the stale link immediately.
+  const currentPreparedCaptionFile = preparedCaptionFile
+    && preparedCaptionFile.file === file
+    && preparedCaptionFile.draft === captionDraft
+    && preparedCaptionFile.offsetMs === captionOffsetMs
+    ? preparedCaptionFile : null;
   const validTrim = Number.isFinite(start) && Number.isFinite(end)
     && start >= 0 && end <= duration && end > start && end - start <= MAX_CLIP_SECONDS;
   // The review list, preflight count and serialized VTT all read this one
@@ -340,6 +368,10 @@ function VideoClip() {
     // MP4 stay until a replacement actually succeeds.
     captionRequest.current++;
     setCaptionLoading(false);
+    captionFileRequest.current++;
+    setCaptionFileLoading(false);
+    setCaptionFileMessage("");
+    setPreparedCaptionFile(null);
     if (!fromHandoff && sourceRequest.current) {
       sourceRequest.current.abort();
       sourceRequest.current = null;
@@ -410,7 +442,7 @@ function VideoClip() {
     }
   }
   async function chooseCaptions(selected: File | undefined) {
-    if (!selected || !file || busy || checking || receiptLoading) return;
+    if (!selected || !file || busy || checking || receiptLoading || captionFileLoading) return;
     const request = ++captionRequest.current;
     setCaptionLoading(true);
     setCaptionMessage("Reading captions on this device…");
@@ -436,12 +468,83 @@ function VideoClip() {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
   }
+  // Save the editable caption draft as one small local JSON file. The video is
+  // read only for its exact SHA-256 and byte length; the cues use the canonical
+  // full-source formatter at their unshifted times. The download link is tied
+  // to this exact file object, draft and offset, so a later edit hides it.
+  async function prepareCaptionDraftFile() {
+    if (!file || !captionDraft || captionOffsetMs === null || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
+    const selectedSource = file;
+    const draft = captionDraft;
+    const offsetMs = captionOffsetMs;
+    const request = ++captionFileRequest.current;
+    setPreparedCaptionFile(null);
+    setCaptionFileLoading(true);
+    setCaptionFileMessage("Checking the video fingerprint and caption cues on this device…");
+    try {
+      const sourceSha256 = await sha256Hex(new Uint8Array(await selectedSource.arrayBuffer()));
+      if (request !== captionFileRequest.current) return;
+      const prepared = captionDraftFileText({ bytes: selectedSource.size, sha256: sourceSha256 }, draft.cues, offsetMs);
+      if (request !== captionFileRequest.current) return;
+      if ("problem" in prepared) { setCaptionFileMessage(prepared.problem); return; }
+      const url = URL.createObjectURL(new Blob([prepared.text], { type: "application/json" }));
+      setPreparedCaptionFile({ file: selectedSource, draft, offsetMs, text: prepared.text, url });
+      setCaptionFileMessage("Caption draft ready to save. It keeps every cue at its original video time and the timing offset above.");
+    } catch {
+      if (request === captionFileRequest.current)
+        setCaptionFileMessage("Could not prepare the caption draft on this device. Your caption cues and timing offset are unchanged.");
+    } finally {
+      if (request === captionFileRequest.current) setCaptionFileLoading(false);
+    }
+  }
+  // Open a caption draft only after proving it belongs to the exact video file
+  // already chosen here. A schema, version, size, field, fingerprint or WebVTT
+  // failure leaves the working cues and offset exactly as they were. The trim,
+  // framing, finished MP4 and receipt are never touched.
+  async function openCaptionDraftFile(selected: File | undefined) {
+    if (!selected || !file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
+    const selectedSource = file;
+    const request = ++captionFileRequest.current;
+    setCaptionFileLoading(true);
+    setCaptionFileMessage("Checking this caption draft against the current video…");
+    try {
+      if (!selected.size || selected.size > MAX_CAPTION_DRAFT_BYTES)
+        throw new Error(`Choose a Video Clip caption draft JSON file under ${MAX_CAPTION_DRAFT_BYTES / 1024} KB.`);
+      const text = await selected.text();
+      if (request !== captionFileRequest.current) return;
+      const sourceSha256 = await sha256Hex(new Uint8Array(await selectedSource.arrayBuffer()));
+      if (request !== captionFileRequest.current) return;
+      const restored = parseCaptionDraftFile(text, { bytes: selectedSource.size, sha256: sourceSha256 });
+      const source = manualCaptionTrackVtt(restored.cues);
+      if (!source) throw new Error("This caption draft has no cues to restore.");
+      const draftSha256 = await sha256Hex(new TextEncoder().encode(source));
+      if (request !== captionFileRequest.current) return;
+      setCaptionDraft({ name: selected.name, sourceSha256: draftSha256, cues: restored.cues, local: true });
+      setCaptionUndo(null);
+      setCaptionOffsetRaw(String(restored.offsetMs / 1000));
+      setCaptionText("");
+      resetCueEditor();
+      setManualCueMessage("");
+      setShowSourceCaptions(false);
+      setPreparedCaptionFile(null);
+      const count = restored.cues.length;
+      const offset = restored.offsetMs === 0
+        ? "no timing offset"
+        : `a ${restored.offsetMs > 0 ? "+" : "−"}${Math.abs(restored.offsetMs) / 1000}s timing offset`;
+      setCaptionFileMessage(`Restored ${count} ${count === 1 ? "cue" : "cues"} and ${offset} from ${selected.name}. Trim, frame and any finished MP4 are unchanged.`);
+    } catch (error) {
+      if (request === captionFileRequest.current)
+        setCaptionFileMessage(`${error instanceof Error ? error.message : "Could not read that caption draft."} Your current caption cues and timing offset are unchanged.`);
+    } finally {
+      if (request === captionFileRequest.current) setCaptionFileLoading(false);
+    }
+  }
   // The paste box is an alternate local source for the same chooser. A File is
   // built from exactly the entered UTF-8 bytes only after an explicit Apply, so
   // the existing bound, digest, parser, preflight, preview and draft download
   // all stay identical. Refused text leaves the loaded track and finished MP4.
   async function applyCaptionText() {
-    if (!file || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     const prepared = captionFileFromText(captionText);
     if ("problem" in prepared) { setCaptionMessage(prepared.problem); return; }
     await chooseCaptions(prepared.file);
@@ -461,7 +564,7 @@ function VideoClip() {
   // in time order. The digest covers the actual edited track so a receipt never
   // claims the imported file's bytes were changed.
   async function addManualCue() {
-    if (!file || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     const added = appendManualClipCue(captionDraft?.cues ?? [], {
       text: manualCueText, startSeconds: manualCueStart, endSeconds: manualCueEnd,
     }, Math.round(duration * 1000));
@@ -487,7 +590,7 @@ function VideoClip() {
   // seconds rather than the clipped, offset review times. The draft itself is
   // not changed until Update cue, so Cancel and invalid values stay harmless.
   function beginCueEdit(sourceIndex: number) {
-    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     const cue = captionDraft.cues[sourceIndex];
     if (!cue) return;
     if (manualCueDetails.current) manualCueDetails.current.open = true;
@@ -501,7 +604,7 @@ function VideoClip() {
     setManualCueMessage(`Editing the cue at ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} in the original video.`);
   }
   function cancelCueEdit() {
-    if (!cueEditing || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!cueEditing || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     resetCueEditor();
     setManualCueMessage("Edit cancelled. Write a new cue or choose another cue to edit.");
     manualCueTextInput.current?.focus();
@@ -510,7 +613,7 @@ function VideoClip() {
   // range and size checks run before any state change. The digest covers the
   // actual edited track, and the untouched prior draft is saved for Undo.
   async function saveEditedCue() {
-    if (!captionDraft || !cueEditing || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!captionDraft || !cueEditing || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     if (cueEditing.draft !== captionDraft || !captionDraft.cues[cueEditing.sourceIndex]) {
       resetCueEditor();
       setManualCueMessage("The caption draft changed. Choose Edit again.");
@@ -543,7 +646,7 @@ function VideoClip() {
   // text parts. Validation runs before any draft change, then the same edited
   // track digest and exact prior-draft Undo as Update cue apply.
   async function splitEditedCue() {
-    if (!captionDraft || !cueEditing || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!captionDraft || !cueEditing || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     const sourceCue = captionDraft.cues[cueEditing.sourceIndex];
     if (cueEditing.draft !== captionDraft || !sourceCue) {
       resetCueEditor();
@@ -584,7 +687,7 @@ function VideoClip() {
   // draft sidecar all read the resulting draft, so they update together. The
   // last cue removes the draft and track but keeps the snapshot for Undo.
   async function removeTrimmedCue(sourceIndex: number) {
-    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     const previousDraft = captionDraft;
     const nextCues = removeClipDraftCue(previousDraft.cues, sourceIndex);
     if (!nextCues) return;
@@ -618,7 +721,7 @@ function VideoClip() {
   // join with one space. Validation runs before any draft change, then the same
   // edited-track digest and exact prior-draft Undo as removal and editing apply.
   async function mergeTrimmedCues(firstSourceIndex: number, nextSourceIndex: number) {
-    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     const previousDraft = captionDraft;
     const merged = mergeClipDraftCues(previousDraft.cues, firstSourceIndex, nextSourceIndex, Math.round(duration * 1000));
     if ("problem" in merged) {
@@ -645,7 +748,7 @@ function VideoClip() {
   // Restore the exact draft, name and digest saved before that removal or edit.
   // Any later add, replacement, clear or source change already dropped it.
   function undoCaptionRemoval() {
-    if (!captionUndo || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (!captionUndo || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     captionRequest.current++;
     setCaptionDraft(captionUndo);
     setCaptionUndo(null);
@@ -676,7 +779,7 @@ function VideoClip() {
   // digest against the exact bytes already accepted as the source, then writes
   // only the editable controls. Results and captions stay until a replacement.
   async function openReceipt(selected: File | undefined) {
-    if (!selected || !file || busy || importing || checking || captionLoading || receiptLoading) return;
+    if (!selected || !file || busy || importing || checking || captionLoading || receiptLoading || captionFileLoading) return;
     const selectedSource = file;
     const request = ++receiptRequest.current;
     const stale = () => request !== receiptRequest.current;
@@ -719,7 +822,7 @@ function VideoClip() {
   }
 
   async function makeClip() {
-    if (!file || busy || checking || captionLoading || receiptLoading || captionOffsetMs === null) return;
+    if (!file || busy || checking || captionLoading || receiptLoading || captionFileLoading || captionOffsetMs === null) return;
     if (!validTrim) { setMessage("Choose a valid start and end within the video, up to 60 seconds apart."); return; }
     // A finished clip stays committed until a replacement actually succeeds, so a
     // cancelled or failed repeat leaves the previous poster and exact download intact.
@@ -864,7 +967,7 @@ function VideoClip() {
       {file && <><p><strong>{file.name}</strong> · {duration.toFixed(2)} seconds</p>
       <p className="trim-note">Reopen a Clip receipt to load the saved edit settings for this video.</p>
       <div className="video-tool-actions">
-        <label className="trim-file">Open clip receipt (JSON)<input type="file" accept="application/json,.json" disabled={busy || importing || checking || captionLoading || receiptLoading} onChange={event => {
+        <label className="trim-file">Open clip receipt (JSON)<input type="file" accept="application/json,.json" disabled={busy || importing || checking || captionLoading || receiptLoading || captionFileLoading} onChange={event => {
           const input = event.currentTarget;
           void openReceipt(input.files?.[0]);
           input.value = "";
@@ -880,8 +983,8 @@ function VideoClip() {
       {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
       <details>
         <summary>Use your own captions</summary>
-        <p className="trim-note">Choose a plain SRT or WebVTT file, paste the text below, or add one plain-text cue. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4.</p>
-        <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading} onChange={event => {
+        <p className="trim-note">Choose a plain SRT or WebVTT file, paste the text below, or add one plain-text cue. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4. A caption draft JSON also saves the editable cues and timing offset so you can reopen them later.</p>
+        <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading || captionFileLoading} onChange={event => {
           const input = event.currentTarget;
           void chooseCaptions(input.files?.[0]);
           input.value = "";
@@ -891,48 +994,48 @@ function VideoClip() {
           aria-describedby="caption-paste-help"
           placeholder={"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nYour first caption"}
           value={captionText}
-          disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+          disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
           onChange={event => setCaptionText(event.currentTarget.value)}
         /></label>
-        <button type="button" className="secondary" disabled={!file || !captionText.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void applyCaptionText()}>Apply captions</button>
+        <button type="button" className="secondary" disabled={!file || !captionText.trim() || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={() => void applyCaptionText()}>Apply captions</button>
         <details ref={manualCueDetails}>
           <summary>{cueEditing ? "Edit cue" : "Write a cue"}</summary>
           <p id="manual-cue-help" className="trim-note">Use seconds from the start of the original video, with up to three decimal places. The timing offset applies to every cue.</p>
           <label>Caption text<input ref={manualCueTextInput} type="text" spellCheck={false} maxLength={300}
             aria-describedby="manual-cue-help"
             value={manualCueText}
-            disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+            disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
             onChange={event => setManualCueText(event.currentTarget.value)}
           /></label>
           <div className="trim-fields">
             <div>
               <label>Cue start (seconds)<input type="number" min="0" max={duration} step="0.001"
                 value={manualCueStart}
-                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                 onChange={event => setManualCueStart(event.currentTarget.value)}
               /></label>
               <button type="button" className="secondary"
                 aria-label="Fill Cue start from the original video playhead"
-                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                 onClick={() => fillCueTimeFromPlayhead("start")}>Use playhead</button>
             </div>
             <div>
               <label>Cue end (seconds)<input type="number" min="0" max={duration} step="0.001"
                 value={manualCueEnd}
-                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                 onChange={event => setManualCueEnd(event.currentTarget.value)}
               /></label>
               <button type="button" className="secondary"
                 aria-label="Fill Cue end from the original video playhead"
-                disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                 onClick={() => fillCueTimeFromPlayhead("end")}>Use playhead</button>
             </div>
           </div>
           <div className="video-tool-actions">
             {cueEditing ? <>
-              <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void saveEditedCue()}>Update cue</button>
-              <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading} onClick={cancelCueEdit}>Cancel</button>
-            </> : <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void addManualCue()}>Add cue</button>}
+              <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={() => void saveEditedCue()}>Update cue</button>
+              <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={cancelCueEdit}>Cancel</button>
+            </> : <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={() => void addManualCue()}>Add cue</button>}
           </div>
           {canSplitEditingCue && editingCue && (
             <details className="trim-cue-split">
@@ -942,12 +1045,12 @@ function VideoClip() {
                 <label>Split at (seconds)<input type="number" min={editingCue.startMs / 1000} max={editingCue.endMs / 1000} step="0.001"
                   aria-describedby="cue-split-help"
                   value={cueSplitAt}
-                  disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                  disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                   onChange={event => setCueSplitAt(event.currentTarget.value)}
                 /></label>
                 <label>Word boundary<select value={cueSplitBoundary}
                   aria-describedby="cue-split-help"
-                  disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+                  disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                   onChange={event => setCueSplitWord(Number(event.currentTarget.value))}>
                   {editingCueWords.slice(1).map((_, index) => {
                     const boundary = index + 1;
@@ -957,14 +1060,18 @@ function VideoClip() {
               </div>
               {cueSplitPreview && <p className="trim-note trim-cue-split-preview" aria-live="polite">{cueSplitPreview.first} | {cueSplitPreview.second}</p>}
               <button type="button" className="secondary"
-                disabled={!file || !cueSplitAt.trim() || busy || checking || importing || receiptLoading || captionLoading}
+                disabled={!file || !cueSplitAt.trim() || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                 onClick={() => void splitEditedCue()}>Split cue</button>
             </details>
           )}
           {manualCueMessage && <p role="status" aria-live="polite" className="trim-note">{manualCueMessage}</p>}
         </details>
-        {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
+        {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionFileLoading} onClick={() => {
           captionRequest.current++;
+          captionFileRequest.current++;
+          setPreparedCaptionFile(null);
+          setCaptionFileLoading(false);
+          setCaptionFileMessage("");
           setCaptionDraft(null);
           setCaptionUndo(null);
           setCaptionOffsetRaw("0");
@@ -979,7 +1086,7 @@ function VideoClip() {
           <div className="trim-fields">
             <label>Timing offset (seconds)
               <input type="number" min={-MAX_CAPTION_OFFSET_SECONDS} max={MAX_CAPTION_OFFSET_SECONDS} step="0.001"
-                value={captionOffsetRaw} disabled={busy || checking || importing || receiptLoading}
+                value={captionOffsetRaw} disabled={busy || checking || importing || receiptLoading || captionFileLoading}
                 aria-invalid={captionOffsetMs === null}
                 aria-describedby={captionOffsetMs === null ? "caption-offset-help caption-offset-error" : "caption-offset-help"}
                 onChange={event => setCaptionOffsetRaw(event.target.value)}
@@ -1007,7 +1114,7 @@ function VideoClip() {
                     <li key={cue.sourceIndex} className="trim-cue-row">
                       <button type="button" className="secondary trim-cue-jump"
                         aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
-                        disabled={busy || checking || importing || receiptLoading || captionLoading}
+                        disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                         onClick={() => jumpToOriginalCue(cue.sourceStartMs)}>
                         <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
                         <span className="trim-cue-text">{cue.text}</span>
@@ -1015,15 +1122,15 @@ function VideoClip() {
                       <div className="trim-cue-actions">
                         <button type="button" className="secondary trim-cue-edit"
                           aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
-                          disabled={busy || checking || importing || receiptLoading || captionLoading}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                           onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
                         {canMerge && nextCue && <button type="button" className="secondary trim-cue-merge"
                           aria-label={`Merge cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text} with the next cue ${clipTimeStamp(nextCue.from)}–${clipTimeStamp(nextCue.to)}. ${nextCue.text}`}
-                          disabled={busy || checking || importing || receiptLoading || captionLoading}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                           onClick={() => void mergeTrimmedCues(cue.sourceIndex, nextCue.sourceIndex)}>Merge with next</button>}
                         <button type="button" className="secondary trim-cue-remove"
                           aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
-                          disabled={busy || checking || importing || receiptLoading || captionLoading}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                           onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
                       </div>
                     </li>
@@ -1045,19 +1152,42 @@ function VideoClip() {
             <p id="draft-captions-note" className="trim-note">These files use the current trim and timing offset. Finished clips keep their original caption files.</p>
           </div>}
           <label className="video-tool-check">
-            <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>
+            <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading || captionFileLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>
             Preview draft captions on original video
           </label>
           <p className="trim-note">The preview uses the full video and the timing offset above. The cue count applies to the trimmed MP4.</p>
           {sourcePreviewNote && <p className="trim-note" role="status">{sourcePreviewNote}</p>}
         </div>}
+        <div>
+          <p className="trim-note"><strong>Caption draft file (JSON)</strong></p>
+          <div className="video-tool-actions">
+            <button type="button" className="secondary"
+              disabled={!captionDraft || captionOffsetMs === null || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+              aria-busy={captionFileLoading || undefined}
+              aria-describedby="caption-draft-file-note"
+              onClick={() => void prepareCaptionDraftFile()}>
+              Prepare caption draft (JSON)
+            </button>
+            <label className="trim-file">Open caption draft (JSON)<input type="file" accept="application/json,.json"
+              disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+              aria-describedby="caption-draft-file-note"
+              onChange={event => {
+                const input = event.currentTarget;
+                void openCaptionDraftFile(input.files?.[0]);
+                input.value = "";
+              }}/></label>
+          </div>
+          {currentPreparedCaptionFile && <p><a className="button secondary" href={currentPreparedCaptionFile.url} download={`${clipFilename}-caption-draft.json`} aria-describedby="caption-draft-file-note">Save caption draft (JSON)</a></p>}
+          <p id="caption-draft-file-note" className="trim-note">This local JSON keeps every cue at its original video time and the timing offset above, tied to this video’s SHA-256 and byte length. Open it after choosing the same original video to restore those cues and offset for further edits. Trim, frame and any finished MP4 stay out of this file.</p>
+          <p role="status" aria-live="polite" className="trim-note">{captionFileMessage}</p>
+        </div>
         {captionUndo && <p>
-          <button ref={captionUndoButton} type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading} onClick={undoCaptionRemoval}>Undo last cue change</button>
+          <button ref={captionUndoButton} type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={undoCaptionRemoval}>Undo last cue change</button>
         </p>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
       <label className="video-tool-check"><input type="checkbox" checked={mute} disabled={busy || importing || receiptLoading} onChange={e => {setMute(e.target.checked);}}/> Mute original audio</label><p className="trim-note">H.264/AAC MP4 · {sizes[quality][shape][0]} × {sizes[quality][shape][1]} · {quality === "hd" ? "4 Mbps" : "1.2 Mbps"} video. HD uses more memory and may not work in every browser; try Standard if it cannot export.</p>
-      {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading || (captionOffsetMs === null)} aria-describedby={captionOffsetMs === null ? "caption-offset-error" : undefined} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
+      {!busy ? <button type="button" disabled={importing || checking || captionLoading || receiptLoading || captionFileLoading || (captionOffsetMs === null)} aria-describedby={captionOffsetMs === null ? "caption-offset-error" : undefined} onClick={() => void makeClip()}>Make MP4</button> : <button type="button" className="secondary" onClick={() => { cancelRequested.current = true; setMessage("Cancelling export…"); void active.current?.cancel(); }}>Cancel export</button>}</>}
       <p role="status" aria-live="polite">{message}</p>{result && <div className="trim-result" aria-busy={checking}><h2>{previous ? "Previous export" : "Your clip"}</h2>{previous && <p className="trim-note">Your settings changed after this MP4 was made. Make MP4 updates it; until then this is your last successful export.</p>}<ClipPoster key={`poster:${result}`} src={result} filename={clipFilename} captionTrack={captionTrack} output={completedClip?.output ?? null}/>
         <a className="button" href={result} download={`${clipFilename}.mp4`}>Save MP4</a>
         <button type="button" className="button secondary" disabled={!completedClip || handoffBusy || busy || importing || checking || receiptLoading} aria-disabled={handoffBusy || undefined} onClick={() => void openInAddMusic()}>{handoffBusy ? "Opening Add Music…" : "Open finished clip in Add Music"}</button>
