@@ -23,22 +23,41 @@ function stamp(ms: number) {
   return `${minutes}:${seconds}.${millis}`;
 }
 
+type ClippedCaptionCue = Readonly<{ from: number; to: number; text: string }>;
+
 // offsetMs is applied to every cue before it is clipped and rebased to the
 // selected range: positive moves cues later, negative earlier. The default of
-// 0 leaves the original timing (and therefore the emitted bytes) unchanged.
-export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0) {
+// 0 leaves the original timing unchanged. null means these values cannot be
+// projected at all; an empty array means valid values with no surviving cues.
+function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0): ClippedCaptionCue[] | null {
   const start = Math.round(startSeconds * 1000);
   const end = Math.round(endSeconds * 1000);
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start) return null;
   if (!Number.isSafeInteger(offsetMs) || Math.abs(offsetMs) > MAX_CAPTION_OFFSET_SECONDS * 1000) return null;
-  const blocks: string[] = [];
+  const kept: ClippedCaptionCue[] = [];
   for (const cue of cues) {
     const from = Math.max(cue.startMs + offsetMs, start), to = Math.min(cue.endMs + offsetMs, end);
     if (from >= to) continue;
-    const text = cue.text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-    blocks.push(`${stamp(from - start)} --> ${stamp(to - start)}\n${text}`);
+    kept.push({ from: from - start, to: to - start, text: cue.text });
   }
+  return kept;
+}
+
+export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0) {
+  const kept = clipCaptionCues(cues, startSeconds, endSeconds, offsetMs);
+  if (!kept) return null;
+  const blocks = kept.map(({ from, to, text }) => {
+    const plain = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    return `${stamp(from)} --> ${stamp(to)}\n${plain}`;
+  });
   return blocks.length ? `WEBVTT\n\n${blocks.join("\n\n")}\n` : null;
+}
+
+// Preflight count for the draft trim/offset. It reads the same projection the
+// serializer uses, so a count of zero predicts the null VTT an export would get
+// without a second clamp/filter pass or inspecting the emitted text.
+export function survivingClipCaptionCount(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0): number | null {
+  return clipCaptionCues(cues, startSeconds, endSeconds, offsetMs)?.length ?? null;
 }
 
 // SRT stamps carry hours and use a comma before milliseconds; WebVTT omits
