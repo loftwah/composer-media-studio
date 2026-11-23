@@ -23,6 +23,7 @@ const assets = [
   { source: 'src/browser/studio-route.ts', output: 'public/studio-route.js', header: '// Generated from src/browser/studio-route.ts; edit that source.\n' },
   { source: 'src/browser/studio-login-return.ts', output: 'public/studio-login-return.js', header: '// Generated from src/browser/studio-login-return.ts; edit that source.\n' },
   { source: 'src/browser/theme.ts', output: 'public/theme.js', header: '// Generated from src/browser/theme.ts; edit that source.\n' },
+  { source: 'src/browser/login.ts', output: 'public/login.js', header: '// Generated from src/browser/login.ts; edit that source. MIT.\n' },
 ];
 
 export function launcherAsset({ write = false } = {}) {

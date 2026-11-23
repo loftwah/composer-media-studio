@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { shell } from '../src/lib/ui.mjs';
+import { loginPage, shell } from '../src/lib/ui.mjs';
 
 test('the local app launcher uses only a configured safe Composer origin', () => {
   const configured = shell({revision:'a1', composerOrigin:'https://composer.example/', session:{mode:'bridge', actorName:'dean', workspaceName:'dean'}});
@@ -50,4 +50,10 @@ test('the launcher trigger always ships with the dialog it controls', () => {
   const bare = shell({revision:'a1', session:{mode:'owner'}});
   assert.doesNotMatch(bare, /data-open-apps/);
   assert.doesNotMatch(bare, /id="app-navigation"/);
+});
+
+test('the owner passphrase label names the password field rather than the hidden username', () => {
+  const login = loginPage({ bridged: true, revision: 'a1' });
+  assert.match(login, /<input name="username"[^>]* hidden>\s*<label for="owner-passphrase">Owner passphrase\s*<input id="owner-passphrase" name="passphrase" type="password"/);
+  assert.match(login, /src="\/login\.js\?v=a1"/);
 });
