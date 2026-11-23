@@ -296,7 +296,7 @@ type ListFocus =
   | { kind: "row-action"; id: string; offset: -1 | 1 }
   | { kind: "picker" };
 
-type ContactSheet = { url: string; blob: Blob; layoutUrl: string; count: number; columns: number; tileSize: number; width: number; height: number; mode: SheetMode };
+type ContactSheet = { url: string; blob: Blob; layoutUrl: string; layoutText: string; count: number; columns: number; tileSize: number; width: number; height: number; mode: SheetMode };
 type SheetMode = "contact-sheet" | "sprite-atlas";
 
 const DEFAULT_SETTINGS: Settings = {
@@ -1008,6 +1008,7 @@ function Images() {
   } | null>(null);
   const [outputCopy, setOutputCopy] = useState<{ key: string; message: string } | null>(null);
   const [sheetCopy, setSheetCopy] = useState<{ key: string; message: string } | null>(null);
+  const [sheetJsonFallback, setSheetJsonFallback] = useState<{ key: string; trigger: HTMLButtonElement } | null>(null);
   const [outputHashFallback, setOutputHashFallback] = useState<{
     key: string;
     hash: string;
@@ -1050,6 +1051,7 @@ function Images() {
   const dragIdRef = useRef("");
   const latestOutputCopy = useRef(0);
   const latestSheetCopy = useRef(0);
+  const sheetJsonFallbackField = useRef<HTMLTextAreaElement>(null);
   const latestSnippetCopy = useRef(0);
   const snippetField = useRef<HTMLTextAreaElement>(null);
   const latestPaletteCopy = useRef(0);
@@ -1125,6 +1127,7 @@ function Images() {
   useLayoutEffect(() => {
     currentSheetKey.current = sheetKey;
     latestSheetCopy.current += 1;
+    setSheetJsonFallback(null);
   }, [sheetKey]);
   // An alpha profile belongs to one exact finished result. Selecting another
   // row or regenerating can never leave an earlier result's counts on screen.
@@ -1292,6 +1295,7 @@ function Images() {
     batchExportRevision.current += 1;
     latestSheetCopy.current += 1;
     setSheetCopy(null);
+    setSheetJsonFallback(null);
     const nextMessage = zipBusy ? "The batch changed. Prepare the ZIP again." :
       sheetBusy ? `The batch changed. Make the ${sheetMode === "sprite-atlas" ? "sprite atlas" : "contact sheet"} again.` : "";
     setBatchMessage(nextMessage);
@@ -1421,7 +1425,10 @@ function Images() {
     if (outputHashFallback?.trigger === document.activeElement) {
       outputHashFallbackField.current?.focus();
     }
-  }, [paletteCopyFallback, outputHashFallback]);
+    if (sheetJsonFallback?.trigger === document.activeElement) {
+      sheetJsonFallbackField.current?.focus();
+    }
+  }, [paletteCopyFallback, outputHashFallback, sheetJsonFallback]);
 
   useEffect(() => () => publicImageRequest.current?.abort(), []);
 
@@ -2019,7 +2026,8 @@ function Images() {
           ? atlasDocument(atlas, sheet, tiles)
           : null;
       if (!layoutDocument) throw new Error(`This browser could not describe the ${name} layout.`);
-      const layoutBlob = new Blob([JSON.stringify(layoutDocument)], { type: "application/json" });
+      const layoutText = JSON.stringify(layoutDocument);
+      const layoutBlob = new Blob([layoutText], { type: "application/json" });
       const url = trackUrl(blob);
       const layoutUrl = trackUrl(layoutBlob);
       releaseUrl(contactSheet?.url);
@@ -2028,6 +2036,7 @@ function Images() {
         url,
         blob,
         layoutUrl,
+        layoutText,
         count: layout.count,
         columns: layout.columns,
         tileSize: contactLayout?.tileSize ?? CONTACT_SHEET_TILE,
@@ -2562,6 +2571,20 @@ function Images() {
     } catch {
       report(`Could not copy the PNG. Use Download ${sheet.mode === "sprite-atlas" ? "sprite atlas" : "contact sheet"} PNG instead.`);
     }
+  }
+
+  // The clipboard uses the same captured text as the download.
+  async function copySheetLayoutJson(button: HTMLButtonElement): Promise<void> {
+    const sheet = contactSheet;
+    if (!sheet) return;
+    const { report, stillCurrent } = sheetCopyAttemptFor(sheet.url);
+    const copied = await copyValue("layout JSON", sheet.layoutText, {
+      echo: false,
+      fallback: "Clipboard unavailable. Select the exact layout JSON below and copy it.",
+      report,
+    });
+    if (!stillCurrent()) return;
+    setSheetJsonFallback(copied ? null : { key: sheet.url, trigger: button });
   }
 
   async function copyOutputHash(
@@ -4415,7 +4438,31 @@ function Images() {
               Copy PNG
             </button>
           )}
+          {contactSheet && (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={(event) => void copySheetLayoutJson(event.currentTarget)}
+            >
+              Copy layout JSON
+            </button>
+          )}
         </div>
+        {sheetJsonFallback?.key === sheetKey && contactSheet && (
+          <label className="image-copy-fallback">
+            Exact layout JSON — select and copy
+            <textarea
+              readOnly
+              ref={sheetJsonFallbackField}
+              value={contactSheet.layoutText}
+              rows={6}
+              spellCheck={false}
+              aria-label="Exact layout JSON to copy"
+              onFocus={(event) => event.currentTarget.select()}
+              onClick={(event) => event.currentTarget.select()}
+            />
+          </label>
+        )}
         {sheetCopy?.key === sheetKey && (
           <p className="image-status" role="status" aria-live="polite">{sheetCopy.message}</p>
         )}
