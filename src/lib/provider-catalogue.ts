@@ -48,6 +48,31 @@ export interface CatalogueEntry {
   costBasis: string;
 }
 
+export type PublicModelAudio = ModelAudio;
+
+/** One served model in the exact shape publicModels() returns and the manifest stores. */
+export interface PublicModelRecord {
+  id: string;
+  label: string;
+  kind: string;
+  endpoint: string;
+  composer: boolean;
+  description: string;
+  aspects: string[];
+  durations: number[] | null;
+  references: number;
+  audio: PublicModelAudio | null;
+  edit: string | null;
+  promptRequired: boolean;
+  mask: boolean;
+  render: string | null;
+  provider: string;
+  costMicro: number;
+  costPerSecondMicro: number | null;
+  durationCostsMicro: Record<string, number> | null;
+  costBasis: string;
+}
+
 /** A retired entry keeps its exact attribution for saved jobs. */
 export interface RetiredCatalogueEntry {
   id: string;
@@ -55,6 +80,18 @@ export interface RetiredCatalogueEntry {
   provider: ProviderId;
   endpoint: string;
   kind: "image";
+  retiredAt: string;
+  replacement: string;
+  reason: string;
+}
+
+/** A retired model's retained attribution, in the exact shape the manifest stores. */
+export interface RetiredModelRecord {
+  id: string;
+  label: string;
+  kind: string;
+  endpoint: string;
+  provider: string;
   retiredAt: string;
   replacement: string;
   reason: string;
@@ -319,3 +356,56 @@ export const retiredModels: Record<string, RetiredCatalogueEntry> = {
       "Cloudflare's planned deprecation date for SDXL Lightning is 20 November 2026. New work uses Studio Draft · FLUX.2 Klein 9B; saved results keep this attribution.",
   },
 };
+
+export function publicRetiredModels(): RetiredModelRecord[] {
+  return Object.values(retiredModels).map((model) => ({
+    id: model.id,
+    label: model.label,
+    kind: model.kind,
+    endpoint: model.endpoint,
+    provider: "Cloudflare Workers AI",
+    retiredAt: model.retiredAt,
+    replacement: model.replacement,
+    reason: model.reason,
+  }));
+}
+
+/** The still, video and sound generation models Composer Init offers. Editing
+ * and render routes stay in the Studio manifest but are not Init choices. */
+const composerSelection = new Set([
+  "studio-print",
+  "studio-film",
+  "studio-craft",
+  "studio-quick",
+  "hailuo-standard",
+  "kling-standard",
+  "studio-score",
+  "studio-voice",
+]);
+
+export function publicModels(): PublicModelRecord[] {
+  return Object.values(models).filter(model => !model.restyle).map((model) => ({
+    id: model.id,
+    label: model.label,
+    kind: model.kind,
+    endpoint: model.endpoint,
+    composer: composerSelection.has(model.id),
+    description: model.description,
+    aspects: model.aspects ?? [],
+    durations: model.durations ?? null,
+    references: model.references,
+    audio: model.audio ?? null,
+    edit: model.edit ?? null,
+    promptRequired: model.promptRequired !== false,
+    mask: Boolean(model.mask),
+    render: model.render ?? null,
+    provider:
+      model.provider === PROVIDER_CLOUDFLARE
+        ? "Cloudflare Workers AI"
+        : "fal.ai",
+    costMicro: model.costMicro,
+    costPerSecondMicro: model.costPerSecondMicro ?? null,
+    durationCostsMicro: model.durationCostsMicro ?? null,
+    costBasis: model.costBasis,
+  }));
+}
