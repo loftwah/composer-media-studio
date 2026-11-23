@@ -1,6 +1,7 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
+import { appendManualClipCue, manualCaptionSourceName, manualCaptionTrackVtt } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -38,7 +39,7 @@ const sizes = {
 type Quality = keyof typeof sizes;
 type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
-type CaptionDraft = Readonly<{ name: string; sourceSha256: string; cues: ImportedCue[] }>;
+type CaptionDraft = Readonly<{ name: string; sourceSha256: string; cues: ImportedCue[]; local: boolean }>;
 
 // Accept a decimal-seconds offset only when it is a whole number of
 // milliseconds within the advertised +/- bound. Returns null when invalid so
@@ -82,6 +83,10 @@ function VideoClip() {
   const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
   const [captionOffsetRaw, setCaptionOffsetRaw] = useState("0");
   const [captionText, setCaptionText] = useState("");
+  const [manualCueText, setManualCueText] = useState("");
+  const [manualCueStart, setManualCueStart] = useState("");
+  const [manualCueEnd, setManualCueEnd] = useState("");
+  const [manualCueMessage, setManualCueMessage] = useState("");
   const [captionMessage, setCaptionMessage] = useState("");
   const [captionLoading, setCaptionLoading] = useState(false);
   const [showSourceCaptions, setShowSourceCaptions] = useState(false);
@@ -247,7 +252,7 @@ function VideoClip() {
   }, [sourceCaptionUrl]);
   const sourcePreviewNote = !showSourceCaptions ? ""
     : captionOffsetMs === null ? "Enter a valid timing offset to preview captions."
-    : !sourceVtt ? "No imported cues fit the original video at this offset."
+    : !sourceVtt ? "No caption cues fit the original video at this offset."
     : sourceTrackProblem;
   // A replacement only replaces the current video after it proves readable.
   // Returning focus to the chooser keeps the refusal next to the control that
@@ -294,6 +299,7 @@ function VideoClip() {
       setLoadedHandoff(fromHandoff);
       captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
+      setManualCueText(""); setManualCueStart(""); setManualCueEnd(""); setManualCueMessage("");
       setShowSourceCaptions(false);
       setCropAnchor("center");
       setReceiptMessage(""); setReceiptLoading(false);
@@ -350,8 +356,9 @@ function VideoClip() {
       const sourceSha256 = await sha256Hex(bytes);
       const cues = parseCaptionFile(new TextDecoder().decode(bytes), 0, MAX_SOURCE_SECONDS * 1000);
       if (request !== captionRequest.current) return;
-      setCaptionDraft({ name: selected.name, sourceSha256, cues });
+      setCaptionDraft({ name: selected.name, sourceSha256, cues, local: false });
       setCaptionOffsetRaw("0");
+      setManualCueMessage("");
       setCaptionMessage(`Loaded ${cues.length} ${cues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
       if (request === captionRequest.current)
@@ -369,6 +376,41 @@ function VideoClip() {
     const prepared = captionFileFromText(captionText);
     if ("problem" in prepared) { setCaptionMessage(prepared.problem); return; }
     await chooseCaptions(prepared.file);
+  }
+  // One plain-text cue at original-video seconds. Validation and overlap checks
+  // run before any state change, then the accepted cue joins the current draft
+  // in time order. The digest covers the actual edited track so a receipt never
+  // claims the imported file's bytes were changed.
+  async function addManualCue() {
+    if (!file || busy || checking || importing || receiptLoading || captionLoading) return;
+    const added = appendManualClipCue(captionDraft?.cues ?? [], {
+      text: manualCueText, startSeconds: manualCueStart, endSeconds: manualCueEnd,
+    }, Math.round(duration * 1000));
+    if ("problem" in added) { setManualCueMessage(added.problem); return; }
+    const request = ++captionRequest.current;
+    setCaptionLoading(true);
+    setManualCueMessage("Adding the cue to this draft…");
+    try {
+      const source = manualCaptionTrackVtt(added.cues);
+      if (!source) throw new Error("The cue times do not fit this video.");
+      const sourceSha256 = await sha256Hex(new TextEncoder().encode(source));
+      if (request !== captionRequest.current) return;
+      setCaptionDraft({
+        name: manualCaptionSourceName(captionDraft),
+        sourceSha256,
+        cues: added.cues,
+        local: true,
+      });
+      setManualCueText("");
+      setManualCueStart("");
+      setManualCueEnd("");
+      setManualCueMessage(`Added one cue. This draft now has ${added.cues.length} ${added.cues.length === 1 ? "cue" : "cues"}.`);
+    } catch (error) {
+      if (request === captionRequest.current)
+        setManualCueMessage(error instanceof Error ? error.message : "Could not add the cue in this browser.");
+    } finally {
+      if (request === captionRequest.current) setCaptionLoading(false);
+    }
   }
   // Pause on the projected source time and keep keyboard focus on the cue.
   function jumpToOriginalCue(sourceStartMs: number) {
@@ -481,7 +523,7 @@ function VideoClip() {
       // Keep the usual success wording unless the creator supplied captions that
       // this clip could not include, then point them at the offset/trim controls.
       setMessage(captionDraft && !captions?.vtt
-        ? "Your MP4 is ready to play and save. No imported cues fall inside this clip. Change the caption offset or trim and make the MP4 again to include cues."
+        ? "Your MP4 is ready to play and save. No caption cues fall inside this clip. Change the caption offset or trim and make the MP4 again to include cues."
         : "Your MP4 is ready to play and save.");
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Could not make the video on this device.";
@@ -577,14 +619,14 @@ function VideoClip() {
       <p role="status" className="trim-note">{receiptMessage}</p>
       <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
       <video ref={sourceVideo} className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}>
-        {sourceCaptionUrl && <track ref={sourceCaptions} kind="captions" label="Imported captions · original video" src={sourceCaptionUrl}/>}
+        {sourceCaptionUrl && <track ref={sourceCaptions} kind="captions" label="Draft captions · original video" src={sourceCaptionUrl}/>}
       </video>
       <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
       <label>Frame<select value={shape} disabled={busy || importing || receiptLoading} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing || receiptLoading} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing || receiptLoading} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (crop)</option></select></label>
       {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
       <details>
         <summary>Use your own captions</summary>
-        <p className="trim-note">Choose a plain SRT or WebVTT file, or paste the text below. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4.</p>
+        <p className="trim-note">Choose a plain SRT or WebVTT file, paste the text below, or add one plain-text cue. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4.</p>
         <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading} onChange={event => {
           const input = event.currentTarget;
           void chooseCaptions(input.files?.[0]);
@@ -599,11 +641,39 @@ function VideoClip() {
           onChange={event => setCaptionText(event.currentTarget.value)}
         /></label>
         <button type="button" className="secondary" disabled={!file || !captionText.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void applyCaptionText()}>Apply captions</button>
+        <details>
+          <summary>Write a cue</summary>
+          <p id="manual-cue-help" className="trim-note">Use seconds from the start of the original video, with up to three decimal places. The timing offset applies to every cue.</p>
+          <label>Caption text<input type="text" spellCheck={false} maxLength={300}
+            aria-describedby="manual-cue-help"
+            value={manualCueText}
+            disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+            onChange={event => setManualCueText(event.currentTarget.value)}
+          /></label>
+          <div className="trim-fields">
+            <label>Cue start (seconds)<input type="number" min="0" max={duration} step="0.001"
+              value={manualCueStart}
+              disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+              onChange={event => setManualCueStart(event.currentTarget.value)}
+            /></label>
+            <label>Cue end (seconds)<input type="number" min="0" max={duration} step="0.001"
+              value={manualCueEnd}
+              disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+              onChange={event => setManualCueEnd(event.currentTarget.value)}
+            /></label>
+          </div>
+          <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void addManualCue()}>Add cue</button>
+          {manualCueMessage && <p role="status" aria-live="polite" className="trim-note">{manualCueMessage}</p>}
+        </details>
         {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
           captionRequest.current++;
           setCaptionDraft(null);
           setCaptionOffsetRaw("0");
           setCaptionText("");
+          setManualCueText("");
+          setManualCueStart("");
+          setManualCueEnd("");
+          setManualCueMessage("");
           setCaptionLoading(false);
           setShowSourceCaptions(false);
           setCaptionMessage("Captions cleared.");
@@ -631,7 +701,7 @@ function VideoClip() {
           {trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
             <details className="trim-cue-review">
               <summary>Review cues in this trim ({trimmedCaptionCues.length})</summary>
-              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Turn on Preview imported captions on original video to see the original caption there.</p>
+              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Turn on Preview draft captions on original video to see the original caption there.</p>
               <ol className="trim-cue-list" aria-label="Caption cues in this trim">
                 {trimmedCaptionCues.map((cue, index) => (
                   <li key={`${cue.from}-${cue.to}-${index}`}>
@@ -654,7 +724,7 @@ function VideoClip() {
           </div>}
           <label className="video-tool-check">
             <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>
-            Preview imported captions on original video
+            Preview draft captions on original video
           </label>
           <p className="trim-note">The preview uses the full video and the timing offset above. The cue count applies to the trimmed MP4.</p>
           {sourcePreviewNote && <p className="trim-note" role="status">{sourcePreviewNote}</p>}
