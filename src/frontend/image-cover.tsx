@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { coverAreas, EMPTY_COVER_FIELDS, MAX_COVER_AREAS, type CoverFields, type CoverRegion } from "./image-cover-region.ts";
 import { MAX_IMAGE_INPUT_BYTES } from "./image-limits.ts";
+import { mosaicBlockSize, mosaicFitsPixelBudget, pixelateMosaic } from "./image-mosaic.ts";
 
 type CoverSource = { blob: Blob; url: string; width: number; height: number };
 type Props = {
@@ -11,7 +12,25 @@ type Props = {
   batchFull: boolean;
 };
 
-const REDACTED_FILENAME = "media-studio-redacted.png";
+type CoverMode = "solid" | "mosaic";
+
+const MODES = [
+  {
+    value: "solid",
+    label: "Solid cover",
+    note: "Fills each area with opaque black. This is the choice for concealing content.",
+  },
+  {
+    value: "mosaic",
+    label: "Mosaic",
+    note: "Decorative pixelation with a fixed block pattern. It can leave content recognisable and does not conceal it.",
+  },
+] as const satisfies readonly { value: CoverMode; label: string; note: string }[];
+
+const FILENAMES: Record<CoverMode, string> = {
+  solid: "media-studio-redacted.png",
+  mosaic: "media-studio-mosaic.png",
+};
 
 const fields = [
   { key: "left", label: "Left (px)", min: 0 },
@@ -33,7 +52,8 @@ function rectangleBetween(a: Point, b: Point): CoverRegion | null {
 
 export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batchFull }: Props) {
   const [coordinates, setCoordinates] = useState<CoverFields>(EMPTY_COVER_FIELDS);
-  const [output, setOutput] = useState<{ blob: Blob; url: string } | null>(null);
+  const [mode, setMode] = useState<CoverMode>("solid");
+  const [output, setOutput] = useState<{ blob: Blob; url: string; mode: CoverMode } | null>(null);
   const [addedUrl, setAddedUrl] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,6 +67,7 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
   const drag = useRef<{ pointerId: number; start: Point } | null>(null);
   const areas = coverAreas(coordinates, retained, source.width, source.height);
   const pending = areas.pending || nativeInvalid;
+  const mosaicOverBudget = mode === "mosaic" && !mosaicFitsPixelBudget(areas.regions);
 
   useEffect(() => () => {
     generation.current += 1;
@@ -65,6 +86,12 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
     invalidate();
     setNativeInvalid(Boolean(fieldsElement.current?.querySelector("input:invalid")));
     setCoordinates(previous => ({ ...previous, [key]: value }));
+  }
+
+  function changeMode(next: CoverMode) {
+    if (busy || next === mode) return;
+    invalidate();
+    setMode(next);
   }
 
   function pointFromEvent(event: ReactPointerEvent<HTMLImageElement>): Point {
@@ -136,7 +163,7 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
     if (!areas.canRetain || !current || pending) return;
     clearArea();
     setRetained(previous => [...previous, current]);
-    setMessage("Area added. Set the next rectangle or make the redacted PNG.");
+    setMessage(`Area added. Set the next rectangle or make the ${mode === "mosaic" ? "mosaic" : "redacted"} PNG.`);
   }
 
   function removeArea(index: number) {
@@ -148,7 +175,7 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
   }
 
   async function make() {
-    if (!areas.canExport || pending || busy || drawing) return;
+    if (!areas.canExport || pending || busy || drawing || mosaicOverBudget) return;
     const invalidField = fieldsElement.current?.querySelector<HTMLInputElement>("input:invalid");
     if (invalidField) {
       setNativeInvalid(true);
@@ -156,8 +183,11 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
       return;
     }
     const current = ++generation.current;
+    const exportMode = mode;
     setBusy(true);
-    setMessage("Making the redacted PNG on this device…");
+    setMessage(exportMode === "mosaic"
+      ? "Pixelating the mosaic PNG on this device…"
+      : "Making the redacted PNG on this device…");
     const canvas = document.createElement("canvas");
     try {
       const bitmap = await createImageBitmap(source.blob);
@@ -168,12 +198,24 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
         }
         canvas.width = source.width;
         canvas.height = source.height;
-        const ctx = canvas.getContext("2d");
+        const ctx = canvas.getContext("2d", { willReadFrequently: exportMode === "mosaic" });
         if (!ctx) throw new Error("This browser could not prepare the image.");
         ctx.drawImage(bitmap, 0, 0);
-        ctx.fillStyle = "#000";
-        for (const area of areas.regions) {
-          ctx.fillRect(area.left, area.top, area.width, area.height);
+        if (exportMode === "mosaic") {
+          for (const area of areas.regions) {
+            const pixels = ctx.getImageData(area.left, area.top, area.width, area.height);
+            pixelateMosaic(
+              pixels,
+              { left: 0, top: 0, width: area.width, height: area.height },
+              mosaicBlockSize(area),
+            );
+            ctx.putImageData(pixels, area.left, area.top);
+          }
+        } else {
+          ctx.fillStyle = "#000";
+          for (const area of areas.regions) {
+            ctx.fillRect(area.left, area.top, area.width, area.height);
+          }
         }
       } finally {
         bitmap.close();
@@ -183,11 +225,13 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
       if (png.type !== "image/png") throw new Error("This browser could not export a PNG.");
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current);
       resultUrl.current = URL.createObjectURL(png);
-      setOutput({ blob: png, url: resultUrl.current });
-      setMessage("Redacted PNG ready.");
+      setOutput({ blob: png, url: resultUrl.current, mode: exportMode });
+      setMessage(exportMode === "mosaic" ? "Mosaic PNG ready." : "Redacted PNG ready.");
     } catch (error) {
       if (current === generation.current) {
-        setMessage(error instanceof Error ? error.message : "Could not make the redacted PNG.");
+        setMessage(error instanceof Error
+          ? error.message
+          : exportMode === "mosaic" ? "Could not make the mosaic PNG." : "Could not make the redacted PNG.");
       }
     } finally {
       canvas.width = 0;
@@ -198,23 +242,49 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
 
   const finished = drawing ? null : output;
   const finishedPreview = finished?.url ?? "";
+  const finishedMode = finished?.mode ?? mode;
   const outlined = finishedPreview ? [] : draft ? [...retained, draft] : areas.regions;
   const alreadyAdded = finished?.url === addedUrl;
   const tooLargeToAdd = finished ? finished.blob.size > MAX_IMAGE_INPUT_BYTES : false;
+  const finishName = finishedMode === "mosaic" ? "mosaic PNG" : "redacted PNG";
 
-  async function addRedactedPng() {
+  async function addFinishedPng() {
     if (!finished || pending || busy || alreadyAdded || !canAddToBatch || tooLargeToAdd || batchFull) return;
-    const added = await addToBatch(new File([finished.blob], REDACTED_FILENAME, { type: "image/png" }));
+    const added = await addToBatch(new File([finished.blob], FILENAMES[finished.mode], { type: "image/png" }));
     if (added && resultUrl.current === finished.url) {
       setAddedUrl(finished.url);
-      setMessage("Redacted PNG added to the batch. Open it from the batch to continue editing.");
+      setMessage(finished.mode === "mosaic"
+        ? "Mosaic PNG added to the batch. Open it from the batch to continue editing."
+        : "Redacted PNG added to the batch. Open it from the batch to continue editing.");
     }
   }
 
   return (
-    <details className="image-cover">
-      <summary>Cover an area</summary>
-      <p>Fill a rectangle with solid black. Enter whole pixels from the top-left of the {source.width} × {source.height} image, or draw it on the preview.</p>
+    <details className="image-cover" data-image-region-treatment={mode}>
+      <summary>Cover or mosaic an area</summary>
+      <p>{mode === "mosaic"
+        ? "Pixelate a rectangle with a fixed block pattern. Enter whole pixels from the top-left of the "
+        : "Fill a rectangle with solid black. Enter whole pixels from the top-left of the "}
+        {source.width} × {source.height} image, or draw it on the preview.</p>
+      <fieldset className="image-cover-mode">
+        <legend>Treatment</legend>
+        {MODES.map(option => (
+          <label key={option.value}>
+            <input
+              type="radio"
+              name="image-cover-mode"
+              value={option.value}
+              checked={mode === option.value}
+              disabled={busy}
+              onChange={() => changeMode(option.value)}
+            />
+            <span>
+              <strong>{option.label}</strong>
+              <span className="trim-note">{option.note}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
       <div className="image-cover-fields" ref={fieldsElement}>
         {fields.map(field => (
           <label key={field.key}>
@@ -249,7 +319,7 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
       </div>
       {retained.length > 0 && (
         <div>
-          <p className="trim-note">Added areas ({retained.length}/{MAX_COVER_AREAS}). Each area is covered in the same PNG.</p>
+          <p className="trim-note">Added areas ({retained.length}/{MAX_COVER_AREAS}). Each area gets the same treatment in the same PNG.</p>
           <ul className="image-cover-area-list">
             {retained.map((area, index) => (
               <li key={`${area.left}-${area.top}-${index}`}>
@@ -269,7 +339,9 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
           src={finishedPreview || source.url}
           width={source.width}
           height={source.height}
-          alt={finishedPreview ? "Redacted PNG preview" : "Completed image for region selection"}
+          alt={finishedPreview
+            ? finishedMode === "mosaic" ? "Mosaic PNG preview" : "Redacted PNG preview"
+            : "Completed image for region selection"}
           draggable={false}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -292,24 +364,43 @@ export function ImageCover({ source, encodePng, addToBatch, canAddToBatch, batch
         ))}
       </div>
       <div className="image-control-actions">
-        <button type="button" className="secondary" disabled={!areas.canExport || pending} aria-disabled={busy || drawing} onClick={() => void make()}>
-          {busy ? "Making redacted PNG…" : "Make redacted PNG"}
+        <button
+          type="button"
+          className="secondary"
+          data-image-region-export={mode}
+          disabled={!areas.canExport || pending || mosaicOverBudget}
+          aria-disabled={busy || drawing}
+          onClick={() => void make()}
+        >
+          {busy
+            ? finishedMode === "mosaic" ? "Pixelating mosaic PNG…" : "Making redacted PNG…"
+            : finishedMode === "mosaic" ? "Make mosaic PNG" : "Make redacted PNG"}
         </button>
         {finished && (
           <>
-            <a className="button secondary" href={finished.url} download={REDACTED_FILENAME}>Download redacted PNG</a>
+            <a
+              className="button secondary"
+              data-image-region-download={finished.mode}
+              href={finished.url}
+              download={FILENAMES[finished.mode]}
+            >
+              {finished.mode === "mosaic" ? "Download mosaic PNG" : "Download redacted PNG"}
+            </a>
             <button
               className="button secondary"
               type="button"
               aria-disabled={busy || pending || alreadyAdded || !canAddToBatch || tooLargeToAdd || batchFull}
-              onClick={() => void addRedactedPng()}
+              onClick={() => void addFinishedPng()}
             >
-              {alreadyAdded ? "Redacted PNG added" : "Add redacted PNG to batch"}
+              {alreadyAdded
+                ? `${finished.mode === "mosaic" ? "Mosaic" : "Redacted"} PNG added`
+                : `Add ${finishName} to batch`}
             </button>
           </>
         )}
       </div>
       <p role="status" className="trim-note">{pending ? "Finish or clear the current rectangle before exporting." : message}</p>
+      {mosaicOverBudget && <p className="trim-note">Make the mosaic areas smaller. One export can pixelate up to 8 million pixels.</p>}
       {finished && (tooLargeToAdd || batchFull) && (
         <p className="trim-note">
           {tooLargeToAdd ? `New inputs must be ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MiB or smaller.` : "Remove an image before adding this PNG."}
