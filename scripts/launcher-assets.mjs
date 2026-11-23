@@ -1,4 +1,4 @@
-// MIT. Check/emit the small classic browser scripts without a second build framework.
+// MIT. Check/emit the small browser scripts without a second build framework.
 import ts from 'typescript';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -6,13 +6,15 @@ import { basename, resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-// Authored strict TypeScript under src/browser and the exact classic defer paths
+// Authored strict TypeScript under src/browser and the exact browser entry paths
 // they ship as. Each header is the source pointer kept at the top of its output;
-// the script stays classic (no imports) so pageshow binds at defer-evaluation time.
+// the scripts stay import-free, so the classic defer assets bind at
+// defer-evaluation time and the compare review keeps its module path.
 const assets = [
   { source: 'src/browser/launcher.ts', output: 'public/brand/launcher.js', header: '// Generated from src/browser/launcher.ts; edit that source. MIT.\n' },
   { source: 'src/browser/gallery-focus.ts', output: 'public/gallery-focus.js', header: '// Generated from src/browser/gallery-focus.ts; edit that source.\n' },
   { source: 'src/browser/public-piece.ts', output: 'public/public-piece.js', header: '// Generated from src/browser/public-piece.ts; edit that source.\n' },
+  { source: 'src/browser/compare.ts', output: 'public/compare.js', header: '// Generated from src/browser/compare.ts; edit that source.\n' },
 ];
 
 export function launcherAsset({ write = false } = {}) {
