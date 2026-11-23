@@ -12,33 +12,25 @@ import {
   imageAspects,
   imageDimensions,
   models,
+  publicModels,
+  publicRetiredModels,
   retiredModels,
 } from "./provider-catalogue.ts";
 
-// The static catalogue lives in provider-catalogue.ts so it is checked as
-// strict TypeScript. Re-exported here so existing callers keep this path.
+// The static catalogue and its public projections live in provider-catalogue.ts
+// so they are checked as strict TypeScript. Re-exported here so existing callers
+// keep this path.
 export {
   PROVIDER_CLOUDFLARE,
   PROVIDER_FAL,
   imageAspects,
   models,
+  publicModels,
+  publicRetiredModels,
   retiredModels,
 };
 
 export const FAL_ORIGIN = "https://queue.fal.run";
-
-export function publicRetiredModels() {
-  return Object.values(retiredModels).map((model) => ({
-    id: model.id,
-    label: model.label,
-    kind: model.kind,
-    endpoint: model.endpoint,
-    provider: "Cloudflare Workers AI",
-    retiredAt: model.retiredAt,
-    replacement: model.replacement,
-    reason: model.reason,
-  }));
-}
 
 /** Chunked base64 so an 8 MiB reference cannot overflow the argument limit. */
 export function toBase64(bytes) {
@@ -47,46 +39,6 @@ export function toBase64(bytes) {
   for (let index = 0; index < bytes.length; index += chunk)
     binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
   return btoa(binary);
-}
-
-/** The still, video and sound generation models Composer Init offers. Editing
- * and render routes stay in the Studio manifest but are not Init choices. */
-const composerSelection = new Set([
-  "studio-print",
-  "studio-film",
-  "studio-craft",
-  "studio-quick",
-  "hailuo-standard",
-  "kling-standard",
-  "studio-score",
-  "studio-voice",
-]);
-
-export function publicModels() {
-  return Object.values(models).filter(model => !model.restyle).map((model) => ({
-    id: model.id,
-    label: model.label,
-    kind: model.kind,
-    endpoint: model.endpoint,
-    composer: composerSelection.has(model.id),
-    description: model.description,
-    aspects: model.aspects ?? [],
-    durations: model.durations ?? null,
-    references: model.references,
-    audio: model.audio ?? null,
-    edit: model.edit ?? null,
-    promptRequired: model.promptRequired !== false,
-    mask: Boolean(model.mask),
-    render: model.render ?? null,
-    provider:
-      model.provider === PROVIDER_CLOUDFLARE
-        ? "Cloudflare Workers AI"
-        : "fal.ai",
-    costMicro: model.costMicro,
-    costPerSecondMicro: model.costPerSecondMicro ?? null,
-    durationCostsMicro: model.durationCostsMicro ?? null,
-    costBasis: model.costBasis,
-  }));
 }
 
 export function getModel(id) {

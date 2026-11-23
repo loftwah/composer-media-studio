@@ -2,8 +2,8 @@
 // check. A refresh reads public provider pages and model search; it never calls
 // inference, changes a default, spends money or writes a GitHub issue.
 
-import { imageAspects, models, publicModels, publicRetiredModels } from "./providers.mjs";
-import type { CatalogueModel, PublicModelRecord, RetiredModelRecord } from "./providers.mjs";
+import { imageAspects, models, publicModels, publicRetiredModels } from "./provider-catalogue.ts";
+import type { CatalogueEntry, PublicModelRecord, RetiredModelRecord } from "./provider-catalogue.ts";
 import { DARKROOM_VERSION } from "./darkroom.mjs";
 
 export const CAPABILITIES_CONTRACT = "media-studio-capabilities";
@@ -222,7 +222,7 @@ interface SourceRecordExtra {
 }
 
 function sourceRecord(
-  model: CatalogueModel,
+  model: CatalogueEntry,
   source: string,
   status: SourceStatus,
   detail: unknown,
@@ -255,7 +255,7 @@ async function fetchText(fetchImpl: FetchLike, url: string): Promise<string> {
   return readBounded(response);
 }
 
-async function checkCloudflare(fetchImpl: FetchLike, model: CatalogueModel, checkedAt: string): Promise<CapabilitySource> {
+async function checkCloudflare(fetchImpl: FetchLike, model: CatalogueEntry, checkedAt: string): Promise<CapabilitySource> {
   const slug = cloudflareSlug(model.endpoint);
   const source = `${CLOUDFLARE_DOCS}/${slug}/index.md`;
   try {
@@ -277,7 +277,7 @@ export function falModelMatches(endpoint: string, item: unknown): boolean {
   return candidate.id === endpoint || candidate.id === endpoint.replace(/^fal-ai\//, "");
 }
 
-async function checkFal(fetchImpl: FetchLike, model: CatalogueModel, checkedAt: string): Promise<CapabilitySource> {
+async function checkFal(fetchImpl: FetchLike, model: CatalogueEntry, checkedAt: string): Promise<CapabilitySource> {
   const source = `${FAL_MODELS}?keywords=${encodeURIComponent(model.endpoint)}`;
   try {
     const text = await fetchText(fetchImpl, source);
