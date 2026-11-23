@@ -13,6 +13,7 @@ import {
   buildTitlePairManifest,
   bundleFileName,
   coverCropRect,
+  describeExportAnchors,
   exportFileName,
   manifestFileName,
   normalizeCreatorNote,
@@ -124,6 +125,13 @@ test("object-position is the CSS form of the same anchor", () => {
   assert.equal(objectPositionFor("top"), "50% 0%");
 });
 
+test("a prepared-set label names a shared anchor or says the crops differ", () => {
+  assert.equal(describeExportAnchors(["centre", "centre", "centre"]), "Centre");
+  assert.equal(describeExportAnchors(["top"]), "Top");
+  assert.equal(describeExportAnchors(["centre", "bottom"]), "per-pair");
+  assert.equal(describeExportAnchors([]), "Centre");
+});
+
 test("the download stem follows the workbench's name rules", () => {
   assert.equal(safeTitleStem("My Great Title!"), "My-Great-Title");
   assert.equal(safeTitleStem("   "), "thumbnail");
@@ -159,6 +167,59 @@ test("the section keeps the workbench's local-only and keyboard promises", () =>
   assert.match(section, /URL\.revokeObjectURL/);
   // The workbench mounts the section.
   assert.match(workbench, /<TitleCompare preparedImage=\{preparedTitleImage\} \/>/);
+});
+
+test("every pair keeps its own crop anchor with centre defaults", () => {
+  assert.match(
+    section,
+    /const \[anchors, setAnchors\] = useState<Record<PairId, CropAnchorKey>>\(\(\) => \(\{\s*a: "centre",\s*b: "centre",\s*c: "centre",?\s*\}\)\)/,
+  );
+  // The select shows and edits the active pair, and each compact preview reads
+  // its own pair's anchor.
+  assert.match(section, /const anchor = anchors\[selectedId\]/);
+  assert.match(section, /const position = objectPositionFor\(anchors\[id\]\)/);
+  assert.match(section, /\{`Preview crop position for \$\{selectedLabel\}`\}/);
+  assert.match(section, /data-title-compare-anchor-pair=\{selectedId\}/);
+  assert.match(
+    section,
+    /onChange=\{\(event\) => updateAnchor\(selectedIndex, event\.target\.value as CropAnchorKey\)\}/,
+  );
+  assert.match(section, /function updateAnchor\(index: number, next: CropAnchorKey\): void \{/);
+  assert.match(section, /if \(anchors\[id\] === next\) return;/);
+  assert.match(section, /setAnchors\(\(current\) => \(\{ \.\.\.current, \[id\]: next \}\)\)/);
+});
+
+test("a crop edit clears only the edited pair's preference", () => {
+  const start = section.indexOf("function updateAnchor");
+  const end = section.indexOf("\n  }", start);
+  assert.ok(start >= 0 && end > start);
+  const update = section.slice(start, end);
+  assert.match(update, /clearPreferenceFor\(index\)/);
+  assert.doesNotMatch(update, /setPreferredId|setSelectedId|discardExports/);
+});
+
+test("each export captures its pair's anchor before the first await", () => {
+  // Single-pair PNG and manifest capture the selected pair's own anchor.
+  assert.equal(
+    (section.match(/const forPair = selectedId;\s*const forAnchor = anchors\[forPair\];/g) ?? []).length,
+    2,
+  );
+  assert.match(
+    section,
+    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image \}\];/,
+  );
+  // The set snapshot carries each pair's anchor and the loop encodes with it.
+  assert.match(
+    section,
+    /const setAnchorLabel = describeExportAnchors\(captured\.map\(\(pair\) => pair\.anchor\)\)/,
+  );
+  assert.match(
+    section,
+    /for \(const prepared of captured\) \{\s*const image = prepared\.image;\s*const forAnchor = prepared\.anchor;/,
+  );
+  assert.match(section, /anchor: forAnchor,/);
+  assert.match(section, /anchorLabel: setAnchorLabel,/);
+  assert.doesNotMatch(section, /const forAnchor = anchor;/);
 });
 
 test("decoded bitmaps are closed on every outcome, not just a successful draw", () => {
@@ -260,6 +321,21 @@ test("the manifest builder records the captured facts under a versioned schema",
   }
 });
 
+test("centre stays the default and the legacy manifest shape is unchanged", () => {
+  // All pairs default to centre, and a centre plan is still the same
+  // whole-pixel rect the preview and PNG have always used.
+  assert.deepEqual(coverCropRect(2000, 1080, 640, 360, "centre"), {
+    left: 40,
+    top: 0,
+    width: 1920,
+    height: 1080,
+  });
+  const manifest = buildTitlePairManifest({ ...noteManifestInput(), anchor: "centre" });
+  assert.equal(manifest.version, 1);
+  assert.equal(manifest.crop.anchor, "centre");
+  assert.equal(JSON.stringify(manifest).includes("per-pair"), false);
+});
+
 function noteManifestInput() {
   return {
     generatedAt: "2026-11-23T09:00:00.000Z",
@@ -344,7 +420,7 @@ test("each pair editor writes a local note that only reaches its manifest", () =
   assert.match(section, /onChange=\{\(event\) => setPair\(index, \{ note: event\.target\.value \}\)\}/);
   // Both note and title are captured before either export's first await.
   assert.match(section, /const title = pair\.title;\s*const note = pair\.note;/);
-  assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, image: pair\.image \}\];/);
+  assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image \}\];/);
   // The single-pair and prepared-set paths feed their captured note to the
   // same builder whose bytes are reused unchanged in the package ZIPs.
   assert.match(section, /pairId: forPair,\s*title,\s*note,\s*source:/);

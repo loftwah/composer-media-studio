@@ -18,7 +18,7 @@
 .title-compare-anchor {
   display: grid;
   gap: 0.35rem;
-  max-width: 14rem;
+  max-width: 18rem;
 }
 
 /* The optional creator note is plain text scoped to one pair. The workbench
