@@ -85,7 +85,7 @@ import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } from "./lib/publication-policy.mjs";
 import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.mjs";
-import { PUBLIC_CACHE_SECONDS, publicOrigin, publicSitemap, robotsTxt } from "./lib/sitemap.ts";
+import { PUBLIC_CACHE_SECONDS, publicOrigin, publicDiscoveryResponse } from "./lib/sitemap.ts";
 import { checkPublicImage } from "./lib/public-image-privacy.ts";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
 import { servePosterPreview, servePublicationThumb } from "./lib/public-derivative-responses.ts";
@@ -2400,31 +2400,8 @@ async function handlePublic(request, env, url) {
   // state. They share the 60-second public cache boundary with the pages they
   // name, so a withdrawal disappears within that window. Above the single-file
   // cap, /sitemap.xml is a same-origin index of numbered child sitemaps.
-  const sitemapChild = path.match(/^\/sitemap-([1-9][0-9]*)\.xml$/);
-  if (path === "/sitemap.xml" || sitemapChild || path === "/robots.txt") {
-    const origin = publicOrigin(env, request.url);
-    if (path === "/robots.txt") {
-      return new Response(robotsTxt(origin), {
-        headers: {
-          "content-type": "text/plain; charset=utf-8",
-          "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}`,
-        },
-      });
-    }
-    const body = await publicSitemap(env, origin, sitemapChild ? Number(sitemapChild[1]) : null);
-    if (body === null) {
-      return new Response(notFoundPage(), {
-        status: 404,
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-      });
-    }
-    return new Response(body, {
-      headers: {
-        "content-type": "application/xml; charset=utf-8",
-        "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}`,
-      },
-    });
-  }
+  const discovery = await publicDiscoveryResponse(env, request.url, path);
+  if (discovery) return discovery;
   if (path === "/gallery") {
     const rawPage = url.searchParams.get("page") ?? "1";
     const page = /^[1-9][0-9]{0,4}$/.test(rawPage) ? Number(rawPage) : 1;

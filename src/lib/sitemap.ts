@@ -22,6 +22,7 @@
 // from the same eligibility query on each read: no sitemap rows are stored.
 
 import { escapeHtml } from "./util.mjs";
+import { notFoundPage } from "./public-tool-pages.ts";
 
 export const SITEMAP_LIMIT = 5000;
 export const PUBLIC_CACHE_SECONDS = 60;
@@ -141,4 +142,36 @@ export function robotsTxt(origin: string): string {
     `Sitemap: ${origin}/sitemap.xml`,
     "",
   ].join("\n");
+}
+
+/**
+ * The /robots.txt, /sitemap.xml and numbered /sitemap-N.xml response block,
+ * lifted verbatim from the Worker router. Recognises only those exact routes;
+ * returns null for anything else so the caller keeps its normal routing.
+ */
+export async function publicDiscoveryResponse(env: SitemapEnv, requestUrl: string, path: string): Promise<Response | null> {
+  const sitemapChild = path.match(/^\/sitemap-([1-9][0-9]*)\.xml$/);
+  if (path !== "/sitemap.xml" && !sitemapChild && path !== "/robots.txt") return null;
+  const origin = publicOrigin(env, requestUrl);
+  if (path === "/robots.txt") {
+    return new Response(robotsTxt(origin), {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}`,
+      },
+    });
+  }
+  const body = await publicSitemap(env, origin, sitemapChild ? Number(sitemapChild[1]) : null);
+  if (body === null) {
+    return new Response(notFoundPage(), {
+      status: 404,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  return new Response(body, {
+    headers: {
+      "content-type": "application/xml; charset=utf-8",
+      "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}`,
+    },
+  });
 }
