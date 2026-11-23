@@ -1,4 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
+import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
@@ -80,6 +81,7 @@ function VideoClip() {
   const [captionTrack, setCaptionTrack] = useState<ClipCaptionTrack | null>(null);
   const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
   const [captionOffsetRaw, setCaptionOffsetRaw] = useState("0");
+  const [captionText, setCaptionText] = useState("");
   const [captionMessage, setCaptionMessage] = useState("");
   const [captionLoading, setCaptionLoading] = useState(false);
   const [showSourceCaptions, setShowSourceCaptions] = useState(false);
@@ -258,6 +260,11 @@ function VideoClip() {
   async function choose(next: File | undefined, fromHandoff: "published" | "studio" | null = null) {
     if (busy || importing || receiptLoading) return;
     if (!next) return;
+    // A source change supersedes any caption read still in flight, even if this
+    // replacement is refused. The current track, typed text and any finished
+    // MP4 stay until a replacement actually succeeds.
+    captionRequest.current++;
+    setCaptionLoading(false);
     if (!fromHandoff && sourceRequest.current) {
       sourceRequest.current.abort();
       sourceRequest.current = null;
@@ -283,7 +290,7 @@ function VideoClip() {
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setLoadedHandoff(fromHandoff);
       captionRequest.current++; receiptRequest.current++;
-      setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionMessage(""); setCaptionLoading(false);
+      setCaptionDraft(null); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
       setShowSourceCaptions(false);
       setCropAnchor("center");
       setReceiptMessage(""); setReceiptLoading(false);
@@ -349,6 +356,16 @@ function VideoClip() {
     } finally {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
+  }
+  // The paste box is an alternate local source for the same chooser. A File is
+  // built from exactly the entered UTF-8 bytes only after an explicit Apply, so
+  // the existing bound, digest, parser, preflight, preview and draft download
+  // all stay identical. Refused text leaves the loaded track and finished MP4.
+  async function applyCaptionText() {
+    if (!file || busy || checking || importing || receiptLoading || captionLoading) return;
+    const prepared = captionFileFromText(captionText);
+    if ("problem" in prepared) { setCaptionMessage(prepared.problem); return; }
+    await chooseCaptions(prepared.file);
   }
 
   // Opening a receipt is an explicit, local-only action. It proves the saved
@@ -557,16 +574,26 @@ function VideoClip() {
       {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
       <details>
         <summary>Use your own captions</summary>
-        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4.</p>
+        <p className="trim-note">Choose a plain SRT or WebVTT file, or paste the text below. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4.</p>
         <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading} onChange={event => {
           const input = event.currentTarget;
           void chooseCaptions(input.files?.[0]);
           input.value = "";
         }}/></label>
+        <p id="caption-paste-help" className="trim-note">Plain SRT or WebVTT up to 64 KB. Caption text stays in this tab.</p>
+        <label className="trim-file">Paste captions<textarea rows={6} spellCheck={false}
+          aria-describedby="caption-paste-help"
+          placeholder={"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nYour first caption"}
+          value={captionText}
+          disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
+          onChange={event => setCaptionText(event.currentTarget.value)}
+        /></label>
+        <button type="button" className="secondary" disabled={!file || !captionText.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void applyCaptionText()}>Apply captions</button>
         {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
           captionRequest.current++;
           setCaptionDraft(null);
           setCaptionOffsetRaw("0");
+          setCaptionText("");
           setCaptionLoading(false);
           setShowSourceCaptions(false);
           setCaptionMessage("Captions cleared.");
