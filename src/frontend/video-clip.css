@@ -14,6 +14,6 @@
 .trim-cue-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.35rem; align-items:stretch; }
 .trim-cue-jump { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.75rem; align-items:baseline; width:100%; text-align:left; }
 .trim-cue-actions { display:grid; gap:.35rem; align-content:start; }
-.trim-cue-edit, .trim-cue-remove { align-self:stretch; }
+.trim-cue-edit, .trim-cue-merge, .trim-cue-remove { align-self:stretch; }
 .trim-cue-time { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .trim-cue-text { overflow-wrap:anywhere; }

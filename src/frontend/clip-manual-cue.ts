@@ -134,6 +134,70 @@ export function replaceClipDraftCue(
 }
 
 /**
+ * Two draft cues are truly adjacent only when their source indexes are next to
+ * each other, their original times touch without a gap or overlap, and they
+ * share a speaker. The review calls this only for rows it currently shows, so a
+ * cue hidden by the trim or timing offset can never be pulled into a merge.
+ */
+function adjacentClipDraftCues(
+  cues: readonly ImportedCue[],
+  firstSourceIndex: number,
+  nextSourceIndex: number,
+): Readonly<{ first: ImportedCue; next: ImportedCue }> | null {
+  if (!Number.isSafeInteger(firstSourceIndex) || !Number.isSafeInteger(nextSourceIndex)) return null;
+  if (nextSourceIndex !== firstSourceIndex + 1) return null;
+  if (firstSourceIndex < 0 || nextSourceIndex >= cues.length) return null;
+  const first = cues[firstSourceIndex], next = cues[nextSourceIndex];
+  if (!first || !next) return null;
+  if (first.startMs >= first.endMs || next.startMs >= next.endMs) return null;
+  if (first.endMs !== next.startMs || first.speaker !== next.speaker) return null;
+  return { first, next };
+}
+
+/** Whether the review can offer Merge with next for these two visible cues. */
+export function canMergeClipDraftCues(
+  cues: readonly ImportedCue[],
+  firstSourceIndex: number,
+  nextSourceIndex: number,
+): boolean {
+  return adjacentClipDraftCues(cues, firstSourceIndex, nextSourceIndex) !== null;
+}
+
+/**
+ * Merge exactly two adjacent cues by their draft indexes, the identity carried
+ * by the shared trim projection. The first cue's original start and the next
+ * cue's original end are kept, and their exact texts are joined with one space.
+ * The merged track goes through the same plain-text, duration, overlap and size
+ * validation as Add cue and Update cue. A refusal changes nothing, so the
+ * caller's draft remains exactly as it was.
+ */
+export function mergeClipDraftCues(
+  cues: readonly ImportedCue[],
+  firstSourceIndex: number,
+  nextSourceIndex: number,
+  durationMs: number,
+): ManualCueAddition {
+  const pair = adjacentClipDraftCues(cues, firstSourceIndex, nextSourceIndex);
+  if (!pair) {
+    const stale = !Number.isSafeInteger(firstSourceIndex) || firstSourceIndex < 0 || firstSourceIndex >= cues.length
+      || !Number.isSafeInteger(nextSourceIndex) || nextSourceIndex < 0 || nextSourceIndex >= cues.length;
+    return { problem: stale
+      ? "That cue is no longer in this draft. Choose Merge again."
+      : "Only two adjacent cues with matching speakers and no gap can be merged." };
+  }
+  const { first, next } = pair;
+  // Remove the second cue first so the existing replacement validator sees the
+  // exact draft a successful merge would leave, including its overlap checks.
+  const remaining = cues.filter((_, index) => index !== nextSourceIndex);
+  const seconds = (ms: number) => (ms / 1000).toFixed(3);
+  return validatedManualCue(remaining, {
+    text: `${first.text} ${next.text}`,
+    startSeconds: seconds(first.startMs),
+    endSeconds: seconds(next.endMs),
+  }, durationMs, firstSourceIndex);
+}
+
+/**
  * Remove one cue by its index in the draft, the identity carried by the shared
  * trim projection. An offset or trim can clamp or shift what the review row
  * shows, so its displayed times cannot identify the underlying cue. Cues

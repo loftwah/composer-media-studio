@@ -5,8 +5,10 @@ import { clipCaptionCues, serializeClipCaptions, sourcePreviewVtt } from '../src
 import {
   MAX_MANUAL_CAPTION_CUES,
   appendManualClipCue,
+  canMergeClipDraftCues,
   manualCaptionSourceName,
   manualCaptionTrackVtt,
+  mergeClipDraftCues,
   removeClipDraftCue,
   replaceClipDraftCue,
 } from '../src/frontend/clip-manual-cue.ts';
@@ -153,6 +155,81 @@ test('a clamped or shifted review row edits its exact draft cue and preserves ex
     { from: 0, to: 1500, sourceStartMs: 2000, text: 'Trimmed', sourceIndex: 1 },
     { from: 4250, to: 5000, sourceStartMs: 6250, text: 'Shifted corrected', sourceIndex: 2 },
   ]);
+});
+
+test('two visible adjacent cues merge with their exact texts and original outer times', () => {
+  const before = cue(0, 500, 'Before');
+  const first = cue(1000, 2000, 'Hello & <one>');
+  const next = cue(2000, 3200, 'world');
+  const after = cue(5000, 6000, 'After');
+  const cues = [before, first, next, after];
+  const snapshot = structuredClone(cues);
+  assert.equal(canMergeClipDraftCues(cues, 1, 2), true);
+  const nextCues = accepted(mergeClipDraftCues(cues, 1, 2, 10_000));
+  assert.deepEqual(nextCues, [
+    before, { startMs: 1000, endMs: 3200, text: 'Hello & <one> world', speaker: '' }, after,
+  ]);
+  // The exact edited track is the canonical full-source VTT used for its digest.
+  assert.equal(manualCaptionTrackVtt(nextCues),
+    'WEBVTT\n\n00:00.000 --> 00:00.500\nBefore\n\n00:01.000 --> 00:03.200\nHello &amp; &lt;one&gt; world\n\n00:05.000 --> 00:06.000\nAfter\n');
+  // Atomic: neither the caller's cues nor the merged source texts were changed.
+  assert.deepEqual(cues, snapshot);
+  assert.equal(first.text, 'Hello & <one>');
+});
+
+test('a merge keeps cues hidden by the trim and offset and targets the visible source indexes', () => {
+  const before = cue(500, 900, 'Before');
+  const first = cue(1000, 3000, 'First');
+  const next = cue(3000, 5000, 'Second');
+  const after = cue(9000, 9800, 'After');
+  const cues = [before, first, next, after];
+  const projected = clipCaptionCues(cues, 2, 7, 500);
+  assert.deepEqual(projected, [
+    { from: 0, to: 1500, sourceStartMs: 2000, text: 'First', sourceIndex: 1 },
+    { from: 1500, to: 3500, sourceStartMs: 3500, text: 'Second', sourceIndex: 2 },
+  ]);
+  const nextCues = accepted(mergeClipDraftCues(cues, projected[0].sourceIndex, projected[1].sourceIndex, 10_000));
+  // Hidden cues stay exactly where they were; only the two visible rows merge,
+  // and their original start/end survive the clamp and offset.
+  assert.deepEqual(nextCues, [before, { startMs: 1000, endMs: 5000, text: 'First Second', speaker: '' }, after]);
+  assert.deepEqual(clipCaptionCues(nextCues, 2, 7, 500), [
+    { from: 0, to: 3500, sourceStartMs: 2000, text: 'First Second', sourceIndex: 1 },
+  ]);
+});
+
+test('merge refuses hidden, gapped, mismatched or stale neighbours without changing the draft', () => {
+  const cues = [cue(0, 1000, 'A'), cue(1000, 2000, 'B'), cue(2000, 3000, 'C')];
+  const snapshot = structuredClone(cues);
+  assert.equal(canMergeClipDraftCues(cues, 0, 2), false);
+  assert.match(problem(mergeClipDraftCues(cues, 0, 2, 10_000)), /adjacent cues/);
+  // Adjacency is the next draft source index, not merely the next row in this
+  // trim, so skipping a source cue is refused even when both rows are visible.
+  assert.equal(canMergeClipDraftCues(cues, 0, 1), true);
+  assert.match(problem(mergeClipDraftCues([cue(0, 1000, 'A'), cue(1001, 2000, 'B')], 0, 1, 10_000)), /no gap/);
+  assert.match(problem(mergeClipDraftCues([{ ...cues[0], speaker: 'One' }, { ...cues[1], speaker: 'Two' }], 0, 1, 10_000)), /matching speakers/);
+  for (const [firstIndex, nextIndex] of [[-1, 0], [2, 3], [0, 1.5], [0, -1]]) {
+    assert.match(problem(mergeClipDraftCues(cues, firstIndex, nextIndex, 10_000)), /no longer in this draft/);
+  }
+  // The existing overlap check still runs against every cue left in the draft.
+  const overlapping = [cue(0, 1000, 'A'), cue(1000, 2000, 'B'), cue(1500, 2500, 'C')];
+  assert.match(problem(mergeClipDraftCues(overlapping, 0, 1, 10_000)), /overlaps another cue/);
+  assert.deepEqual(cues, snapshot);
+});
+
+test('merge reuses the plain-text, duration, size and text limits before changing the draft', () => {
+  const exact = [cue(0, 1000, 'a'.repeat(150)), cue(1000, 2000, 'b'.repeat(149))];
+  assert.equal(accepted(mergeClipDraftCues(exact, 0, 1, 10_000))[0].text.length, 300);
+  const tooLong = [cue(0, 1000, 'a'.repeat(151)), cue(1000, 2000, 'b'.repeat(149))];
+  const tooLongSnapshot = structuredClone(tooLong);
+  assert.equal(problem(mergeClipDraftCues(tooLong, 0, 1, 10_000)),
+    'Use plain text up to 300 characters without control characters.');
+  assert.deepEqual(tooLong, tooLongSnapshot);
+  // The merged outer end must still fit the real video duration.
+  assert.match(problem(mergeClipDraftCues([cue(0, 1000, 'A'), cue(1000, 2000, 'B')], 0, 1, 1500)), /within this video/);
+  // The 64 KB edited-track bound still applies to a merge even when the joined
+  // text itself is under 300 characters.
+  const bulky = Array.from({ length: MAX_MANUAL_CAPTION_CUES }, (_, index) => cue(index * 1000, (index + 1) * 1000, '&'.repeat(149)));
+  assert.match(problem(mergeClipDraftCues(bulky, 0, 1, 100_000)), /64 KB/);
 });
 
 test('an invalid or stale edit is refused without changing the cue list', () => {
