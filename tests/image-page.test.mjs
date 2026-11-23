@@ -102,7 +102,10 @@ test("WebP choices follow the one-time probe while the byte-level MIME check sta
   assert.match(workbench, /useState<SocialKitFormat>\(defaultSocialKitFormat\(WEBP_ENCODABLE\)\)/);
   assert.match(workbench, /format: defaultSocialKitFormat\(WEBP_ENCODABLE\)/);
   assert.match(workbench, /image-webp-unavailable-note/);
-  assert.equal([...workbench.matchAll(/disabled=\{value === "webp" && !WEBP_ENCODABLE\}/g)].length, 2);
+  assert.equal([...workbench.matchAll(/disabled=\{value === "webp" && !WEBP_ENCODABLE\}/g)].length, 3);
+  assert.match(workbench, /Format for this image/);
+  assert.match(workbench, /<option value="">Use batch<\/option>/);
+  assert.match(workbench, /if \(value === "webp" && !WEBP_ENCODABLE\) return;/);
   assert.match(workbench, /if \(blob\.type !== mime\)/);
   assert.match(workbench, /if \(!sniffed\.supported \|\| sniffed\.mime !== mime\)/);
 });
@@ -193,6 +196,15 @@ test("a batch row can set its own long edge without touching the batch", () => {
   assert.match(workbench, /longEdgeFromControl\(event\.currentTarget\)/);
   assert.match(workbench, /const invalidLongEdgeItem = items\.find/);
   assert.match(workbench, /Boolean\(invalidLongEdgeItem\)/);
+});
+
+test("a batch row can choose its own export format without touching the batch", () => {
+  assert.match(workbench, /value=\{item\.formatOverride \?\? ""\}/);
+  assert.match(workbench, /setFormatOverride\(/);
+  assert.match(workbench, /formatOverride: value/);
+  assert.match(workbench, /item\.formatOverride !== undefined/);
+  assert.match(workbench, /rowIsLossy\(item\)/);
+  assert.match(workbench, /selected\.formatOverride/);
 });
 
 test("intake decodes each candidate before it queues or resets exports", () => {

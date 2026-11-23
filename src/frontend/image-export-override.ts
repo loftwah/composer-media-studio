@@ -1,7 +1,10 @@
 // MIT. A bounded, reversible per-image export choice. The batch keeps its
-// normal Settings; a PNG source can opt into a lossless PNG result while the
-// batch default stays JPEG or WebP. PNG has no byte target, so an inherited
-// target is dropped for that one image. This is not a receipt version change.
+// normal Settings; one row can choose PNG, JPEG or WebP while the batch keeps
+// its own format. The older PNG-source boolean still means "lossless PNG" for
+// callers that do not pass a format. PNG has no byte target, so an inherited
+// target is dropped for that one image. A lossy row in a PNG batch drops the
+// batch's stored target too, so a hidden value cannot revive a byte search.
+// This is not a receipt version change.
 // A per-image long edge composes with that choice: a number resizes only that
 // image, and a blank value keeps the batch resize. A per-image crop aspect
 // likewise changes only that image; an undefined value keeps the batch crop.
@@ -53,9 +56,15 @@ export function canExportImageAsPng(sourceMime: string, batchFormat: string): bo
 }
 
 /**
- * The effective settings for one image. Unchecked images, non-PNG sources and
- * an already-PNG batch keep the exact batch settings object. A checked PNG in a
- * JPEG/WebP batch becomes lossless PNG with no byte target.
+ * The effective settings for one image. With no row format and no PNG flag,
+ * the exact batch settings object is returned.
+ *
+ * A row format replaces the batch format for that image. A PNG result is
+ * lossless and has no byte target. A lossy result keeps a target that already
+ * belongs to a lossy batch, but a lossy result from a PNG batch clears the
+ * batch's stored target so a hidden value cannot become a byte search. The
+ * older `pngOverride` flag still becomes lossless PNG when the source is PNG
+ * and the batch is JPEG or WebP; an explicit row format takes precedence.
  *
  * A defined long edge replaces the batch resize for one image with an explicit
  * long edge, including when the batch uses exact dimensions or a maximum. An
@@ -79,6 +88,7 @@ export function settingsForImage<T extends BatchExportSettings>(
   cropAspectOverride?: T["cropAspect"],
   cropAnchorOverride?: T["cropAnchor"],
   qualityOverride?: number,
+  formatOverride?: ExportFormat,
 ): EffectiveSettings<T> {
   let effective: EffectiveSettings<T> = settings;
   if (longEdgeOverride !== undefined) {
@@ -97,7 +107,18 @@ export function settingsForImage<T extends BatchExportSettings>(
     candidate.targetKiB === null
       ? { ...candidate, quality: qualityOverride / 100 }
       : candidate;
-  if (!pngOverride || !canExportImageAsPng(sourceMime, settings.format))
+  const requestedFormat =
+    formatOverride === "png" || formatOverride === "jpeg" || formatOverride === "webp"
+      ? formatOverride
+      : undefined;
+  const format = requestedFormat ??
+    (pngOverride && canExportImageAsPng(sourceMime, settings.format) ? "png" : undefined);
+  if (format === undefined) {
     return applyQuality(effective);
-  return { ...effective, format: "png", targetKiB: null };
+  }
+  return applyQuality({
+    ...effective,
+    format,
+    targetKiB: format === "png" || settings.format === "png" ? null : effective.targetKiB,
+  });
 }
