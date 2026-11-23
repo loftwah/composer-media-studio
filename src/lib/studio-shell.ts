@@ -170,9 +170,9 @@ export function loginPage({ next = "/", revision = "dev", bridged = false, compo
     ${storyUrl ? `<p class="small"><a href="${escapeHtml(storyUrl)}">Read how this studio was built</a></p>` : ""}
     <details><summary>Standalone owner sign-in</summary>` : ""}
     <form id="login-form" class="stack">
-      <label>Owner passphrase
-        <input name="username" type="text" autocomplete="username" value="owner" hidden>
-        <input name="passphrase" type="password" autocomplete="current-password" required minlength="16" autofocus>
+      <input name="username" type="text" autocomplete="username" value="owner" hidden>
+      <label for="owner-passphrase">Owner passphrase
+        <input id="owner-passphrase" name="passphrase" type="password" autocomplete="current-password" required minlength="16" autofocus>
       </label>
       <input type="hidden" name="next" value="${escapeHtml(next)}">
       <button class="button" type="submit">${bridged ? "Sign in with the owner passphrase" : "Open the studio"}</button>
