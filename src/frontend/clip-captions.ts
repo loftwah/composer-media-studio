@@ -60,6 +60,17 @@ export function survivingClipCaptionCount(cues: readonly ImportedCue[], startSec
   return clipCaptionCues(cues, startSeconds, endSeconds, offsetMs)?.length ?? null;
 }
 
+/**
+ * Native preview of imported captions on the untouched source. It reuses the
+ * same serializer and offset projection as the export, but spans 0 through the
+ * full source duration so a draft trim cannot hide cues here. An invalid or
+ * missing offset yields no track rather than a preview the export would reject.
+ */
+export function sourcePreviewVtt(cues: readonly ImportedCue[], durationSeconds: number, offsetMs: number | null): string | null {
+  if (offsetMs === null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return null;
+  return serializeClipCaptions(cues, 0, durationSeconds, offsetMs);
+}
+
 // SRT stamps carry hours and use a comma before milliseconds; WebVTT omits
 // hours and uses a dot. Both are built from the same relative millisecond cue
 // times, so the two sidecars describe one timeline.
