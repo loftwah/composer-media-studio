@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { coverRegion, MAX_COVER_AREAS } from "../src/frontend/image-cover-region.ts";
+import { BLUR_PIXEL_BUDGET, blurFitsPixelBudget } from "../src/frontend/image-blur.ts";
 import { MAX_IMAGE_OUTPUT_DIMENSION } from "../src/frontend/image-limits.ts";
+import { mosaicFitsPixelBudget } from "../src/frontend/image-mosaic.ts";
 import { inspectImage } from "../src/frontend/image-metadata.ts";
 import { digest, downloadLink, readLocalPng, runLocalImages, saveNewPng } from "./local-image-workbench.mjs";
 
@@ -10,6 +12,37 @@ function wholePixels(value, name) {
   assert(typeof value === "string" && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)),
     `Supply a whole-pixel integer --${name} (0 or greater).`);
   return Number(value);
+}
+
+/** The native treatments this command can drive; solid stays the privacy default. */
+export const TREATMENTS = Object.freeze(["solid", "mosaic", "blur"]);
+
+/** Native export controls for each treatment; decorative modes are never called redaction. */
+export const TREATMENT_EXPORTS = Object.freeze({
+  solid: Object.freeze({ name: "redacted", make: "Make redacted PNG", download: "Download redacted PNG" }),
+  mosaic: Object.freeze({ name: "mosaic", make: "Make mosaic PNG", download: "Download mosaic PNG" }),
+  blur: Object.freeze({ name: "soft blur", make: "Make soft blur PNG", download: "Download soft blur PNG" }),
+});
+
+export function parseTreatment(value) {
+  const treatment = value ?? "solid";
+  assert(TREATMENTS.includes(treatment), "Choose --treatment solid, mosaic or blur.");
+  return treatment;
+}
+
+/** The same aggregate pixel budgets the native panel uses, checked before any rendering. */
+export function assertTreatmentBudget(treatment, regions) {
+  if (treatment === "mosaic") {
+    assert(mosaicFitsPixelBudget(regions), "Mosaic areas exceed the 8 million pixel budget for one export.");
+  } else if (treatment === "blur") {
+    assert(blurFitsPixelBudget(regions),
+      `Soft blur areas exceed the ${BLUR_PIXEL_BUDGET / 1_000_000} million pixel budget for one export.`);
+  }
+}
+
+/** Solid keeps its exact receipt; decorative modes name what actually happened to the pixels. */
+export function treatmentReceiptFields(treatment) {
+  return treatment === "solid" ? {} : { treatment, decorative: true };
 }
 
 /** Resolve either CLI form to an ordered list of whole-pixel rectangles, before any rendering. */
@@ -64,15 +97,19 @@ async function main() {
       width: { type: "string" },
       height: { type: "string" },
       area: { type: "string", multiple: true },
+      treatment: { type: "string" },
     },
   });
   assert(values.source, "Supply an explicit --source <PNG>.");
   assert(values.output, "Supply an explicit new --output <PNG path>.");
+  const treatment = parseTreatment(values.treatment);
+  const labels = TREATMENT_EXPORTS[treatment];
 
   const source = await readLocalPng(values.source);
   const { mime, orientedWidth, orientedHeight } = inspectImage(source);
   assert.equal(mime, "image/png");
   const selection = coverSelection(values, orientedWidth, orientedHeight);
+  assertTreatmentBudget(treatment, selection.regions);
   const longEdge = Math.max(orientedWidth, orientedHeight);
   assert(longEdge <= MAX_IMAGE_OUTPUT_DIMENSION,
     `The source long edge ${longEdge} exceeds the ${MAX_IMAGE_OUTPUT_DIMENSION} px output limit; pixel coordinates cannot be preserved.`);
@@ -84,6 +121,9 @@ async function main() {
     await result.waitFor();
     const cover = result.locator(".image-cover");
     await cover.locator("summary").click();
+    if (treatment !== "solid") {
+      await cover.locator(`input[name="image-cover-mode"][value="${treatment}"]`).check();
+    }
     for (let index = 0; index < selection.regions.length; index++) {
       const region = selection.regions[index];
       await cover.getByLabel("Left (px)").fill(String(region.left));
@@ -96,21 +136,22 @@ async function main() {
         await cover.getByRole("button", { name: "Add another area", exact: true }).click();
       }
     }
-    await cover.getByRole("button", { name: "Make redacted PNG", exact: true }).click();
-    const redacted = await downloadLink(page, cover.getByRole("link", { name: "Download redacted PNG", exact: true }));
-    return { bytes: redacted.bytes };
+    await cover.getByRole("button", { name: labels.make, exact: true }).click();
+    const exported = await downloadLink(page, cover.getByRole("link", { name: labels.download, exact: true }));
+    return { bytes: exported.bytes };
   });
 
   const output = inspectImage(bytes);
   assert.equal(output.mime, "image/png");
-  assert.equal(output.width, orientedWidth, "The redacted PNG changed the source pixel width.");
-  assert.equal(output.height, orientedHeight, "The redacted PNG changed the source pixel height.");
+  assert.equal(output.width, orientedWidth, `The ${labels.name} PNG changed the source pixel width.`);
+  assert.equal(output.height, orientedHeight, `The ${labels.name} PNG changed the source pixel height.`);
   await saveNewPng(values.output, bytes);
   console.log(JSON.stringify({
     ...report,
     source: { sha256: digest(source), bytes: source.length, width: orientedWidth, height: orientedHeight },
     ...(selection.legacy ? { region: selection.region } : { areas: selection.regions }),
     output: { sha256: digest(bytes), bytes: bytes.length, width: output.width, height: output.height },
+    ...treatmentReceiptFields(treatment),
   }));
 }
 

@@ -21,7 +21,7 @@ Projects, uploads, thumbnails, the viewer, search and filters, renaming, downloa
 - **Limits and honest refusals:** SVG, HTML and other active content are refused, as are HEIC/HEIF, AVIF, GIF and unsupported containers in this slice. Corrupt or malformed files fail before processing. Object URLs and bitmaps are released on remove, clear and page unmount. There is no server upload on the local path.
 - **Explicit Studio import only:** a result can be imported only after checking a signed-in Studio session, choosing an existing project and clicking upload. The caption records the source filename, source SHA-256 and transform settings, including crop position and adjustment values. The result becomes a new private library asset; nothing is published automatically.
 
-The workbench is part of [issue #183](https://github.com/loftwah/composer-media-studio/issues/183). In Batch, **Sprite atlas · native size** assembles two to twenty completed PNGs with transparent padding. The column control shows the planned dimensions before drawing, and the download includes ordered pixel rectangles in a separate JSON file. Perceptual compression presets, alpha-edge fringe inspection, local background removal, provider upscale, GIF, PDF, HTML-to-image and captions remain open or delegated. **Cover, mosaic or blur an area** works on up to eight whole-pixel rectangles and saves a separate PNG. **Solid cover** is the default and fills them with opaque black; **Mosaic** is a decorative browser-local pixelation with a fixed block pattern that can leave content recognisable; **Soft blur** is a decorative local two-pass blur that reads only pixels inside each rectangle, capped at 2 million selected pixels per export. Neither decorative treatment conceals content, so use Solid cover for private or identifying material. Only the selected rectangles change; the image outside them and the completed source stay as they were. The local cover command (`scripts/local-cover-area.mjs`) still fills solid black, takes an explicitly selected PNG and accepts repeated `--area left,top,width,height` options. Face detection remains open. In Launch Kit, open **Import a Media Studio palette** and choose the palette JSON you downloaded. The JSON stays on your device. See [the coverage matrix](docs/image-tools-coverage.md) for the exact shipped, delegated and deferred state. Older local tools remain at `/tools/audio-trim`, `/tools/video-clip` and `/tools/add-music`.
+The workbench is part of [issue #183](https://github.com/loftwah/composer-media-studio/issues/183). In Batch, **Sprite atlas · native size** assembles two to twenty completed PNGs with transparent padding. The column control shows the planned dimensions before drawing, and the download includes ordered pixel rectangles in a separate JSON file. Perceptual compression presets, alpha-edge fringe inspection, local background removal, provider upscale, GIF, PDF, HTML-to-image and captions remain open or delegated. **Cover, mosaic or blur an area** works on up to eight whole-pixel rectangles and saves a separate PNG. **Solid cover** is the default and fills them with opaque black; **Mosaic** is a decorative browser-local pixelation with a fixed block pattern that can leave content recognisable; **Soft blur** is a decorative local two-pass blur that reads only pixels inside each rectangle, capped at 2 million selected pixels per export. Neither decorative treatment conceals content, so use Solid cover for private or identifying material. Only the selected rectangles change; the image outside them and the completed source stay as they were. The local cover command (`scripts/local-cover-area.mjs`) takes an explicitly selected PNG and repeated `--area left,top,width,height` options. It fills solid black by default; `--treatment mosaic` or `--treatment blur` uses the same rectangles for a decorative PNG, reported honestly in the JSON rather than as a redaction. Face detection remains open. In Launch Kit, open **Import a Media Studio palette** and choose the palette JSON you downloaded. The JSON stays on your device. See [the coverage matrix](docs/image-tools-coverage.md) for the exact shipped, delegated and deferred state. Older local tools remain at `/tools/audio-trim`, `/tools/video-clip` and `/tools/add-music`.
 
 ## Generation
 
@@ -194,6 +194,17 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 The new form reports the ordered `areas` list in its JSON instead of the single
 `region`; the older single-rectangle flags and their `region` JSON are unchanged.
 The output path must still be new.
+
+`--treatment mosaic` or `--treatment blur` applies the same rectangles as a
+decorative local pattern instead of a solid fill. Their aggregate pixel budget is
+checked before Chrome starts, and the JSON reports the actual treatment as
+decorative rather than as a redaction.
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-cover-area.mjs --source ./source.png --output ./mosaic.png \
+  --treatment mosaic --area 64,64,100,80 --area 300,300,50,50
+```
 
 ## Trim transparent edges from an explicit local PNG
 

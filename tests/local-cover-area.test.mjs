@@ -1,7 +1,8 @@
 // MIT. Focused checks for the local cover command's argument-to-rectangle
 // contract: original whole-pixel flags stay compatible, repeated --area values
 // stay ordered and bound, and invalid rectangles fail before any rendering.
-// The browser path itself is unchanged and shared with runLocalImages.
+// The --treatment modes reuse the native aggregate pixel budgets and report
+// decorative work honestly; browser rendering stays shared with runLocalImages.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -10,7 +11,10 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { coverSelection } from "../scripts/local-cover-area.mjs";
+import {
+  assertTreatmentBudget, coverSelection, parseTreatment, TREATMENT_EXPORTS, treatmentReceiptFields,
+} from "../scripts/local-cover-area.mjs";
+import { BLUR_PIXEL_BUDGET } from "../src/frontend/image-blur.ts";
 import { pngFixture } from "./support/image-fixtures.mjs";
 
 const run = promisify(execFile);
@@ -131,6 +135,93 @@ test("the CLI refuses an out-of-bounds --area before rendering or writing output
       },
     );
     await assert.rejects(readFile(outputPath), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("treatment defaults to solid and only accepts the three native modes", () => {
+  assert.equal(parseTreatment(undefined), "solid");
+  for (const mode of ["solid", "mosaic", "blur"]) assert.equal(parseTreatment(mode), mode);
+  assert.throws(() => parseTreatment("redact"), /Choose --treatment solid, mosaic or blur/);
+});
+
+test("solid keeps its receipt while decorative modes name the real treatment", () => {
+  assert.deepEqual(treatmentReceiptFields("solid"), {});
+  for (const mode of ["mosaic", "blur"]) {
+    const fields = treatmentReceiptFields(mode);
+    assert.deepEqual(fields, { treatment: mode, decorative: true });
+    assert.equal(JSON.stringify(fields).includes("redact"), false, "a decorative PNG is not described as redaction");
+  }
+  assert.deepEqual(Object.keys(TREATMENT_EXPORTS), ["solid", "mosaic", "blur"]);
+  assert.deepEqual(TREATMENT_EXPORTS.solid, { name: "redacted", make: "Make redacted PNG", download: "Download redacted PNG" });
+  assert.deepEqual(TREATMENT_EXPORTS.mosaic, { name: "mosaic", make: "Make mosaic PNG", download: "Download mosaic PNG" });
+  assert.deepEqual(TREATMENT_EXPORTS.blur, { name: "soft blur", make: "Make soft blur PNG", download: "Download soft blur PNG" });
+});
+
+test("decorative pixel budgets are aggregate and use the native limits", () => {
+  const image = 8192;
+  const mosaicSelection = coverSelection(values({ area: ["0,0,4000,2000", "4000,0,4000,2000"] }), image, image);
+  assert.equal(mosaicSelection.regions.reduce((sum, r) => sum + r.width * r.height, 0), 16_000_000);
+  assert.doesNotThrow(() => assertTreatmentBudget("mosaic", mosaicSelection.regions.slice(0, 1)));
+  assert.throws(() => assertTreatmentBudget("mosaic", mosaicSelection.regions), /8 million pixel budget/);
+  assert.doesNotThrow(() => assertTreatmentBudget("solid", mosaicSelection.regions));
+
+  const blurSelection = coverSelection(values({ area: ["0,0,1500,1000", "1500,0,1500,1000"] }), image, image);
+  assert.equal(BLUR_PIXEL_BUDGET, 2_000_000);
+  assert.doesNotThrow(() => assertTreatmentBudget("blur", blurSelection.regions.slice(0, 1)));
+  assert.throws(() => assertTreatmentBudget("blur", blurSelection.regions), /2 million pixel budget/);
+  assert.doesNotThrow(() => assertTreatmentBudget("solid", blurSelection.regions));
+});
+
+test("the CLI refuses an unknown --treatment before rendering or writing output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "studio-local-cover-"));
+  try {
+    const sourcePath = join(root, "source.png");
+    const outputPath = join(root, "out.png");
+    await writeFile(sourcePath, pngFixture());
+    await assert.rejects(
+      run(process.execPath, [
+        command, "--source", sourcePath, "--output", outputPath,
+        "--left", "0", "--top", "0", "--width", "1", "--height", "1",
+        "--treatment", "redact",
+      ], { cwd }),
+      error => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /Choose --treatment solid, mosaic or blur/);
+        return true;
+      },
+    );
+    await assert.rejects(readFile(outputPath), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the CLI refuses over-budget decorative areas before the browser starts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "studio-local-cover-"));
+  try {
+    const sourcePath = join(root, "source.png");
+    const outputPath = join(root, "out.png");
+    await writeFile(sourcePath, pngFixture({ width: 8192, height: 8192 }));
+    const cases = [
+      ["mosaic", ["0,0,4000,2000", "4000,0,4000,2000"], /8 million pixel budget/],
+      ["blur", ["0,0,1500,1000", "1500,0,1500,1000"], /2 million pixel budget/],
+    ];
+    for (const [treatment, areas, message] of cases) {
+      await assert.rejects(
+        run(process.execPath, [
+          command, "--source", sourcePath, "--output", outputPath, "--treatment", treatment,
+          ...areas.flatMap(area => ["--area", area]),
+        ], { cwd }),
+        error => {
+          assert.equal(error.code, 1);
+          assert.match(error.stderr, message);
+          return true;
+        },
+      );
+      await assert.rejects(readFile(outputPath), { code: "ENOENT" });
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
