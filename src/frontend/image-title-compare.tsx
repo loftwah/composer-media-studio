@@ -31,6 +31,7 @@ import {
   preparedPairsBundleFileName,
   type CoverRect,
   type FeedSize,
+  type FeedSizeKey,
   type PairId,
 } from "./image-title-compare-plan.ts";
 import { createZip, ZIP_MIME, type ZipEntryInput } from "./image-zip.ts";
@@ -130,6 +131,9 @@ export function TitleCompare() {
   const [titleFallback, setTitleFallback] = useState<string | null>(null);
   const [draggingPair, setDraggingPair] = useState<PairId | null>(null);
   const [titleClips, setTitleClips] = useState<TitleClipState>({});
+  /** Feed size for the full-size framing inspection only. It is display state:
+   * it never touches the crop anchor, the preference or any export. */
+  const [fullViewSizeKey, setFullViewSizeKey] = useState<FeedSizeKey>("card");
   const sectionRef = useRef<HTMLElement | null>(null);
   const urls = useRef(new Set<string>());
   const exportsRef = useRef<ExportEntry[]>([]);
@@ -638,6 +642,13 @@ export function TitleCompare() {
     preferredId,
     prepared.map((pair) => pair.id),
   );
+  // The full-size inspection is derived from the live selection and the same
+  // cover plan the package encodes. It decodes nothing and owns no bytes.
+  const selectedImage = selected.image;
+  const fullViewSize = FEED_SIZES.find((size) => size.key === fullViewSizeKey) ?? FEED_SIZES[1];
+  const fullRect = selectedImage
+    ? coverCropRect(selectedImage.width, selectedImage.height, fullViewSize.width, fullViewSize.height, anchor)
+    : null;
 
   return (
     <section ref={sectionRef} className="trim-work image-title-compare" aria-labelledby="image-title-compare-heading">
@@ -855,6 +866,79 @@ export function TitleCompare() {
           })}
         </div>
       </div>
+      <details
+        className="title-compare-full"
+        data-title-compare-full
+        data-title-compare-full-pair={selectedId}
+      >
+        <summary>{`Inspect full-size framing — ${selectedLabel}`}</summary>
+        {selectedImage && fullRect ? (
+          <div className="title-compare-full-body">
+            <div className="title-compare-full-bar">
+              <label className="title-compare-full-size">
+                Feed size
+                <select
+                  value={fullViewSize.key}
+                  aria-label="Full-size preview feed size"
+                  data-title-compare-full-size
+                  onChange={(event) => setFullViewSizeKey(event.target.value as FeedSizeKey)}
+                >
+                  {FEED_SIZES.map((size) => (
+                    <option value={size.key} key={size.key}>
+                      {`${size.label} — ${size.width} × ${size.height} px`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="title-compare-full-facts" data-title-compare-full-facts>
+                {`Simulated framing · source ${selectedImage.width} × ${selectedImage.height} px · ${CROP_ANCHOR_LABELS[anchor].toLowerCase()} crop · ${fullViewSize.width} × ${fullViewSize.height} feed`}
+              </p>
+            </div>
+            <p className="title-compare-full-note">
+              Scroll to inspect the source at full size. The outline shows the crop used in the PNG export.
+            </p>
+            <div
+              className="title-compare-full-viewport"
+              role="region"
+              aria-label="Scrollable full-size thumbnail"
+              tabIndex={0}
+              data-title-compare-full-viewport
+            >
+              <div
+                className="title-compare-full-stage"
+                style={{ width: selectedImage.width, height: selectedImage.height }}
+              >
+                <img
+                  src={selectedImage.url}
+                  alt={`Full-size source thumbnail for ${selectedLabel}`}
+                  width={selectedImage.width}
+                  height={selectedImage.height}
+                  data-title-compare-full-image
+                />
+                <span
+                  className="title-compare-full-crop"
+                  style={{
+                    left: fullRect.left,
+                    top: fullRect.top,
+                    width: fullRect.width,
+                    height: fullRect.height,
+                    boxShadow: `0 0 0 ${Math.max(selectedImage.width, selectedImage.height)}px rgb(23 24 27 / 55%)`,
+                  }}
+                  data-title-compare-full-crop
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+            <p className="title-compare-full-caption" data-title-compare-full-caption>
+              {`Crop area ${fullRect.width} × ${fullRect.height} px · PNG ${fullViewSize.width} × ${fullViewSize.height} px`}
+            </p>
+          </div>
+        ) : (
+          <p className="title-compare-full-empty" data-title-compare-full-empty>
+            {`Choose a thumbnail for ${selectedLabel} to inspect its full-size framing.`}
+          </p>
+        )}
+      </details>
       <div className="image-control-actions" role="group" aria-label={`Actions for ${selectedLabel}`}>
         <button
           type="button"
