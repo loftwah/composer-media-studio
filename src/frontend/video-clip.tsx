@@ -9,6 +9,7 @@ import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
 import { ClipPoster } from "./clip-poster";
 import { ClipPosterVerifyPanel } from "./clip-poster-verify-panel";
+import { ClipWaveform } from "./clip-waveform";
 import { sha256Hex } from "../lib/util.mjs";
 import { probeMediaTrack } from "./media-probe";
 import { LocalImport } from "./local-import";
@@ -756,12 +757,17 @@ function VideoClip() {
     setCaptionLoading(false);
     setCaptionMessage("Restored the previous cue draft.");
   }
+  // One source-seek path for the caption review and the waveform range: pause
+  // the existing preview player and move its own clock, never a second decoder.
+  function seekOriginalVideo(sourceSeconds: number) {
+    const video = sourceVideo.current;
+    if (!video || !Number.isFinite(sourceSeconds)) return;
+    video.pause();
+    video.currentTime = Math.min(Math.max(sourceSeconds, 0), duration);
+  }
   // Pause on the projected source time and keep keyboard focus on the cue.
   function jumpToOriginalCue(sourceStartMs: number) {
-    const video = sourceVideo.current;
-    if (!video) return;
-    video.pause();
-    video.currentTime = Math.min(sourceStartMs / 1000, duration);
+    seekOriginalVideo(sourceStartMs / 1000);
   }
   // Copy the original video's current playhead into one cue field only. The
   // native player is read but never paused, seeked or restarted, and no other
@@ -978,6 +984,7 @@ function VideoClip() {
       <video ref={sourceVideo} className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}>
         {sourceCaptionUrl && <track ref={sourceCaptions} kind="captions" label="Draft captions · original video" src={sourceCaptionUrl}/>}
       </video>
+      {file && validTrim && <ClipWaveform file={file} startSeconds={start} endSeconds={end} video={sourceVideo} onSeek={seekOriginalVideo}/>}
       <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
       <label>Frame<select value={shape} disabled={busy || importing || receiptLoading} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing || receiptLoading} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing || receiptLoading} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (crop)</option></select></label>
       {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
