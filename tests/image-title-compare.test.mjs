@@ -495,3 +495,33 @@ test("a preferred pair is included only when the exact export contains it", () =
   assert.equal(preferredPairForExport("c", ["a", "b"]), undefined);
   assert.equal(preferredPairForExport(null, ["a", "b"]), undefined);
 });
+
+test("the full-size framing preview is a bounded, honest browser-local overlay", () => {
+  const start = section.indexOf("<details");
+  const end = section.indexOf("</details>", start);
+  assert.ok(start >= 0 && end > start);
+  const disclosure = section.slice(start, end);
+  // A native disclosure keeps focus, pair switching and every other control live.
+  assert.match(disclosure, /className="title-compare-full"/);
+  assert.match(disclosure, /<summary>/);
+  assert.match(disclosure, /data-title-compare-full-size/);
+  assert.match(disclosure, /data-title-compare-full-crop/);
+  // It shows the existing blob URL at 1:1 — no display-time decode or re-encode.
+  assert.match(disclosure, /src=\{selectedImage\.url\}/);
+  assert.match(disclosure, /width=\{selectedImage\.width\}/);
+  assert.doesNotMatch(disclosure, /toBlob|createImageBitmap|[< ]canvas/);
+  // Genuine labelling and the real intrinsic dimensions of the source.
+  assert.match(disclosure, /Simulated framing/);
+  assert.match(disclosure, /The outline shows the crop used in the PNG export/);
+  assert.match(disclosure, /aria-label="Scrollable full-size thumbnail"\s+tabIndex=\{0\}/);
+  assert.match(disclosure, /source \$\{selectedImage\.width\} × \$\{selectedImage\.height\} px/);
+  // One shared crop plan drives the preview frame and the exported pixels.
+  assert.match(
+    section,
+    /coverCropRect\(selectedImage\.width, selectedImage\.height, fullViewSize\.width, fullViewSize\.height, anchor\)/,
+  );
+  // The bounded scroll box keeps phone pages free of horizontal overflow.
+  assert.match(stylesheet, /max-height: min\(65vh, 34rem\)/);
+  assert.match(stylesheet, /\.title-compare-full-viewport/);
+  assert.match(stylesheet, /\.title-compare-full-crop/);
+});
