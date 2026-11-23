@@ -48,6 +48,11 @@ export {
   verifyManifestSeal,
 } from './portable-manifest.ts';
 
+// The read-only inventory and local bundle description live typed in
+// portable-inventory.ts. Re-exporting keeps the worker, owner CLI and tests on
+// their existing portable-bundle import path with no behaviour change.
+export { describeBundle, portableInventory } from './portable-inventory.ts';
+
 const IMAGE_BYTES = 32 * 1024 * 1024;
 const AUDIO_BYTES = 32 * 1024 * 1024;
 
@@ -835,31 +840,6 @@ export async function importStatus(env, importId) {
   };
 }
 
-/** Read-only inventory. Useful for #158 duplicate review and restore support. */
-export async function portableInventory(env, { projectId = null } = {}) {
-  const imports = (await (projectId
-    ? env.DB.prepare('SELECT id,bundle_id,source_project_id,project_id,status,asset_count,byte_count,created_at,committed_at FROM project_bundle_imports WHERE project_id=?1 ORDER BY created_at DESC').bind(projectId).all()
-    : env.DB.prepare('SELECT id,bundle_id,source_project_id,project_id,status,asset_count,byte_count,created_at,committed_at FROM project_bundle_imports ORDER BY created_at DESC LIMIT 100').all())).results;
-  const duplicates = (await env.DB.prepare(
-    'SELECT project_id,sha256,COUNT(*) AS n,SUM(bytes) AS bytes,GROUP_CONCAT(id) AS asset_ids FROM assets WHERE deleted_at IS NULL GROUP BY project_id,sha256 HAVING COUNT(*)>1 ORDER BY (COUNT(*)-1)*SUM(bytes) DESC LIMIT 100',
-  ).all()).results.map((row) => ({
-    projectId: row.project_id,
-    sha256: row.sha256,
-    count: row.n,
-    bytesEach: Number(row.bytes) / row.n,
-    wastedBytes: Number(row.bytes) - Number(row.bytes) / row.n,
-    assetIds: String(row.asset_ids).split(','),
-  }));
-  const totals = await env.DB.prepare('SELECT COUNT(*) AS assets,COALESCE(SUM(bytes),0) AS bytes FROM assets WHERE deleted_at IS NULL').first();
-  return {
-    readOnly: true,
-    generatedAt: Date.now(),
-    totals: { assets: totals.assets, bytes: totals.bytes },
-    imports: imports.map((row) => ({ importId: row.id, bundleId: row.bundle_id, sourceProjectId: row.source_project_id, projectId: row.project_id, status: row.status, assets: row.asset_count, bytes: row.byte_count, createdAt: row.created_at, committedAt: row.committed_at })),
-    duplicateContent: duplicates,
-  };
-}
-
 /** Opt-in cleanup of staging objects that are not referenced by an asset row.
  * Never deletes a live original, a publication dependency or another import. */
 export async function cleanupPortableImport(env, importId, { confirm = false } = {}) {
@@ -903,17 +883,4 @@ export async function encodePortableBundle(manifest, blobs) {
 
 export async function decodePortableBundle(input) {
   return decodePortableArchive(input, archiveSeams);
-}
-
-/** Local validation helper used by the CLI before any network write. */
-export function describeBundle(manifest) {
-  return {
-    format: manifest.format,
-    schemaVersion: manifest.schemaVersion,
-    bundleId: manifest.bundleId,
-    project: manifest.project,
-    stats: manifest.stats,
-    excluded: manifest.excluded,
-    limits: manifest.limits,
-  };
 }
