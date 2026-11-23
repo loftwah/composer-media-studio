@@ -7,10 +7,10 @@
 // them unchanged, so the CLI, tests, browser restore panel and owner worker
 // keep their import paths and one PortableError class identity.
 //
-// D1 reads, R2 staging, full manifest validation, id rewriting and secret
-// scanning stay in portable-bundle.mjs. This module only hashes and seals
-// what it is handed; decoded JSON keeps its unknown shape until a caller
-// has validated it.
+// Full manifest validation lives in portable-validation.ts; D1 reads, R2
+// staging, id rewriting, commit and cleanup stay in portable-bundle.mjs. This
+// module only hashes and seals what it is handed; decoded JSON keeps its
+// unknown shape until a caller has validated it.
 
 import { sha256Hex } from './util.mjs';
 

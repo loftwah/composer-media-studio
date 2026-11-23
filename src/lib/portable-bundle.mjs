@@ -10,6 +10,13 @@
 import { extensionFor, HttpError, id, safeJson, slug, sniffMedia } from './util.mjs';
 import { decodePortableArchive, encodePortableArchive } from './portable-archive.ts';
 import {
+  ASSET_ID_KEYS,
+  AUDIO_BYTES,
+  IMAGE_BYTES,
+  scanSecrets,
+  validateManifest,
+} from './portable-validation.ts';
+import {
   MAX_PORTABLE_ASSET_BYTES,
   MAX_PORTABLE_BUNDLE_BYTES,
   MAX_PORTABLE_ASSETS,
@@ -21,10 +28,8 @@ import {
   PortableError,
   SHA256_HEX as SHA,
   canonicalJson,
-  invalid,
   sealManifest,
   sha256Bytes,
-  verifyManifestSeal,
 } from './portable-manifest.ts';
 
 // The pure sealing core — format/schema constants, PortableError, canonical
@@ -53,61 +58,10 @@ export {
 // their existing portable-bundle import path with no behaviour change.
 export { describeBundle, portableInventory } from './portable-inventory.ts';
 
-const IMAGE_BYTES = 32 * 1024 * 1024;
-const AUDIO_BYTES = 32 * 1024 * 1024;
-
-const MIME_KINDS = new Map([
-  ['image/jpeg', 'image'],
-  ['image/png', 'image'],
-  ['image/webp', 'image'],
-  ['image/avif', 'image'],
-  ['video/mp4', 'video'],
-  ['video/webm', 'video'],
-  ['audio/mpeg', 'audio'],
-  ['audio/wav', 'audio'],
-  ['audio/mp4', 'audio'],
-  ['audio/ogg', 'audio'],
-]);
-const ASSET_ID_KEYS = new Set([
-  'assetId',
-  'referenceAssetId',
-  'maskAssetId',
-  'parentAssetId',
-  'outputAssetId',
-  'posterAssetId',
-  'songAssetId',
-  'selectedTakeId',
-  'slateAssetId',
-  'slateVideoAssetId',
-  'audioAssetId',
-  'sourceAssetId',
-]);
-const SECRET_KEY = /(api[_-]?key|access[_-]?token|refresh[_-]?token|bearer|session[_-]?(cookie|secret|key)|provider[_-]?key|secret|passphrase|password|authorization|private[_-]?key|fal[_-]?key|client[_-]?secret)/i;
-const SAFE_ID = /^[a-z0-9_:-]{1,100}$/;
-
-function integer(value, label, { min = 0, max = Number.MAX_SAFE_INTEGER, optional = false } = {}) {
-  if (optional && (value === null || value === undefined)) return null;
-  if (!Number.isSafeInteger(value) || value < min || value > max) invalid(`${label} is not a supported integer`);
-  return value;
-}
-
-function string(value, label, max = 2000, { optional = false } = {}) {
-  if (optional && (value === null || value === undefined)) return '';
-  if (typeof value !== 'string' || value.length > max) invalid(`${label} is not supported text`);
-  return value;
-}
-
-function scanSecrets(value, path = '$') {
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => scanSecrets(entry, `${path}[${index}]`));
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-  for (const [key, entry] of Object.entries(value)) {
-    if (SECRET_KEY.test(key)) invalid(`The bundle contains a credential-shaped field at ${path}.${key}`, 'secret_material_present');
-    scanSecrets(entry, `${path}.${key}`);
-  }
-}
+// The owning manifest validator lives typed in portable-validation.ts. This
+// re-export keeps one validator and the existing portable-bundle import path
+// for the worker, CLI, archive container and tests.
+export { validateManifest };
 
 /** Build a manifest from D1 metadata. Media bytes are read by the export CLI,
  * which verifies each stored hash before writing it into the archive. */
@@ -318,177 +272,6 @@ export async function exportProjectManifest(env, project) {
   const sealed = await sealManifest(content);
   await validateManifest(sealed);
   return sealed;
-}
-
-function walkRefs(value, visit, path = '$') {
-  if (Array.isArray(value)) return value.forEach((entry, index) => walkRefs(entry, visit, `${path}[${index}]`));
-  if (!value || typeof value !== 'object') return;
-  for (const [key, entry] of Object.entries(value)) {
-    visit(key, entry, `${path}.${key}`);
-    walkRefs(entry, visit, `${path}.${key}`);
-  }
-}
-
-function assertAssetRef(assetIds, value, label) {
-  if (value === null || value === undefined || value === '') return;
-  if (typeof value !== 'string' || !assetIds.has(value)) invalid(`${label} refers to media that is not in the bundle`, 'missing_dependency');
-}
-
-function collectRecordRefs(record, assetIds, label) {
-  walkRefs(record, (key, value) => {
-    if (ASSET_ID_KEYS.has(key)) assertAssetRef(assetIds, value, `${label}.${key}`);
-    if (key === 'assetIds' && Array.isArray(value)) value.forEach((entry) => assertAssetRef(assetIds, entry, `${label}.assetIds`));
-  });
-}
-
-/** Full validation, independent of the archive container. */
-export async function validateManifest(manifest) {
-  await verifyManifestSeal(manifest);
-  if (new TextEncoder().encode(canonicalJson(manifest)).byteLength > MAX_PORTABLE_MANIFEST_BYTES)
-    invalid('The bundle records exceed the supported manifest size', 'bundle_too_large');
-  scanSecrets(manifest);
-  const project = manifest.project;
-  if (!project || typeof project !== 'object' || Array.isArray(project)) invalid('The bundle has no project record');
-  string(project.id, 'Project id', 80); string(project.name, 'Project name', 80); string(project.slug, 'Project slug', 80);
-  string(project.creativeDirection ?? '', 'Creative direction', 600); string(project.visibility ?? 'private', 'Visibility', 20);
-  if (!SAFE_ID.test(project.id)) invalid('The project id is not a supported Studio id');
-  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(project.slug)) invalid('The project slug is not supported');
-  if (!['private', 'unlisted'].includes(project.visibility)) invalid('The project visibility is not supported');
-  if (!Array.isArray(project.references) || project.references.length > 12) invalid('The project references are not supported');
-  if (!project.defaults || typeof project.defaults !== 'object' || Array.isArray(project.defaults)) invalid('The project defaults are not supported');
-  integer(project.createdAt, 'Project created time'); integer(project.updatedAt, 'Project updated time');
-
-  if (!Array.isArray(manifest.assets) || manifest.assets.length > MAX_PORTABLE_ASSETS) invalid('The bundle asset list is too large');
-  if (!Array.isArray(manifest.blobs) || manifest.blobs.length > MAX_PORTABLE_ASSETS) invalid('The bundle blob list is too large');
-  const blobBySha = new Map();
-  let totalBytes = 0;
-  for (const blob of manifest.blobs) {
-    if (!blob || typeof blob !== 'object') invalid('A bundle blob entry is malformed');
-    if (!SHA.test(blob.sha256 ?? '')) invalid('A bundle blob has an invalid hash');
-    if (blobBySha.has(blob.sha256)) invalid('A bundle blob is listed twice', 'duplicate_entry');
-    if (blob.path !== `assets/${blob.sha256}`) invalid('A bundle blob path is not content-addressed', 'path_traversal');
-    const blobKind = MIME_KINDS.get(blob.mime);
-    const blobLimit = blobKind === 'video' ? MAX_PORTABLE_ASSET_BYTES : blobKind === 'audio' ? AUDIO_BYTES : IMAGE_BYTES;
-    integer(blob.bytes, 'Blob size', { min: 1, max: blobLimit });
-    if (!MIME_KINDS.has(blob.mime)) invalid(`Unsupported media type ${String(blob.mime)}`);
-    totalBytes += blob.bytes;
-    blobBySha.set(blob.sha256, blob);
-  }
-  if (totalBytes > MAX_PORTABLE_BUNDLE_BYTES) invalid('The bundle exceeds the supported archive size', 'bundle_too_large');
-
-  const assets = new Map();
-  for (const asset of manifest.assets) {
-    if (!asset || typeof asset !== 'object') invalid('A bundle asset entry is malformed');
-    if (typeof asset.id !== 'string' || !SAFE_ID.test(asset.id) || assets.has(asset.id)) invalid('A bundle asset id is invalid or duplicated', 'duplicate_entry');
-    if (!['image', 'video', 'audio'].includes(asset.kind)) invalid('A bundle asset has an unsupported kind');
-    if (!['upload', 'generated', 'variant', 'assembled'].includes(asset.source)) invalid('A bundle asset has an unsupported source');
-    if (MIME_KINDS.get(asset.mime) !== asset.kind) invalid('A bundle asset MIME type does not match its kind');
-    const entryLimit = asset.kind === 'video' ? MAX_PORTABLE_ASSET_BYTES : asset.kind === 'audio' ? AUDIO_BYTES : IMAGE_BYTES;
-    integer(asset.bytes, 'Asset size', { min: 1, max: entryLimit });
-    if (!SHA.test(asset.sha256 ?? '')) invalid('A bundle asset has an invalid fingerprint');
-    if (asset.content !== 'media' && asset.content !== 'tombstone') invalid('A bundle asset content flag is unsupported');
-    if (asset.content === 'media') {
-      const blob = blobBySha.get(asset.blobSha256);
-      if (!blob) invalid('A live asset has no media bytes in the bundle', 'missing_media');
-      if (blob.bytes !== asset.bytes || blob.mime !== asset.mime || blob.sha256 !== asset.sha256) invalid('A live asset disagrees with its media blob', 'integrity_failed');
-    } else if (asset.blobSha256 !== null) invalid('A tombstone cannot carry media bytes');
-    if (asset.content === 'tombstone' && !Number.isSafeInteger(asset.deletedAt)) invalid('A tombstone must keep its deletion time');
-    assets.set(asset.id, asset);
-  }
-
-  const records = ['generations', 'compositions', 'recipes', 'subjects', 'songPlans', 'footagePlans', 'publications', 'promoBriefs'];
-  let recordCount = 0;
-  for (const name of records) {
-    if (!Array.isArray(manifest[name])) invalid(`The bundle ${name} list is missing`);
-    recordCount += manifest[name].length;
-  }
-  if (recordCount > MAX_PORTABLE_RECORDS) invalid('The bundle has too many records', 'bundle_too_large');
-
-  const compositionIds = new Set(manifest.compositions.map((row) => row.id));
-  const recipeIds = new Set(manifest.recipes.map((row) => row.id));
-  const subjectVersions = new Set(manifest.subjects.map((row) => `${row.subjectId}:${row.revision}`));
-  for (const composition of manifest.compositions) {
-    if (!composition || typeof composition !== 'object' || typeof composition.title !== 'string') invalid('A storyboard record is malformed');
-    if (!composition.spec || typeof composition.spec !== 'object' || Array.isArray(composition.spec)) invalid('A storyboard spec is malformed');
-    if (composition.spec.shots !== undefined && !Array.isArray(composition.spec.shots)) invalid('A storyboard shot list is malformed');
-  }
-  for (const subject of manifest.subjects) {
-    if (!subject || typeof subject.subjectId !== 'string' || !Number.isSafeInteger(subject.revision) || subject.revision < 1) invalid('A subject version is malformed');
-    if (!subject.spec || typeof subject.spec !== 'object' || Array.isArray(subject.spec)) invalid('A subject spec is malformed');
-  }
-  for (const plan of manifest.songPlans) {
-    if (!plan || typeof plan.id !== 'string' || !plan.spec || typeof plan.spec !== 'object' || Array.isArray(plan.spec)) invalid('A song plan is malformed');
-    if (!Array.isArray(plan.spec.scenes) || plan.spec.scenes.length < 2 || plan.spec.scenes.length > 6) invalid('A song plan needs two to six scenes');
-  }
-  for (const plan of manifest.footagePlans) {
-    if (!plan || typeof plan.id !== 'string' || !plan.spec || typeof plan.spec !== 'object' || Array.isArray(plan.spec)) invalid('A footage plan is malformed');
-    if (!Array.isArray(plan.spec.scenes) || plan.spec.scenes.length < 1 || plan.spec.scenes.length > 6) invalid('A footage plan needs one to six scenes');
-  }
-  for (const publication of manifest.publications) {
-    if (!publication || typeof publication.title !== 'string') invalid('A publication record is malformed');
-  }
-  for (const brief of manifest.promoBriefs) {
-    if (!brief || typeof brief.id !== 'string' || !brief.spec || typeof brief.spec !== 'object' || Array.isArray(brief.spec)) invalid('A promo brief is malformed');
-  }
-  for (const asset of assets.values()) {
-    if (asset.parentAssetId) assertAssetRef(assets, asset.parentAssetId, `asset ${asset.id}.parentAssetId`);
-    if (asset.generationId && !manifest.generations.some((row) => row.id === asset.generationId)) invalid('An asset refers to a generation outside the bundle', 'missing_dependency');
-    const trail = new Set([asset.id]);
-    let parent = asset.parentAssetId ? assets.get(asset.parentAssetId) : null;
-    while (parent) {
-      if (trail.has(parent.id)) invalid('The bundle has a cyclic media dependency', 'invalid_bundle');
-      trail.add(parent.id);
-      parent = parent.parentAssetId ? assets.get(parent.parentAssetId) : null;
-    }
-  }
-  for (const generation of manifest.generations) {
-    if (!generation || typeof generation !== 'object') invalid('A bundle generation is malformed');
-    if (!['image', 'video', 'audio'].includes(generation.kind)) invalid('A generation has an unsupported kind');
-    for (const field of ['model', 'provider', 'recipeId', 'clientRequestId']) {
-      if (typeof generation[field] !== 'string' || !generation[field]) invalid(`A generation has no ${field}`);
-    }
-    if (!generation.request || typeof generation.request !== 'object' || Array.isArray(generation.request)) invalid('A generation request is malformed');
-    if (generation.outputAssetId) assertAssetRef(assets, generation.outputAssetId, `generation ${generation.id}.outputAssetId`);
-    if (generation.compositionId && !compositionIds.has(generation.compositionId)) invalid('A generation refers to a storyboard outside the bundle', 'missing_dependency');
-    if (typeof generation.recipeId === 'string' && generation.recipeId.startsWith('rcp_') && !recipeIds.has(generation.recipeId)) invalid('A generation refers to a custom recipe outside the bundle', 'missing_dependency');
-    collectRecordRefs(generation.request, assets, `generation ${generation.id}.request`);
-  }
-  for (const composition of manifest.compositions) collectRecordRefs(composition.spec, assets, `composition ${composition.id}`);
-  for (const subject of manifest.subjects) {
-    assertAssetRef(assets, subject.referenceAssetId, `subject ${subject.subjectId}`);
-    if (assets.get(subject.referenceAssetId)?.sha256 !== subject.referenceSha256) invalid('A subject reference fingerprint does not match its asset', 'integrity_failed');
-  }
-  for (const plan of manifest.songPlans) {
-    assertAssetRef(assets, plan.songAssetId, `song plan ${plan.id}.songAssetId`);
-    if (assets.get(plan.songAssetId)?.sha256 !== plan.songSha256) invalid('A song plan fingerprint does not match its source', 'integrity_failed');
-    collectRecordRefs(plan.spec, assets, `song plan ${plan.id}`);
-    for (const scene of plan.spec?.scenes ?? []) {
-      if (scene.subjectOrigin && !subjectVersions.has(`${scene.subjectOrigin.subjectId}:${scene.subjectOrigin.revision}`)) invalid('A song scene refers to a subject version outside the bundle', 'missing_dependency');
-    }
-  }
-  for (const plan of manifest.footagePlans) {
-    assertAssetRef(assets, plan.sourceAssetId, `footage plan ${plan.id}.sourceAssetId`);
-    if (assets.get(plan.sourceAssetId)?.sha256 !== plan.sourceSha256) invalid('A footage plan fingerprint does not match its source', 'integrity_failed');
-    collectRecordRefs(plan.spec, assets, `footage plan ${plan.id}`);
-  }
-  for (const publication of manifest.publications) {
-    assertAssetRef(assets, publication.assetId, `publication ${publication.id}.assetId`);
-    assertAssetRef(assets, publication.posterAssetId, `publication ${publication.id}.posterAssetId`);
-    if (typeof publication.slug !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(publication.slug)) invalid('A publication slug is not supported');
-  }
-  for (const brief of manifest.promoBriefs) collectRecordRefs(brief.spec, assets, `promo brief ${brief.id}`);
-
-  return {
-    bundleId: manifest.bundleId,
-    project: manifest.project,
-    stats: {
-      ...manifest.stats,
-      records: recordCount,
-      contentBytes: totalBytes,
-      blobs: blobBySha.size,
-      assets: assets.size,
-    },
-  };
 }
 
 function repoKey(projectId, assetId, mime) {

@@ -25,6 +25,7 @@ import {
   exportProjectManifest,
   portableInventory,
   previewPortableImport,
+  sealManifest,
   stagePortableAsset,
   validateManifest,
 } from '../src/lib/portable-bundle.mjs';
@@ -295,6 +296,30 @@ test('tampered manifest or media is refused without creating a project', async (
   const { bundleId: _ob, integrity: _oi, ...oversizedContent } = oversized;
   await assert.rejects(validateManifest(await sealManifest(oversizedContent)), (error) => error.code === 'invalid_bundle');
   assert.deepEqual(snapshot(fresh), before);
+});
+
+test('a sealed manifest refuses missing visibility and null records', async () => {
+  const { env, project } = await fixture();
+  const { manifest } = await bundleOf(env, project);
+  const { bundleId, integrity, ...content } = manifest;
+  const hiddenProject = { ...content.project };
+  delete hiddenProject.visibility;
+  const refused = [
+    [{ ...content, project: hiddenProject }, 'The project visibility is not supported'],
+    [{ ...content, recipes: [null] }, 'A recipe record is malformed'],
+    [{
+      ...content,
+      songPlans: content.songPlans.map((plan) => ({
+        ...plan, spec: { ...plan.spec, scenes: [null, ...plan.spec.scenes.slice(1)] },
+      })),
+    }, 'A song plan scene is malformed'],
+  ];
+  for (const [candidate, message] of refused) {
+    await assert.rejects(
+      validateManifest(await sealManifest(candidate)),
+      (error) => error instanceof PortableError && error.code === 'invalid_bundle' && error.message === message,
+    );
+  }
 });
 
 test('missing media fails clearly and a resumed restore converges without duplicates', async () => {
