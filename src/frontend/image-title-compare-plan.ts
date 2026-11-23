@@ -2,7 +2,7 @@
 // the feed sizes, the cover-crop plan shared by the CSS preview and the PNG
 // export, and the download-name rules. No DOM, no React, no state.
 
-import type { CropAnchorKey } from "./image-ops.ts";
+import { CROP_ANCHOR_LABELS, type CropAnchorKey } from "./image-ops.ts";
 
 export const PAIR_IDS = ["a", "b", "c"] as const;
 export type PairId = (typeof PAIR_IDS)[number];
@@ -95,6 +95,15 @@ export function coverCropRect(
 export function objectPositionFor(anchor: CropAnchorKey): string {
   const { x, y } = anchorFractions(anchor);
   return `${x * 100}% ${y * 100}%`;
+}
+
+/** One honest label for a prepared-set snapshot whose pairs may hold different
+ * crop anchors. Agreement keeps the familiar anchor name; mixed anchors say
+ * so rather than claiming one crop for every PNG. */
+export function describeExportAnchors(anchors: readonly CropAnchorKey[]): string {
+  const first = anchors[0];
+  if (first === undefined) return CROP_ANCHOR_LABELS.centre;
+  return anchors.every((anchor) => anchor === first) ? CROP_ANCHOR_LABELS[first] : "per-pair";
 }
 
 /** The download stem of one export, with the workbench's name rules. */

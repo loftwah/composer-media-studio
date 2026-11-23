@@ -23,6 +23,7 @@ import {
   buildTitlePairManifest,
   bundleFileName,
   coverCropRect,
+  describeExportAnchors,
   exportFileName,
   manifestFileName,
   MANIFEST_VERSION,
@@ -66,12 +67,14 @@ type Pair = {
   busy: boolean;
 };
 
-/** A pair captured for the set export: the exact title, note and local image
- * the run will encode, taken before the first await. */
+/** A pair captured for the set export: the exact title, note, crop anchor and
+ * local image the run will encode, taken before the first await. */
 type PreparedPair = {
   id: PairId;
   title: string;
   note: string;
+  /** This pair's own crop anchor at capture time. */
+  anchor: CropAnchorKey;
   image: PairImage;
 };
 
@@ -141,7 +144,16 @@ export function TitleCompare({
    * selection: it names one complete pair for the set manifest without
    * changing which pair is being compared or exported. */
   const [preferredId, setPreferredId] = useState<PairId | null>(null);
-  const [anchor, setAnchor] = useState<CropAnchorKey>("centre");
+  /** Every pair keeps its own crop anchor. The select edits the pair it names,
+   * and each preview, export and manifest reads only that pair's value. Centre
+   * stays the default, so untouched pairs keep the legacy manifest and PNG. */
+  const [anchors, setAnchors] = useState<Record<PairId, CropAnchorKey>>(() => ({
+    a: "centre",
+    b: "centre",
+    c: "centre",
+  }));
+  /** The active pair's anchor: what the select shows and the full view uses. */
+  const anchor = anchors[selectedId];
   const [exports, setExports] = useState<ExportEntry[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
@@ -258,7 +270,7 @@ export function TitleCompare({
     return PAIR_IDS.flatMap((id, index) => {
       const pair = pairs[index];
       if (pair.busy || !pair.image || pair.title.trim() === "") return [];
-      return [{ id, title: pair.title, note: pair.note, image: pair.image }];
+      return [{ id, title: pair.title, note: pair.note, anchor: anchors[id], image: pair.image }];
     });
   }
 
@@ -279,6 +291,16 @@ export function TitleCompare({
   function updateTitle(index: number, title: string): void {
     if (index === PAIR_IDS.indexOf(selectedId)) clearCopyFeedback();
     setPair(index, { title });
+    clearPreferenceFor(index);
+  }
+
+  /** A crop change is a material edit for that pair only. It writes that
+   * pair's anchor and retires that pair's packaging preference through the
+   * same rule a title or thumbnail edit uses; other pairs are untouched. */
+  function updateAnchor(index: number, next: CropAnchorKey): void {
+    const id = PAIR_IDS[index];
+    if (anchors[id] === next) return;
+    setAnchors((current) => ({ ...current, [id]: next }));
     clearPreferenceFor(index);
   }
 
@@ -397,7 +419,7 @@ export function TitleCompare({
     if (!image) return;
     const run = ++exportRun.current;
     const forPair = selectedId;
-    const forAnchor = anchor;
+    const forAnchor = anchors[forPair];
     const title = pair.title;
     const current = () => mounted.current && exportRun.current === run;
     setExportBusy(true);
@@ -445,7 +467,7 @@ export function TitleCompare({
     if (!image) return;
     const run = ++exportRun.current;
     const forPair = selectedId;
-    const forAnchor = anchor;
+    const forAnchor = anchors[forPair];
     const title = pair.title;
     const note = pair.note;
     const current = () => mounted.current && exportRun.current === run;
@@ -540,20 +562,21 @@ export function TitleCompare({
 
   /** Every titled pair with a local thumbnail — at least two, at most the
    * three this section holds — in one flat ZIP. The titles, creator notes,
-   * image facts and crop anchor are captured before the first encode, so a
-   * later edit cannot relabel the package. Each pair reuses the single-pair
-   * card encode, manifest builder, SHA-256 and store-only ZIP writer; its
-   * prefixed entry names keep same-title pairs distinct, and each manifest
-   * names and hashes the exact PNG bytes the archive stores and carries only
-   * that pair's note. The preference is captured with the same snapshot and
-   * written only if that pair is actually in this archive. */
+   * image facts and each pair's own crop anchor are captured before the first
+   * encode, so a later edit cannot relabel the package. Each pair reuses the
+   * single-pair card encode, manifest builder, SHA-256 and store-only ZIP
+   * writer; its prefixed entry names keep same-title pairs distinct, and each
+   * manifest names and hashes the exact PNG bytes the archive stores, carries
+   * that pair's own anchor and only that pair's note. The preference is
+   * captured with the same snapshot and written only if that pair is actually
+   * in this archive. */
   async function exportPreparedPairs(): Promise<void> {
     const size = FEED_SIZES[1];
-    const forAnchor = anchor;
     const forPreferred = preferredId;
     const generatedAt = new Date().toISOString();
     const captured = readyPairs();
     if (captured.length < 2) return;
+    const setAnchorLabel = describeExportAnchors(captured.map((pair) => pair.anchor));
     const preferredForExport = preferredPairForExport(
       forPreferred,
       captured.map((pair) => pair.id),
@@ -567,6 +590,7 @@ export function TitleCompare({
       const pairLabels: string[] = [];
       for (const prepared of captured) {
         const image = prepared.image;
+        const forAnchor = prepared.anchor;
         const { rect, pngBytes } = await encodeCropPng(image, size, forAnchor);
         // Unmounted or superseded: no hash, no ZIP and no URL.
         if (!current()) return;
@@ -619,7 +643,7 @@ export function TitleCompare({
           name,
           label: `${captured.length} pairs, ${zipEntries.length} files`,
           pairLabel: pairLabels.join(", "),
-          anchorLabel: CROP_ANCHOR_LABELS[forAnchor],
+          anchorLabel: setAnchorLabel,
           width: size.width,
           height: size.height,
           bytes: bundleBlob.size,
@@ -627,7 +651,7 @@ export function TitleCompare({
         },
       ]);
       setExportMessage(
-        `ZIP ready for pairs ${pairLabels.join(", ")}. It contains ${captured.length} thumbnails and their manifests.${preferredForExport ? ` Pair ${PAIR_LABELS[preferredForExport]} is marked preferred in each manifest.` : ""}`,
+        `ZIP ready for pairs ${pairLabels.join(", ")}. It contains ${captured.length} thumbnails and their manifests, each using its pair's own crop position.${preferredForExport ? ` Pair ${PAIR_LABELS[preferredForExport]} is marked preferred in each manifest.` : ""}`,
       );
     } catch (error) {
       if (current())
@@ -687,27 +711,25 @@ export function TitleCompare({
       <div className="image-section-head">
         <h2 id="image-title-compare-heading" tabIndex={-1}>Title + thumbnail compare</h2>
         <span>
-          {selectedLabel} selected{preferredId ? ` · Pair ${PAIR_LABELS[preferredId]} preferred` : ""}
+          {selectedLabel} selected · {CROP_ANCHOR_LABELS[anchor]} crop
+          {preferredId ? ` · Pair ${PAIR_LABELS[preferredId]} preferred` : ""}
         </span>
       </div>
       <p className="trim-note" id="image-title-compare-note">
-        Name up to three title and thumbnail combinations from files on this device and
-        see each one at two real feed sizes. Titles truncate the way feeds truncate
-        them, and thumbnails show the real cover crop at the chosen position.
-        Nothing is uploaded, and the arrow keys switch the compared pair. A
-        complete pair can be marked preferred for the prepared-set manifests
-        without changing which pair is compared or exported. An optional
-        creator note stays with its pair and is written only into that pair's
-        exported manifest.
+        Compare up to three local pairs at two feed sizes. Choose a pair to
+        set its crop, or use the arrow keys to switch pairs. The exported
+        manifests record your preference and each pair’s creator note.
       </p>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
           <legend>Combinations</legend>
           <label className="title-compare-anchor">
-            Preview crop position
+            {`Preview crop position for ${selectedLabel}`}
             <select
               value={anchor}
-              onChange={(event) => setAnchor(event.target.value as CropAnchorKey)}
+              data-title-compare-anchor
+              data-title-compare-anchor-pair={selectedId}
+              onChange={(event) => updateAnchor(selectedIndex, event.target.value as CropAnchorKey)}
               aria-describedby="image-title-compare-note"
             >
               {Object.entries(CROP_ANCHOR_LABELS).map(([value, label]) => (
@@ -879,7 +901,7 @@ export function TitleCompare({
             const pair = pairs[PAIR_IDS.indexOf(id)];
             const isSelected = id === selectedId;
             const isPreferred = id === preferredId;
-            const position = objectPositionFor(anchor);
+            const position = objectPositionFor(anchors[id]);
             const hasTitle = pair.title.trim() !== "";
             const rowClipped = hasTitle && titleClips[`${id}-${FEED_SIZES[0].key}`];
             const cardClipped = hasTitle && titleClips[`${id}-${FEED_SIZES[1].key}`];
