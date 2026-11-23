@@ -173,6 +173,24 @@ function VideoClip() {
     applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
   );
 
+  // Draft sidecar: the same serializer the MP4 export uses, over the live trim,
+  // offset and cue count, so no video has to be encoded. An invalid trim or
+  // offset, or no surviving cue, produces no download at all.
+  const draftCaptionVtt = captionDraft && validTrim && captionOffsetMs !== null
+    && survivingCaptionCount !== null && survivingCaptionCount > 0
+    ? serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs)
+    : null;
+  const [draftCaptionFile, setDraftCaptionFile] = useState<{ vtt: string; url: string } | null>(null);
+  useEffect(() => {
+    if (!draftCaptionVtt) {
+      setDraftCaptionFile(null);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([draftCaptionVtt], { type: "text/vtt; charset=utf-8" }));
+    setDraftCaptionFile({ vtt: draftCaptionVtt, url });
+    return () => URL.revokeObjectURL(url);
+  }, [draftCaptionVtt]);
+  const draftCaptionUrl = draftCaptionFile?.vtt === draftCaptionVtt ? draftCaptionFile.url : null;
   const sourceVtt = showSourceCaptions && captionDraft
     ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs)
     : null;
@@ -523,7 +541,7 @@ function VideoClip() {
       {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
       <details>
         <summary>Use your own captions</summary>
-        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. Preview them on the original video or the finished clip.</p>
+        <p className="trim-note">Choose a plain SRT or WebVTT file up to 64 KB. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4.</p>
         <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading} onChange={event => {
           const input = event.currentTarget;
           void chooseCaptions(input.files?.[0]);
@@ -557,6 +575,10 @@ function VideoClip() {
                 : `${survivingCaptionCount} caption ${survivingCaptionCount === 1 ? "cue" : "cues"} inside this trim.`}
             </p>
           )}
+          {draftCaptionUrl && <div>
+            <p><a className="button secondary" href={draftCaptionUrl} download={`${clipFilename}-draft-captions.vtt`} aria-describedby="draft-captions-note">Save draft trim captions (VTT)</a></p>
+            <p id="draft-captions-note" className="trim-note">This file uses the current trim and timing offset. Finished clips keep their original caption files.</p>
+          </div>}
           <label className="video-tool-check">
             <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>
             Preview imported captions on original video
