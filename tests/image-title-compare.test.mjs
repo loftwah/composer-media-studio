@@ -356,6 +356,15 @@ test("the stylesheet renders real pixel boxes and real truncation", () => {
   assert.match(stylesheet, /max-width: 820px/);
 });
 
+test("the title fit note uses the rendered, nonempty preview box", () => {
+  assert.match(section, /title\.clientHeight === 0/);
+  assert.match(section, /title\.scrollHeight - title\.clientHeight > 1/);
+  assert.match(section, /rowClipped = hasTitle && titleClips/);
+  assert.match(section, /cardClipped = hasTitle && titleClips/);
+  assert.match(section, /className="title-compare-fit-note"/);
+  assert.doesNotMatch(section, /title-compare-fit-note[^\n]*aria-live/);
+});
+
 test("the section catches a deep link that lands before React mounts", () => {
   // Proven gap: the heading only exists after React mounts, so the browser's
   // native fragment scroll never runs and the heading is not focusable.

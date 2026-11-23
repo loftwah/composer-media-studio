@@ -5,7 +5,7 @@
 // account or server state; the only bytes that leave this tab are the ones an
 // explicit download writes to disk.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   IMAGE_ACCEPT_ATTRIBUTE,
   imageInputProblem,
@@ -74,6 +74,30 @@ type ExportEntry = {
 
 const emptyPair = (): Pair => ({ title: "", image: null, error: null, busy: false });
 
+type TitleClipState = Record<string, boolean>;
+
+/** Title fit is a fact about the rendered box: a two-line clamp that hides
+ * scrollable content. A hidden or unlaid-out box reports 0 and is not a cut. */
+function measureTitleClips(section: HTMLElement): TitleClipState {
+  const clipped: TitleClipState = {};
+  for (const id of PAIR_IDS) {
+    const figure = section.querySelector(`[data-title-compare-preview="${id}"]`);
+    if (!figure) continue;
+    for (const size of FEED_SIZES) {
+      const title = figure.querySelector(`[data-title-compare-title="${id}-${size.key}"]`);
+      if (!(title instanceof HTMLElement) || title.clientHeight === 0) continue;
+      clipped[`${id}-${size.key}`] = title.scrollHeight - title.clientHeight > 1;
+    }
+  }
+  return clipped;
+}
+
+function sameTitleClips(current: TitleClipState, next: TitleClipState): boolean {
+  return PAIR_IDS.every((id) =>
+    FEED_SIZES.every((size) => current[`${id}-${size.key}`] === next[`${id}-${size.key}`]),
+  );
+}
+
 export function TitleCompare() {
   const [pairs, setPairs] = useState<Pair[]>(() => PAIR_IDS.map(emptyPair));
   const [selectedId, setSelectedId] = useState<PairId>("a");
@@ -84,6 +108,8 @@ export function TitleCompare() {
   const [copyMessage, setCopyMessage] = useState("");
   const [titleFallback, setTitleFallback] = useState<string | null>(null);
   const [draggingPair, setDraggingPair] = useState<PairId | null>(null);
+  const [titleClips, setTitleClips] = useState<TitleClipState>({});
+  const sectionRef = useRef<HTMLElement | null>(null);
   const urls = useRef(new Set<string>());
   const exportsRef = useRef<ExportEntry[]>([]);
   const mounted = useRef(true);
@@ -121,6 +147,29 @@ export function TitleCompare() {
       exportsRef.current = [];
     };
   }, []);
+
+  const updateTitleClips = useCallback(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const next = measureTitleClips(section);
+    setTitleClips((current) => (sameTitleClips(current, next) ? current : next));
+  }, []);
+
+  // Edits can change hidden text without changing the visible clamped height.
+  useEffect(updateTitleClips, [pairs, updateTitleClips]);
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateTitleClips);
+    section.querySelectorAll("[data-title-compare-title]").forEach((element) => resize?.observe(element));
+    if (!resize) window.addEventListener("resize", updateTitleClips);
+    document.fonts?.addEventListener("loadingdone", updateTitleClips);
+    return () => {
+      resize?.disconnect();
+      if (!resize) window.removeEventListener("resize", updateTitleClips);
+      document.fonts?.removeEventListener("loadingdone", updateTitleClips);
+    };
+  }, [updateTitleClips]);
 
   function trackUrl(source: Blob): string {
     const url = URL.createObjectURL(source);
@@ -420,7 +469,7 @@ export function TitleCompare() {
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
 
   return (
-    <section className="trim-work image-title-compare" aria-labelledby="image-title-compare-heading">
+    <section ref={sectionRef} className="trim-work image-title-compare" aria-labelledby="image-title-compare-heading">
       <div className="image-section-head">
         <h2 id="image-title-compare-heading" tabIndex={-1}>Title + thumbnail compare</h2>
         <span>{selectedLabel} selected</span>
@@ -531,6 +580,16 @@ export function TitleCompare() {
             const pair = pairs[PAIR_IDS.indexOf(id)];
             const isSelected = id === selectedId;
             const position = objectPositionFor(anchor);
+            const hasTitle = pair.title.trim() !== "";
+            const rowClipped = hasTitle && titleClips[`${id}-${FEED_SIZES[0].key}`];
+            const cardClipped = hasTitle && titleClips[`${id}-${FEED_SIZES[1].key}`];
+            const clipNote = rowClipped && cardClipped
+              ? "Compact row and Large card cut this title short."
+              : rowClipped
+                ? "Compact row cuts this title short."
+                : cardClipped
+                  ? "Large card cuts this title short."
+                  : "";
             const thumb = (box: FeedSize, extra: string) => (
               <span
                 className={`title-compare-thumb${extra ? ` ${extra}` : ""}`}
@@ -556,16 +615,23 @@ export function TitleCompare() {
               >
                 <div className="title-compare-row">
                   {thumb(FEED_SIZES[0], "title-compare-thumb-row")}
-                  <span className="title-compare-title title-compare-title-row">
+                  <span
+                    className="title-compare-title title-compare-title-row"
+                    data-title-compare-title={`${id}-${FEED_SIZES[0].key}`}
+                  >
                     {pair.title || <em>Untitled {PAIR_LABELS[id]}</em>}
                   </span>
                 </div>
                 <div className="title-compare-card">
                   {thumb(FEED_SIZES[1], "title-compare-thumb-card")}
-                  <span className="title-compare-title title-compare-title-card">
+                  <span
+                    className="title-compare-title title-compare-title-card"
+                    data-title-compare-title={`${id}-${FEED_SIZES[1].key}`}
+                  >
                     {pair.title || <em>Untitled {PAIR_LABELS[id]}</em>}
                   </span>
                 </div>
+                {clipNote && <p className="title-compare-fit-note">{clipNote}</p>}
                 <figcaption>
                   {`Pair ${PAIR_LABELS[id]} · row 168 × 94 · card up to 640 × 360 · ${
                     pair.image ? `${pair.image.width} × ${pair.image.height} source` : "no thumbnail yet"

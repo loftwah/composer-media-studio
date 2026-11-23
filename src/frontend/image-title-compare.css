@@ -160,6 +160,13 @@
   font-weight: 400;
 }
 
+/* Only shown when the rendered clamp hides text; not a live region. */
+.title-compare-fit-note {
+  margin: -0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .title-compare-preview figcaption {
   color: var(--muted);
   font-size: 0.8rem;
