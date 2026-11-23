@@ -158,7 +158,7 @@ test("the section keeps the workbench's local-only and keyboard promises", () =>
   assert.match(section, /URL\.createObjectURL/);
   assert.match(section, /URL\.revokeObjectURL/);
   // The workbench mounts the section.
-  assert.match(workbench, /<TitleCompare \/>/);
+  assert.match(workbench, /<TitleCompare preparedImage=\{preparedTitleImage\} \/>/);
 });
 
 test("decoded bitmaps are closed on every outcome, not just a successful draw", () => {
@@ -494,6 +494,63 @@ test("a preferred pair is included only when the exact export contains it", () =
   assert.equal(preferredPairForExport("b", ["a", "b"]), "b");
   assert.equal(preferredPairForExport("c", ["a", "b"]), undefined);
   assert.equal(preferredPairForExport(null, ["a", "b"]), undefined);
+});
+
+test("the workbench offers its exact finished result to the packaging compare", () => {
+  assert.match(workbench, /const preparedTitleImage: PreparedTitleImage \| null = selected\?\.result/);
+  assert.match(workbench, /blob: selected\.result\.blob/);
+  assert.match(workbench, /filename: renderedFileName\(selected\.file\.name, selected\.result\)/);
+  assert.match(workbench, /mime: selected\.result\.mime/);
+  assert.match(workbench, /<TitleCompare preparedImage=\{preparedTitleImage\} \/>/);
+  // The offer does not add an input file, upload or save path of its own.
+  assert.doesNotMatch(workbench, /<TitleCompare[^>]*(?:onUpload|autoApply|save)/);
+});
+
+test("the prepared handoff is explicit and wraps the exact blob without re-encoding", () => {
+  assert.match(section, /function usePreparedImage\(index: number\): void \{/);
+  assert.match(
+    section,
+    /new File\(\[preparedImage\.blob\], preparedImage\.filename, \{\s*type: preparedImage\.mime \|\| preparedImage\.blob\.type,?\s*\}\)/,
+  );
+  assert.match(section, /void chooseImage\(index, file\)/);
+  assert.match(section, /onClick=\{\(\) => usePreparedImage\(index\)\}/);
+  // One definition and one button handler: no effect or prop watcher applies it.
+  assert.equal((section.match(/usePreparedImage\(/g) ?? []).length, 2);
+  const start = section.indexOf("function usePreparedImage");
+  const end = section.indexOf("function removeImage", start);
+  assert.ok(start >= 0 && end > start);
+  const handoff = section.slice(start, end);
+  assert.doesNotMatch(handoff, /toBlob|createImageBitmap|canvas/);
+  assert.doesNotMatch(handoff, /fetch\(|XMLHttpRequest|localStorage/);
+});
+
+test("the prepared action names the offered image and any thumbnail it replaces", () => {
+  assert.match(section, /data-title-compare-prepared-offer/);
+  assert.match(section, /Prepared image: \$\{preparedImage\.filename\}/);
+  assert.match(section, /preparedImage\.width\} × \$\{preparedImage\.height\} px/);
+  assert.match(section, /data-title-compare-prepared-use=\{id\}/);
+  assert.match(section, /Use prepared image for Pair \$\{PAIR_LABELS\[id\]\}/);
+  assert.match(section, /\(replaces current thumbnail\)/);
+  assert.match(section, /Replaces \$\{pair\.image\.fileName\}/);
+  assert.match(section, /Replacing the thumbnail clears this pair’s preference/);
+  // The offer is already bounded by the same input limit chooseImage enforces.
+  assert.match(section, /preparedImage\.bytes > MAX_IMAGE_INPUT_BYTES/);
+});
+
+test("the prepared handoff keeps the pair's text and shares the existing preference rule", () => {
+  assert.match(section, /clearPreferenceFor\(index\);\s*discardExports\(\);/);
+  const start = section.indexOf("function usePreparedImage");
+  const end = section.indexOf("function removeImage", start);
+  const handoff = section.slice(start, end);
+  assert.match(handoff, /void chooseImage\(index, file\)/);
+  assert.doesNotMatch(handoff, /setPair\([^)]*(?:title|note)|setPreferredId|setSelectedId/);
+});
+
+test("the local picker and drop keep their existing intake rules", () => {
+  assert.match(section, /void chooseImage\(index, event\.dataTransfer\.files\[0\]\)/);
+  assert.match(section, /void chooseImage\(index, file\);/);
+  assert.match(section, /const previous = pairs\[index\]\.image;\s*releaseUrl\(previous\?\.url\);/);
+  assert.match(section, /clearPreferenceFor\(index\);\s*discardExports\(\);/);
 });
 
 test("the full-size framing preview is a bounded, honest browser-local overlay", () => {
