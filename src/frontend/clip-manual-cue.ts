@@ -96,3 +96,15 @@ export function appendManualClipCue(
     return { problem: "That cue could not be added. Check its text, start and end." };
   }
 }
+
+/**
+ * Remove one cue by its index in the draft, the identity carried by the shared
+ * trim projection. An offset or trim can clamp or shift what the review row
+ * shows, so its displayed times cannot identify the underlying cue. Cues
+ * outside the current trim stay untouched, and an out-of-range index changes
+ * nothing.
+ */
+export function removeClipDraftCue(cues: readonly ImportedCue[], sourceIndex: number): ImportedCue[] | null {
+  if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= cues.length) return null;
+  return cues.filter((_, index) => index !== sourceIndex);
+}

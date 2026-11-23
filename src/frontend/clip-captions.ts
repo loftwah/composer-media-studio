@@ -26,24 +26,26 @@ export function clipTimeStamp(ms: number) {
   return `${minutes}:${seconds}.${millis}`;
 }
 
-type ClippedCaptionCue = Readonly<{ from: number; to: number; sourceStartMs: number; text: string }>;
+type ClippedCaptionCue = Readonly<{ from: number; to: number; sourceStartMs: number; text: string; sourceIndex: number }>;
 
 // The shared projection for every trimmed-caption surface: serialization, the
 // preflight count and the review list. Times are trim-relative milliseconds.
 // offsetMs is applied to every cue before it is clipped and rebased to the
 // selected range: positive moves cues later, negative earlier. The default of
-// 0 leaves the original timing unchanged. null means these values cannot be
-// projected at all; an empty array means valid values with no surviving cues.
+// 0 leaves the original timing unchanged. sourceIndex is the cue's position in
+// the draft, so a clamped or shifted review row can still name its own cue.
+// null means these values cannot be projected at all; an empty array means
+// valid values with no surviving cues.
 export function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0): ClippedCaptionCue[] | null {
   const start = Math.round(startSeconds * 1000);
   const end = Math.round(endSeconds * 1000);
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start) return null;
   if (!Number.isSafeInteger(offsetMs) || Math.abs(offsetMs) > MAX_CAPTION_OFFSET_SECONDS * 1000) return null;
   const kept: ClippedCaptionCue[] = [];
-  for (const cue of cues) {
+  for (const [sourceIndex, cue] of cues.entries()) {
     const from = Math.max(cue.startMs + offsetMs, start), to = Math.min(cue.endMs + offsetMs, end);
     if (from >= to) continue;
-    kept.push({ from: from - start, to: to - start, sourceStartMs: from, text: cue.text });
+    kept.push({ from: from - start, to: to - start, sourceStartMs: from, text: cue.text, sourceIndex });
   }
   return kept;
 }

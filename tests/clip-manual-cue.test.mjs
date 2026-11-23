@@ -7,6 +7,7 @@ import {
   appendManualClipCue,
   manualCaptionSourceName,
   manualCaptionTrackVtt,
+  removeClipDraftCue,
 } from '../src/frontend/clip-manual-cue.ts';
 
 const cue = (startMs, endMs, text = 'Line') => ({ startMs, endMs, text, speaker: '' });
@@ -70,8 +71,8 @@ test('an accepted cue follows the existing clamp, rebase, preview and export pro
   assert.equal(sourcePreviewVtt(cues, 10, 0),
     'WEBVTT\n\n00:01.000 --> 00:02.000\nA\n\n00:02.500 --> 00:04.250\nB &amp; &lt;C&gt;\n');
   assert.deepEqual(clipCaptionCues(cues, 2, 5, 500), [
-    { from: 0, to: 500, sourceStartMs: 2000, text: 'A' },
-    { from: 1000, to: 2750, sourceStartMs: 3000, text: 'B & <C>' },
+    { from: 0, to: 500, sourceStartMs: 2000, text: 'A', sourceIndex: 0 },
+    { from: 1000, to: 2750, sourceStartMs: 3000, text: 'B & <C>', sourceIndex: 1 },
   ]);
   const vtt = serializeClipCaptions(cues, 2, 5, 500);
   assert.equal(vtt, 'WEBVTT\n\n00:00.000 --> 00:00.500\nA\n\n00:01.000 --> 00:02.750\nB &amp; &lt;C&gt;\n');
@@ -80,6 +81,30 @@ test('an accepted cue follows the existing clamp, rebase, preview and export pro
     { startMs: 0, endMs: 500, text: 'A', speaker: '' },
     { startMs: 1000, endMs: 2750, text: 'B & <C>', speaker: '' },
   ]);
+});
+
+test('a clamped or shifted review row removes its exact draft cue and preserves excluded cues', () => {
+  const before = cue(500, 900, 'Before');
+  const clamped = cue(1000, 3000, 'Trimmed');
+  const shifted = cue(6000, 8000, 'Shifted');
+  const after = cue(9000, 9800, 'After');
+  const cues = [before, clamped, shifted, after];
+  const projected = clipCaptionCues(cues, 2, 7, 500);
+  // The clamped row starts at the trim, and the shifted row starts 500 ms later.
+  assert.deepEqual(projected, [
+    { from: 0, to: 1500, sourceStartMs: 2000, text: 'Trimmed', sourceIndex: 1 },
+    { from: 4500, to: 5000, sourceStartMs: 6500, text: 'Shifted', sourceIndex: 2 },
+  ]);
+  // Either row deletes exactly its own source cue, including the cues outside
+  // the trim, so the offset keeps the same meaning for every untouched cue.
+  assert.deepEqual(removeClipDraftCue(cues, projected[1].sourceIndex), [before, clamped, after]);
+  assert.deepEqual(removeClipDraftCue(cues, projected[0].sourceIndex), [before, shifted, after]);
+  const remaining = removeClipDraftCue(cues, projected[1].sourceIndex);
+  assert.equal(manualCaptionTrackVtt(remaining),
+    'WEBVTT\n\n00:00.500 --> 00:00.900\nBefore\n\n00:01.000 --> 00:03.000\nTrimmed\n\n00:09.000 --> 00:09.800\nAfter\n');
+  assert.equal(manualCaptionSourceName({ name: 'watch.vtt', local: false }), 'watch.vtt (edited in Video Clip)');
+  // A stale or invented identity changes nothing.
+  for (const index of [-1, cues.length, 1.5]) assert.equal(removeClipDraftCue(cues, index), null);
 });
 
 test('a manual or edited track is named as a local source, not the imported file', () => {
