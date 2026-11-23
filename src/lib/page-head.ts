@@ -91,3 +91,7 @@ ${twitter}`}
 ${extra}
 </head>`;
 }
+
+export function brandByline() {
+  return `<span class="brand-by">App Composer</span>`;
+}
