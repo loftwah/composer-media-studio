@@ -48,15 +48,18 @@ export function manualCaptionTrackVtt(cues: readonly ImportedCue[]): string | nu
 }
 
 /**
- * Add one plain-text cue to the local draft. The combined track goes back
+ * Validate one manual cue against the draft. The combined track goes back
  * through the existing caption importer, so plain-text, no-overlap, in-video
- * and 100-cue limits are the same ones a chosen file already follows. An
- * invalid entry returns a problem and leaves the caller's draft untouched.
+ * and size limits are the same ones a chosen file already follows. When
+ * replaceIndex is null the cue is added; otherwise only that draft index is
+ * replaced. An invalid entry returns a problem and leaves the caller's draft
+ * untouched.
  */
-export function appendManualClipCue(
+function validatedManualCue(
   cues: readonly ImportedCue[],
   input: ManualCueEntry,
   durationMs: number,
+  replaceIndex: number | null,
 ): ManualCueAddition {
   if (!Number.isSafeInteger(durationMs) || durationMs <= 0)
     return { problem: "This video has no usable duration for captions." };
@@ -70,18 +73,21 @@ export function appendManualClipCue(
   if (startMs < 0 || endMs > durationMs)
     return { problem: `Choose a start and end within this video (0 to ${clipTimeStamp(durationMs)}).` };
   if (endMs <= startMs) return { problem: "The end must be after the start." };
-  if (cues.length >= MAX_MANUAL_CAPTION_CUES)
+  if (replaceIndex === null && cues.length >= MAX_MANUAL_CAPTION_CUES)
     return { problem: `This draft already has ${MAX_MANUAL_CAPTION_CUES} cues. Clear or replace the track before adding another.` };
-  if (cues.some(cue => startMs < cue.endMs && cue.startMs < endMs))
+  if (cues.some((cue, index) => index !== replaceIndex && startMs < cue.endMs && cue.startMs < endMs))
     return { problem: "This cue overlaps another cue. Choose a free start and end." };
 
-  const next = [...cues, { startMs, endMs, text: input.text, speaker: "" }]
+  const edited = { startMs, endMs, text: input.text, speaker: "" };
+  const next = (replaceIndex === null
+    ? [...cues, edited]
+    : cues.map((cue, index) => index === replaceIndex ? edited : cue))
     .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
   const source = manualCaptionTrackVtt(next);
   if (!source) return { problem: "The cue times do not fit this video." };
   if (new TextEncoder().encode(source).byteLength > MAX_CAPTION_BYTES)
-    return { problem: "Adding this cue would put the caption track over 64 KB." };
-  // The new cue is already bounded by the real video. Existing imported cues
+    return { problem: "This cue would put the caption track over 64 KB." };
+  // The edited cue is already bounded by the real video. Existing imported cues
   // may extend past it, so let the importer validate order and overlap over the
   // whole draft without rejecting those untouched cues.
   const segmentEndMs = Math.max(durationMs, ...next.map(cue => cue.endMs));
@@ -93,8 +99,38 @@ export function appendManualClipCue(
       return { problem: "This cue overlaps another cue. Choose a free start and end." };
     if (/plain text/.test(message))
       return { problem: "Use plain text up to 300 characters without control characters." };
-    return { problem: "That cue could not be added. Check its text, start and end." };
+    return { problem: "That cue could not be saved. Check its text, start and end." };
   }
+}
+
+/**
+ * Add one plain-text cue to the local draft. An invalid entry returns a
+ * problem and leaves the caller's draft untouched.
+ */
+export function appendManualClipCue(
+  cues: readonly ImportedCue[],
+  input: ManualCueEntry,
+  durationMs: number,
+): ManualCueAddition {
+  return validatedManualCue(cues, input, durationMs, null);
+}
+
+/**
+ * Replace exactly one cue by its index in the draft, the identity carried by
+ * the shared trim projection. An offset or trim can clamp or shift what the
+ * review row shows, so its displayed times cannot identify the underlying cue.
+ * Only that index changes; every other cue keeps its text and original-video
+ * times, and an out-of-range index leaves the draft untouched.
+ */
+export function replaceClipDraftCue(
+  cues: readonly ImportedCue[],
+  sourceIndex: number,
+  input: ManualCueEntry,
+  durationMs: number,
+): ManualCueAddition {
+  if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= cues.length)
+    return { problem: "That cue is no longer in this draft. Choose Edit again." };
+  return validatedManualCue(cues, input, durationMs, sourceIndex);
 }
 
 /**

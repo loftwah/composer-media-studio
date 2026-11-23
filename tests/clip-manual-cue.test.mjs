@@ -8,11 +8,14 @@ import {
   manualCaptionSourceName,
   manualCaptionTrackVtt,
   removeClipDraftCue,
+  replaceClipDraftCue,
 } from '../src/frontend/clip-manual-cue.ts';
 
 const cue = (startMs, endMs, text = 'Line') => ({ startMs, endMs, text, speaker: '' });
 const add = (cues, text, startSeconds, endSeconds, durationMs = 10_000) =>
   appendManualClipCue(cues, { text, startSeconds, endSeconds }, durationMs);
+const replace = (cues, sourceIndex, text, startSeconds, endSeconds, durationMs = 10_000) =>
+  replaceClipDraftCue(cues, sourceIndex, { text, startSeconds, endSeconds }, durationMs);
 const accepted = result => {
   assert.ok(!('problem' in result), result.problem);
   return result.cues;
@@ -105,6 +108,76 @@ test('a clamped or shifted review row removes its exact draft cue and preserves 
   assert.equal(manualCaptionSourceName({ name: 'watch.vtt', local: false }), 'watch.vtt (edited in Video Clip)');
   // A stale or invented identity changes nothing.
   for (const index of [-1, cues.length, 1.5]) assert.equal(removeClipDraftCue(cues, index), null);
+});
+
+test('editing one cue replaces only its sourceIndex and preserves every other cue', () => {
+  const before = cue(0, 500, 'Before');
+  const selected = cue(1000, 2000, 'Wrong line');
+  const after = cue(3000, 4000, 'After');
+  const cues = [before, selected, after];
+  const next = accepted(replace(cues, 1, 'Corrected & <new>', '1.25', '2.75'));
+  assert.deepEqual(next, [
+    before, { startMs: 1250, endMs: 2750, text: 'Corrected & <new>', speaker: '' }, after,
+  ]);
+  // The edited track is the canonical full-source VTT used for its receipt digest.
+  assert.equal(manualCaptionTrackVtt(next),
+    'WEBVTT\n\n00:00.000 --> 00:00.500\nBefore\n\n00:01.250 --> 00:02.750\nCorrected &amp; &lt;new&gt;\n\n00:03.000 --> 00:04.000\nAfter\n');
+  // Moving the cue within a free gap re-sorts the same cue set.
+  assert.deepEqual(accepted(replace(cues, 1, 'Moved', '2.1', '2.9')), [
+    before, { startMs: 2100, endMs: 2900, text: 'Moved', speaker: '' }, after,
+  ]);
+  // Atomic: the caller's draft and the excluded cues are never mutated.
+  assert.deepEqual(cues, [before, selected, after]);
+  assert.equal(selected.text, 'Wrong line');
+});
+
+test('a clamped or shifted review row edits its exact draft cue and preserves excluded cues', () => {
+  const before = cue(500, 900, 'Before');
+  const clamped = cue(1000, 3000, 'Trimmed');
+  const shifted = cue(6000, 8000, 'Shifted');
+  const after = cue(9000, 9800, 'After');
+  const cues = [before, clamped, shifted, after];
+  const projected = clipCaptionCues(cues, 2, 7, 500);
+  // The shifted row only shows 4500–5000 after clipping, but its sourceIndex
+  // still names the original 6000–8000 cue and its unshifted seconds.
+  assert.deepEqual(projected[1], {
+    from: 4500, to: 5000, sourceStartMs: 6500, text: 'Shifted', sourceIndex: 2,
+  });
+  const next = accepted(replace(cues, projected[1].sourceIndex, 'Shifted corrected', '5.75', '8.25'));
+  assert.deepEqual(next, [
+    before, clamped, { startMs: 5750, endMs: 8250, text: 'Shifted corrected', speaker: '' }, after,
+  ]);
+  // The untouched cues keep their original times, so the same trim and offset
+  // project them exactly as before.
+  assert.deepEqual(clipCaptionCues(next, 2, 7, 500), [
+    { from: 0, to: 1500, sourceStartMs: 2000, text: 'Trimmed', sourceIndex: 1 },
+    { from: 4250, to: 5000, sourceStartMs: 6250, text: 'Shifted corrected', sourceIndex: 2 },
+  ]);
+});
+
+test('an invalid or stale edit is refused without changing the cue list', () => {
+  const cues = [cue(0, 1000, 'A'), cue(2000, 3000, 'B'), cue(4000, 5000, 'C')];
+  const snapshot = structuredClone(cues);
+  // Overlap is checked against every other cue, not the cue being replaced.
+  assert.match(problem(replace(cues, 1, 'Overlap', '0.5', '2.5')), /overlaps another cue/);
+  assert.equal(accepted(replace(cues, 1, 'Adjacent', '1', '2')).length, 3);
+  // Source range, ordering, plain text and one-line limits match Add cue.
+  assert.match(problem(replace(cues, 1, 'Outside', '2', '10.001')), /within this video/);
+  assert.match(problem(replace(cues, 1, 'Negative', '-1', '1')), /within this video/);
+  assert.match(problem(replace(cues, 1, 'Reversed', '3', '2')), /after the start/);
+  assert.match(problem(replace(cues, 1, '  ', '2', '2.5')), /plain caption text/);
+  assert.match(problem(replace(cues, 1, 'Two\nlines', '2', '2.5')), /one line/);
+  assert.equal(problem(replace(cues, 1, 'x'.repeat(301), '2', '2.5')),
+    'Use plain text up to 300 characters without control characters.');
+  // A stale index from a replaced or imported draft cannot target a new cue.
+  for (const index of [-1, cues.length, 1.5]) assert.match(problem(replace(cues, index, 'B', '2', '2.5')), /no longer in this draft/);
+  // A replacement at the 100-cue ceiling is allowed because it adds no cue.
+  const full = Array.from({ length: MAX_MANUAL_CAPTION_CUES }, (_, index) => cue(index * 1000, (index + 1) * 1000));
+  assert.equal(accepted(replace(full, 50, 'Edited', '50', '51', 100_000)).length, 100);
+  // The 64 KB edited-track bound still applies to a replacement.
+  const multibyte = full.slice(0, 80).map(item => ({ ...item, text: '界'.repeat(300) }));
+  assert.match(problem(replace(multibyte, 0, '界'.repeat(300), '0', '1', 100_000)), /64 KB/);
+  assert.deepEqual(cues, snapshot);
 });
 
 test('a manual or edited track is named as a local source, not the imported file', () => {

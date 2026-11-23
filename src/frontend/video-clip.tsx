@@ -1,7 +1,7 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
-import { appendManualClipCue, manualCaptionSourceName, manualCaptionTrackVtt, removeClipDraftCue } from "./clip-manual-cue";
+import { appendManualClipCue, manualCaptionSourceName, manualCaptionTrackVtt, removeClipDraftCue, replaceClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -92,9 +92,9 @@ function VideoClip() {
   const [completedClip, setCompletedClip] = useState<CompletedClip | null>(null);
   const [captionTrack, setCaptionTrack] = useState<ClipCaptionTrack | null>(null);
   const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
-  // One-step snapshot of the exact draft before the most recent cue removal.
-  // Any later caption change or source change clears it, so Undo cannot replace
-  // newer work with stale cues or a stale source name and digest.
+  // One-step snapshot of the exact draft before the most recent cue removal or
+  // edit. Any later caption change or source change clears it, so Undo cannot
+  // replace newer work with stale cues or a stale source name and digest.
   const [captionUndo, setCaptionUndo] = useState<CaptionDraft | null>(null);
   const captionUndoButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -106,6 +106,15 @@ function VideoClip() {
   const [manualCueStart, setManualCueStart] = useState("");
   const [manualCueEnd, setManualCueEnd] = useState("");
   const [manualCueMessage, setManualCueMessage] = useState("");
+  // The exact draft the edit was opened against. Any import, removal, undo,
+  // replacement or source change replaces that draft (or clears it), so a
+  // stale edit can never overwrite newer cues with an old index.
+  const [cueEditing, setCueEditing] = useState<{ sourceIndex: number; draft: CaptionDraft } | null>(null);
+  const manualCueTextInput = useRef<HTMLInputElement>(null);
+  const manualCueDetails = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (cueEditing) manualCueTextInput.current?.focus();
+  }, [cueEditing]);
   const [captionMessage, setCaptionMessage] = useState("");
   const [captionLoading, setCaptionLoading] = useState(false);
   const [showSourceCaptions, setShowSourceCaptions] = useState(false);
@@ -318,7 +327,7 @@ function VideoClip() {
       setLoadedHandoff(fromHandoff);
       captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionUndo(null); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
-      setManualCueText(""); setManualCueStart(""); setManualCueEnd(""); setManualCueMessage("");
+      resetCueEditor(); setManualCueMessage("");
       setShowSourceCaptions(false);
       setCropAnchor("center");
       setReceiptMessage(""); setReceiptLoading(false);
@@ -378,6 +387,7 @@ function VideoClip() {
       setCaptionDraft({ name: selected.name, sourceSha256, cues, local: false });
       setCaptionUndo(null);
       setCaptionOffsetRaw("0");
+      resetCueEditor();
       setManualCueMessage("");
       setCaptionMessage(`Loaded ${cues.length} ${cues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
@@ -397,6 +407,14 @@ function VideoClip() {
     if ("problem" in prepared) { setCaptionMessage(prepared.problem); return; }
     await chooseCaptions(prepared.file);
   }
+  // Leave the shared manual-cue form in add mode with no stale text. The trim,
+  // offset, loaded track and any finished MP4 are not touched.
+  function resetCueEditor() {
+    setCueEditing(null);
+    setManualCueText("");
+    setManualCueStart("");
+    setManualCueEnd("");
+  }
   // One plain-text cue at original-video seconds. Validation and overlap checks
   // run before any state change, then the accepted cue joins the current draft
   // in time order. The digest covers the actual edited track so a receipt never
@@ -415,13 +433,63 @@ function VideoClip() {
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
       setCaptionUndo(null);
-      setManualCueText("");
-      setManualCueStart("");
-      setManualCueEnd("");
+      resetCueEditor();
       setManualCueMessage(`Added one cue. This draft now has ${added.cues.length} ${added.cues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
       if (request === captionRequest.current)
         setManualCueMessage(error instanceof Error ? error.message : "Could not add the cue in this browser.");
+    } finally {
+      if (request === captionRequest.current) setCaptionLoading(false);
+    }
+  }
+  // Load one reviewed cue into the same manual form, using its original-video
+  // seconds rather than the clipped, offset review times. The draft itself is
+  // not changed until Update cue, so Cancel and invalid values stay harmless.
+  function beginCueEdit(sourceIndex: number) {
+    if (!captionDraft || busy || checking || importing || receiptLoading || captionLoading) return;
+    const cue = captionDraft.cues[sourceIndex];
+    if (!cue) return;
+    if (manualCueDetails.current) manualCueDetails.current.open = true;
+    setCueEditing({ sourceIndex, draft: captionDraft });
+    setManualCueText(cue.text);
+    setManualCueStart((cue.startMs / 1000).toFixed(3));
+    setManualCueEnd((cue.endMs / 1000).toFixed(3));
+    setManualCueMessage(`Editing the cue at ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} in the original video.`);
+  }
+  function cancelCueEdit() {
+    if (!cueEditing || busy || checking || importing || receiptLoading || captionLoading) return;
+    resetCueEditor();
+    setManualCueMessage("Edit cancelled. Write a new cue or choose another cue to edit.");
+    manualCueTextInput.current?.focus();
+  }
+  // Replace the exact draft cue the editor opened against. Validation, overlap,
+  // range and size checks run before any state change. The digest covers the
+  // actual edited track, and the untouched prior draft is saved for Undo.
+  async function saveEditedCue() {
+    if (!captionDraft || !cueEditing || busy || checking || importing || receiptLoading || captionLoading) return;
+    if (cueEditing.draft !== captionDraft || !captionDraft.cues[cueEditing.sourceIndex]) {
+      resetCueEditor();
+      setManualCueMessage("The caption draft changed. Choose Edit again.");
+      return;
+    }
+    const previousDraft = captionDraft;
+    const replaced = replaceClipDraftCue(previousDraft.cues, cueEditing.sourceIndex, {
+      text: manualCueText, startSeconds: manualCueStart, endSeconds: manualCueEnd,
+    }, Math.round(duration * 1000));
+    if ("problem" in replaced) { setManualCueMessage(replaced.problem); return; }
+    const request = ++captionRequest.current;
+    setCaptionLoading(true);
+    setManualCueMessage("Updating the cue in this draft…");
+    try {
+      const updated = await editedCaptionDraft(previousDraft, replaced.cues);
+      if (request !== captionRequest.current) return;
+      setCaptionDraft(updated);
+      setCaptionUndo(previousDraft);
+      resetCueEditor();
+      setManualCueMessage(`Updated one cue. This draft now has ${replaced.cues.length} ${replaced.cues.length === 1 ? "cue" : "cues"}. Undo is available below.`);
+    } catch (error) {
+      if (request === captionRequest.current)
+        setManualCueMessage(error instanceof Error ? error.message : "Could not update the cue in this browser.");
     } finally {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
@@ -444,6 +512,7 @@ function VideoClip() {
         if (request !== captionRequest.current) return;
         setCaptionDraft(null);
         setCaptionUndo(previousDraft);
+        if (cueEditing) resetCueEditor();
         setCaptionMessage("Removed the last cue. The caption track is removed; Undo is available below.");
         return;
       }
@@ -451,6 +520,7 @@ function VideoClip() {
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
       setCaptionUndo(previousDraft);
+      if (cueEditing) resetCueEditor();
       setCaptionMessage(`Removed one cue. This draft now has ${nextCues.length} ${nextCues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
       if (request === captionRequest.current)
@@ -459,15 +529,16 @@ function VideoClip() {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
   }
-  // Restore the exact draft, name and digest saved before that removal. Any
-  // later add, replacement, clear or source change already dropped the snapshot.
+  // Restore the exact draft, name and digest saved before that removal or edit.
+  // Any later add, replacement, clear or source change already dropped it.
   function undoCaptionRemoval() {
     if (!captionUndo || busy || checking || importing || receiptLoading || captionLoading) return;
     captionRequest.current++;
     setCaptionDraft(captionUndo);
     setCaptionUndo(null);
+    if (cueEditing) resetCueEditor();
     setCaptionLoading(false);
-    setCaptionMessage("Restored the removed cue and caption track.");
+    setCaptionMessage("Restored the previous cue draft.");
   }
   // Pause on the projected source time and keep keyboard focus on the cue.
   function jumpToOriginalCue(sourceStartMs: number) {
@@ -711,10 +782,10 @@ function VideoClip() {
           onChange={event => setCaptionText(event.currentTarget.value)}
         /></label>
         <button type="button" className="secondary" disabled={!file || !captionText.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void applyCaptionText()}>Apply captions</button>
-        <details>
-          <summary>Write a cue</summary>
+        <details ref={manualCueDetails}>
+          <summary>{cueEditing ? "Edit cue" : "Write a cue"}</summary>
           <p id="manual-cue-help" className="trim-note">Use seconds from the start of the original video, with up to three decimal places. The timing offset applies to every cue.</p>
-          <label>Caption text<input type="text" spellCheck={false} maxLength={300}
+          <label>Caption text<input ref={manualCueTextInput} type="text" spellCheck={false} maxLength={300}
             aria-describedby="manual-cue-help"
             value={manualCueText}
             disabled={!file || busy || checking || importing || receiptLoading || captionLoading}
@@ -744,7 +815,12 @@ function VideoClip() {
                 onClick={() => fillCueTimeFromPlayhead("end")}>Use playhead</button>
             </div>
           </div>
-          <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void addManualCue()}>Add cue</button>
+          <div className="video-tool-actions">
+            {cueEditing ? <>
+              <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void saveEditedCue()}>Update cue</button>
+              <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading} onClick={cancelCueEdit}>Cancel</button>
+            </> : <button type="button" className="secondary" disabled={!file || !manualCueText.trim() || !manualCueStart.trim() || !manualCueEnd.trim() || busy || checking || importing || receiptLoading || captionLoading} onClick={() => void addManualCue()}>Add cue</button>}
+          </div>
           {manualCueMessage && <p role="status" aria-live="polite" className="trim-note">{manualCueMessage}</p>}
         </details>
         {captionDraft && <p><strong>{captionDraft.name}</strong> <button type="button" className="secondary" disabled={busy || checking || importing || receiptLoading} onClick={() => {
@@ -753,9 +829,7 @@ function VideoClip() {
           setCaptionUndo(null);
           setCaptionOffsetRaw("0");
           setCaptionText("");
-          setManualCueText("");
-          setManualCueStart("");
-          setManualCueEnd("");
+          resetCueEditor();
           setManualCueMessage("");
           setCaptionLoading(false);
           setShowSourceCaptions(false);
@@ -784,10 +858,10 @@ function VideoClip() {
           {trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
             <details className="trim-cue-review">
               <summary>Review cues in this trim ({trimmedCaptionCues.length})</summary>
-              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Turn on Preview draft captions on original video to see the original caption there.</p>
+              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Edit writes the cue's original-video text and times into the form above; Remove deletes just that cue. Turn on Preview draft captions on original video to see the original caption there.</p>
               <ol className="trim-cue-list" aria-label="Caption cues in this trim">
                 {trimmedCaptionCues.map(cue => (
-                  <li key={cue.sourceStartMs} className="trim-cue-row">
+                  <li key={cue.sourceIndex} className="trim-cue-row">
                     <button type="button" className="secondary trim-cue-jump"
                       aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
                       disabled={busy || checking || importing || receiptLoading || captionLoading}
@@ -795,10 +869,16 @@ function VideoClip() {
                       <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
                       <span className="trim-cue-text">{cue.text}</span>
                     </button>
-                    <button type="button" className="secondary trim-cue-remove"
-                      aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
-                      disabled={busy || checking || importing || receiptLoading || captionLoading}
-                      onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
+                    <div className="trim-cue-actions">
+                      <button type="button" className="secondary trim-cue-edit"
+                        aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                        disabled={busy || checking || importing || receiptLoading || captionLoading}
+                        onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
+                      <button type="button" className="secondary trim-cue-remove"
+                        aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                        disabled={busy || checking || importing || receiptLoading || captionLoading}
+                        onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
+                    </div>
                   </li>
                 ))}
               </ol>
@@ -817,7 +897,7 @@ function VideoClip() {
           {sourcePreviewNote && <p className="trim-note" role="status">{sourcePreviewNote}</p>}
         </div>}
         {captionUndo && <p>
-          <button ref={captionUndoButton} type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading} onClick={undoCaptionRemoval}>Undo last cue removal</button>
+          <button ref={captionUndoButton} type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading} onClick={undoCaptionRemoval}>Undo last cue change</button>
         </p>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
