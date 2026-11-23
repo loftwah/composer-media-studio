@@ -8,14 +8,17 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 
 // Authored strict TypeScript under src/browser and the exact browser entry paths
 // they ship as. Each header is the source pointer kept at the top of its output;
-// the scripts stay import-free, so the classic defer assets bind at
-// defer-evaluation time and the compare review keeps its module path.
+// the classic assets stay import-free, so they bind at defer-evaluation time,
+// while the route and sign-in return modules keep their relative ES-module
+// imports beside the deployed files.
 const assets = [
   { source: 'src/browser/launcher.ts', output: 'public/brand/launcher.js', header: '// Generated from src/browser/launcher.ts; edit that source. MIT.\n' },
   { source: 'src/browser/gallery-focus.ts', output: 'public/gallery-focus.js', header: '// Generated from src/browser/gallery-focus.ts; edit that source.\n' },
   { source: 'src/browser/public-piece.ts', output: 'public/public-piece.js', header: '// Generated from src/browser/public-piece.ts; edit that source.\n' },
   { source: 'src/browser/compare.ts', output: 'public/compare.js', header: '// Generated from src/browser/compare.ts; edit that source.\n' },
   { source: 'src/browser/review.ts', output: 'public/review.js', header: '// Generated from src/browser/review.ts; edit that source.\n' },
+  { source: 'src/browser/studio-route.ts', output: 'public/studio-route.js', header: '// Generated from src/browser/studio-route.ts; edit that source.\n' },
+  { source: 'src/browser/studio-login-return.ts', output: 'public/studio-login-return.js', header: '// Generated from src/browser/studio-login-return.ts; edit that source.\n' },
 ];
 
 export function launcherAsset({ write = false } = {}) {
