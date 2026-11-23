@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { captionReceiptFields, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { captionReceiptFields, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
 
 test('imported caption cues are trimmed, rebased and escaped as plain WebVTT', () => {
   const cues = parseCaptionFile('1\n00:00:00,500 --> 00:00:02,000\nA & B\n\n2\n00:00:02,100 --> 00:00:05,200\n&lt;Next&gt;\n', 0, 180_000);
@@ -60,6 +60,36 @@ test('the preflight count uses the same clamp/offset/filter projection as serial
   assert.equal(survivingClipCaptionCount(cues, Number.NaN, 1), null);
   assert.equal(survivingClipCaptionCount(cues, 2, 2), null);
   assert.equal(survivingClipCaptionCount(cues, 2, 10, 61_000), null);
+});
+
+test('cue review rows expose trim-relative times and add trim start for original-video seeks', () => {
+  const cues = [
+    { startMs: 1000, endMs: 7000, text: 'A & B', speaker: '' },
+    { startMs: 8000, endMs: 12000, text: '<Next>', speaker: '' },
+  ];
+  const trimmed = clipCaptionCues(cues, 2, 10, 1500);
+  assert.deepEqual(trimmed, [
+    { from: 500, to: 6500, sourceStartMs: 2500, text: 'A & B' },
+    { from: 7500, to: 8000, sourceStartMs: 9500, text: '<Next>' },
+  ]);
+  assert.deepEqual(trimmed.map(cue => clipTimeStamp(cue.from)), ['00:00.500', '00:07.500']);
+  // The same projection still backs the VTT and count.
+  assert.equal(trimmed.length, survivingClipCaptionCount(cues, 2, 10, 1500));
+  assert.equal(serializeClipCaptions(cues, 2, 10, 1500)?.split('\n\n').length, 3);
+  // A cue already running before the trim is clamped to the trim start, so its
+  // source seek includes the trim start rather than the earlier source time.
+  const clipped = clipCaptionCues(cues, 2.0006, 10);
+  assert.deepEqual(clipped?.[0], { from: 0, to: 4999, sourceStartMs: 2001, text: 'A & B' });
+  const earlier = clipCaptionCues(cues, 2, 10, -1500);
+  assert.deepEqual(earlier, [
+    { from: 0, to: 3500, sourceStartMs: 2000, text: 'A & B' },
+    { from: 4500, to: 8000, sourceStartMs: 6500, text: '<Next>' },
+  ]);
+  // Invalid values stay indistinguishable from the serializer's null result.
+  assert.deepEqual(clipCaptionCues(cues, 12.5, 14), []);
+  assert.equal(clipCaptionCues(cues, Number.NaN, 1), null);
+  assert.equal(clipCaptionCues(cues, 2, 2), null);
+  assert.equal(clipCaptionCues(cues, 2, 10, 61_000), null);
 });
 
 test('a caption receipt carries the source digest and offset but never cue text', () => {

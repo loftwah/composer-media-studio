@@ -1,6 +1,6 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
-import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -168,9 +168,12 @@ function VideoClip() {
   const captionOffsetMs = captionDraft ? parseCaptionOffset(captionOffsetRaw) : 0;
   const validTrim = Number.isFinite(start) && Number.isFinite(end)
     && start >= 0 && end <= duration && end > start && end - start <= MAX_CLIP_SECONDS;
-  const survivingCaptionCount = captionDraft && validTrim && captionOffsetMs !== null
-    ? survivingClipCaptionCount(captionDraft.cues, start, end, captionOffsetMs)
+  // The review list, preflight count and serialized VTT all read this one
+  // projection, so a cue row can never disagree with the exported timing.
+  const trimmedCaptionCues = captionDraft && validTrim && captionOffsetMs !== null
+    ? clipCaptionCues(captionDraft.cues, start, end, captionOffsetMs)
     : null;
+  const survivingCaptionCount = trimmedCaptionCues?.length ?? null;
   const previous = applied !== null && (
     applied.settings !== draft || applied.captions !== captionDraft || applied.captionOffsetMs !== captionOffsetMs
   );
@@ -366,6 +369,13 @@ function VideoClip() {
     const prepared = captionFileFromText(captionText);
     if ("problem" in prepared) { setCaptionMessage(prepared.problem); return; }
     await chooseCaptions(prepared.file);
+  }
+  // Pause on the projected source time and keep keyboard focus on the cue.
+  function jumpToOriginalCue(sourceStartMs: number) {
+    const video = sourceVideo.current;
+    if (!video) return;
+    video.pause();
+    video.currentTime = Math.min(sourceStartMs / 1000, duration);
   }
 
   // Opening a receipt is an explicit, local-only action. It proves the saved
@@ -617,6 +627,25 @@ function VideoClip() {
                 ? "No caption cues will fit this trim. Adjust the timing offset or trim to include them."
                 : `${survivingCaptionCount} caption ${survivingCaptionCount === 1 ? "cue" : "cues"} inside this trim.`}
             </p>
+          )}
+          {trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
+            <details className="trim-cue-review">
+              <summary>Review cues in this trim ({trimmedCaptionCues.length})</summary>
+              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Turn on Preview imported captions on original video to see the original caption there.</p>
+              <ol className="trim-cue-list" aria-label="Caption cues in this trim">
+                {trimmedCaptionCues.map((cue, index) => (
+                  <li key={`${cue.from}-${cue.to}-${index}`}>
+                    <button type="button" className="secondary trim-cue-jump"
+                      aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                      disabled={busy || checking || importing || receiptLoading || captionLoading}
+                      onClick={() => jumpToOriginalCue(cue.sourceStartMs)}>
+                      <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
+                      <span className="trim-cue-text">{cue.text}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </details>
           )}
           {draftCaptionUrl && <div>
             <p><a className="button secondary" href={draftCaptionUrl} download={`${clipFilename}-draft-captions.vtt`} aria-describedby="draft-captions-note">Save draft trim captions (VTT)</a></p>
