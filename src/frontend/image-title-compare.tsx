@@ -26,6 +26,7 @@ import {
   MANIFEST_VERSION,
   objectPositionFor,
   pairArchiveFileNames,
+  preferredPairForExport,
   preparedPairsBundleFileName,
   type CoverRect,
   type FeedSize,
@@ -80,6 +81,8 @@ type ExportEntry = {
   bytes: number;
   /** Set on manifest entries: the digest of the PNG the manifest names. */
   sha256?: string;
+  /** Set on a prepared-set entry: the preference captured with that snapshot. */
+  preferredPairLabel?: string;
 };
 
 const emptyPair = (): Pair => ({ title: "", image: null, error: null, busy: false });
@@ -111,6 +114,10 @@ function sameTitleClips(current: TitleClipState, next: TitleClipState): boolean 
 export function TitleCompare() {
   const [pairs, setPairs] = useState<Pair[]>(() => PAIR_IDS.map(emptyPair));
   const [selectedId, setSelectedId] = useState<PairId>("a");
+  /** The package preference is deliberately separate from the preview
+   * selection: it names one complete pair for the set manifest without
+   * changing which pair is being compared or exported. */
+  const [preferredId, setPreferredId] = useState<PairId | null>(null);
   const [anchor, setAnchor] = useState<CropAnchorKey>("centre");
   const [exports, setExports] = useState<ExportEntry[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
@@ -195,6 +202,29 @@ export function TitleCompare() {
     setPairs((current) => current.map((pair, at) => (at === index ? { ...pair, ...patch } : pair)));
   }
 
+  /** A preferred pair must be complete: a non-empty title and a valid local
+   * thumbnail that is not mid-replacement. */
+  function completePair(pair: Pair): boolean {
+    return !pair.busy && pair.image !== null && pair.title.trim() !== "";
+  }
+
+  /** Clear only the preference at this index, checked at update time so a slow
+   * decode cannot remove a preference the user has since moved elsewhere. */
+  function clearPreferenceFor(index: number): void {
+    setPreferredId((current) =>
+      current !== null && PAIR_IDS.indexOf(current) === index ? null : current,
+    );
+  }
+
+  function togglePreference(id: PairId): void {
+    if (preferredId === id) {
+      setPreferredId(null);
+      return;
+    }
+    if (!completePair(pairs[PAIR_IDS.indexOf(id)])) return;
+    setPreferredId(id);
+  }
+
   /** The snapshot a set export may bundle: a real title and a local thumbnail
    * that is not mid-replacement, with the exact pair id and image object the
    * run captures before its first await. */
@@ -223,6 +253,7 @@ export function TitleCompare() {
   function updateTitle(index: number, title: string): void {
     if (index === PAIR_IDS.indexOf(selectedId)) clearCopyFeedback();
     setPair(index, { title });
+    clearPreferenceFor(index);
   }
 
   /** Replace the export list outside the state updater: revoking URLs inside
@@ -282,6 +313,9 @@ export function TitleCompare() {
         );
       }
       if (!current()) return;
+      // The pair now points at different pixels, so a preference for this
+      // index must not silently follow the replaced artefact.
+      clearPreferenceFor(index);
       discardExports();
       const previous = pairs[index].image;
       releaseUrl(previous?.url);
@@ -308,6 +342,7 @@ export function TitleCompare() {
     // Removing is also a newer choice for this pair: any decode still in
     // flight for it must not put an image back.
     loadRuns.current[index] += 1;
+    clearPreferenceFor(index);
     discardExports();
     releaseUrl(pairs[index].image?.url);
     setPair(index, { image: null, error: null, busy: false });
@@ -467,13 +502,19 @@ export function TitleCompare() {
    * relabel the package. Each pair reuses the single-pair card encode, manifest
    * builder, SHA-256 and store-only ZIP writer; its prefixed entry names keep
    * same-title pairs distinct, and each manifest names and hashes the exact
-   * PNG bytes the archive stores. */
+   * PNG bytes the archive stores. The preference is captured with the same
+   * snapshot and written only if that pair is actually in this archive. */
   async function exportPreparedPairs(): Promise<void> {
     const size = FEED_SIZES[1];
     const forAnchor = anchor;
+    const forPreferred = preferredId;
     const generatedAt = new Date().toISOString();
     const captured = readyPairs();
     if (captured.length < 2) return;
+    const preferredForExport = preferredPairForExport(
+      forPreferred,
+      captured.map((pair) => pair.id),
+    );
     const run = ++exportRun.current;
     const current = () => mounted.current && exportRun.current === run;
     setExportBusy(true);
@@ -505,6 +546,7 @@ export function TitleCompare() {
           sourceRect: rect,
           // The name and digest describe the exact PNG bytes added below.
           png: { fileName: names.png, bytes: pngBytes.byteLength, sha256 },
+          preferredPairId: preferredForExport,
         });
         zipEntries.push(
           { name: names.png, data: pngBytes },
@@ -537,10 +579,11 @@ export function TitleCompare() {
           width: size.width,
           height: size.height,
           bytes: bundleBlob.size,
+          ...(preferredForExport ? { preferredPairLabel: PAIR_LABELS[preferredForExport] } : {}),
         },
       ]);
       setExportMessage(
-        `ZIP ready for pairs ${pairLabels.join(", ")}. It contains ${captured.length} thumbnails and their manifests.`,
+        `ZIP ready for pairs ${pairLabels.join(", ")}. It contains ${captured.length} thumbnails and their manifests.${preferredForExport ? ` Pair ${PAIR_LABELS[preferredForExport]} is marked preferred in each manifest.` : ""}`,
       );
     } catch (error) {
       if (current())
@@ -579,19 +622,28 @@ export function TitleCompare() {
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
   const selected = pairs[selectedIndex];
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
-  const preparedCount = readyPairs().length;
+  const prepared = readyPairs();
+  const preparedCount = prepared.length;
+  const preferredForSet = preferredPairForExport(
+    preferredId,
+    prepared.map((pair) => pair.id),
+  );
 
   return (
     <section ref={sectionRef} className="trim-work image-title-compare" aria-labelledby="image-title-compare-heading">
       <div className="image-section-head">
         <h2 id="image-title-compare-heading" tabIndex={-1}>Title + thumbnail compare</h2>
-        <span>{selectedLabel} selected</span>
+        <span>
+          {selectedLabel} selected{preferredId ? ` · Pair ${PAIR_LABELS[preferredId]} preferred` : ""}
+        </span>
       </div>
       <p className="trim-note" id="image-title-compare-note">
         Name up to three title and thumbnail combinations from files on this device and
         see each one at two real feed sizes. Titles truncate the way feeds truncate
         them, and thumbnails show the real cover crop at the chosen position.
-        Nothing is uploaded, and the arrow keys switch the compared pair.
+        Nothing is uploaded, and the arrow keys switch the compared pair. A
+        complete pair can be marked preferred for the prepared-set manifests
+        without changing which pair is compared or exported.
       </p>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
@@ -614,22 +666,29 @@ export function TitleCompare() {
             const index = PAIR_IDS.indexOf(id);
             const pair = pairs[index];
             const isSelected = id === selectedId;
+            const isPreferred = id === preferredId;
+            const isComplete = completePair(pair);
             return (
               <div
-                className={`title-compare-pair${isSelected ? " is-selected" : ""}`}
+                className={`title-compare-pair${isSelected ? " is-selected" : ""}${isPreferred ? " is-preferred" : ""}`}
                 data-title-compare-pair={id}
                 key={id}
               >
-                <label className="title-compare-pick">
-                  <input
-                    type="radio"
-                    name="image-title-compare-pair"
-                    value={id}
-                    checked={isSelected}
-                    onChange={() => selectPair(id)}
-                  />
-                  <strong>Pair {PAIR_LABELS[id]}</strong>
-                </label>
+                <div className="title-compare-pick-row">
+                  <label className="title-compare-pick">
+                    <input
+                      type="radio"
+                      name="image-title-compare-pair"
+                      value={id}
+                      checked={isSelected}
+                      onChange={() => selectPair(id)}
+                    />
+                    <strong>Pair {PAIR_LABELS[id]}</strong>
+                  </label>
+                  {isPreferred && (
+                    <span className="title-compare-preferred-badge">Preferred</span>
+                  )}
+                </div>
                 <label>
                   Title {PAIR_LABELS[id]}
                   <input
@@ -684,6 +743,21 @@ export function TitleCompare() {
                     Remove thumbnail
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="quiet"
+                  aria-pressed={isPreferred}
+                  aria-label={
+                    isPreferred
+                      ? `Clear Pair ${PAIR_LABELS[id]} as the preferred packaging pair`
+                      : `Mark complete Pair ${PAIR_LABELS[id]} as the preferred packaging pair`
+                  }
+                  disabled={!isPreferred && !isComplete}
+                  onClick={() => togglePreference(id)}
+                  data-title-compare-preference={id}
+                >
+                  {isPreferred ? "Clear preferred pair" : "Mark preferred pair"}
+                </button>
               </div>
             );
           })}
@@ -692,6 +766,7 @@ export function TitleCompare() {
           {PAIR_IDS.map((id) => {
             const pair = pairs[PAIR_IDS.indexOf(id)];
             const isSelected = id === selectedId;
+            const isPreferred = id === preferredId;
             const position = objectPositionFor(anchor);
             const hasTitle = pair.title.trim() !== "";
             const rowClipped = hasTitle && titleClips[`${id}-${FEED_SIZES[0].key}`];
@@ -722,7 +797,7 @@ export function TitleCompare() {
             );
             return (
               <figure
-                className={`title-compare-preview${isSelected ? " is-selected" : ""}`}
+                className={`title-compare-preview${isSelected ? " is-selected" : ""}${isPreferred ? " is-preferred" : ""}`}
                 data-title-compare-preview={id}
                 key={id}
               >
@@ -744,6 +819,9 @@ export function TitleCompare() {
                     {pair.title || <em>Untitled {PAIR_LABELS[id]}</em>}
                   </span>
                 </div>
+                {isPreferred && (
+                  <p className="title-compare-preferred-note">Preferred packaging pair</p>
+                )}
                 {clipNote && <p className="title-compare-fit-note">{clipNote}</p>}
                 <figcaption>
                   {`Pair ${PAIR_LABELS[id]} · row 168 × 94 · card up to 640 × 360 · ${
@@ -810,7 +888,7 @@ export function TitleCompare() {
       <p className="trim-note" id="image-title-compare-set-note">
         {preparedCount < 2
           ? `Add a title and thumbnail to at least two pairs. ${preparedCount} of ${PAIR_IDS.length} ready.`
-          : `${preparedCount} pairs ready. The ZIP includes each 640 × 360 PNG and its manifest.`}
+          : `${preparedCount} pairs ready.${preferredForSet ? ` Pair ${PAIR_LABELS[preferredForSet]} will be marked preferred in the manifests.` : ""} The ZIP includes each 640 × 360 PNG and its manifest.`}
       </p>
       <p className="trim-note" role="status" aria-live="polite">{copyMessage}</p>
       {titleFallback !== null && (
@@ -852,7 +930,7 @@ export function TitleCompare() {
                   : `Download ${entry.label} PNG`}
           </a>
           {entry.kind === "set"
-            ? ` · Pairs ${entry.pairLabel} · ${entry.anchorLabel} crop · ${entry.width} × ${entry.height} px PNGs with per-pair manifests · ${formatBytes(entry.bytes)} · ${entry.name}`
+            ? ` · Pairs ${entry.pairLabel}${entry.preferredPairLabel ? ` · Pair ${entry.preferredPairLabel} preferred` : ""} · ${entry.anchorLabel} crop · ${entry.width} × ${entry.height} px PNGs with per-pair manifests · ${formatBytes(entry.bytes)} · ${entry.name}`
             : ` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${
                 entry.kind === "manifest"
                   ? `names a ${entry.width} × ${entry.height} px PNG`

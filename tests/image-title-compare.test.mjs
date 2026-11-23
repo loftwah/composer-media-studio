@@ -16,6 +16,7 @@ import {
   manifestFileName,
   objectPositionFor,
   pairArchiveFileNames,
+  preferredPairForExport,
   preparedPairsBundleFileName,
   safeTitleStem,
 } from "../src/frontend/image-title-compare-plan.ts";
@@ -221,7 +222,7 @@ test("the manifest builder records the captured facts under a versioned schema",
   assert.equal(MANIFEST_SCHEMA, "studio.title-thumbnail-pair-manifest");
   assert.equal(MANIFEST_VERSION, 1);
   const size = FEED_SIZES[1];
-  const manifest = buildTitlePairManifest({
+  const input = {
     generatedAt: "2026-11-22T07:00:00.000Z",
     pairId: "b",
     title: "After Hours — trailer",
@@ -230,7 +231,8 @@ test("the manifest builder records the captured facts under a versioned schema",
     size,
     sourceRect: { left: 0, top: 0, width: 1920, height: 1080 },
     png: { fileName: "After-Hours-trailer-feed-640x360.png", bytes: 51_234, sha256: "a".repeat(64) },
-  });
+  };
+  const manifest = buildTitlePairManifest(input);
   assert.deepEqual(manifest, {
     schema: "studio.title-thumbnail-pair-manifest",
     version: 1,
@@ -249,6 +251,7 @@ test("the manifest builder records the captured facts under a versioned schema",
     },
     local: { uploaded: false, serverInvolved: false },
   });
+  assert.deepEqual(buildTitlePairManifest({ ...input, preferredPairId: "a" }), { ...manifest, preferredPairId: "a" });
   const serialized = JSON.stringify(manifest);
   for (const invented of ["rights", "assetId", "workId", "score", "uplift", "views", "claim"]) {
     assert.ok(!serialized.includes(invented), `the manifest must not invent "${invented}"`);
@@ -389,4 +392,10 @@ test("prepared pairs keep distinct stable names inside the packaging ZIP", () =>
   assert.equal(archive.ok, true);
   assert.deepEqual(archive.entries, names);
   assert.equal(preparedPairsBundleFileName(size, 2), "prepared-pairs-2-feed-640x360-package.zip");
+});
+
+test("a preferred pair is included only when the exact export contains it", () => {
+  assert.equal(preferredPairForExport("b", ["a", "b"]), "b");
+  assert.equal(preferredPairForExport("c", ["a", "b"]), undefined);
+  assert.equal(preferredPairForExport(null, ["a", "b"]), undefined);
 });
