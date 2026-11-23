@@ -12,6 +12,7 @@ import {
   manualCaptionSourceName,
   manualCaptionTrackVtt,
   mergeClipDraftCues,
+  nudgeManualCueTimes,
   removeClipDraftCue,
   replaceClipDraftCue,
   splitClipDraftCue,
@@ -365,4 +366,50 @@ test('a manual or edited track is named as a local source, not the imported file
   assert.equal(manualCaptionSourceName(null), 'Manual cues in Video Clip');
   assert.equal(manualCaptionSourceName({ name: 'watch.vtt', local: false }), 'watch.vtt (edited in Video Clip)');
   assert.equal(manualCaptionSourceName({ name: 'Manual cues in Video Clip', local: true }), 'Manual cues in Video Clip');
+});
+
+test('a nudge moves both entered times by exactly 100 ms and keeps their duration', () => {
+  const input = { startSeconds: '2.5', endSeconds: '4.25' };
+  assert.deepEqual(nudgeManualCueTimes(input, 100, 10_000), { startSeconds: '2.600', endSeconds: '4.350' });
+  assert.deepEqual(nudgeManualCueTimes(input, -100, 10_000), { startSeconds: '2.400', endSeconds: '4.150' });
+  // Repeated steps stay exact whole milliseconds and keep the original gap.
+  let fields = input;
+  for (let i = 0; i < 3; i++) fields = nudgeManualCueTimes(fields, 100, 10_000);
+  assert.deepEqual(fields, { startSeconds: '2.800', endSeconds: '4.550' });
+  assert.equal(Math.round(Number(fields.endSeconds) * 1000) - Math.round(Number(fields.startSeconds) * 1000), 1750);
+  assert.deepEqual(input, { startSeconds: '2.5', endSeconds: '4.25' });
+  // Those draft fields are what the existing Add cue action already applies.
+  assert.deepEqual(accepted(add([], 'Line', fields.startSeconds, fields.endSeconds)), [cue(2800, 4550, 'Line')]);
+});
+
+test('a nudge refuses to cross either video edge and leaves the fields unchanged', () => {
+  const atStart = { startSeconds: '0.000', endSeconds: '1.500' };
+  assert.equal(problem(nudgeManualCueTimes(atStart, -100, 10_000)),
+    'Cannot move 100 ms earlier: the cue would start before the video (0 to 00:10.000).');
+  const atEnd = { startSeconds: '8.500', endSeconds: '10.000' };
+  assert.equal(problem(nudgeManualCueTimes(atEnd, 100, 10_000)),
+    'Cannot move 100 ms later: the cue would end after the video (0 to 00:10.000).');
+  // One step before each edge is still allowed and lands exactly on it.
+  assert.deepEqual(nudgeManualCueTimes({ startSeconds: '0.100', endSeconds: '1.000' }, -100, 10_000),
+    { startSeconds: '0.000', endSeconds: '0.900' });
+  assert.deepEqual(nudgeManualCueTimes({ startSeconds: '8.000', endSeconds: '9.900' }, 100, 10_000),
+    { startSeconds: '8.100', endSeconds: '10.000' });
+  assert.deepEqual(atStart, { startSeconds: '0.000', endSeconds: '1.500' });
+  assert.deepEqual(atEnd, { startSeconds: '8.500', endSeconds: '10.000' });
+});
+
+test('a nudge reuses the existing draft time validation before changing a field', () => {
+  assert.match(problem(nudgeManualCueTimes({ startSeconds: '', endSeconds: '1' }, 100, 10_000)), /three decimal places/);
+  assert.match(problem(nudgeManualCueTimes({ startSeconds: '0.1', endSeconds: 'abc' }, 100, 10_000)), /three decimal places/);
+  assert.match(problem(nudgeManualCueTimes({ startSeconds: '0.1', endSeconds: '1.2345' }, 100, 10_000)), /three decimal places/);
+  assert.equal(problem(nudgeManualCueTimes({ startSeconds: '-0.1', endSeconds: '1' }, 100, 10_000)),
+    'Choose a start and end within this video (0 to 00:10.000).');
+  assert.equal(problem(nudgeManualCueTimes({ startSeconds: '0', endSeconds: '10.001' }, -100, 10_000)),
+    'Choose a start and end within this video (0 to 00:10.000).');
+  assert.equal(problem(nudgeManualCueTimes({ startSeconds: '2', endSeconds: '1' }, 100, 10_000)),
+    'The end must be after the start.');
+  assert.equal(problem(nudgeManualCueTimes({ startSeconds: '0', endSeconds: '1' }, 100, 0)),
+    'This video has no usable duration for captions.');
+  assert.equal(problem(nudgeManualCueTimes({ startSeconds: '0', endSeconds: '1' }, 0, 10_000)),
+    'Choose a whole-millisecond nudge step.');
 });
