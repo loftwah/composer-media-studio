@@ -115,6 +115,9 @@ export type TitlePairManifest = {
   generatedAt: string;
   generator: string;
   pair: { id: PairId; label: string };
+  /** Additive V1 metadata: present only when a prepared-set snapshot shows a
+   * preference and that pair is in the set it names. */
+  preferredPairId?: PairId;
   title: { text: string; maxLength: number };
   source: ManifestSourceFacts;
   crop: { mode: "cover"; anchor: CropAnchorKey; sourceRect: CoverRect };
@@ -139,6 +142,9 @@ export function buildTitlePairManifest(input: {
   size: FeedSize;
   sourceRect: CoverRect;
   png: ManifestPngFacts;
+  /** Omit it when no pair is preferred, so older releases' manifest shape and
+   * bytes stay unchanged. */
+  preferredPairId?: PairId;
 }): TitlePairManifest {
   return {
     schema: MANIFEST_SCHEMA,
@@ -146,6 +152,7 @@ export function buildTitlePairManifest(input: {
     generatedAt: input.generatedAt,
     generator: "Media Studio Image Tools — Title + thumbnail compare (browser-local)",
     pair: { id: input.pairId, label: PAIR_LABELS[input.pairId] },
+    ...(input.preferredPairId ? { preferredPairId: input.preferredPairId } : {}),
     title: { text: input.title, maxLength: TITLE_MAX_LENGTH },
     source: input.source,
     crop: { mode: "cover", anchor: input.anchor, sourceRect: input.sourceRect },
@@ -184,6 +191,16 @@ export function bundleFileName(
 export function pairArchiveFileNames(pairId: PairId, size: FeedSize): { png: string; manifest: string } {
   const stem = `pair-${pairId}-feed-${size.width}x${size.height}`;
   return { png: `${stem}.png`, manifest: `${stem}-manifest-v${MANIFEST_VERSION}.json` };
+}
+
+/** The set export may name a preferred pair only when that pair is in the
+ * exact snapshot it is about to export. A stale preference for a pair that was
+ * removed, retitled, replaced or skipped is not written into the manifest. */
+export function preferredPairForExport(
+  preferred: PairId | null,
+  exported: readonly PairId[],
+): PairId | undefined {
+  return preferred !== null && exported.includes(preferred) ? preferred : undefined;
 }
 
 /** The one package of prepared pairs. It carries the same store-only flat ZIP

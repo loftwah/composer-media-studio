@@ -34,6 +34,27 @@
   border-color: var(--accent);
 }
 
+/* Preference is separate from the preview selection, so it uses the link
+   teal instead of the selection accent. */
+.title-compare-pair.is-preferred {
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.title-compare-pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.title-compare-preferred-badge {
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .title-compare-pick {
   display: flex;
   align-items: center;
@@ -84,6 +105,21 @@
 .title-compare-preview.is-selected {
   border-color: var(--accent);
   box-shadow: 0 1px 3px var(--shadow);
+}
+
+.title-compare-preview.is-preferred {
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.title-compare-preview.is-selected.is-preferred {
+  box-shadow: inset 3px 0 0 var(--teal), 0 1px 3px var(--shadow);
+}
+
+.title-compare-preferred-note {
+  margin: -0.4rem 0 0;
+  color: var(--teal);
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .title-compare-row {
