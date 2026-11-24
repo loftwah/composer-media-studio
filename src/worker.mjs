@@ -71,10 +71,11 @@ import { measureFootageSource } from "./lib/footage-preflight.ts";
 import { webmVideoSize } from "./lib/webm-metadata.ts";
 import { listSubjects, subjectVersions, saveSubject } from "./lib/subjects.ts";
 import { listPromoBriefs, createPromoBrief, updatePromoBrief } from "./lib/promo-briefs.ts";
-import { models, publicModels, publicRetiredModels, retiredModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
+import { models, publicModels, publicRetiredModels, getModel, validateSettings, estimateCost, PROVIDER_FAL, PROVIDER_CLOUDFLARE } from "./lib/providers.mjs";
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.ts";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
+import { assetView, generationView } from "./lib/library-views.ts";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi } from "./lib/woodhouse-share.ts";
 import { shell, loginPage, notFoundPage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { compareRouteResponse } from "./lib/compare-route.ts";
@@ -187,75 +188,6 @@ async function rawPortableBody(request, limit = 64 * 1024 * 1024) {
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.byteLength > limit) throw new HttpError(413, "That media is too large for one bundle entry.", "too_large");
   return bytes;
-}
-
-function assetView(asset, extra = {}) {
-  return {
-    id: asset.id,
-    kind: asset.kind,
-    title: asset.title,
-    caption: asset.caption,
-    mime: asset.mime,
-    bytes: asset.bytes,
-    width: asset.width,
-    height: asset.height,
-    durationMs: asset.duration_ms,
-    sampleRate: asset.sample_rate ?? null,
-    channels: asset.channels ?? null,
-    sha256: asset.sha256,
-    source: asset.source,
-    // The immediate upload/import response must carry the same self-reference
-    // as a fresh project read. Video relationships are supplied by that read.
-    reuseStillId: reuseStillFor({ asset, assets: [asset] })?.id ?? null,
-    parentAssetId: asset.parent_asset_id,
-    generationId: asset.generation_id,
-    createdAt: asset.created_at,
-    file: `/api/assets/${asset.id}/file`,
-    download: `/api/assets/${asset.id}/download`,
-    ...extra,
-  };
-}
-
-function modelAttribution(generation) {
-  const request = safeJson(generation.request_json, {});
-  const current = models[generation.model];
-  const retired = retiredModels[generation.model];
-  return {
-    modelLabel: current?.label ?? retired?.label ?? generation.model,
-    modelEndpoint: request.modelEndpoint ?? current?.endpoint ?? retired?.endpoint ?? null,
-    modelRetired: Boolean(retired),
-  };
-}
-
-function generationView(generation, extra = {}) {
-  const request = safeJson(generation.request_json, {});
-  return {
-    id: generation.id,
-    kind: generation.kind,
-    status: generation.status,
-    model: generation.model,
-    ...modelAttribution(generation),
-    recipeId: generation.recipe_id,
-    compositionId: generation.composition_id ?? null,
-    variant: request.variant ?? null,
-    prompt: request.prompt ?? "",
-    aspect: request.aspect ?? null,
-    durationSeconds: request.durationSeconds ?? null,
-    referenceAssetId: request.referenceAssetId ?? null,
-    maskAssetId: request.maskAssetId ?? null,
-    maskSha256: request.maskSha256 ?? null,
-    parentAssetId: request.parentAssetId ?? null,
-    costEstimateMicro: generation.cost_estimate_micro,
-    costAllocatedMicro: generation.cost_allocated_micro,
-    error: generation.error_code
-      ? { code: generation.error_code, message: generation.error_detail ?? "" }
-      : null,
-    assetId: generation.output_asset_id,
-    createdAt: generation.created_at,
-    updatedAt: generation.updated_at,
-    completedAt: generation.completed_at,
-    ...extra,
-  };
 }
 
 /** Every private route that names a project checks the same binding: the
