@@ -175,3 +175,34 @@ test('no SRT is exposed when the shared parser cannot cleanly preserve the sourc
   assert.equal(srtForClipVtt(null, 5000), null);
   assert.equal(srtForClipVtt('WEBVTT\n\n00:00.000 --> 00:01.000\nA\n', 0), null);
 });
+test('Video Clip voice output escapes and round-trips while unnamed bytes stay identical', () => {
+  const cues = [
+    { startMs: 1000, endMs: 2000, text: 'A & <B>', speaker: 'Dean & Jane' },
+    { startMs: 2000, endMs: 3000, text: 'Unnamed', speaker: '' },
+  ];
+  const unnamed = 'WEBVTT\n\n00:01.000 --> 00:02.000\nA &amp; &lt;B&gt;\n\n00:02.000 --> 00:03.000\nUnnamed\n';
+  assert.equal(serializeClipCaptions(cues, 0, 3), unnamed);
+  const named = 'WEBVTT\n\n00:01.000 --> 00:02.000\n<v Dean &amp; Jane>A &amp; &lt;B&gt;</v>\n\n00:02.000 --> 00:03.000\nUnnamed\n';
+  assert.equal(serializeClipCaptions(cues, 0, 3, 0, 'default', { voices: true }), named);
+  assert.deepEqual(parseCaptionFile(named, 0, 3000, { voices: true }), cues);
+  // Placement changes only the cue setting; the voice body is shared.
+  assert.equal(sourcePreviewVtt(cues, 3, 0, 'top', { voices: true }),
+    'WEBVTT\n\n00:01.000 --> 00:02.000 line:12%\n<v Dean &amp; Jane>A &amp; &lt;B&gt;</v>\n\n00:02.000 --> 00:03.000 line:12%\nUnnamed\n');
+});
+test('cue review projections keep a supplied speaker separate from the words', () => {
+  const cues = [{ startMs: 1000, endMs: 2000, text: 'A & B', speaker: 'Dean' }];
+  assert.deepEqual(clipCaptionCues(cues, 0, 3), [
+    { from: 1000, to: 2000, sourceStartMs: 1000, text: 'A & B', speaker: 'Dean', sourceIndex: 0 },
+  ]);
+  assert.deepEqual(sourceCaptionCues(cues), [
+    { startMs: 1000, endMs: 2000, text: 'A & B', speaker: 'Dean', sourceIndex: 0 },
+  ]);
+});
+test('SRT is withheld for named cues instead of silently dropping the speaker', () => {
+  const named = { startMs: 0, endMs: 1000, text: 'Hi', speaker: 'Dean' };
+  const namedVtt = serializeClipCaptions([named], 0, 1, 0, 'default', { voices: true });
+  assert.equal(srtForClipVtt(namedVtt, 1000), null);
+  // The prior unnamed SRT stays byte-identical.
+  const unnamedVtt = serializeClipCaptions([{ ...named, speaker: '' }], 0, 1);
+  assert.equal(srtForClipVtt(unnamedVtt, 1000), '1\n00:00:00,000 --> 00:00:01,000\nHi\n');
+});
