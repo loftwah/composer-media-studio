@@ -1564,10 +1564,9 @@ function VideoClip() {
             </div>
           )}
           {fullSourceCaptionProblem && <p className="trim-note" role="status">{fullSourceCaptionProblem}</p>}
-          {fullSourceCaptionHasSpeakers && !fullSourceCaptionSpeakerSrtUrl && <p className="trim-note" role="status">This draft names speakers that an SRT cannot represent exactly. Save the WebVTT to keep them.</p>}
-          {draftCaptionHasSpeakers && <p className="trim-note">{draftSpeakerSrtUrl
-            ? "This trim includes speaker names. WebVTT keeps them as voices; the speaker-names-as-text SRT writes each name before its cue words."
-            : "This trim names speakers that an SRT cannot represent exactly. Save the WebVTT to keep them."}</p>}
+          {fullSourceCaptionHasSpeakers && !fullSourceCaptionSpeakerSrtText && <p className="trim-note" role="status">This draft names speakers that an SRT cannot represent exactly. Save the WebVTT to keep them.</p>}
+          {(fullSourceCaptionSpeakerSrtUrl || draftSpeakerSrtUrl) && <p className="trim-note">Use WebVTT to keep editable speaker names. SRT includes them in the caption text.</p>}
+          {draftCaptionHasSpeakers && !draftCaptionSpeakerSrtText && <p className="trim-note">This trim names speakers that an SRT cannot represent exactly. Save the WebVTT to keep them.</p>}
           {draftCaptionUrl && <div>
             <p><a className="button secondary" href={draftCaptionUrl} download={`${clipFilename}-draft-captions.vtt`} aria-describedby="draft-captions-note">Save draft trim captions (VTT)</a></p>
             {draftSrtUrl && <p><a className="button secondary" href={draftSrtUrl} download={`${clipFilename}-draft-captions.srt`} aria-describedby="draft-captions-note">Save draft trim captions (SRT)</a></p>}
