@@ -1052,6 +1052,7 @@ function Images() {
   const [gifDelayMs, setGifDelayMs] = useState<number>(GIF_DEFAULT_DELAY_MS);
   const [gifMatte, setGifMatte] = useState("#ffffff");
   const [gifLoop, setGifLoop] = useState(true);
+  const [gifCompact, setGifCompact] = useState(false);
   const gifSource = useRef("");
   const [batchMessage, setBatchMessage] = useState("");
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
@@ -2189,6 +2190,7 @@ function Images() {
     const delayMs = gifDelayMs;
     const matte = gifMatte;
     const loop = gifLoop;
+    const compact = gifCompact;
     // Capture the exact ordered vector once. A blank row inherits the batch
     // delay here, and later row edits cannot change this run's settings.
     const hasOverrides = snapshot.some((item) => item.gifDelayMsOverride !== undefined);
@@ -2264,6 +2266,7 @@ function Images() {
         delayMs,
         ...(hasOverrides ? { frameDelaysMs } : {}),
         loop,
+        compact,
       });
       if (attempt !== gifRevision.current) return;
       const blob = blobFromBytes(bytes, "image/gif");
@@ -4776,7 +4779,9 @@ function Images() {
             Use {GIF_MIN_FRAMES}–{GIF_MAX_FRAMES} source stills in batch order.
             Every frame uses the same square size and matte. The batch delay
             applies to every frame unless a row below sets its own. The fixed
-            256-colour palette can cause banding in gradients.
+            256-colour palette can cause banding in gradients. Compact file
+            reuses repeated pixels for a smaller download; frames, palette and
+            timing do not change.
           </p>
           <div className="image-gif-settings">
             <label className="image-sheet-columns">
@@ -4835,6 +4840,18 @@ function Images() {
                 }}
               />
               Repeat after the last frame
+            </label>
+            <label className="image-check">
+              <input
+                type="checkbox"
+                checked={gifCompact}
+                disabled={gifBusy}
+                onChange={(event) => {
+                  setGifCompact(event.target.checked);
+                  if (gifOutput) invalidateGif("GIF compact setting changed. Make the GIF again.");
+                }}
+              />
+              Compact file
             </label>
           </div>
           {items.length > 0 && items.length <= GIF_MAX_FRAMES && (

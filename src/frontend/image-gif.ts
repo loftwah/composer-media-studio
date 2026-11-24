@@ -25,6 +25,12 @@ const MIN_CODE_SIZE = 8;
 // dictionary slot would reach 512 and force 10-bit codes. Emitting Clear here
 // resets that slot, so every code in the stream is exactly 9 bits.
 const LITERAL_RUN = 250;
+// The compact path builds the decoder's dictionary, then clears before the next
+// free slot would need 10-bit codes. 254 data codes leave the decoder's next
+// slot at 511, so the forced Clear, the following literal and End all stay at
+// 9 bits. The dictionary never grows past fixed-width codes.
+const COMPACT_FIRST_CODE = 258;
+const COMPACT_SLOT_LIMIT = 512;
 
 /** A GIF delay is in hundredths of a second, i.e. units of 10 ms. */
 export function gifDelayUnits(delayMs: number): number {
@@ -225,6 +231,65 @@ function literalLzw(indices: Uint8Array): Uint8Array {
   return out.slice(0, offset);
 }
 
+/**
+ * Optional smaller 9-bit LZW. It reuses repeated runs through the decoder's
+ * dictionary, as GIF89a Appendix F describes, but clears before the next free
+ * slot would force a 10-bit code. Decodes to the same colour indices and uses
+ * the same control blocks and frame bounds as the literal stream.
+ */
+function compactLzw(indices: Uint8Array): Uint8Array {
+  // Every block emits at most 254 data codes and at least one, so the stream
+  // is bounded by two codes per pixel plus the opening and closing codes.
+  const capacity = Math.ceil(((2 * indices.length + 3) * 9) / 8) + 4;
+  const out = new Uint8Array(capacity);
+  let offset = 0;
+  let accumulator = 0;
+  let bits = 0;
+  const emit = (code: number): void => {
+    accumulator |= code << bits;
+    bits += 9;
+    while (bits >= 8) {
+      out[offset++] = accumulator & 0xff;
+      accumulator >>>= 8;
+      bits -= 8;
+    }
+  };
+
+  // A 0 slot means "no entry"; real dictionary codes start at 258. Prefix
+  // codes are 0–511 and each is followed by one literal, so 512 × 256 slots
+  // cover every key without a hash.
+  const table = new Int16Array(COMPACT_SLOT_LIMIT * 256);
+  let nextCode = COMPACT_FIRST_CODE;
+  let prefix = -1;
+
+  emit(CLEAR_CODE);
+  for (const index of indices) {
+    if (prefix < 0) {
+      prefix = index;
+      continue;
+    }
+    const key = (prefix << 8) | index;
+    const match = table[key];
+    if (match !== 0) {
+      prefix = match;
+      continue;
+    }
+    emit(prefix);
+    table[key] = nextCode;
+    nextCode += 1;
+    prefix = index;
+    if (nextCode === COMPACT_SLOT_LIMIT) {
+      emit(CLEAR_CODE);
+      nextCode = COMPACT_FIRST_CODE;
+      table.fill(0);
+    }
+  }
+  emit(prefix);
+  emit(END_CODE);
+  if (bits > 0) out[offset++] = accumulator & 0xff;
+  return out.slice(0, offset);
+}
+
 type GifWriter = {
   byte: (value: number) => void;
   u16: (value: number) => void;
@@ -280,6 +345,8 @@ export type GifEncodeOptions = {
   /** Optional exact delay vector in frame order; its length must equal frames.length. */
   frameDelaysMs?: readonly number[];
   loop?: boolean;
+  /** Opt in to the smaller bounded LZW stream; omit or false for legacy bytes. */
+  compact?: boolean;
 };
 
 /**
@@ -287,6 +354,7 @@ export type GifEncodeOptions = {
  * Control Extension per frame, optional Netscape looping extension and a single
  * trailer. Frames are in the array order, which is the workbench's list order.
  * Omit frameDelaysMs to keep the original uniform-delay bytes exactly.
+ * Omit compact (or pass false) to keep the original literal LZW bytes exactly.
  */
 export function encodeGif({
   frames,
@@ -295,6 +363,7 @@ export function encodeGif({
   delayMs,
   frameDelaysMs,
   loop = true,
+  compact = false,
 }: GifEncodeOptions): Uint8Array {
   if (!Number.isSafeInteger(width) || width < 1 || width > GIF_MAX_FRAME_SIZE ||
       !Number.isSafeInteger(height) || height < 1 || height > GIF_MAX_FRAME_SIZE)
@@ -358,7 +427,8 @@ export function encodeGif({
     output.u16(height);
     output.byte(0x00);
 
-    const data = literalLzw(quantise(frame, width, height));
+    const indices = quantise(frame, width, height);
+    const data = compact ? compactLzw(indices) : literalLzw(indices);
     output.byte(MIN_CODE_SIZE);
     for (let offset = 0; offset < data.length; offset += 255) {
       const size = Math.min(255, data.length - offset);

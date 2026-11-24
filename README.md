@@ -148,7 +148,9 @@ Choose a square size of 96, 128, 160, 240 or 320 px and a delay of 100–2000 ms
 10 ms steps. Add `--frame-delays-ms 120,480,900` to set an exact delay for every
 source in that same order; omit it to use `--delay` for every frame. The vector
 must name each `--source` once. The optional `--matte '#ffffff'` sets the opaque
-background. Repeat is the default. Use `--once` to stop after one play. The
+background. Repeat is the default. Use `--once` to stop after one play. Add
+`--compact` for the smaller bounded LZW stream; omit it for the legacy literal
+bytes. Both decode to the same pixels, palette, frame bounds and timing. The
 isolated Chrome workbench writes the same GIF as Image Tools, reads the delay
 control blocks back from the downloaded bytes and reports ordered source hashes,
 settings, the output SHA-256 and the network pass-through count.
