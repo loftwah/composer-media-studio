@@ -167,6 +167,20 @@ test("a matching PNG is reported as matched, with only validated facts", async (
   assert.doesNotMatch(JSON.stringify(outcome), /Private|Unvalidated|private-source/);
 });
 
+test("an alt-bearing manifest still verifies and never echoes its free text", async () => {
+  const bytes = png(640, 360);
+  const withAlt = manifest(bytes, { alt: "A red tram crossing the wet street" });
+  const without = manifest(bytes);
+  // The optional field is compatible: the verifier reads the same facts.
+  assert.deepEqual(
+    parsePackagingManifest(JSON.stringify(withAlt)),
+    parsePackagingManifest(JSON.stringify(without)),
+  );
+  const outcome = await verify(withAlt, bytes);
+  assert.equal(outcome.status, "matched");
+  assert.doesNotMatch(JSON.stringify(outcome), /red tram|wet street/);
+});
+
 test("exact byte size, dimensions and SHA-256 differences stay distinguishable", async () => {
   const bytes = png(640, 360, 7);
 

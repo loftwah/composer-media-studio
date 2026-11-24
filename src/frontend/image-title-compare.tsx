@@ -15,6 +15,7 @@ import {
 import { inspectImage, sniffLocalImage, type ImageMetadataSummary } from "./image-metadata.ts";
 import { CROP_ANCHOR_LABELS, type CropAnchorKey } from "./image-ops.ts";
 import {
+  ALT_MAX_LENGTH,
   FEED_SIZES,
   NOTE_MAX_LENGTH,
   PAIR_IDS,
@@ -28,6 +29,7 @@ import {
   exportFileName,
   manifestFileName,
   MANIFEST_VERSION,
+  normalizeThumbnailAlt,
   objectPositionFor,
   pairArchiveFileNames,
   preferredPairForExport,
@@ -79,6 +81,9 @@ type PairImage = {
 
 type Pair = {
   title: string;
+  /** Optional thumbnail alt text. Kept per pair and written only into that
+   * pair's manifest; it never reaches the encoded pixels. */
+  alt: string;
   /** Optional browser-local creator note. Written only into the manifest. */
   note: string;
   image: PairImage | null;
@@ -86,11 +91,13 @@ type Pair = {
   busy: boolean;
 };
 
-/** A pair captured for the set export: the exact title, note, crop anchor and
- * local image the run will encode, taken before the first await. */
+/** A pair captured for the set export: the exact title, thumbnail alt text,
+ * creator note, crop anchor and local image the run will encode, taken before
+ * the first await. */
 type PreparedPair = {
   id: PairId;
   title: string;
+  alt: string;
   note: string;
   /** This pair's own crop anchor at capture time. */
   anchor: CropAnchorKey;
@@ -133,13 +140,14 @@ type ExportEntry = {
   pngBlob?: Blob;
 };
 
-const emptyPair = (): Pair => ({ title: "", note: "", image: null, error: null, busy: false });
+const emptyPair = (): Pair => ({ title: "", alt: "", note: "", image: null, error: null, busy: false });
 
 /** The occupancy facts the duplicate planner reads; the image itself is not
  * needed to know whether a pair is free. */
 function pairOccupancy(pair: Pair, anchor: CropAnchorKey): PairOccupancy {
   return {
     title: pair.title,
+    alt: pair.alt,
     note: pair.note,
     hasImage: pair.image !== null,
     busy: pair.busy,
@@ -330,7 +338,7 @@ export function TitleCompare({
     return PAIR_IDS.flatMap((id, index) => {
       const pair = pairs[index];
       if (pair.busy || !pair.image || pair.title.trim() === "") return [];
-      return [{ id, title: pair.title, note: pair.note, anchor: anchors[id], image: pair.image }];
+      return [{ id, title: pair.title, note: pair.note, anchor: anchors[id], image: pair.image, alt: pair.alt }];
     });
   }
 
@@ -352,6 +360,17 @@ export function TitleCompare({
     if (index === PAIR_IDS.indexOf(selectedId)) clearCopyFeedback();
     setPair(index, { title });
     clearPreferenceFor(index);
+  }
+
+  /** Alt text describes the thumbnail, not the crop or the encoded pixels. An
+   * edit therefore leaves this pair's image, anchor, title, note and human
+   * preference alone. Prepared JSON/ZIP files and any in-flight encode were
+   * built from the previous text, so this retires them through the existing
+   * export state rather than letting them look current. */
+  function updateAlt(index: number, next: string): void {
+    if (pairs[index]?.alt === next) return;
+    setPair(index, { alt: next });
+    retirePreparedOutput();
   }
 
   /** A crop change is a material edit for that pair only. It writes that
@@ -379,6 +398,17 @@ export function TitleCompare({
 
   function discardExports(): void {
     replaceExports([]);
+  }
+
+  /** Retire prepared downloads and any encode still running for the text they
+   * captured. The export run guard makes a pending encode return before it
+   * publishes; clearing the busy flag here is the step that abandoned run no
+   * longer performs for itself. */
+  function retirePreparedOutput(): void {
+    exportRun.current += 1;
+    setExportBusy(false);
+    setExportMessage("");
+    discardExports();
   }
 
   /** Intake follows the workbench's addFiles sequence: declared facts, byte
@@ -427,11 +457,12 @@ export function TitleCompare({
       if (!current()) return;
       // A new thumbnail needs its own preference decision.
       clearPreferenceFor(index);
-      discardExports();
+      retirePreparedOutput();
       const previous = pairs[index].image;
       releaseUrl(previous?.url);
       const url = trackUrl(file);
       setPair(index, {
+        ...(previous ? { alt: "" } : {}),
         image: {
           file,
           url,
@@ -467,9 +498,9 @@ export function TitleCompare({
     // flight for it must not put an image back.
     loadRuns.current[index] += 1;
     clearPreferenceFor(index);
-    discardExports();
+    retirePreparedOutput();
     releaseUrl(pairs[index].image?.url);
-    setPair(index, { image: null, error: null, busy: false });
+    setPair(index, { image: null, alt: "", error: null, busy: false });
   }
 
   /** Copy the selected complete pair into the first empty pair, then select
@@ -496,6 +527,7 @@ export function TitleCompare({
         at === targetIndex
           ? {
               title: source.title,
+              alt: source.alt,
               note: "",
               image: { ...sourceImage, url },
               error: null,
@@ -559,12 +591,13 @@ export function TitleCompare({
 
   /** The selected pair as a versioned JSON manifest naming the exact cropped
    * PNG this same run encodes — its file name, pixel size and SHA-256 — plus
-   * the exact title, the crop plan and (when present) the creator note. The
-   * manifest is built from the bytes the encode produced, so the hash always
-   * describes the PNG it ships with. Title and note are captured with the pair
-   * before the first await, so a later edit cannot change this prepared file.
-   * No work, rights or performance value is claimed: the manifest carries only
-   * what this tab actually captured. */
+   * the exact title, the crop plan and (when present) the creator note and
+   * thumbnail alt text. The manifest is built from the bytes the encode
+   * produced, so the hash always describes the PNG it ships with. Title, note
+   * and alt text are captured with the pair before the first await, so a later
+   * edit cannot change this prepared file. No work, rights or performance
+   * value is claimed: the manifest carries only what this tab actually
+   * captured. */
   async function exportSelectedPairManifest(size: FeedSize): Promise<void> {
     const index = PAIR_IDS.indexOf(selectedId);
     const pair = pairs[index];
@@ -575,6 +608,7 @@ export function TitleCompare({
     const forAnchor = anchors[forPair];
     const title = pair.title;
     const note = pair.note;
+    const alt = pair.alt;
     const current = () => mounted.current && exportRun.current === run;
     setExportBusy(true);
     setExportMessage("");
@@ -600,6 +634,7 @@ export function TitleCompare({
         size,
         sourceRect: rect,
         png: { fileName: name, bytes: blob.size, sha256 },
+        alt,
       });
       const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
       const manifestBlob = new Blob([manifestText], {
@@ -667,15 +702,15 @@ export function TitleCompare({
   }
 
   /** Every titled pair with a local thumbnail — at least two, at most the
-   * three this section holds — in one flat ZIP. The titles, creator notes,
-   * image facts and each pair's own crop anchor are captured before the first
-   * encode, so a later edit cannot relabel the package. Each pair reuses the
-   * single-pair card encode, manifest builder, SHA-256 and store-only ZIP
-   * writer; its prefixed entry names keep same-title pairs distinct, and each
-   * manifest names and hashes the exact PNG bytes the archive stores, carries
-   * that pair's own anchor and only that pair's note. The preference is
-   * captured with the same snapshot and written only if that pair is actually
-   * in this archive. */
+   * three this section holds — in one flat ZIP. The titles, thumbnail alt
+   * text, creator notes, image facts and each pair's own crop anchor are
+   * captured before the first encode, so a later edit cannot relabel the
+   * package. Each pair reuses the single-pair card encode, manifest builder,
+   * SHA-256 and store-only ZIP writer; its prefixed entry names keep
+   * same-title pairs distinct, and each manifest names and hashes the exact
+   * PNG bytes the archive stores, carries that pair's own anchor and only that
+   * pair's note and alt text. The preference is captured with the same
+   * snapshot and written only if that pair is actually in this archive. */
   async function exportPreparedPairs(): Promise<void> {
     const size = FEED_SIZES[1];
     const forPreferred = preferredId;
@@ -721,6 +756,7 @@ export function TitleCompare({
           // The name and digest describe the exact PNG bytes added below.
           png: { fileName: names.png, bytes: pngBytes.byteLength, sha256 },
           preferredPairId: preferredForExport,
+          alt: prepared.alt,
         });
         zipEntries.push(
           { name: names.png, data: pngBytes },
@@ -879,6 +915,9 @@ export function TitleCompare({
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
   const selected = pairs[selectedIndex];
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
+  /** The supplied description when it normalises to text, so the full-size
+   * source image keeps its useful labelled fallback when the field is blank. */
+  const selectedAlt = normalizeThumbnailAlt(selected.alt);
   // The duplicate action names the exact empty pair it would create. It stays
   // inactive — with visible copy saying why — when the source is incomplete or
   // every other pair holds work.
@@ -890,8 +929,8 @@ export function TitleCompare({
   const duplicateNote = !duplicateSourceComplete
     ? `Add a title and thumbnail to ${selectedLabel} to duplicate it.`
     : duplicateTarget
-      ? "Copies the title, thumbnail and crop. The new pair starts with an empty note."
-      : "To free a pair, clear its title, note and thumbnail and set its crop to Centre.";
+      ? "Copies the title, thumbnail, alt text and crop. The new pair starts with an empty note."
+      : "To free a pair, clear its title, alt text, note and thumbnail and set its crop to Centre.";
   const prepared = readyPairs();
   const preparedCount = prepared.length;
   const preparedImageTooLarge =
@@ -920,7 +959,8 @@ export function TitleCompare({
       <p className="trim-note" id="image-title-compare-note">
         Compare up to three local pairs at two feed sizes. Choose a pair to
         set its crop, or use the arrow keys to switch pairs. The exported
-        manifests record your preference and each pair’s creator note.
+        manifests record your preference, each pair’s creator note and any
+        thumbnail alt text.
       </p>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
@@ -941,6 +981,24 @@ export function TitleCompare({
               ))}
             </select>
           </label>
+          <label className="title-compare-alt">
+            {`Thumbnail alt text for ${selectedLabel} (optional, up to ${ALT_MAX_LENGTH} characters)`}
+            <input
+              type="text"
+              value={selected.alt}
+              maxLength={ALT_MAX_LENGTH}
+              placeholder="Describe the thumbnail for screen readers"
+              spellCheck={false}
+              disabled={selected.busy}
+              data-title-compare-alt
+              data-title-compare-alt-pair={selectedId}
+              aria-describedby="image-title-compare-alt-note"
+              onChange={(event) => updateAlt(selectedIndex, event.target.value)}
+            />
+          </label>
+          <p className="trim-note title-compare-alt-note" id="image-title-compare-alt-note">
+            {`${selected.alt.length} of ${ALT_MAX_LENGTH} characters · blank keeps the default description. Saved only in ${selectedLabel}’s manifest when nonblank.`}
+          </p>
           {preparedImage && (
             <p
               className="trim-note title-compare-prepared-offer"
@@ -1242,7 +1300,7 @@ export function TitleCompare({
               >
                 <img
                   src={selectedImage.url}
-                  alt={`Full-size source thumbnail for ${selectedLabel}`}
+                  alt={selectedAlt ?? `Full-size source thumbnail for ${selectedLabel}`}
                   width={selectedImage.width}
                   height={selectedImage.height}
                   data-title-compare-full-image
@@ -1344,7 +1402,7 @@ export function TitleCompare({
       )}
       <p className="trim-note" role="status" aria-live="polite">
         {exportMessage ||
-          "Exports use the workbench's local encode and download path. The PNG contains the cropped thumbnail pixels only; the manifest names the exact PNG it was encoded with — file name, pixel size and SHA-256 — plus the title, crop and any creator note. The manifest export also offers one ZIP of that same PNG and JSON. Nothing is uploaded."}
+          "Exports use the workbench's local encode and download path. The PNG contains the cropped thumbnail pixels only; the manifest names the exact PNG it was encoded with — file name, pixel size and SHA-256 — plus the title, crop, any creator note and any thumbnail alt text. The manifest export also offers one ZIP of that same PNG and JSON. Nothing is uploaded."}
       </p>
       {exports.map((entry) => (
         <p className="title-compare-export" key={entry.url}>

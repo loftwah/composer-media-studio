@@ -17,19 +17,24 @@ export const PAIR_LABELS: Readonly<Record<PairId, string>> = Object.freeze({
  * thumbnail is a boolean because the decision is about occupancy, not bytes. */
 export type PairOccupancy = {
   title: string;
+  /** Optional thumbnail alt text counts as work, like the creator note. */
+  alt?: string;
   note: string;
   hasImage: boolean;
   busy: boolean;
   anchor: CropAnchorKey;
 };
 
-/** An empty pair has no title, note, thumbnail, pending decode or crop edit. */
+/** An empty pair has no title, alt text, note, thumbnail, pending decode or
+ * crop edit. Older occupancy snapshots without the optional alt field still
+ * read as empty. */
 export function pairIsEmpty(pair: PairOccupancy): boolean {
   return (
     !pair.busy &&
     !pair.hasImage &&
     pair.anchor === "centre" &&
     pair.title.trim() === "" &&
+    (pair.alt ?? "").trim() === "" &&
     pair.note.trim() === ""
   );
 }
@@ -71,6 +76,11 @@ export const TITLE_MAX_LENGTH = 200;
  * note can never make the exported JSON unbounded. */
 export const NOTE_MAX_LENGTH = 240;
 
+/** Thumbnail alt text is optional, bounded plain text. A concise description
+ * is more useful to a screen-reader listener than a title-length paragraph, so
+ * it gets a smaller cap than the creator note; the editor states it visibly. */
+export const ALT_MAX_LENGTH = 160;
+
 /**
  * Normalise a raw note to bounded plain text: CRLF becomes LF, C0/C1 controls
  * and DEL are dropped, the text is trimmed and finally capped. Empty or
@@ -90,6 +100,18 @@ export function normalizeCreatorNote(
     .slice(0, maxLength)
     .trimEnd();
   return cleaned === "" ? undefined : cleaned;
+}
+
+/**
+ * Normalise optional thumbnail alt text with the same bounded-plain-text rule
+ * a creator note uses. Blank input yields `undefined`, so a pair without alt
+ * text adds no field and keeps the older manifest shape and bytes.
+ */
+export function normalizeThumbnailAlt(
+  raw: string,
+  maxLength: number = ALT_MAX_LENGTH,
+): string | undefined {
+  return normalizeCreatorNote(raw, maxLength);
 }
 
 export type CoverRect = { left: number; top: number; width: number; height: number };
@@ -196,6 +218,9 @@ export type TitlePairManifest = {
   /** Additive V1 metadata, like preferredPairId: present only when the captured
    * pair carried a nonempty creator note. Bounded plain text, browser-local. */
   note?: string;
+  /** Additive V1 metadata, like note: present only when the captured pair
+   * carried nonblank thumbnail alt text. Bounded plain text, browser-local. */
+  alt?: string;
   title: { text: string; maxLength: number };
   source: ManifestSourceFacts;
   crop: { mode: "cover"; anchor: CropAnchorKey; sourceRect: CoverRect };
@@ -226,8 +251,12 @@ export function buildTitlePairManifest(input: {
   /** Omit it when the pair has no note, so no-note manifest bytes stay exactly
    * as they were before this optional field existed. */
   note?: string;
+  /** Omit it when the pair has no thumbnail alt text, so a no-alt manifest
+   * keeps the exact shape and bytes it had before this optional field. */
+  alt?: string;
 }): TitlePairManifest {
   const note = normalizeCreatorNote(input.note ?? "");
+  const alt = normalizeThumbnailAlt(input.alt ?? "");
   return {
     schema: MANIFEST_SCHEMA,
     version: MANIFEST_VERSION,
@@ -236,6 +265,7 @@ export function buildTitlePairManifest(input: {
     pair: { id: input.pairId, label: PAIR_LABELS[input.pairId] },
     ...(input.preferredPairId ? { preferredPairId: input.preferredPairId } : {}),
     ...(note ? { note } : {}),
+    ...(alt ? { alt } : {}),
     title: { text: input.title, maxLength: TITLE_MAX_LENGTH },
     source: input.source,
     crop: { mode: "cover", anchor: input.anchor, sourceRect: input.sourceRect },
