@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   ALT_MAX_LENGTH,
   FEED_SIZES,
+  HYPOTHESIS_MAX_LENGTH,
   MANIFEST_SCHEMA,
   MANIFEST_VERSION,
   NOTE_MAX_LENGTH,
@@ -19,6 +20,7 @@ import {
   exportFileName,
   manifestFileName,
   normalizeCreatorNote,
+  normalizeTestingHypothesis,
   normalizeThumbnailAlt,
   objectPositionFor,
   pairArchiveFileNames,
@@ -210,7 +212,7 @@ test("each export captures its pair's anchor before the first await", () => {
   );
   assert.match(
     section,
-    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt \}\];/,
+    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt, hypothesis: pair\.hypothesis \}\];/,
   );
   // The set snapshot carries each pair's anchor and the loop encodes with it.
   assert.match(
@@ -424,7 +426,7 @@ test("each pair editor writes a local note that only reaches its manifest", () =
   assert.match(section, /onChange=\{\(event\) => setPair\(index, \{ note: event\.target\.value \}\)\}/);
   // Both note and title are captured before either export's first await.
   assert.match(section, /const title = pair\.title;\s*const note = pair\.note;/);
-  assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt \}\];/);
+  assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt, hypothesis: pair\.hypothesis \}\];/);
   // The single-pair and prepared-set paths feed their captured note to the
   // same builder whose bytes are reused unchanged in the package ZIPs.
   assert.match(section, /pairId: forPair,\s*title,\s*note,\s*source:/);
@@ -470,7 +472,7 @@ test("thumbnail alt text is retained per pair for single and prepared exports", 
   assert.match(section, /const title = pair\.title;\s*const note = pair\.note;\s*const alt = pair\.alt;/);
   assert.match(
     section,
-    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt \}\];/,
+    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt, hypothesis: pair\.hypothesis \}\];/,
   );
   // Both export paths pass the captured alt text to the one manifest builder.
   assert.match(section, /png: \{ fileName: name, bytes: blob\.size, sha256 \},\s*alt,/);
@@ -872,9 +874,9 @@ test("the duplicate action names its target and shows a clear inactive state", (
   assert.match(section, /id="image-title-compare-duplicate-note"/);
   assert.match(section, /onClick=\{duplicateSelectedPair\}/);
   assert.match(section, /Duplicate \$\{selectedLabel\} into Pair \$\{PAIR_LABELS\[duplicateTarget\]\}/);
-  assert.match(section, /To free a pair, clear its title, alt text, note and thumbnail and set its crop to Centre/);
+  assert.match(section, /To free a pair, clear its title, alt text, hypothesis, note and thumbnail and set its crop to Centre/);
   assert.match(section, /Add a title and thumbnail to \$\{selectedLabel\} to duplicate it/);
-  assert.match(section, /Copies the title, thumbnail, alt text and crop/);
+  assert.match(section, /Copies the title, thumbnail, alt text, testing hypothesis and crop/);
   assert.match(stylesheet, /\.title-compare-duplicate/);
 });
 
@@ -906,4 +908,156 @@ test("a duplicate keeps the source bytes, crop and title, with a note-free manif
   assert.match(duplicate, /const sourceAnchor = anchors\[selectedId\];/);
   assert.match(duplicate, /image: \{ \.\.\.sourceImage, url \},/);
   assert.doesNotMatch(duplicate, /chooseImage|usePreparedImage|toBlob|createImageBitmap|canvas/);
+});
+
+// A creator's testing hypothesis: one bounded, optional, per-pair expectation
+// carried through the same v1 manifest, ZIP and pair-ownership paths as an alt
+// description. It is text only — never a score, a measured result or a route.
+
+test("a testing hypothesis is bounded plain text and absent when blank", () => {
+  assert.equal(HYPOTHESIS_MAX_LENGTH, NOTE_MAX_LENGTH);
+  assert.equal(normalizeTestingHypothesis(""), undefined);
+  assert.equal(normalizeTestingHypothesis("  \n\t "), undefined);
+  assert.equal(normalizeTestingHypothesis("  Try the quieter title first  "), "Try the quieter title first");
+  assert.equal(normalizeTestingHypothesis("line one\r\nline two"), "line one\nline two");
+  // C0/C1 controls and DEL never reach the JSON as invisible bytes.
+  assert.equal(normalizeTestingHypothesis("a\u0001b\u007fc\u0085d"), "abcd");
+  assert.equal(normalizeTestingHypothesis("x".repeat(HYPOTHESIS_MAX_LENGTH + 50))?.length, HYPOTHESIS_MAX_LENGTH);
+});
+
+test("the manifest carries a hypothesis only when one was captured", () => {
+  const base = noteManifestInput();
+  const without = buildTitlePairManifest(base);
+  assert.equal(Object.hasOwn(without, "hypothesis"), false);
+  // Empty or whitespace-only input leaves the pre-hypothesis bytes exact.
+  for (const empty of ["", "   ", "\n\t "]) {
+    assert.equal(JSON.stringify(buildTitlePairManifest({ ...base, hypothesis: empty })), JSON.stringify(without));
+  }
+  const withHypothesis = buildTitlePairManifest({ ...base, hypothesis: "  Expect the quiet title to hold on mobile  " });
+  assert.equal(withHypothesis.hypothesis, "Expect the quiet title to hold on mobile");
+  const { hypothesis, ...rest } = withHypothesis;
+  assert.deepEqual(rest, without);
+  assert.equal(withHypothesis.version, MANIFEST_VERSION);
+  assert.equal(buildTitlePairManifest({ ...base, hypothesis: "x".repeat(HYPOTHESIS_MAX_LENGTH + 10) }).hypothesis?.length, HYPOTHESIS_MAX_LENGTH);
+  // It composes with every other additive V1 field, still under version 1.
+  const both = buildTitlePairManifest({
+    ...base,
+    preferredPairId: "a",
+    note: "Keep left",
+    alt: "Red tram",
+    hypothesis: "Quieter title wins",
+  });
+  assert.equal(both.preferredPairId, "a");
+  assert.equal(both.note, "Keep left");
+  assert.equal(both.alt, "Red tram");
+  assert.equal(both.hypothesis, "Quieter title wins");
+  assert.equal(both.version, MANIFEST_VERSION);
+  // No analytic score, measured uplift or audience experiment is invented.
+  const serialized = JSON.stringify(withHypothesis);
+  for (const invented of ["score", "uplift", "views", "ctr", "experiment", "audience"]) {
+    assert.ok(!serialized.includes(invented), `the manifest must not invent "${invented}"`);
+  }
+});
+
+test("the hypothesis-bearing manifest JSON is the exact text the package ZIP carries", () => {
+  const size = FEED_SIZES[1];
+  const base = noteManifestInput();
+  const manifest = buildTitlePairManifest({ ...base, hypothesis: "Expect the quieter cut to hold." });
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  assert.match(manifestText, /"hypothesis": "Expect the quieter cut to hold\."/);
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]);
+  const pngName = exportFileName(base.title, base.source.fileName, size);
+  const manifestName = manifestFileName(base.title, base.source.fileName, size);
+  const result = createZip(
+    [
+      { name: pngName, data: pngBytes },
+      { name: manifestName, data: manifestText },
+    ],
+    { date: new Date(2026, 10, 24, 3, 12) },
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.entries, [pngName, manifestName]);
+  const data = new DataView(result.bytes.buffer, result.bytes.byteOffset, result.bytes.byteLength);
+  const found = new Map();
+  let offset = 0;
+  while (offset + 30 <= result.bytes.length && data.getUint32(offset, true) === 0x04034b50) {
+    const length = data.getUint32(offset + 18, true);
+    const nameLength = data.getUint16(offset + 26, true);
+    const extraLength = data.getUint16(offset + 28, true);
+    const name = new TextDecoder().decode(result.bytes.subarray(offset + 30, offset + 30 + nameLength));
+    const start = offset + 30 + nameLength + extraLength;
+    found.set(name, result.bytes.subarray(start, start + length));
+    offset = start + length;
+  }
+  // The PNG bytes are untouched by the text field, and the JSON is byte-exact.
+  assert.deepEqual(found.get(pngName), pngBytes);
+  assert.deepEqual(found.get(manifestName), new TextEncoder().encode(manifestText));
+  assert.match(new TextDecoder().decode(found.get(manifestName)), /"hypothesis": "Expect the quieter cut to hold\."/);
+});
+
+test("the encoder never reads the hypothesis, so initial PNG pixels stay exact", () => {
+  const start = section.indexOf("async function encodeCropPng");
+  const end = section.indexOf("/** SHA-256 over", start);
+  assert.ok(start >= 0 && end > start);
+  const encode = section.slice(start, end);
+  assert.doesNotMatch(encode, /hypothesis|note|alt|title/);
+  assert.match(encode, /context\.drawImage\(bitmap, plan\.left, plan\.top, plan\.width, plan\.height, 0, 0, size\.width, size\.height\)/);
+});
+
+test("the selected-pair hypothesis control is labelled, bounded and pair-scoped", () => {
+  assert.match(section, /Testing hypothesis for \$\{selectedLabel\} \(optional\)/);
+  assert.match(section, /<input\s+type="text"\s+value=\{selected\.hypothesis\}\s+maxLength=\{HYPOTHESIS_MAX_LENGTH\}/);
+  assert.match(section, /data-title-compare-hypothesis-pair=\{selectedId\}/);
+  assert.match(section, /onChange=\{\(event\) => updateHypothesis\(selectedIndex, event\.target\.value\)\}/);
+  assert.match(section, /What do you expect this pair to do\?/);
+  assert.match(section, /disabled=\{selected\.busy\}/);
+  assert.match(section, /aria-describedby="image-title-compare-hypothesis-note"/);
+  assert.match(stylesheet, /\.title-compare-hypothesis input/);
+  // It is browser-local text: no route, provider, storage or new dependency.
+  assert.doesNotMatch(section, /hypothesis[^\n]*(?:fetch\(|localStorage|sessionStorage|indexedDB)/);
+});
+
+test("an hypothesis edit retires prepared exports without touching the pair", () => {
+  const start = section.indexOf("function updateHypothesis");
+  const end = section.indexOf("\n  }", start);
+  assert.ok(start >= 0 && end > start);
+  const update = section.slice(start, end);
+  assert.match(update, /if \(pairs\[index\]\?\.hypothesis === next\) return;/);
+  assert.match(update, /setPair\(index, \{ hypothesis: next \}\)/);
+  assert.match(update, /retirePreparedOutput\(\)/);
+  assert.doesNotMatch(
+    update,
+    /clearPreferenceFor|setPreferredId|setAnchors|setSelectedId|encodeCropPng|toBlob|createImageBitmap|canvas/,
+  );
+  const retireStart = section.indexOf("function retirePreparedOutput");
+  const retire = section.slice(retireStart, section.indexOf("\n  }", retireStart));
+  assert.match(retire, /exportRun\.current \+= 1/);
+  assert.match(retire, /discardExports\(\)/);
+});
+
+test("the hypothesis belongs to its pair, follows duplication and clears with replaced media", () => {
+  assert.match(section, /hypothesis: string;/);
+  assert.match(section, /hypothesis: ""/); // emptyPair
+  assert.match(section, /hypothesis: pair\.hypothesis/); // occupancy
+  // Both export paths capture the same pair's hypothesis before the first await.
+  assert.match(section, /const alt = pair\.alt;\s*const hypothesis = pair\.hypothesis;/);
+  assert.match(section, /alt,\s*hypothesis,/);
+  assert.match(section, /alt: prepared\.alt,\s*hypothesis: prepared\.hypothesis,/);
+  // Explicit duplication of a complete pair carries the expectation with it;
+  // the source keeps its own text and the copy's note still starts empty.
+  const start = section.indexOf("function duplicateSelectedPair");
+  const duplicate = section.slice(start, section.indexOf("\n  }", start));
+  assert.match(duplicate, /hypothesis: source\.hypothesis,/);
+  assert.match(duplicate, /note: "",/);
+  assert.doesNotMatch(duplicate, /note: source\.note|setPreferredId|clearPreferenceFor/);
+  // A hypothesis occupies a pair, so it cannot be overwritten by a duplicate.
+  const empty = { title: "", alt: "", hypothesis: "", note: "", hasImage: false, busy: false, anchor: "centre" };
+  assert.equal(pairIsEmpty(empty), true);
+  assert.equal(pairIsEmpty({ ...empty, hypothesis: "Expect a quieter title" }), false);
+  assert.equal(pairIsEmpty({ ...empty, hypothesis: "   " }), true);
+  assert.equal(pairIsEmpty({ ...empty, hypothesis: undefined }), true);
+  // Replacing or removing the owner media clears text tied to the old pair,
+  // while the title, creator note and crop are preserved.
+  assert.match(section, /\.\.\.\(previous \? \{ alt: "", hypothesis: "" \} : \{\}\)/);
+  assert.match(section, /setPair\(index, \{ image: null, alt: "", hypothesis: "", error: null, busy: false \}\)/);
 });

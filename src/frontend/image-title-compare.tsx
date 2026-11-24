@@ -17,6 +17,7 @@ import { CROP_ANCHOR_LABELS, type CropAnchorKey } from "./image-ops.ts";
 import {
   ALT_MAX_LENGTH,
   FEED_SIZES,
+  HYPOTHESIS_MAX_LENGTH,
   NOTE_MAX_LENGTH,
   PAIR_IDS,
   PAIR_LABELS,
@@ -84,6 +85,10 @@ type Pair = {
   /** Optional thumbnail alt text. Kept per pair and written only into that
    * pair's manifest; it never reaches the encoded pixels. */
   alt: string;
+  /** Optional creator-written testing hypothesis for this exact title and
+   * thumbnail. Kept per pair, written only into that pair's manifest, and
+   * never treated as a measured result or sent to any provider. */
+  hypothesis: string;
   /** Optional browser-local creator note. Written only into the manifest. */
   note: string;
   image: PairImage | null;
@@ -92,12 +97,13 @@ type Pair = {
 };
 
 /** A pair captured for the set export: the exact title, thumbnail alt text,
- * creator note, crop anchor and local image the run will encode, taken before
- * the first await. */
+ * testing hypothesis, creator note, crop anchor and local image the run will
+ * encode, taken before the first await. */
 type PreparedPair = {
   id: PairId;
   title: string;
   alt: string;
+  hypothesis: string;
   note: string;
   /** This pair's own crop anchor at capture time. */
   anchor: CropAnchorKey;
@@ -140,7 +146,7 @@ type ExportEntry = {
   pngBlob?: Blob;
 };
 
-const emptyPair = (): Pair => ({ title: "", alt: "", note: "", image: null, error: null, busy: false });
+const emptyPair = (): Pair => ({ title: "", alt: "", hypothesis: "", note: "", image: null, error: null, busy: false });
 
 /** The occupancy facts the duplicate planner reads; the image itself is not
  * needed to know whether a pair is free. */
@@ -148,6 +154,7 @@ function pairOccupancy(pair: Pair, anchor: CropAnchorKey): PairOccupancy {
   return {
     title: pair.title,
     alt: pair.alt,
+    hypothesis: pair.hypothesis,
     note: pair.note,
     hasImage: pair.image !== null,
     busy: pair.busy,
@@ -338,7 +345,7 @@ export function TitleCompare({
     return PAIR_IDS.flatMap((id, index) => {
       const pair = pairs[index];
       if (pair.busy || !pair.image || pair.title.trim() === "") return [];
-      return [{ id, title: pair.title, note: pair.note, anchor: anchors[id], image: pair.image, alt: pair.alt }];
+      return [{ id, title: pair.title, note: pair.note, anchor: anchors[id], image: pair.image, alt: pair.alt, hypothesis: pair.hypothesis }];
     });
   }
 
@@ -370,6 +377,16 @@ export function TitleCompare({
   function updateAlt(index: number, next: string): void {
     if (pairs[index]?.alt === next) return;
     setPair(index, { alt: next });
+    retirePreparedOutput();
+  }
+
+  /** A testing hypothesis is one pair's own written expectation. Editing or
+   * clearing it leaves this pair's image, anchor, title, alt text, note and
+   * human preference alone, but any prepared JSON/ZIP was built from the old
+   * text, so the same export-retiring rule an alt edit uses applies here. */
+  function updateHypothesis(index: number, next: string): void {
+    if (pairs[index]?.hypothesis === next) return;
+    setPair(index, { hypothesis: next });
     retirePreparedOutput();
   }
 
@@ -462,7 +479,10 @@ export function TitleCompare({
       releaseUrl(previous?.url);
       const url = trackUrl(file);
       setPair(index, {
-        ...(previous ? { alt: "" } : {}),
+        // An alt description and a hypothesis belong to the exact thumbnail
+        // they were written for. Replacing that media clears both, while the
+        // pair's title, creator note and crop stay as the creator left them.
+        ...(previous ? { alt: "", hypothesis: "" } : {}),
         image: {
           file,
           url,
@@ -500,15 +520,16 @@ export function TitleCompare({
     clearPreferenceFor(index);
     retirePreparedOutput();
     releaseUrl(pairs[index].image?.url);
-    setPair(index, { image: null, alt: "", error: null, busy: false });
+    setPair(index, { image: null, alt: "", hypothesis: "", error: null, busy: false });
   }
 
   /** Copy the selected complete pair into the first empty pair, then select
    * it. The source keeps its title, note, preference, thumbnail and crop. The
    * copy carries the same validated File bytes under its own object URL, the
-   * same crop anchor, the same title and an empty note. The target must be
-   * empty at click time, so a named, imaged, noted or pending pair is never
-   * overwritten. */
+   * same crop anchor, title, alt text and testing hypothesis — the expectation
+   * still describes the same combination — but starts with an empty note. The
+   * target must be empty at click time, so a named, imaged, noted, hypothesised
+   * or pending pair is never overwritten. */
   function duplicateSelectedPair(): void {
     const source = pairs[PAIR_IDS.indexOf(selectedId)];
     if (!source || !completePair(source)) return;
@@ -528,6 +549,7 @@ export function TitleCompare({
           ? {
               title: source.title,
               alt: source.alt,
+              hypothesis: source.hypothesis,
               note: "",
               image: { ...sourceImage, url },
               error: null,
@@ -591,13 +613,13 @@ export function TitleCompare({
 
   /** The selected pair as a versioned JSON manifest naming the exact cropped
    * PNG this same run encodes — its file name, pixel size and SHA-256 — plus
-   * the exact title, the crop plan and (when present) the creator note and
-   * thumbnail alt text. The manifest is built from the bytes the encode
-   * produced, so the hash always describes the PNG it ships with. Title, note
-   * and alt text are captured with the pair before the first await, so a later
-   * edit cannot change this prepared file. No work, rights or performance
-   * value is claimed: the manifest carries only what this tab actually
-   * captured. */
+   * the exact title, the crop plan and (when present) the creator note,
+   * thumbnail alt text and testing hypothesis. The manifest is built from the
+   * bytes the encode produced, so the hash always describes the PNG it ships
+   * with. Title, note, alt text and hypothesis are captured with the pair
+   * before the first await, so a later edit cannot change this prepared file.
+   * No work, rights or performance value is claimed: the manifest carries only
+   * what this tab actually captured. */
   async function exportSelectedPairManifest(size: FeedSize): Promise<void> {
     const index = PAIR_IDS.indexOf(selectedId);
     const pair = pairs[index];
@@ -609,6 +631,7 @@ export function TitleCompare({
     const title = pair.title;
     const note = pair.note;
     const alt = pair.alt;
+    const hypothesis = pair.hypothesis;
     const current = () => mounted.current && exportRun.current === run;
     setExportBusy(true);
     setExportMessage("");
@@ -635,6 +658,7 @@ export function TitleCompare({
         sourceRect: rect,
         png: { fileName: name, bytes: blob.size, sha256 },
         alt,
+        hypothesis,
       });
       const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
       const manifestBlob = new Blob([manifestText], {
@@ -703,14 +727,14 @@ export function TitleCompare({
 
   /** Every titled pair with a local thumbnail — at least two, at most the
    * three this section holds — in one flat ZIP. The titles, thumbnail alt
-   * text, creator notes, image facts and each pair's own crop anchor are
-   * captured before the first encode, so a later edit cannot relabel the
-   * package. Each pair reuses the single-pair card encode, manifest builder,
-   * SHA-256 and store-only ZIP writer; its prefixed entry names keep
+   * text, testing hypotheses, creator notes, image facts and each pair's own
+   * crop anchor are captured before the first encode, so a later edit cannot
+   * relabel the package. Each pair reuses the single-pair card encode, manifest
+   * builder, SHA-256 and store-only ZIP writer; its prefixed entry names keep
    * same-title pairs distinct, and each manifest names and hashes the exact
    * PNG bytes the archive stores, carries that pair's own anchor and only that
-   * pair's note and alt text. The preference is captured with the same
-   * snapshot and written only if that pair is actually in this archive. */
+   * pair's note, alt text and hypothesis. The preference is captured with the
+   * same snapshot and written only if that pair is actually in this archive. */
   async function exportPreparedPairs(): Promise<void> {
     const size = FEED_SIZES[1];
     const forPreferred = preferredId;
@@ -757,6 +781,7 @@ export function TitleCompare({
           png: { fileName: names.png, bytes: pngBytes.byteLength, sha256 },
           preferredPairId: preferredForExport,
           alt: prepared.alt,
+          hypothesis: prepared.hypothesis,
         });
         zipEntries.push(
           { name: names.png, data: pngBytes },
@@ -929,8 +954,8 @@ export function TitleCompare({
   const duplicateNote = !duplicateSourceComplete
     ? `Add a title and thumbnail to ${selectedLabel} to duplicate it.`
     : duplicateTarget
-      ? "Copies the title, thumbnail, alt text and crop. The new pair starts with an empty note."
-      : "To free a pair, clear its title, alt text, note and thumbnail and set its crop to Centre.";
+      ? "Copies the title, thumbnail, alt text, testing hypothesis and crop. The new pair starts with an empty note."
+      : "To free a pair, clear its title, alt text, hypothesis, note and thumbnail and set its crop to Centre.";
   const prepared = readyPairs();
   const preparedCount = prepared.length;
   const preparedImageTooLarge =
@@ -959,8 +984,8 @@ export function TitleCompare({
       <p className="trim-note" id="image-title-compare-note">
         Compare up to three local pairs at two feed sizes. Choose a pair to
         set its crop, or use the arrow keys to switch pairs. The exported
-        manifests record your preference, each pair’s creator note and any
-        thumbnail alt text.
+        manifests record your preference, each pair’s creator note, any
+        thumbnail alt text and any testing hypothesis you write.
       </p>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
@@ -998,6 +1023,24 @@ export function TitleCompare({
           </label>
           <p className="trim-note title-compare-alt-note" id="image-title-compare-alt-note">
             {`${selected.alt.length} of ${ALT_MAX_LENGTH} characters · blank keeps the default description. Saved only in ${selectedLabel}’s manifest when nonblank.`}
+          </p>
+          <label className="title-compare-hypothesis">
+            {`Testing hypothesis for ${selectedLabel} (optional)`}
+            <input
+              type="text"
+              value={selected.hypothesis}
+              maxLength={HYPOTHESIS_MAX_LENGTH}
+              placeholder="What do you expect this pair to do?"
+              spellCheck={false}
+              disabled={selected.busy}
+              data-title-compare-hypothesis
+              data-title-compare-hypothesis-pair={selectedId}
+              aria-describedby="image-title-compare-hypothesis-note"
+              onChange={(event) => updateHypothesis(selectedIndex, event.target.value)}
+            />
+          </label>
+          <p className="trim-note title-compare-hypothesis-note" id="image-title-compare-hypothesis-note">
+            {`${selected.hypothesis.length} of ${HYPOTHESIS_MAX_LENGTH} characters. The hypothesis goes in ${selectedLabel}’s manifest.`}
           </p>
           {preparedImage && (
             <p
