@@ -96,6 +96,19 @@ import {
   atlasLayout,
   atlasPlacement,
 } from "./image-atlas.ts";
+import {
+  GIF_DEFAULT_DELAY_MS,
+  GIF_DEFAULT_FRAME_SIZE,
+  GIF_FRAME_SIZES,
+  GIF_DELAY_STEP_MS,
+  GIF_MAX_DELAY_MS,
+  GIF_MAX_FRAMES,
+  GIF_MIN_DELAY_MS,
+  GIF_MIN_FRAMES,
+  encodeGif,
+  gifFramePlacement,
+  gifSettingsProblem,
+} from "./image-gif.ts";
 import { createZip, ZIP_MIME } from "./image-zip.ts";
 import {
   IMAGE_QUALITY_MAX_PERCENT,
@@ -298,6 +311,14 @@ type ListFocus =
 
 type ContactSheet = { url: string; blob: Blob; layoutUrl: string; layoutText: string; count: number; columns: number; tileSize: number; width: number; height: number; mode: SheetMode };
 type SheetMode = "contact-sheet" | "sprite-atlas";
+type GifOutput = {
+  url: string;
+  width: number;
+  height: number;
+  count: number;
+  delayMs: number;
+  bytes: number;
+};
 
 const DEFAULT_SETTINGS: Settings = {
   resizeMode: "long-edge",
@@ -982,6 +1003,14 @@ function Images() {
   const [batchExport, setBatchExport] = useState<"zip" | SheetMode | null>(null);
   const zipBusy = batchExport === "zip";
   const sheetBusy = batchExport === "contact-sheet" || batchExport === "sprite-atlas";
+  const [gifOutput, setGifOutput] = useState<GifOutput | null>(null);
+  const [gifBusy, setGifBusy] = useState(false);
+  const [gifMessage, setGifMessage] = useState("");
+  const [gifFrameSize, setGifFrameSize] = useState<number>(GIF_DEFAULT_FRAME_SIZE);
+  const [gifDelayMs, setGifDelayMs] = useState<number>(GIF_DEFAULT_DELAY_MS);
+  const [gifMatte, setGifMatte] = useState("#ffffff");
+  const [gifLoop, setGifLoop] = useState(true);
+  const gifSource = useRef("");
   const [batchMessage, setBatchMessage] = useState("");
   const [socialOutputs, setSocialOutputs] = useState<SocialOutput[]>([]);
   const [socialZip, setSocialZip] = useState<SocialZip | null>(null);
@@ -1025,6 +1054,7 @@ function Images() {
   const urls = useRef(new Set<string>());
   const revision = useRef(0);
   const batchExportRevision = useRef(0);
+  const gifRevision = useRef(0);
   const batchController = useRef<{ controller: AbortController; report: (message: string) => void } | null>(null);
   const socialController = useRef<AbortController | null>(null);
   const postBriefRequest = useRef(0);
@@ -1204,6 +1234,15 @@ function Images() {
     snippets && selected?.result?.sha256 === snippets.key ? snippets.data : null;
   const snippetText = visibleSnippets ? visibleSnippets.snippets[snippetKind] : "";
   const doneItems = items.filter((item) => item.result);
+  // GIFs use the admitted source files in list order, never the processed
+  // results or per-row overrides. Only an add, remove or reorder invalidates an
+  // existing GIF; finishing a batch render leaves the same stills in place.
+  const gifSourceKey = items.map((item) => `${item.id}:${item.sourceHash}`).join("|");
+  const gifProblem = gifSettingsProblem({
+    frameCount: items.length,
+    frameSize: gifFrameSize,
+    delayMs: gifDelayMs,
+  });
   const isAtlasMode = sheetMode === "sprite-atlas";
   const atlasEntries = isAtlasMode ? doneItems.flatMap((item) =>
     item.result?.mime === "image/png" ? [{ item, result: item.result }] : [],
@@ -1307,6 +1346,16 @@ function Images() {
     setContactSheet(null);
   }
 
+  // A GIF is a snapshot of the source stills and the four GIF controls. Any
+  // change to those retires the old blob immediately; an encode that is already
+  // running checks the same revision before it can publish a stale result.
+  function invalidateGif(message: string): void {
+    gifRevision.current += 1;
+    if (gifOutput) releaseUrl(gifOutput.url);
+    setGifOutput(null);
+    if (gifBusy || gifOutput) setGifMessage(message);
+  }
+
   function releaseSocial(): void {
     for (const output of socialOutputs) releaseUrl(output.url);
     if (socialZip) releaseUrl(socialZip.url);
@@ -1327,6 +1376,7 @@ function Images() {
       revision.current += 1;
       stripRevision.current += 1;
       batchExportRevision.current += 1;
+      gifRevision.current += 1;
       alphaRevision.current += 1;
       batchController.current?.controller.abort();
       socialController.current?.abort();
@@ -1339,6 +1389,19 @@ function Images() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (gifSource.current === gifSourceKey) return;
+    gifSource.current = gifSourceKey;
+    gifRevision.current += 1;
+    if (!gifOutput) {
+      if (gifBusy) setGifMessage("The batch changed. Make the GIF again.");
+      return;
+    }
+    releaseUrl(gifOutput.url);
+    setGifOutput(null);
+    setGifMessage("The batch changed. Make the GIF again.");
+  }, [gifSourceKey]);
 
   useEffect(() => {
     if (!snippetText) {
@@ -1713,6 +1776,9 @@ function Images() {
     setSampleBusy(false);
     runningRef.current = false;
     clearBatchExports();
+    gifRevision.current += 1;
+    setGifOutput(null);
+    setGifMessage("");
     setBatchMessage("");
     for (const url of urls.current) URL.revokeObjectURL(url);
     urls.current.clear();
@@ -2055,6 +2121,105 @@ function Images() {
       canvas.width = 0;
       canvas.height = 0;
       setBatchExport(null);
+    }
+  }
+
+  async function makeGif(): Promise<void> {
+    if (gifBusy || batchExport || addingRef.current || runningRef.current || socialController.current || importing) return;
+    const problem = gifSettingsProblem({
+      frameCount: items.length,
+      frameSize: gifFrameSize,
+      delayMs: gifDelayMs,
+    });
+    if (problem) {
+      setGifMessage(problem);
+      return;
+    }
+    const snapshot = items.slice();
+    const size = gifFrameSize;
+    const delayMs = gifDelayMs;
+    const matte = gifMatte;
+    const loop = gifLoop;
+    const attempt = gifRevision.current;
+    setGifBusy(true);
+    setGifMessage(`Rendering ${snapshot.length} frames on this device…`);
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const frames: Uint8Array[] = [];
+    try {
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("This browser could not draw the GIF frames.");
+      for (const [index, item] of snapshot.entries()) {
+        let bitmap: ImageBitmap | null = null;
+        let oriented: HTMLCanvasElement | null = null;
+        try {
+          let explicitNone = false;
+          try {
+            bitmap = await createImageBitmap(item.file, { imageOrientation: "none" });
+            explicitNone = true;
+          } catch {
+            bitmap = await createImageBitmap(item.file);
+          }
+          if (attempt !== gifRevision.current) return;
+          if (!bitmap || bitmap.width < 1 || bitmap.height < 1)
+            throw new Error(`${item.file.name} did not decode for the GIF.`);
+          const swapped =
+            item.source.width !== item.source.height &&
+            bitmap.width === item.source.height &&
+            bitmap.height === item.source.width;
+          const browserAppliedOrientation = explicitNone
+            ? item.source.orientation >= 5 && swapped
+            : true;
+          oriented = drawOriented(bitmap, browserAppliedOrientation ? 1 : item.source.orientation);
+          bitmap.close();
+          bitmap = null;
+          const placement = gifFramePlacement(size, oriented.width, oriented.height);
+          context.fillStyle = matte;
+          context.fillRect(0, 0, size, size);
+          context.imageSmoothingEnabled = true;
+          context.imageSmoothingQuality = "high";
+          context.drawImage(oriented, placement.x, placement.y, placement.width, placement.height);
+          oriented.width = 0;
+          oriented.height = 0;
+          oriented = null;
+          if (attempt !== gifRevision.current) return;
+          const pixels = context.getImageData(0, 0, size, size).data;
+          // Copy out of the canvas buffer; the next frame reuses this surface.
+          frames.push(new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength).slice());
+          setGifMessage(`Rendering frame ${index + 1} of ${snapshot.length}…`);
+        } finally {
+          bitmap?.close();
+          if (oriented) {
+            oriented.width = 0;
+            oriented.height = 0;
+          }
+        }
+      }
+      const bytes = encodeGif({ frames, width: size, height: size, delayMs, loop });
+      if (attempt !== gifRevision.current) return;
+      const blob = blobFromBytes(bytes, "image/gif");
+      const url = trackUrl(blob);
+      if (gifOutput) releaseUrl(gifOutput.url);
+      setGifOutput({
+        url,
+        width: size,
+        height: size,
+        count: frames.length,
+        delayMs,
+        bytes: blob.size,
+      });
+      setGifMessage(
+        `GIF ready: ${frames.length} frames · ${size} × ${size} px · ${delayMs} ms per frame · ` +
+        `${formatBytes(blob.size)} · ${loop ? "loops forever" : "plays once"}.`,
+      );
+    } catch (error) {
+      if (attempt === gifRevision.current)
+        setGifMessage(error instanceof Error ? error.message : "Could not make the GIF.");
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+      setGifBusy(false);
     }
   }
 
@@ -3049,8 +3214,9 @@ function Images() {
         <p className="trim-note">
           JPEG, PNG or WebP up to {MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MiB and 40
           megapixels each. Up to {MAX_BATCH_IMAGES} images, processed one at a time.
-          SVG, HTML, HEIC/HEIF, AVIF, GIF and other formats are refused honestly in
-          this slice; they are not silently decoded.
+          SVG, HTML, HEIC/HEIF, AVIF and other formats are refused as input. GIF is
+          not accepted as an input still either, but Batch can assemble 2–8 admitted
+          stills into a real GIF output below.
         </p>
         <p className="trim-note">
           JPEG EXIF orientation is applied before editing. The source facts and the
@@ -4489,6 +4655,113 @@ function Images() {
             )}
           </>
         )}
+        <fieldset className="image-gif" aria-describedby="image-gif-note">
+          <legend>Make an animated GIF</legend>
+          <p className="trim-note" id="image-gif-note">
+            Use {GIF_MIN_FRAMES}–{GIF_MAX_FRAMES} source stills in batch order.
+            Every frame uses the same square size, matte and delay. The fixed
+            256-colour palette can cause banding in gradients.
+          </p>
+          <div className="image-gif-settings">
+            <label className="image-sheet-columns">
+              GIF frame size
+              <select
+                value={gifFrameSize}
+                disabled={gifBusy}
+                onChange={(event) => {
+                  setGifFrameSize(Number(event.target.value));
+                  if (gifOutput) invalidateGif("GIF frame size changed. Make the GIF again.");
+                }}
+              >
+                {GIF_FRAME_SIZES.map((size) => (
+                  <option value={size} key={size}>
+                    {size} px square{size === GIF_DEFAULT_FRAME_SIZE ? " · default" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="image-sheet-columns">
+              GIF delay (ms per frame)
+              <input
+                type="number"
+                min={GIF_MIN_DELAY_MS}
+                max={GIF_MAX_DELAY_MS}
+                step={GIF_DELAY_STEP_MS}
+                inputMode="numeric"
+                value={Number.isFinite(gifDelayMs) ? gifDelayMs : ""}
+                disabled={gifBusy}
+                onChange={(event) => {
+                  setGifDelayMs(event.currentTarget.valueAsNumber);
+                  if (gifOutput) invalidateGif("GIF delay changed. Make the GIF again.");
+                }}
+              />
+            </label>
+            <label className="image-sheet-columns">
+              GIF matte
+              <input
+                type="color"
+                value={gifMatte}
+                disabled={gifBusy}
+                onChange={(event) => {
+                  setGifMatte(event.target.value);
+                  if (gifOutput) invalidateGif("GIF matte changed. Make the GIF again.");
+                }}
+              />
+            </label>
+            <label className="image-check">
+              <input
+                type="checkbox"
+                checked={gifLoop}
+                disabled={gifBusy}
+                onChange={(event) => {
+                  setGifLoop(event.target.checked);
+                  if (gifOutput) invalidateGif("GIF loop changed. Make the GIF again.");
+                }}
+              />
+              Repeat after the last frame
+            </label>
+          </div>
+          <div className="image-control-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={
+                gifBusy || Boolean(batchExport) || socialBusy || adding || importing || running ||
+                Boolean(gifProblem)
+              }
+              onClick={() => {
+                if (gifBusy) return;
+                void makeGif();
+              }}
+            >
+              {gifBusy ? "Making GIF…" : `Make GIF${items.length >= GIF_MIN_FRAMES && items.length <= GIF_MAX_FRAMES ? ` (${items.length} frames)` : ""}`}
+            </button>
+            {gifOutput && (
+              <a
+                className="button secondary"
+                href={gifOutput.url}
+                download={`media-studio-gif-${gifOutput.count}-frames-${gifOutput.width}px-${gifOutput.delayMs}ms.gif`}
+              >
+                Download GIF · {formatBytes(gifOutput.bytes)}
+              </a>
+            )}
+          </div>
+          {gifProblem && items.length > 0 && (
+            <p className="image-plan is-error" role="alert">{gifProblem}</p>
+          )}
+          <p className="image-status" role="status" aria-live="polite">{gifMessage}</p>
+          {gifOutput && (
+            <>
+              <img
+                className="image-gif-preview"
+                src={gifOutput.url}
+                width={gifOutput.width}
+                height={gifOutput.height}
+                alt={`Encoded GIF: ${gifOutput.count} frames at ${gifOutput.width} × ${gifOutput.height} px, ${gifOutput.delayMs} ms per frame`}
+              />
+            </>
+          )}
+        </fieldset>
         {running && (
           <div className="image-progress">
             <progress value={batch.completed} max={batch.total || 1} aria-label="Batch progress" />
