@@ -2,10 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  ALPHA_REPORT_SCHEMA,
+  ALPHA_REPORT_VERSION,
   alphaBounds,
   alphaMapPlan,
   writeAlphaMapBand,
   alphaProfile,
+  buildAlphaReport,
   extractPalette,
   formatHsl,
   formatRgb,
@@ -302,6 +305,74 @@ test("alpha profile refuses buffers that do not match the result dimensions", ()
   assert.match(alphaProfile(new Uint8ClampedArray(4), { width: 2, height: 2 }).error, /smaller/);
   assert.match(alphaProfile(new Uint8ClampedArray(20), { width: 2, height: 2 }).error, /do not match/);
   assert.match(alphaProfile(new Uint8ClampedArray(16), { width: 0, height: 2 }).error, /dimensions/);
+});
+
+test("alpha report is a v1 snapshot of exact counts and the finished result", () => {
+  const result = {
+    mime: "image/webp",
+    width: 3,
+    height: 2,
+    bytes: 98765,
+    sha256: "A".repeat(64),
+  };
+  const profile = {
+    ok: true,
+    width: 3,
+    height: 2,
+    totalPixels: 6,
+    transparent: 1,
+    partial: 3,
+    opaque: 2,
+  };
+  const report = buildAlphaReport({ result, profile });
+
+  assert.deepEqual(Object.keys(report), ["schema", "version", "note", "output", "alpha"]);
+  assert.equal(report.schema, ALPHA_REPORT_SCHEMA);
+  assert.equal(report.version, ALPHA_REPORT_VERSION);
+  assert.equal(ALPHA_REPORT_VERSION, 1);
+  assert.deepEqual(report.output, {
+    mime: "image/webp",
+    width: 3,
+    height: 2,
+    bytes: 98765,
+    sha256: "a".repeat(64),
+  });
+  assert.deepEqual(report.alpha, {
+    transparent: 1,
+    partial: 3,
+    opaque: 2,
+    total: 6,
+  });
+  assert.equal(report.alpha.total, report.alpha.transparent + report.alpha.partial + report.alpha.opaque);
+});
+
+test("alpha report carries no source, path, filename, map or sampled pixels", () => {
+  const profile = alphaProfile(
+    makePixels(2, 2, (x, y) => [4, 5, 6, [0, 128, 254, 255][y * 2 + x]]),
+    { width: 2, height: 2 },
+  );
+  const report = buildAlphaReport({
+    result: {
+      mime: "image/png",
+      width: 2,
+      height: 2,
+      bytes: 101,
+      sha256: "b".repeat(64),
+      filename: "/private/secret/art.png",
+      title: "Private artwork",
+      sourceHash: "c".repeat(64),
+    },
+    profile,
+    map: { width: 2, height: 2, sampled: false, pixels: new Uint8ClampedArray(16) },
+  });
+
+  const json = JSON.stringify(report);
+  for (const banned of [
+    "filename", "path", "title", "sourceHash", "map", "pixels", "sampled",
+    "secret", "Private artwork", "blob", "url", "createdAt",
+  ])
+    assert.equal(json.includes(banned), false, `alpha report must not carry ${banned}`);
+  assert.match(report.note, /Counted on this device; nothing uploaded/);
 });
 
 test("alpha map keeps each exact alpha byte at native size", () => {

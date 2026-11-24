@@ -171,6 +171,11 @@ test("the completed result has an on-demand exact alpha inspection", () => {
   assert.match(workbench, /className="image-alpha-map"/);
   assert.match(workbench, /role="img"/);
   assert.match(workbench, /This preview samples the finished image/);
+  assert.match(workbench, /Download alpha report \(JSON\)/);
+  assert.match(workbench, /download="studio-alpha-report\.json"/);
+  assert.match(workbench, /report: buildAlphaReport\(\{ result, profile \}\)/);
+  assert.match(workbench, /alphaInspect\?\.key === outputResultKey \? alphaInspect\.report : null/);
+  assert.match(workbench, /data:application\/json;charset=utf-8,\$\{encodeURIComponent\(JSON\.stringify\(visibleAlphaReport\)\)\}/);
   assert.match(workbench, /key === currentOutputKey\.current/);
   assert.match(workbench, /alphaRevision\.current \+= 1/);
   assert.match(workbench, /aria-disabled=\{alphaBusy \|\| running\}/);
