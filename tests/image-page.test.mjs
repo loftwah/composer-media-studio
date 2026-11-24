@@ -165,6 +165,12 @@ test("the completed result has an on-demand exact alpha inspection", () => {
   assert.match(workbench, /Transparent is\s+alpha 0, partial is 1–254/);
   assert.match(workbench, /createImageBitmap\(result\.blob\)/);
   assert.match(workbench, /alphaProfile\(data, \{ width, height: rows \}\)/);
+  assert.match(workbench, /alphaMapPlan\(width, height\)/);
+  assert.match(workbench, /writeAlphaMapBand\(mapPlan, data, y\)/);
+  assert.match(workbench, /alphaInspect\?\.key === outputResultKey \? alphaInspect\.map : null/);
+  assert.match(workbench, /className="image-alpha-map"/);
+  assert.match(workbench, /role="img"/);
+  assert.match(workbench, /This preview samples the finished image/);
   assert.match(workbench, /key === currentOutputKey\.current/);
   assert.match(workbench, /alphaRevision\.current \+= 1/);
   assert.match(workbench, /aria-disabled=\{alphaBusy \|\| running\}/);

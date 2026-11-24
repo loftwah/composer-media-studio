@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   alphaBounds,
+  alphaMapPlan,
+  writeAlphaMapBand,
   alphaProfile,
   extractPalette,
   formatHsl,
@@ -300,6 +302,57 @@ test("alpha profile refuses buffers that do not match the result dimensions", ()
   assert.match(alphaProfile(new Uint8ClampedArray(4), { width: 2, height: 2 }).error, /smaller/);
   assert.match(alphaProfile(new Uint8ClampedArray(20), { width: 2, height: 2 }).error, /do not match/);
   assert.match(alphaProfile(new Uint8ClampedArray(16), { width: 0, height: 2 }).error, /dimensions/);
+});
+
+test("alpha map keeps each exact alpha byte at native size", () => {
+  const alphas = [0, 1, 128, 254, 255, 64];
+  const pixels = makePixels(3, 2, (x, y) => [11, 22, 33, alphas[y * 3 + x]]);
+  const plan = alphaMapPlan(3, 2);
+  assert.ok(plan);
+  writeAlphaMapBand(plan, pixels, 0);
+  const { map } = plan;
+  assert.equal(map.sampled, false);
+  assert.equal(map.width, 3);
+  assert.equal(map.height, 2);
+  assert.deepEqual([...map.pixels], [
+    0, 0, 0, 255,
+    1, 1, 1, 255,
+    128, 128, 128, 255,
+    254, 254, 254, 255,
+    255, 255, 255, 255,
+    64, 64, 64, 255,
+  ]);
+});
+
+test("alpha map takes one deterministic nearest pixel per cell above 512 px", () => {
+  const width = 1024;
+  const height = 512;
+  const pixels = makePixels(width, height, (x, y) => [9, 9, 9, (x * 7 + y * 13) % 256]);
+  const plan = alphaMapPlan(width, height);
+  assert.ok(plan);
+  const midpoint = width * height * 2;
+  writeAlphaMapBand(plan, pixels.subarray(0, midpoint), 0);
+  writeAlphaMapBand(plan, pixels.subarray(midpoint), height / 2);
+  const { map } = plan;
+  assert.equal(map.sampled, true);
+  assert.equal(map.width, 512);
+  assert.equal(map.height, 256);
+  for (const [mapX, mapY] of [
+    [0, 0],
+    [1, 0],
+    [256, 128],
+    [511, 255],
+  ]) {
+    const sourceX = Math.min(width - 1, Math.floor(((mapX + 0.5) * width) / map.width));
+    const sourceY = Math.min(height - 1, Math.floor(((mapY + 0.5) * height) / map.height));
+    const expected = (sourceX * 7 + sourceY * 13) % 256;
+    const offset = (mapY * map.width + mapX) * 4;
+    assert.equal(map.pixels[offset], expected);
+    assert.equal(map.pixels[offset + 1], expected);
+    assert.equal(map.pixels[offset + 2], expected);
+    assert.equal(map.pixels[offset + 3], 255);
+  }
+  assert.equal(alphaMapPlan(0, 2), null);
 });
 
 test("alpha bounds respect an explicit threshold", () => {
