@@ -88,6 +88,7 @@ import { PUBLIC_CACHE_SECONDS, publicOrigin, publicDiscoveryResponse } from "./l
 import { checkPublicImage } from "./lib/public-image-privacy.ts";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
 import { publicCatalogue } from "./lib/public-catalogue.ts";
+import { handleGallery, homeShowcase, shareShowcaseFilms } from "./lib/gallery-showcase.ts";
 import { parseRange, rangeHeaders, servePublished } from "./lib/public-media.ts";
 import { handlePublicPublication } from "./lib/public-publication.ts";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.ts";
@@ -266,49 +267,6 @@ function generationView(generation, extra = {}) {
     completedAt: generation.completed_at,
     ...extra,
   };
-}
-
-// These films were explicitly selected for the Portfolio showcase. The
-// showcase is independent of a film's inclusion in the general Gallery.
-async function shareShowcaseFilms(env) {
-  const slugs = [...new Set(String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",")
-    .map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)))].slice(0, 24);
-  if (!slugs.length) return [];
-  const films = await env.DB.prepare(`SELECT p.slug,p.title
-    FROM publications p JOIN assets a ON a.id=p.asset_id AND a.project_id=p.project_id
-    WHERE p.slug IN (${slugs.map(() => "?").join(",")}) AND p.revoked_at IS NULL
-      AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'`).bind(...slugs).all();
-  const bySlug = new Map(films.results.map((film) => [film.slug, film]));
-  return slugs.flatMap((slug) => bySlug.has(slug) ? [bySlug.get(slug)] : []);
-}
-
-// Only explicitly configured, still-published films are safe for the home gallery.
-async function homeShowcase(env, { listedOnly = false } = {}) {
-  const slugs = String(env.PUBLIC_SHOWCASE_SLUGS ?? "").split(",").map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_-]{1,80}$/.test(value)).slice(0, 8);
-  const rows = await Promise.all(slugs.map((value) => env.DB.prepare(`SELECT p.slug,p.title,p.description,poster.id AS poster_asset_id,a.mime,
-    d.publication_id AS poster_preview_id,d.width AS poster_preview_width,d.height AS poster_preview_height,
-    t.publication_id AS thumb_id,t.width AS thumb_width,t.height AS thumb_height
-    FROM publications p JOIN assets a ON a.id=p.asset_id
-    LEFT JOIN assets poster ON poster.id=p.poster_asset_id AND poster.project_id=p.project_id AND poster.kind='image' AND poster.deleted_at IS NULL
-    LEFT JOIN publication_derivatives d ON d.publication_id=p.id AND d.kind='poster' AND d.source_sha256=poster.sha256
-    LEFT JOIN publication_derivatives t ON t.publication_id=p.id AND t.kind='thumb'
-    WHERE p.slug=?1 AND p.revoked_at IS NULL AND p.hidden=0 AND a.deleted_at IS NULL AND a.kind='video'
-      ${listedOnly ? 'AND p.listed=1' : ''}`).bind(value).first()));
-  return rows.filter(Boolean).slice(0, 3).map((row) => ({
-    slug: row.slug,
-    title: row.title,
-    description: row.description,
-    mime: row.mime,
-    hasPoster: Boolean(row.poster_asset_id),
-    ...(row.thumb_id ? { thumb_id: row.thumb_id, thumb_width: row.thumb_width, thumb_height: row.thumb_height } : {}),
-    ...(row.poster_preview_id
-      ? {
-          poster_preview_id: row.poster_preview_id,
-          poster_preview_width: row.poster_preview_width,
-          poster_preview_height: row.poster_preview_height,
-        }
-      : {}),
-  }));
 }
 
 /** Every private route that names a project checks the same binding: the
@@ -2254,24 +2212,9 @@ async function handlePublic(request, env, url) {
   // cap, /sitemap.xml is a same-origin index of numbered child sitemaps.
   const discovery = await publicDiscoveryResponse(env, request.url, path);
   if (discovery) return discovery;
-  if (path === "/gallery") {
-    const rawPage = url.searchParams.get("page") ?? "1";
-    const page = /^[1-9][0-9]{0,4}$/.test(rawPage) ? Number(rawPage) : 1;
-    const query = (url.searchParams.get("q") ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
-    const requestedKind = url.searchParams.get("kind") ?? "";
-    const kind = ["image", "video", "audio"].includes(requestedKind) ? requestedKind : "";
-    const requestedProject = (url.searchParams.get("project") ?? "").slice(0, 80);
-    const project = /^[A-Za-z0-9_-]+$/.test(requestedProject) ? requestedProject : "";
-    const requestedCapability = url.searchParams.get("capability") ?? "";
-    const capability = ["original", "variation", "refinement", "assembled"].includes(requestedCapability) ? requestedCapability : "";
-    const order = url.searchParams.get("order") === "oldest" ? "oldest" : "newest";
-    const showFeatured = page === 1 && order === "newest" && !query && !kind && !project && !capability;
-    const [catalogue, featured] = await Promise.all([
-      publicCatalogue(env, page, 24, { query, kind, order, project, capability }),
-      showFeatured ? homeShowcase(env, { listedOnly: true }) : [],
-    ]);
-    return new Response(publicGallery({ ...catalogue, featured, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
-  }
+  // The pure filter parsing, catalogue/featured reads and public response for
+  // /gallery live in gallery-showcase.ts under strict TypeScript.
+  if (path === "/gallery") return handleGallery(env, url.searchParams);
   if (path === "/help") {
     return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" },
