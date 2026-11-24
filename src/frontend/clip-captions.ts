@@ -131,31 +131,28 @@ function srtStamp(ms: number) {
 
 // Keep ampersands literal (SRT readers such as FFmpeg show entities verbatim)
 // but neutralise angle brackets so plain text is not mistaken for markup.
-const srtLine = (cue: ImportedCue) => cue.text.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const srtLine = (text: string) => text.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-function serializeSrt(cues: readonly ImportedCue[]) {
+// The speaker-name-as-text variant keeps the same timeline and folds the name
+// into the cue line. An unnamed cue keeps its exact prior text.
+const srtCueText = (cue: ImportedCue, speakerText: boolean) =>
+  speakerText && cue.speaker ? `${cue.speaker}: ${cue.text}` : cue.text;
+
+function serializeSrt(cues: readonly ImportedCue[], speakerText = false) {
   return cues
-    .map((cue, index) => `${index + 1}\n${srtStamp(cue.startMs)} --> ${srtStamp(cue.endMs)}\n${srtLine(cue)}\n`)
+    .map((cue, index) => `${index + 1}\n${srtStamp(cue.startMs)} --> ${srtStamp(cue.endMs)}\n${srtLine(srtCueText(cue, speakerText))}\n`)
     .join("\n");
 }
 
-/**
- * Derive an optional SRT sidecar from the exact trimmed WebVTT the receipt has
- * already prepared. No second parser is introduced: the same bounded importer
- * used for caption upload re-reads that VTT at zero offset. The download is
- * exposed only when that parser yields exact relative millisecond times and
- * plain text, and agrees with an SRT round-trip. Any parser failure or text
- * mismatch hides the download rather than falling back to divergent logic.
- * SRT has no voice annotation, so a named cue also withholds the download
- * instead of silently dropping its speaker.
- */
-export function srtForClipVtt(vtt: string | null, durationMs: number): string | null {
-  if (!vtt || !Number.isSafeInteger(durationMs) || durationMs <= 0) return null;
-  let cues: ImportedCue[], srt: string, check: ImportedCue[];
+// Re-read the exact candidate through the same bounded importer and compare
+// relative times and the text the cue is meant to carry. A folded speaker name
+// can make a line too long for the 300-character cue bound or push the sidecar
+// over 64 KiB as multibyte text; either failure withholds this SRT only.
+function srtFromCues(cues: readonly ImportedCue[], durationMs: number, speakerText: boolean): string | null {
+  const srt = serializeSrt(cues, speakerText);
+  if (speakerText && new TextEncoder().encode(srt).byteLength > MAX_CAPTION_BYTES) return null;
+  let check: ImportedCue[];
   try {
-    cues = parseCaptionFile(vtt, 0, durationMs, { voices: true });
-    if (!cues.length || cues.some(cue => cue.speaker)) return null;
-    srt = serializeSrt(cues);
     check = parseCaptionFile(srt, 0, durationMs);
   } catch {
     return null;
@@ -163,7 +160,61 @@ export function srtForClipVtt(vtt: string | null, durationMs: number): string | 
   if (check.length !== cues.length) return null;
   for (let i = 0; i < cues.length; i++) {
     const source = cues[i]!, roundTrip = check[i]!;
-    if (source.startMs !== roundTrip.startMs || source.endMs !== roundTrip.endMs || source.text !== roundTrip.text || source.speaker !== roundTrip.speaker) return null;
+    if (source.startMs !== roundTrip.startMs || source.endMs !== roundTrip.endMs
+      || srtCueText(source, speakerText) !== roundTrip.text || roundTrip.speaker !== "") return null;
   }
   return srt;
+}
+
+export type ClipCaptionSrtVariants = Readonly<{
+  // The unnamed-only SRT every earlier caller has always received.
+  plain: string | null;
+  // A speaker-name-as-text SRT, only when the VTT actually names a cue.
+  speakerText: string | null;
+  // True when the parsed VTT names at least one cue, even if the speaker-text
+  // SRT cannot be represented (for example a combined line over 300 characters).
+  named: boolean;
+}>;
+
+/**
+ * Parse one canonical VTT once and derive both optional SRT sidecars. The same
+ * bounded importer used for caption upload re-reads that VTT at zero offset;
+ * both candidates then go back through it. A download is exposed only when the
+ * parser yields exact relative millisecond times and the expected plain text.
+ * The plain candidate withholds every named cue, preserving the earlier
+ * stricter meaning, while the speaker-text candidate folds each name into the
+ * cue line. Any parser failure or text mismatch hides that candidate rather
+ * than falling back to divergent logic.
+ */
+export function clipCaptionSrtVariants(vtt: string | null, durationMs: number): ClipCaptionSrtVariants | null {
+  if (!vtt || !Number.isSafeInteger(durationMs) || durationMs <= 0) return null;
+  let cues: ImportedCue[];
+  try {
+    cues = parseCaptionFile(vtt, 0, durationMs, { voices: true });
+  } catch {
+    return null;
+  }
+  if (!cues.length) return null;
+  const named = cues.some(cue => cue.speaker);
+  return {
+    named,
+    plain: named ? null : srtFromCues(cues, durationMs, false),
+    speakerText: named ? srtFromCues(cues, durationMs, true) : null,
+  };
+}
+
+export type ClipSrtOptions = Readonly<{ speakerText?: boolean }>;
+
+/**
+ * Derive an optional SRT sidecar from the exact trimmed WebVTT the receipt has
+ * already prepared. The default is unchanged: SRT has no voice annotation, so a
+ * named cue withholds the download instead of silently dropping its speaker.
+ * Callers that deliberately want names as text can pass speakerText, which
+ * returns the same plain export when no cue is named.
+ */
+export function srtForClipVtt(vtt: string | null, durationMs: number, options: ClipSrtOptions = {}): string | null {
+  const variants = clipCaptionSrtVariants(vtt, durationMs);
+  if (!variants) return null;
+  if (options.speakerText === true) return variants.speakerText ?? variants.plain;
+  return variants.plain;
 }

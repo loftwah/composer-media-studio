@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { captionReceiptFields, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { captionReceiptFields, clipCaptionCues, clipCaptionSrtVariants, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
 import { filterCuesByText } from '../src/frontend/clip-cue-search.ts';
 
 test('imported caption cues are trimmed, rebased and escaped as plain WebVTT', () => {
@@ -208,4 +208,63 @@ test('SRT is withheld for named cues instead of silently dropping the speaker', 
   // The prior unnamed SRT stays byte-identical.
   const unnamedVtt = serializeClipCaptions([{ ...named, speaker: '' }], 0, 1);
   assert.equal(srtForClipVtt(unnamedVtt, 1000), '1\n00:00:00,000 --> 00:00:01,000\nHi\n');
+});
+test('the speaker-name-as-text SRT folds named cues, keeps unnamed bytes and exact times', () => {
+  const cues = [
+    { startMs: 0, endMs: 1000, text: 'Hello & <there>', speaker: 'Dean & <Jane>' },
+    { startMs: 1200, endMs: 2500, text: 'Unnamed & <plain>', speaker: '' },
+  ];
+  const vtt = serializeClipCaptions(cues, 0, 3, 0, 'default', { voices: true });
+  const variants = clipCaptionSrtVariants(vtt, 3000);
+  assert.equal(variants.named, true);
+  assert.equal(variants.plain, null);
+  assert.equal(variants.speakerText, '1\n00:00:00,000 --> 00:00:01,000\nDean & &lt;Jane&gt;: Hello & &lt;there&gt;\n\n2\n00:00:01,200 --> 00:00:02,500\nUnnamed & &lt;plain&gt;\n');
+  // The combined line and relative times survive the same bounded parser.
+  assert.deepEqual(parseCaptionFile(variants.speakerText, 0, 3000), [
+    { startMs: 0, endMs: 1000, text: 'Dean & <Jane>: Hello & <there>', speaker: '' },
+    { startMs: 1200, endMs: 2500, text: 'Unnamed & <plain>', speaker: '' },
+  ]);
+  // The legacy strict default is unchanged; the opt-in reuses the same parse.
+  assert.equal(srtForClipVtt(vtt, 3000), null);
+  assert.equal(srtForClipVtt(vtt, 3000, { speakerText: true }), variants.speakerText);
+});
+test('an unnamed export keeps its exact plain SRT and offers no speaker variant', () => {
+  const vtt = serializeClipCaptions([{ startMs: 0, endMs: 1000, text: 'A & <B>', speaker: '' }], 0, 1);
+  const variants = clipCaptionSrtVariants(vtt, 1000);
+  assert.equal(variants.named, false);
+  assert.equal(variants.plain, '1\n00:00:00,000 --> 00:00:01,000\nA & &lt;B&gt;\n');
+  assert.equal(variants.speakerText, null);
+  assert.equal(srtForClipVtt(vtt, 1000), variants.plain);
+  assert.equal(srtForClipVtt(vtt, 1000, { speakerText: true }), variants.plain);
+});
+test('a trim that excludes every named cue keeps the unchanged plain SRT', () => {
+  const cues = [
+    { startMs: 0, endMs: 1000, text: 'Named outside', speaker: 'Dean' },
+    { startMs: 2000, endMs: 3000, text: 'Unnamed inside', speaker: '' },
+  ];
+  const vtt = serializeClipCaptions(cues, 2, 3, 0, 'default', { voices: true });
+  const variants = clipCaptionSrtVariants(vtt, 1000);
+  assert.equal(variants.named, false);
+  assert.equal(variants.plain, '1\n00:00:00,000 --> 00:00:01,000\nUnnamed inside\n');
+  assert.equal(variants.speakerText, null);
+});
+test('a speaker prefix that pushes a cue line over the text bound keeps WebVTT only', () => {
+  const vtt = serializeClipCaptions([{ startMs: 0, endMs: 1000, text: 'x'.repeat(300), speaker: 'Dean' }], 0, 1, 0, 'default', { voices: true });
+  const variants = clipCaptionSrtVariants(vtt, 1000);
+  assert.equal(variants.named, true);
+  assert.equal(variants.plain, null);
+  assert.equal(variants.speakerText, null);
+  assert.equal(srtForClipVtt(vtt, 1000, { speakerText: true }), null);
+});
+test('a multibyte speaker-text SRT over 64 KiB is withheld even when every line is short', () => {
+  const cues = Array.from({ length: 100 }, (_, index) => ({
+    startMs: index * 1000,
+    endMs: index * 1000 + 900,
+    text: '漢'.repeat(296),
+    speaker: 'S',
+  }));
+  const vtt = serializeClipCaptions(cues, 0, 100, 0, 'default', { voices: true });
+  const variants = clipCaptionSrtVariants(vtt, 100_000);
+  assert.equal(variants.named, true);
+  assert.equal(variants.speakerText, null);
 });
