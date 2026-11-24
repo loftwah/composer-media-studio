@@ -48,6 +48,9 @@ type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
 type CaptionDraft = Readonly<{ name: string; sourceSha256: string; cues: ImportedCue[]; local: boolean }>;
 type CueAudition = Readonly<{ video: HTMLVideoElement; sourceIndex: number; startMs: number; endMs: number }>;
+// Display-only cue look for the original-video preview. It never reaches the
+// VTT, track, downloads, receipt or export.
+type CaptionPreviewContrast = "default" | "contrast";
 
 async function editedCaptionDraft(previous: CaptionDraft | null, cues: ImportedCue[]): Promise<CaptionDraft> {
   const source = manualCaptionTrackVtt(cues);
@@ -174,6 +177,7 @@ function VideoClip() {
   // Display-only preview option. It changes cue settings on the native track
   // over the original video, never the draft, sidecars, receipt or export.
   const [sourceCaptionPlacement, setSourceCaptionPlacement] = useState<CaptionPreviewPlacement>("default");
+  const [sourceCaptionContrast, setSourceCaptionContrast] = useState<CaptionPreviewContrast>("default");
   const [sourceCaptionTrack, setSourceCaptionTrack] = useState<{ vtt: string; url: string } | null>(null);
   const [sourceTrackProblem, setSourceTrackProblem] = useState("");
   // A cue audition is a short, explicitly started play of the existing source
@@ -1238,7 +1242,7 @@ function VideoClip() {
       </div>
       <p role="status" className="trim-note">{receiptMessage}</p>
       <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
-      <video ref={sourceVideo} className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}
+      <video ref={sourceVideo} className="video-tool-player" data-caption-contrast={sourceCaptionContrast} src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}
         onPause={event => pauseSourceVideo(event.currentTarget)} onSeeking={event => checkSourceSeek(event.currentTarget)}
         onEnded={event => endSourceVideo(event.currentTarget)} onError={event => failSourceVideo(event.currentTarget)}>
         {sourceCaptionUrl && <track ref={sourceCaptions} kind="captions" label="Draft captions · original video" src={sourceCaptionUrl}/>}
@@ -1556,8 +1560,16 @@ function VideoClip() {
               <option value="default">Default</option>
               <option value="top">Top</option>
             </select></label>
+            <label>Preview caption contrast<select
+              aria-describedby="source-caption-note"
+              value={sourceCaptionContrast}
+              disabled={busy || checking || importing || receiptLoading || captionFileLoading}
+              onChange={event => setSourceCaptionContrast(event.currentTarget.value === "contrast" ? "contrast" : "default")}>
+              <option value="default">Default</option>
+              <option value="contrast">High contrast</option>
+            </select></label>
           </div>}
-          <p id="source-caption-note" className="trim-note">The preview uses the full video and the timing offset above. Choose Top to clear the lower part of the preview. The cue count applies to the trimmed MP4.</p>
+          <p id="source-caption-note" className="trim-note">The preview uses the full video and the timing offset above. Choose Top to clear the lower part of the preview, or High contrast for pale yellow captions on near-black. The cue count applies to the trimmed MP4.</p>
           {sourcePreviewNote && <p className="trim-note" role="status">{sourcePreviewNote}</p>}
         </div>}
         <div>
