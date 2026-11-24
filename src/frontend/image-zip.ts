@@ -67,7 +67,7 @@ function toBytes(value: unknown): Uint8Array {
   throw new TypeError("ZIP entries must be bytes or text");
 }
 
-function truncateUtf8(text: string, maxBytes: number): string {
+export function truncateUtf8(text: string, maxBytes: number): string {
   if (new TextEncoder().encode(text).length <= maxBytes) return text;
   let out = "";
   for (const character of text) {
