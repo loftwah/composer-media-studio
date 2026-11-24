@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from '../src/frontend/clip-cue-search.ts';
+import { sourceCaptionCues } from '../src/frontend/clip-captions.ts';
 
 const reviewed = (sourceIndex, text) => ({ from: sourceIndex * 1000, to: sourceIndex * 1000 + 900, sourceStartMs: sourceIndex * 1000, text, sourceIndex });
 const cue = (startMs, endMs, text, speaker = '') => ({ startMs, endMs, text, speaker });
@@ -80,4 +81,26 @@ test('gapped, mismatched-speaker and non-consecutive draft cues never offer a me
   assert.equal(cueMergeVisibility(full, full[0], full, draft).mergeWith, null); // speaker mismatch
   assert.equal(cueMergeVisibility(full, full[1], full, draft).mergeWith, null); // gap in draft time
   assert.equal(cueMergeVisibility(full, full[0], [full[0], full[2]], draft).hiddenMergeWith, null);
+});
+
+test('All source cues merges a genuinely adjacent cue outside the trim but never skips a hidden one', () => {
+  const draft = [
+    { ...cue(0, 1000, 'Intro line'), speaker: 'Ann' },
+    { ...cue(1000, 2000, 'Outside trim'), speaker: 'Ann' },
+    { ...cue(2500, 3000, 'Gap cue'), speaker: 'Ann' },
+  ];
+  const full = sourceCaptionCues(draft);
+  // The source view lists every original cue, so cue 0's genuine neighbour is
+  // cue 1 even when the current trim shows only one of them.
+  assert.deepEqual(cueMergeVisibility(full, full[0], full, draft), {
+    next: full[1], mergeWith: full[1], hiddenMergeWith: null,
+  });
+  // A query hiding that neighbour offers the clear-search recovery instead of
+  // merging across an intermediate cue.
+  const shown = filterCuesByText(full, 'intro');
+  assert.deepEqual(cueMergeVisibility(full, full[0], shown, draft), {
+    next: full[1], mergeWith: null, hiddenMergeWith: full[1],
+  });
+  // An original time gap is never offered, even with both rows visible.
+  assert.equal(cueMergeVisibility(full, full[1], full, draft).mergeWith, null);
 });
