@@ -12,6 +12,7 @@ import {
   MANIFEST_VERSION,
   NOTE_MAX_LENGTH,
   TITLE_MAX_LENGTH,
+  buildPreparedReviewNotes,
   buildTitlePairManifest,
   bundleFileName,
   coverCropRect,
@@ -27,6 +28,7 @@ import {
   pairIsEmpty,
   preferredPairForExport,
   preparedPairsBundleFileName,
+  PREPARED_REVIEW_NOTES_FILE_NAME,
   safeTitleStem,
 } from "../src/frontend/image-title-compare-plan.ts";
 import { createZip } from "../src/frontend/image-zip.ts";
@@ -732,6 +734,118 @@ test("a preferred pair is included only when the exact export contains it", () =
   assert.equal(preferredPairForExport("b", ["a", "b"]), "b");
   assert.equal(preferredPairForExport("c", ["a", "b"]), undefined);
   assert.equal(preferredPairForExport(null, ["a", "b"]), undefined);
+});
+
+test("review notes preserve the exact finalized pair text and crop/size facts", () => {
+  const base = noteManifestInput();
+  const manifests = [
+    buildTitlePairManifest({
+      ...base,
+      pairId: "a",
+      title: "  Exact title — 雪  ",
+      alt: "  Red tram crossing the wet street  ",
+      hypothesis: "  Expect the quiet title to hold  ",
+      preferredPairId: "b",
+    }),
+    buildTitlePairManifest({ ...base, pairId: "b", preferredPairId: "b" }),
+  ];
+  const decisionLine = "_".repeat(60);
+  assert.equal(
+    buildPreparedReviewNotes(manifests),
+    `Title + thumbnail compare — review notes
+Current preference: Pair B
+
+Pair A
+Title: ${"  Exact title — 雪  "}
+Crop / size: cover · Centre · source 640 × 360 px · crop 640 × 360 px · card 640 × 360 px
+Thumbnail alt text: Red tram crossing the wet street
+Creator hypothesis: Expect the quiet title to hold
+Decision:
+${decisionLine}
+${decisionLine}
+
+Pair B
+Title: Quiet margin
+Crop / size: cover · Centre · source 640 × 360 px · crop 640 × 360 px · card 640 × 360 px
+Decision:
+${decisionLine}
+${decisionLine}
+`,
+  );
+});
+
+test("review notes are deterministic and omit timestamps, digests and file paths", () => {
+  const base = noteManifestInput();
+  const manifests = [
+    buildTitlePairManifest({ ...base, pairId: "a", title: "First", preferredPairId: "a" }),
+    buildTitlePairManifest({ ...base, pairId: "b", title: "Second", preferredPairId: "a" }),
+  ];
+  const text = buildPreparedReviewNotes(manifests);
+  const changedMetadata = manifests.map((manifest) => ({
+    ...manifest,
+    generatedAt: "2099-01-01T00:00:00.000Z",
+    source: { ...manifest.source, fileName: "private/secret.png", mime: "image/webp", bytes: 1 },
+    render: {
+      ...manifest.render,
+      png: { fileName: "secret.png", bytes: 1, sha256: "f".repeat(64) },
+    },
+  }));
+  assert.equal(buildPreparedReviewNotes(changedMetadata), text);
+  assert.equal(buildPreparedReviewNotes(manifests), text);
+  for (const omitted of ["still.png", "private/secret.png", "secret.png", "2099-", "SHA-256", "<html", "score", "uplift", "views"]) {
+    assert.ok(!text.includes(omitted), `review notes must not add "${omitted}"`);
+  }
+  assert.equal(PREPARED_REVIEW_NOTES_FILE_NAME, "prepared-pairs-review-notes.txt");
+  assert.doesNotMatch(PREPARED_REVIEW_NOTES_FILE_NAME, /[/\\]/);
+});
+
+test("review notes omit blank optional text and never guess a preference or decision", () => {
+  const base = noteManifestInput();
+  const manifest = buildTitlePairManifest({
+    ...base,
+    pairId: "a",
+    alt: "   ",
+    hypothesis: "\n\t",
+    preferredPairId: "c",
+  });
+  const text = buildPreparedReviewNotes([manifest]);
+  assert.match(text, /Current preference: none marked/);
+  assert.doesNotMatch(text, /Thumbnail alt text:|Creator hypothesis:|Pair C|Decision: (?:approved|rejected|winner)/);
+  assert.match(text, /Decision:\n_{60}\n_{60}\n$/);
+  assert.equal(buildPreparedReviewNotes([]), "Title + thumbnail compare — review notes\n");
+});
+
+test("one plain-text review download sits beside the exact prepared ZIP without another encoder", () => {
+  const start = section.indexOf("async function exportPreparedPairs");
+  const end = section.indexOf("async function copySelectedTitle", start);
+  assert.ok(start >= 0 && end > start);
+  const preparedExport = section.slice(start, end);
+  assert.match(preparedExport, /const captured = readyPairs\(\);/);
+  assert.match(preparedExport, /const manifests: TitlePairManifest\[\] = \[\];/);
+  assert.match(preparedExport, /manifests\.push\(manifest\);/);
+  assert.match(preparedExport, /const notesText = buildPreparedReviewNotes\(manifests\);/);
+  assert.match(preparedExport, /const notesBlob = new Blob\(\[notesText\], \{ type: "text\/plain;charset=utf-8" \}\);/);
+  assert.match(
+    preparedExport,
+    /kind: "notes",\s*url: trackUrl\(notesBlob\),\s*name: PREPARED_REVIEW_NOTES_FILE_NAME,/,
+  );
+  assert.equal(preparedExport.match(/kind: "notes"/g)?.length, 1);
+  assert.equal(preparedExport.match(/await encodeCropPng\(image, size, forAnchor\)/g)?.length, 1);
+  assert.doesNotMatch(
+    preparedExport,
+    /exportsRef\.current|entry\.manifestText|fetch\(|XMLHttpRequest|localStorage|sessionStorage|indexedDB/,
+  );
+  const notesBuild = preparedExport.slice(
+    preparedExport.indexOf("const notesText = buildPreparedReviewNotes"),
+    preparedExport.indexOf("replaceExports([", preparedExport.indexOf("const notesText = buildPreparedReviewNotes")),
+  );
+  assert.doesNotMatch(notesBuild, /encodeCropPng|sha256Hex|createZip|new Date|fetch\(|canvas|toBlob/);
+  assert.match(section, /Download review notes \(\.txt\)/);
+  assert.match(section, /Download review notes \(\.txt\) for prepared pairs \$\{entry\.pairLabel\}/);
+  assert.match(section, /plain text for independent review/);
+  // Both links use the same tracked object-URL replacement and unmount cleanup.
+  assert.match(section, /for \(const entry of previous\) releaseUrl\(entry\.url\);/);
+  assert.match(section, /for \(const url of held\) URL\.revokeObjectURL\(url\);/);
 });
 
 test("the workbench offers its exact finished result to the packaging compare", () => {
