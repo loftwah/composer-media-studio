@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { serializeClipCaptions, sourcePreviewVtt } from '../src/frontend/clip-captions.ts';
-import { fullSourceCaptionDownload } from '../src/frontend/clip-full-source-captions.ts';
+import { serializeClipCaptions, sourcePreviewVtt, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { fullSourceCaptionDownload, fullSourceCaptionSrt } from '../src/frontend/clip-full-source-captions.ts';
 import { manualCaptionTrackVtt } from '../src/frontend/clip-manual-cue.ts';
 import { MAX_PUBLIC_VIDEO_SOURCE_SECONDS } from '../src/frontend/video-clip-source.ts';
 
@@ -39,6 +39,30 @@ test('the full-source VTT re-imports through the same Choose captions bounds wit
   const full = fullSourceCaptionDownload(cues);
   assert.ok('vtt' in full);
   assert.deepEqual(parseCaptionFile(full.vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000), cues);
+});
+
+test('the full-source SRT keeps every original-time cue, including ones outside the trim', () => {
+  const cues = [
+    cue(500, 1800, 'Before & <early>'),
+    cue(2500, 4200, 'Inside'),
+    cue(6100, 7800, 'After'),
+  ];
+  const full = fullSourceCaptionDownload(cues);
+  assert.ok('vtt' in full);
+  const srt = fullSourceCaptionSrt(full.vtt);
+  assert.equal(srt, '1\n00:00:00,500 --> 00:00:01,800\nBefore & &lt;early&gt;\n\n2\n00:00:02,500 --> 00:00:04,200\nInside\n\n3\n00:00:06,100 --> 00:00:07,800\nAfter\n');
+  assert.deepEqual(parseCaptionFile(srt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000), cues);
+  // It is the full-source timeline, not the trimmed SRT the receipt exposes.
+  assert.notEqual(srt, srtForClipVtt(serializeClipCaptions(cues, 3, 5), 2000));
+});
+
+test('an SRT that cannot round-trip is withheld while the full-source VTT stays valid', () => {
+  const cues = [cue(0, 1000, 'Search &lt; here')];
+  const full = fullSourceCaptionDownload(cues);
+  assert.ok('vtt' in full);
+  assert.deepEqual(parseCaptionFile(full.vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000), cues);
+  assert.equal(fullSourceCaptionSrt(full.vtt), null);
+  assert.equal(fullSourceCaptionSrt(null), null);
 });
 
 test('a canonical draft over 64 KB returns an accurate message instead of a download', () => {
