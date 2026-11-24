@@ -207,7 +207,8 @@ export function exportFileName(title: string, fallbackName: string, size: FeedSi
 /** The manifest this slice exports, so a chosen pair can be handed on with the
  * exact facts this tab actually knows: the title text, the source thumbnail's
  * own facts, the crop plan and the identity of the PNG the same run encoded.
- * Version bumps when the field set changes; nothing else here claims a work,
+ * Version bumps when a required field or its meaning changes; optional additive
+ * V1 metadata may appear without changing it. Nothing else here claims a work,
  * rights or performance value this tab cannot know. */
 export const MANIFEST_SCHEMA = "studio.title-thumbnail-pair-manifest";
 export const MANIFEST_VERSION = 1;
@@ -218,6 +219,9 @@ export type ManifestSourceFacts = {
   bytes: number;
   width: number;
   height: number;
+  /** Additive V1 metadata: lowercase SHA-256 of the exact selected source File,
+   * present only when explicit manifest/package preparation hashed it. */
+  sha256?: string;
 };
 
 export type ManifestPngFacts = {
