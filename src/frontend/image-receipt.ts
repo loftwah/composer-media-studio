@@ -4,6 +4,8 @@
 // nothing is saved or uploaded. Keep it dependency-free so it can be tested
 // outside the browser (see image-receipt.test.mjs for the exact shape).
 
+import { normaliseSharpen } from "./image-sharpen.ts";
+
 export const IMAGE_RECEIPT_SCHEMA = "media-studio/image-receipt";
 export const IMAGE_RECEIPT_VERSION = 1;
 
@@ -14,7 +16,7 @@ const SETTINGS = [
   "adjust", "format", "quality", "targetKiB", "matte",
 ] as const;
 
-type ReceiptSettings = Record<(typeof SETTINGS)[number], unknown>;
+type ReceiptSettings = Record<(typeof SETTINGS)[number], unknown> & { sharpen?: unknown };
 
 export type ImageReceiptInput = {
   sourceHash: string;
@@ -56,6 +58,10 @@ export function buildImageReceipt({ sourceHash, result }: ImageReceiptInput): Im
     }
     if (legacyAdjust !== adjust) settings.adjust = legacyAdjust;
   }
+  // Sharpen is opt-in. Omitting a missing or neutral value keeps every older
+  // v1 receipt byte-for-byte stable; an applied pass records its real strength.
+  const sharpen = normaliseSharpen(result.settings.sharpen);
+  if (sharpen && sharpen.amount > 0) settings.sharpen = sharpen;
   return {
     schema: IMAGE_RECEIPT_SCHEMA,
     version: IMAGE_RECEIPT_VERSION,

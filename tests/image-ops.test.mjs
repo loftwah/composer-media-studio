@@ -246,6 +246,19 @@ test("nearest-neighbour resampling is an explicit, captioned choice", () => {
   );
 });
 
+test("sharpen is opt-in in the transform caption and names its real strength", () => {
+  assert.equal(
+    describeTransform({
+      resample: "nearest",
+      sharpen: { radius: 1, amount: 0.5 },
+      format: "png",
+    }),
+    "nearest-neighbour, sharpen edges 50% (1px), PNG, re-encoded",
+  );
+  assert.doesNotMatch(describeTransform({ sharpen: { radius: 1, amount: 0 }, format: "png" }), /sharpen/);
+  assert.doesNotMatch(describeTransform({ sharpen: { radius: 2, amount: 0.5 }, format: "png" }), /sharpen/);
+});
+
 test("a byte target is refused honestly for PNG and invalid sizes", async () => {
   assert.match(targetSizeProblem("png", 50_000), /PNG is lossless/);
   assert.equal(targetSizeProblem("png", null), null);

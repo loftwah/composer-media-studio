@@ -67,6 +67,12 @@ test("only a published PNG, JPEG or WebP still gets the explicit editor handoff"
 test("the workbench exposes labelled colour and output controls", () => {
   assert.match(workbench, /<label>Resampling/);
   assert.match(workbench, /Nearest-neighbour · pixel art/);
+  assert.match(workbench, /<label>\s*Sharpen edges/);
+  assert.match(workbench, /max=\{SHARPEN_AMOUNT_MAX\}/);
+  assert.match(workbench, /step=\{SHARPEN_AMOUNT_STEP\}/);
+  assert.match(workbench, /id="image-sharpen-note"/);
+  assert.match(workbench, /only when you make the image/);
+  assert.match(workbench, /Strengthens edge contrast after resampling/);
   assert.match(workbench, /<label>Target size \(KiB, optional\)/);
   assert.match(workbench, /aria-describedby="image-target-note"/);
   assert.match(workbench, /id="image-target-note"/);
@@ -91,6 +97,9 @@ test("the export path wires trim, target search and nearest-neighbour smoothing"
   assert.match(workbench, /mapBoundsThroughTransform\(found\.bounds/);
   assert.match(workbench, /const smoothing = imageSmoothingFor\(settings\.resample\)/);
   assert.match(workbench, /context\.imageSmoothingEnabled = smoothing\.enabled/);
+  assert.match(workbench, /sharpenPixels\(pixels\.data/);
+  assert.match(workbench, /sharpen: selected\.result\.settings\.sharpen/);
+  assert.match(workbench, /Sharpen edges changed \{selected\.result\.sharpenChanged\.toLocaleString\(\)\}/);
   assert.match(workbench, /searchTargetQuality\(\{/);
   assert.match(workbench, /const cropRect =[\s\S]*trimSnapshot\.itemId === item\.id/);
   assert.match(workbench, /describeTransform\(\{[\s\S]*resample: selected\.result\.settings\.resample/);
