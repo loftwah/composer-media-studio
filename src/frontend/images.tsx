@@ -72,6 +72,7 @@ import {
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
+  rgbaToHex,
   type AlphaMap,
   type AlphaProfileResult,
   type AlphaReport,
@@ -279,7 +280,13 @@ type PaletteState = {
   workingHeight: number;
 };
 
-type PickedColour = { x: number; y: number; hex: string; rgb: Rgb; alpha: number };
+type PickedColour = { resultUrl: string; x: number; y: number; hex: string; rgb: Rgb; alpha: number };
+
+type PickedCopyState = {
+  key: string;
+  message: string;
+  fallback: { value: string; trigger: HTMLButtonElement } | null;
+};
 
 type SnippetState = {
   key: string;
@@ -1164,6 +1171,7 @@ function Images() {
   const [readingPaletteId, setReadingPaletteId] = useState("");
   const [paletteMessage, setPaletteMessage] = useState<{ itemId: string; text: string } | null>(null);
   const [picked, setPicked] = useState<PickedColour | null>(null);
+  const [pickedCopy, setPickedCopy] = useState<PickedCopyState | null>(null);
   const [pickMessage, setPickMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [paletteCopyFallback, setPaletteCopyFallback] = useState<{
@@ -1221,6 +1229,9 @@ function Images() {
   const latestSnippetCopy = useRef(0);
   const snippetField = useRef<HTMLTextAreaElement>(null);
   const latestPaletteCopy = useRef(0);
+  const latestPickedCopy = useRef(0);
+  const currentPickedKey = useRef("");
+  const pickedCopyField = useRef<HTMLInputElement>(null);
   const paletteCopyField = useRef<HTMLInputElement>(null);
   const paletteCopyTextareaField = useRef<HTMLTextAreaElement>(null);
   const outputHashFallbackField = useRef<HTMLInputElement>(null);
@@ -1336,12 +1347,24 @@ function Images() {
   );
   const outputHash = selected?.result?.sha256;
   // Copy status belongs to one exact finished result, so selecting another row
-  // or regenerating never shows an earlier result's message.
+  // or regenerating never shows an earlier result's message. The picked sample
+  // and its in-flight copy use the same result boundary.
   const outputResultKey = selected?.result?.url ?? "";
   useLayoutEffect(() => {
     currentOutputKey.current = outputResultKey;
     latestOutputCopy.current += 1;
+    latestPickedCopy.current += 1;
+    currentPickedKey.current = "";
+    setPickedCopy(null);
   }, [outputResultKey]);
+  const visiblePicked = picked?.resultUrl === outputResultKey ? picked : null;
+  const visiblePickedKey = visiblePicked
+    ? `${visiblePicked.resultUrl}:${visiblePicked.x}:${visiblePicked.y}`
+    : "";
+  const visiblePickedRgbaHex = visiblePicked
+    ? rgbaToHex(visiblePicked.rgb, visiblePicked.alpha)
+    : "";
+  const visiblePickedCopy = pickedCopy?.key === visiblePickedKey ? pickedCopy : null;
   // Copy feedback belongs to one exact sheet blob. Replacing the sheet or
   // clearing the batch retires any in-flight message for the earlier PNG.
   const sheetKey = contactSheet?.url ?? "";
@@ -1707,6 +1730,9 @@ function Images() {
   }, []);
 
   useEffect(() => {
+    if (pickedCopy?.fallback?.trigger === document.activeElement) {
+      pickedCopyField.current?.focus();
+    }
     if (paletteCopyFallback?.trigger === document.activeElement) {
       const field = paletteCopyFallback.value.includes("\n")
         ? paletteCopyTextareaField.current
@@ -1719,7 +1745,7 @@ function Images() {
     if (sheetJsonFallback?.trigger === document.activeElement) {
       sheetJsonFallbackField.current?.focus();
     }
-  }, [paletteCopyFallback, outputHashFallback, sheetJsonFallback]);
+  }, [pickedCopy, paletteCopyFallback, outputHashFallback, sheetJsonFallback]);
 
   useEffect(() => () => publicImageRequest.current?.abort(), []);
 
@@ -3057,6 +3083,31 @@ function Images() {
     setPaletteCopyFallback({ label, value, trigger: button });
   }
 
+  async function copyPickedRgba(
+    button: HTMLButtonElement,
+    sample: PickedColour,
+    value: string,
+  ): Promise<void> {
+    const key = `${sample.resultUrl}:${sample.x}:${sample.y}`;
+    const attempt = ++latestPickedCopy.current;
+    const stillCurrent = () =>
+      attempt === latestPickedCopy.current &&
+      key === currentPickedKey.current &&
+      sample.resultUrl === currentOutputKey.current;
+    if (!stillCurrent()) return;
+    const deniedMessage =
+      "Could not copy automatically. The exact CSS RGBA HEX value is in the field below — select it and copy it.";
+    const copied = await copyValue("CSS RGBA HEX", value, { report: () => undefined });
+    if (!stillCurrent()) return;
+    setPickedCopy({
+      key,
+      message: copied
+        ? `Copied CSS RGBA HEX: ${value}`
+        : deniedMessage,
+      fallback: copied ? null : { value, trigger: button },
+    });
+  }
+
   // Both controls report in one place. An older write cannot replace the
   // latest feedback, and a new rendered blob has its own object URL.
   function copyAttemptFor(key: string) {
@@ -3403,7 +3454,12 @@ function Images() {
       const data = context.getImageData(0, 0, 1, 1).data;
       const rgb = { r: data[0], g: data[1], b: data[2] };
       const hex = rgbToHex(rgb);
-      setPicked({ x, y, hex, rgb, alpha: data[3] });
+      const resultUrl = image.currentSrc || image.src;
+      const key = `${resultUrl}:${x}:${y}`;
+      latestPickedCopy.current += 1;
+      currentPickedKey.current = key;
+      setPicked({ resultUrl, x, y, hex, rgb, alpha: data[3] });
+      setPickedCopy(null);
       setPickMessage(`Pixel ${x}, ${y}: ${hex}.`);
     } catch {
       setPickMessage("Could not read that pixel. The preview may still be loading.");
@@ -4842,7 +4898,7 @@ function Images() {
                           setPickMessage("The result preview is not ready yet.");
                           return;
                         }
-                        const start = picked ?? {
+                        const start = visiblePicked ?? {
                           x: Math.floor(image.naturalWidth / 2),
                           y: Math.floor(image.naturalHeight / 2),
                         };
@@ -4864,13 +4920,13 @@ function Images() {
                         samplePixel(x, y);
                       }}
                     />
-                    {picked && (
+                    {visiblePicked && (
                       <span
                         className="image-pick-marker"
                         aria-hidden="true"
                         style={{
-                          left: `${((picked.x + 0.5) / selected.result!.width) * 100}%`,
-                          top: `${((picked.y + 0.5) / selected.result!.height) * 100}%`,
+                          left: `${((visiblePicked.x + 0.5) / selected.result!.width) * 100}%`,
+                          top: `${((visiblePicked.y + 0.5) / selected.result!.height) * 100}%`,
                         }}
                       />
                     )}
@@ -4880,29 +4936,56 @@ function Images() {
                     The sample reads the encoded result, not a scaled screen copy.
                   </figcaption>
                 </figure>
-                {picked ? (
+                {visiblePicked ? (
                   <div className="image-pick-readout">
                     <span
                       className="image-swatch"
-                      style={{ backgroundColor: picked.hex }}
+                      style={{ backgroundColor: visiblePicked.hex }}
                       aria-hidden="true"
                     />
                     <div className="image-palette-values">
-                      <span><strong>{picked.hex}</strong> · pixel {picked.x}, {picked.y}{picked.alpha < 255 ? ` · alpha ${Math.round(picked.alpha / 2.55)}%` : ""}</span>
-                      <span>{formatRgb(picked.rgb)}</span>
-                      <span>{formatHsl(rgbToHsl(picked.rgb))}</span>
+                      <span><strong>{visiblePicked.hex}</strong> · pixel {visiblePicked.x}, {visiblePicked.y}{visiblePicked.alpha < 255 ? ` · alpha ${Math.round(visiblePicked.alpha / 2.55)}%` : ""}</span>
+                      {visiblePicked.alpha < 255 && (
+                        <span><strong>{visiblePickedRgbaHex}</strong> · CSS alpha included</span>
+                      )}
+                      <span>{formatRgb(visiblePicked.rgb)}</span>
+                      <span>{formatHsl(rgbToHsl(visiblePicked.rgb))}</span>
                       <div className="image-copy-actions">
-                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled HEX ${picked.hex}`} onClick={() => void copyValue("HEX", picked.hex)}>Copy HEX</button>
-                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled RGB ${formatRgb(picked.rgb)}`} onClick={() => void copyValue("RGB", formatRgb(picked.rgb))}>Copy RGB</button>
-                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled HSL ${formatHsl(rgbToHsl(picked.rgb))}`} onClick={() => void copyValue("HSL", formatHsl(rgbToHsl(picked.rgb)))}>Copy HSL</button>
+                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled HEX ${visiblePicked.hex}`} onClick={() => void copyValue("HEX", visiblePicked.hex)}>Copy HEX</button>
+                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled RGB ${formatRgb(visiblePicked.rgb)}`} onClick={() => void copyValue("RGB", formatRgb(visiblePicked.rgb))}>Copy RGB</button>
+                        <button type="button" className="quiet image-copy" aria-label={`Copy sampled HSL ${formatHsl(rgbToHsl(visiblePicked.rgb))}`} onClick={() => void copyValue("HSL", formatHsl(rgbToHsl(visiblePicked.rgb)))}>Copy HSL</button>
+                        {visiblePicked.alpha < 255 && (
+                          <button
+                            type="button"
+                            className="quiet image-copy"
+                            aria-label={`Copy sampled CSS RGBA HEX ${visiblePickedRgbaHex}`}
+                            onClick={(event) => void copyPickedRgba(event.currentTarget, visiblePicked, visiblePickedRgbaHex)}
+                          >
+                            Copy RGBA HEX
+                          </button>
+                        )}
                       </div>
+                      {visiblePickedCopy?.fallback && (
+                        <label className="image-copy-fallback">
+                          Exact CSS RGBA HEX value — select and copy
+                          <input
+                            readOnly
+                            ref={pickedCopyField}
+                            value={visiblePickedCopy.fallback.value}
+                            spellCheck={false}
+                            aria-label="Exact sampled CSS RGBA HEX value to copy"
+                            onFocus={(event) => event.currentTarget.select()}
+                            onClick={(event) => event.currentTarget.select()}
+                          />
+                        </label>
+                      )}
                     </div>
                   </div>
                 ) : (
                   <p className="trim-note">No pixel sampled yet. Click the preview or focus it and use the arrow keys.</p>
                 )}
                 <p className="trim-note" role="status" aria-live="polite">
-                  {pickMessage || "The sample coordinate maps through the displayed size to the intrinsic pixel."}
+                  {visiblePickedCopy?.message || pickMessage || "The sample coordinate maps through the displayed size to the intrinsic pixel."}
                 </p>
               </>
             ) : (

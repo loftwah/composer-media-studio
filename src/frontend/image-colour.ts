@@ -121,6 +121,11 @@ export function rgbToHex(rgb: Partial<Rgb>): string {
   return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
+/** CSS `#rrggbbaa` for RGB plus an alpha byte; 255 is opaque. */
+export function rgbaToHex(rgb: Partial<Rgb>, alpha: unknown): string {
+  return `${rgbToHex(rgb)}${clampByte(alpha).toString(16).padStart(2, "0")}`;
+}
+
 /** Parse `#rgb` or `#rrggbb`; returns null for anything else. */
 export function hexToRgb(hex: string): Rgb | null {
   const value = String(hex ?? "").trim();
