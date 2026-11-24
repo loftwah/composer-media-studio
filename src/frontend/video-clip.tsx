@@ -159,6 +159,8 @@ function VideoClip() {
   // and removed without changing the trim, offset or export. It is display
   // state only and a new caption source starts back on the in-trim view.
   const [cueView, setCueView] = useState<"trim" | "source">("trim");
+  const [cuePlayheadStatus, setCuePlayheadStatus] = useState("");
+  const cueReview = useRef<HTMLDetailsElement>(null);
   const cueSearchInput = useRef<HTMLInputElement>(null);
   const manualCueTextInput = useRef<HTMLInputElement>(null);
   const manualCueDetails = useRef<HTMLDetailsElement>(null);
@@ -328,6 +330,9 @@ function VideoClip() {
   const visibleSourceCues = captionDraft
     ? filterCuesByTextAndSpeaker(allSourceCues, cueSearchText, cueSpeaker)
     : [];
+  useEffect(() => {
+    setCuePlayheadStatus("");
+  }, [captionDraft, source, start, end, captionOffsetMs, cueView, cueSearchText, cueSpeaker]);
   const cueSpeakerFilterName = cueSpeakerName(cueSpeaker);
   const cueFilterDescription = [
     cueQuery ? `text “${cueQuery}”` : "",
@@ -1090,6 +1095,35 @@ function VideoClip() {
   function jumpToOriginalCue(sourceStartMs: number) {
     seekOriginalVideo(sourceStartMs / 1000);
   }
+  // Read the existing player without moving it, then focus the first visible
+  // review row whose half-open source window contains that millisecond. This
+  // only changes feedback and focus, never the video, draft, trim or export.
+  function findCueAtPlayhead() {
+    const video = sourceVideo.current;
+    if (!video || !Number.isFinite(video.currentTime)) {
+      setCuePlayheadStatus("The original video playhead is unavailable.");
+      return;
+    }
+    const atMs = Math.round(video.currentTime * 1000);
+    const trimStartMs = Math.round(start * 1000);
+    const cue = cueView === "source"
+      ? visibleSourceCues.find(cue => cue.startMs <= atMs && atMs < cue.endMs)
+      : visibleCues.find(cue => cue.sourceStartMs <= atMs && atMs < trimStartMs + cue.to);
+    if (!cue) {
+      const filterHint = hasCueFilters ? " Clear the filters to check other cues." : "";
+      setCuePlayheadStatus(`No visible cue at ${clipTimeStamp(atMs)}.${filterHint}`);
+      return;
+    }
+    const jump = cueReview.current?.querySelector<HTMLButtonElement>(
+      `.trim-cue-row[data-source-index="${cue.sourceIndex}"] .trim-cue-jump`,
+    );
+    if (!jump) {
+      setCuePlayheadStatus(`The cue at ${clipTimeStamp(atMs)} is unavailable.`);
+      return;
+    }
+    setCuePlayheadStatus(`Focused the cue at ${clipTimeStamp(atMs)}.`);
+    jump.focus();
+  }
   // Copy the original video's current playhead into one cue field only. The
   // native player is read but never paused, seeked or restarted, and no other
   // state (draft, trim, offset, preview, result) is touched.
@@ -1484,7 +1518,7 @@ function VideoClip() {
             </p>
           )}
           {captionDraft && (
-            <details className="trim-cue-review">
+            <details ref={cueReview} className="trim-cue-review">
               <summary>{trimmedCaptionCues
                 ? `Review cues in this trim (${trimmedCaptionCues.length})`
                 : `Review caption cues (${captionDraft.cues.length} stored)`}</summary>
@@ -1502,6 +1536,13 @@ function VideoClip() {
                   onClick={() => showCueView("source")}>
                   All source cues ({captionDraft.cues.length})
                 </button>
+              </div>
+              <div className="trim-cue-playhead-find">
+                <button type="button" className="secondary"
+                  aria-describedby="trim-cue-playhead-status"
+                  disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                  onClick={findCueAtPlayhead}>Find cue at playhead</button>
+                <p id="trim-cue-playhead-status" className="trim-note" role="status" aria-live="polite">{cuePlayheadStatus}</p>
               </div>
               {cueView === "trim" && !trimmedCaptionCues && (
                 <p className="notice trim-cue-view-unknown">The trim or timing offset is not valid, so there is no in-trim cue list. All source cues still lists every stored cue at its original video time.</p>
