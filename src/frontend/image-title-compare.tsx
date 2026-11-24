@@ -1199,66 +1199,11 @@ export function TitleCompare({
         </span>
       </div>
       <p className="trim-note" id="image-title-compare-note">
-        Compare up to three local pairs at two feed sizes. Choose a pair to
-        set its crop, or use the arrow keys to switch pairs. The exported
-        manifests record your preference, each pair’s creator note, any
-        thumbnail alt text and any testing hypothesis you write.
+        Add a title and thumbnail to each pair. Compare them at two feed sizes.
       </p>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
           <legend>Combinations</legend>
-          <label className="title-compare-anchor">
-            {`Preview crop position for ${selectedLabel}`}
-            <select
-              value={anchor}
-              data-title-compare-anchor
-              data-title-compare-anchor-pair={selectedId}
-              onChange={(event) => updateAnchor(selectedIndex, event.target.value as CropAnchorKey)}
-              aria-describedby="image-title-compare-note"
-            >
-              {Object.entries(CROP_ANCHOR_LABELS).map(([value, label]) => (
-                <option value={value} key={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="title-compare-alt">
-            {`Thumbnail alt text for ${selectedLabel} (optional, up to ${ALT_MAX_LENGTH} characters)`}
-            <input
-              type="text"
-              value={selected.alt}
-              maxLength={ALT_MAX_LENGTH}
-              placeholder="Describe the thumbnail for screen readers"
-              spellCheck={false}
-              disabled={selected.busy}
-              data-title-compare-alt
-              data-title-compare-alt-pair={selectedId}
-              aria-describedby="image-title-compare-alt-note"
-              onChange={(event) => updateAlt(selectedIndex, event.target.value)}
-            />
-          </label>
-          <p className="trim-note title-compare-alt-note" id="image-title-compare-alt-note">
-            {`${selected.alt.length} of ${ALT_MAX_LENGTH} characters · blank keeps the default description. Saved only in ${selectedLabel}’s manifest when nonblank.`}
-          </p>
-          <label className="title-compare-hypothesis">
-            {`Testing hypothesis for ${selectedLabel} (optional)`}
-            <input
-              type="text"
-              value={selected.hypothesis}
-              maxLength={HYPOTHESIS_MAX_LENGTH}
-              placeholder="What do you expect this pair to do?"
-              spellCheck={false}
-              disabled={selected.busy}
-              data-title-compare-hypothesis
-              data-title-compare-hypothesis-pair={selectedId}
-              aria-describedby="image-title-compare-hypothesis-note"
-              onChange={(event) => updateHypothesis(selectedIndex, event.target.value)}
-            />
-          </label>
-          <p className="trim-note title-compare-hypothesis-note" id="image-title-compare-hypothesis-note">
-            {`${selected.hypothesis.length} of ${HYPOTHESIS_MAX_LENGTH} characters. The hypothesis goes in ${selectedLabel}’s manifest.`}
-          </p>
           {preparedImage && (
             <p
               className="trim-note title-compare-prepared-offer"
@@ -1268,6 +1213,63 @@ export function TitleCompare({
               {`Prepared image: ${preparedImage.filename} · ${preparedImage.width} × ${preparedImage.height} px · ${formatBytes(preparedImage.bytes)}`}
             </p>
           )}
+          <details className="title-compare-details">
+            <summary>{`Crop and details for ${selectedLabel}`}</summary>
+            <div className="title-compare-details-body">
+              <label className="title-compare-anchor">
+                {`Preview crop position for ${selectedLabel}`}
+                <select
+                  value={anchor}
+                  data-title-compare-anchor
+                  data-title-compare-anchor-pair={selectedId}
+                  onChange={(event) => updateAnchor(selectedIndex, event.target.value as CropAnchorKey)}
+                  aria-describedby="image-title-compare-note"
+                >
+                  {Object.entries(CROP_ANCHOR_LABELS).map(([value, label]) => (
+                    <option value={value} key={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="title-compare-alt">
+                {`Thumbnail alt text for ${selectedLabel} (optional, up to ${ALT_MAX_LENGTH} characters)`}
+                <input
+                  type="text"
+                  value={selected.alt}
+                  maxLength={ALT_MAX_LENGTH}
+                  placeholder="Describe the thumbnail for screen readers"
+                  spellCheck={false}
+                  disabled={selected.busy}
+                  data-title-compare-alt
+                  data-title-compare-alt-pair={selectedId}
+                  aria-describedby="image-title-compare-alt-note"
+                  onChange={(event) => updateAlt(selectedIndex, event.target.value)}
+                />
+              </label>
+              <p className="trim-note title-compare-alt-note" id="image-title-compare-alt-note">
+                {`${selected.alt.length} of ${ALT_MAX_LENGTH} characters · blank keeps the default description. Saved only in ${selectedLabel}’s manifest when nonblank.`}
+              </p>
+              <label className="title-compare-hypothesis">
+                {`Testing hypothesis for ${selectedLabel} (optional)`}
+                <input
+                  type="text"
+                  value={selected.hypothesis}
+                  maxLength={HYPOTHESIS_MAX_LENGTH}
+                  placeholder="What do you expect this pair to do?"
+                  spellCheck={false}
+                  disabled={selected.busy}
+                  data-title-compare-hypothesis
+                  data-title-compare-hypothesis-pair={selectedId}
+                  aria-describedby="image-title-compare-hypothesis-note"
+                  onChange={(event) => updateHypothesis(selectedIndex, event.target.value)}
+                />
+              </label>
+              <p className="trim-note title-compare-hypothesis-note" id="image-title-compare-hypothesis-note">
+                {`${selected.hypothesis.length} of ${HYPOTHESIS_MAX_LENGTH} characters. The hypothesis goes in ${selectedLabel}’s manifest.`}
+              </p>
+            </div>
+          </details>
           {PAIR_IDS.map((id) => {
             const index = PAIR_IDS.indexOf(id);
             const pair = pairs[index];
@@ -1303,16 +1305,6 @@ export function TitleCompare({
                     maxLength={TITLE_MAX_LENGTH}
                     placeholder={`Title for combination ${PAIR_LABELS[id]}`}
                     onChange={(event) => updateTitle(index, event.target.value)}
-                  />
-                </label>
-                <label className="title-compare-note">
-                  Creator note {PAIR_LABELS[id]} (optional)
-                  <textarea
-                    value={pair.note}
-                    maxLength={NOTE_MAX_LENGTH}
-                    rows={2}
-                    spellCheck={false}
-                    onChange={(event) => setPair(index, { note: event.target.value })}
                   />
                 </label>
                 <label
@@ -1407,6 +1399,16 @@ export function TitleCompare({
                     Remove thumbnail
                   </button>
                 )}
+                <label className="title-compare-note">
+                  Creator note {PAIR_LABELS[id]} (optional)
+                  <textarea
+                    value={pair.note}
+                    maxLength={NOTE_MAX_LENGTH}
+                    rows={2}
+                    spellCheck={false}
+                    onChange={(event) => setPair(index, { note: event.target.value })}
+                  />
+                </label>
                 <button
                   type="button"
                   className="quiet"

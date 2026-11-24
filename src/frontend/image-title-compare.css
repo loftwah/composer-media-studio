@@ -15,6 +15,33 @@
   gap: 1rem;
 }
 
+/* The selected pair's crop and optional metadata stay beside the primary pair
+   controls without pushing their first-run title and picker down the page. */
+.title-compare-details {
+  border-top: 1px solid var(--line);
+}
+
+.title-compare-details > summary {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 0.65rem 0;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--teal);
+}
+
+.title-compare-details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: calc(var(--radius) * 0.4);
+}
+
+.title-compare-details-body {
+  display: grid;
+  gap: 1rem;
+  padding: 0.25rem 0 0.5rem;
+}
+
 .title-compare-anchor {
   display: grid;
   gap: 0.35rem;
