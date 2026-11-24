@@ -5815,6 +5815,7 @@ function Images() {
 
       <TitleCompare
         preparedImage={preparedTitleImage}
+        sourceFile={selected?.result ? null : selected?.file}
         onEditVerifiedPng={openVerifiedPngInEditor}
         verifiedPngEditUnavailable={
           items.length >= MAX_BATCH_IMAGES

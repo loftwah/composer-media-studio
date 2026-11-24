@@ -244,10 +244,13 @@ async function validateTitleThumbnail(file: File): Promise<Omit<PairImage, "url"
 
 export function TitleCompare({
   preparedImage = null,
+  sourceFile = null,
   onEditVerifiedPng,
   verifiedPngEditUnavailable = "",
 }: {
   preparedImage?: PreparedTitleImage | null;
+  /** The exact loaded original File, offered only when no prepared result exists. */
+  sourceFile?: File | null;
   onEditVerifiedPng?: (file: File, trigger: HTMLButtonElement) => void;
   verifiedPngEditUnavailable?: string;
 }) {
@@ -753,6 +756,13 @@ export function TitleCompare({
       type: preparedImage.mime || preparedImage.blob.type,
     });
     void chooseImage(index, file);
+  }
+
+  /** Reuse the exact loaded original through the same validator and run guard;
+   * a prepared result always wins over this fallback offer. */
+  function useSourceImage(index: number): void {
+    if (preparedImage || !sourceFile) return;
+    void chooseImage(index, sourceFile);
   }
 
   function removeImage(index: number): void {
@@ -1449,6 +1459,15 @@ export function TitleCompare({
               {`Prepared image: ${preparedImage.filename} · ${preparedImage.width} × ${preparedImage.height} px · ${formatBytes(preparedImage.bytes)}`}
             </p>
           )}
+          {!preparedImage && sourceFile && (
+            <p
+              className="trim-note title-compare-source-offer"
+              id="title-compare-source-offer"
+              data-title-compare-source-offer
+            >
+              {`Source image: ${sourceFile.name} · ${formatBytes(sourceFile.size)}`}
+            </p>
+          )}
           <details className="title-compare-details">
             <summary>{`Crop and details for ${selectedLabel}`}</summary>
             <div className="title-compare-details-body">
@@ -1611,6 +1630,34 @@ export function TitleCompare({
                         role="alert"
                       >
                         {`This finished result is ${formatBytes(preparedImage.bytes)}. A thumbnail input must be ${formatBytes(MAX_IMAGE_INPUT_BYTES)} or smaller.`}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {isSelected && !preparedImage && sourceFile && (
+                  <div className="title-compare-prepared" data-title-compare-source-pair={id}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      data-title-compare-source-use={id}
+                      disabled={pair.busy}
+                      aria-disabled={pair.busy}
+                      aria-describedby={[
+                        "title-compare-source-offer",
+                        ...(pair.image ? [`title-compare-source-replace-${id}`] : []),
+                      ].join(" ")}
+                      onClick={() => useSourceImage(index)}
+                    >
+                      {pair.image
+                        ? `Use source image for Pair ${PAIR_LABELS[id]} (replaces current thumbnail)`
+                        : `Use source image for Pair ${PAIR_LABELS[id]}`}
+                    </button>
+                    {pair.image && (
+                      <p
+                        className="trim-note title-compare-prepared-replace"
+                        id={`title-compare-source-replace-${id}`}
+                      >
+                        {`Replaces ${pair.image.fileName}.${isPreferred ? " Replacing the thumbnail clears this pair’s preference." : ""}`}
                       </p>
                     )}
                   </div>
