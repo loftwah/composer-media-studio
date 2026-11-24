@@ -4,6 +4,7 @@ import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTim
 import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from "./clip-cue-search";
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
+import { EMPTY_CUE_HISTORY, cueEditHistory, redoLastCueChange, undoLastCueChange, type CueHistory } from "./clip-cue-history";
 import { appendManualClipCue, canSplitClipDraftCue, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, nudgeManualCueTimes, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
@@ -96,14 +97,22 @@ function VideoClip() {
   const [completedClip, setCompletedClip] = useState<CompletedClip | null>(null);
   const [captionTrack, setCaptionTrack] = useState<ClipCaptionTrack | null>(null);
   const [captionDraft, setCaptionDraft] = useState<CaptionDraft | null>(null);
-  // One-step snapshot of the exact draft before the most recent cue removal or
-  // edit. Any later caption change or source change clears it, so Undo cannot
-  // replace newer work with stale cues or a stale source name and digest.
-  const [captionUndo, setCaptionUndo] = useState<CaptionDraft | null>(null);
+  // One-step Undo plus the matching Redo for the exact draft before/after the
+  // most recent cue edit. A successful new edit, import, clear, reload or source
+  // change discards the branch, so old cues can never be replayed over newer
+  // work or a different source name and digest.
+  const [captionHistory, setCaptionHistory] = useState<CueHistory<CaptionDraft>>(EMPTY_CUE_HISTORY);
+  const captionUndo = captionHistory.undo;
+  const captionRedo = captionHistory.redo;
   const captionUndoButton = useRef<HTMLButtonElement>(null);
+  const captionRedoButton = useRef<HTMLButtonElement>(null);
+  // When an edit removes the focused row (or Undo/Redo removes its own button),
+  // focus falls to the body. Move it to the control that is now available.
   useEffect(() => {
-    if (captionUndo && document.activeElement === document.body) captionUndoButton.current?.focus();
-  }, [captionUndo]);
+    if (document.activeElement !== document.body) return;
+    if (captionUndo) captionUndoButton.current?.focus();
+    else if (captionRedo) captionRedoButton.current?.focus();
+  }, [captionUndo, captionRedo]);
   const [captionOffsetRaw, setCaptionOffsetRaw] = useState("0");
   const [captionText, setCaptionText] = useState("");
   const [manualCueText, setManualCueText] = useState("");
@@ -408,7 +417,7 @@ function VideoClip() {
       setSource(url); setFile(next); setDuration(length); setStart(0); setEnd(Math.min(length, MAX_CLIP_SECONDS));
       setLoadedHandoff(fromHandoff);
       captionRequest.current++; receiptRequest.current++;
-      setCaptionDraft(null); setCaptionUndo(null); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
+      setCaptionDraft(null); setCaptionHistory(EMPTY_CUE_HISTORY); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
       setCueSearchText("");
       resetCueEditor(); setManualCueMessage("");
       setShowSourceCaptions(false);
@@ -468,7 +477,7 @@ function VideoClip() {
       const cues = parseCaptionFile(new TextDecoder().decode(bytes), 0, MAX_SOURCE_SECONDS * 1000);
       if (request !== captionRequest.current) return;
       setCaptionDraft({ name: selected.name, sourceSha256, cues, local: false });
-      setCaptionUndo(null);
+      setCaptionHistory(EMPTY_CUE_HISTORY);
       setCaptionOffsetRaw("0");
       setCueSearchText("");
       resetCueEditor();
@@ -533,7 +542,7 @@ function VideoClip() {
       const draftSha256 = await sha256Hex(new TextEncoder().encode(source));
       if (request !== captionFileRequest.current) return;
       setCaptionDraft({ name: selected.name, sourceSha256: draftSha256, cues: restored.cues, local: true });
-      setCaptionUndo(null);
+      setCaptionHistory(EMPTY_CUE_HISTORY);
       setCaptionOffsetRaw(String(restored.offsetMs / 1000));
       setCaptionText("");
       setCueSearchText("");
@@ -596,7 +605,7 @@ function VideoClip() {
       const updated = await editedCaptionDraft(captionDraft, added.cues);
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
-      setCaptionUndo(null);
+      setCaptionHistory(EMPTY_CUE_HISTORY);
       resetCueEditor();
       setManualCueMessage(`Added one cue. This draft now has ${added.cues.length} ${added.cues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
@@ -651,7 +660,7 @@ function VideoClip() {
       const updated = await editedCaptionDraft(previousDraft, replaced.cues);
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
-      setCaptionUndo(previousDraft);
+      setCaptionHistory(cueEditHistory(previousDraft));
       resetCueEditor();
       setManualCueMessage(`Updated one cue. This draft now has ${replaced.cues.length} ${replaced.cues.length === 1 ? "cue" : "cues"}. Undo is available below.`);
     } catch (error) {
@@ -691,7 +700,7 @@ function VideoClip() {
       const updated = await editedCaptionDraft(previousDraft, split.cues);
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
-      setCaptionUndo(previousDraft);
+      setCaptionHistory(cueEditHistory(previousDraft));
       resetCueEditor();
       setManualCueMessage(`Split one cue into two. This draft now has ${split.cues.length} ${split.cues.length === 1 ? "cue" : "cues"}. Undo is available below.`);
     } catch (error) {
@@ -718,7 +727,7 @@ function VideoClip() {
       if (!nextCues.length) {
         if (request !== captionRequest.current) return;
         setCaptionDraft(null);
-        setCaptionUndo(previousDraft);
+        setCaptionHistory(cueEditHistory(previousDraft));
         if (cueEditing) resetCueEditor();
         setCaptionMessage("Removed the last cue. The caption track is removed; Undo is available below.");
         return;
@@ -726,7 +735,7 @@ function VideoClip() {
       const updated = await editedCaptionDraft(previousDraft, nextCues);
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
-      setCaptionUndo(previousDraft);
+      setCaptionHistory(cueEditHistory(previousDraft));
       if (cueEditing) resetCueEditor();
       setCaptionMessage(`Removed one cue. This draft now has ${nextCues.length} ${nextCues.length === 1 ? "cue" : "cues"}.`);
     } catch (error) {
@@ -755,7 +764,7 @@ function VideoClip() {
       const updated = await editedCaptionDraft(previousDraft, merged.cues);
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
-      setCaptionUndo(previousDraft);
+      setCaptionHistory(cueEditHistory(previousDraft));
       if (cueEditing) resetCueEditor();
       setCaptionMessage(`Merged two cues. This draft now has ${merged.cues.length} ${merged.cues.length === 1 ? "cue" : "cues"}. Undo is available below.`);
     } catch (error) {
@@ -765,16 +774,32 @@ function VideoClip() {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
   }
-  // Restore the exact draft, name and digest saved before that removal or edit.
-  // Any later add, replacement, clear or source change already dropped it.
+  // Move between the exact drafts on either side of the last cue edit. Both
+  // directions reuse the same request guard, clear the editor (if any), and
+  // leave the timing offset, trim, preview, result and source untouched.
   function undoCaptionRemoval() {
-    if (!captionUndo || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
+    if (busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
+    const next = undoLastCueChange(captionHistory, captionDraft);
+    if (!next) return;
     captionRequest.current++;
-    setCaptionDraft(captionUndo);
-    setCaptionUndo(null);
+    setCaptionHistory(next.history);
+    setCaptionDraft(next.draft);
     if (cueEditing) resetCueEditor();
     setCaptionLoading(false);
-    setCaptionMessage("Restored the previous cue draft.");
+    setCaptionMessage("Restored the previous cue draft. Redo is available below.");
+  }
+  function redoCaptionChange() {
+    if (busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
+    const next = redoLastCueChange(captionHistory, captionDraft);
+    if (!next) return;
+    captionRequest.current++;
+    setCaptionHistory(next.history);
+    setCaptionDraft(next.draft);
+    if (cueEditing) resetCueEditor();
+    setCaptionLoading(false);
+    setCaptionMessage(next.draft
+      ? "Reapplied the last cue change. Undo is available below."
+      : "Reapplied the removal of the last cue. Undo is available below.");
   }
   // One source-seek path for the caption review and the waveform range: pause
   // the existing preview player and move its own clock, never a second decoder.
@@ -1124,7 +1149,7 @@ function VideoClip() {
           setCaptionFileLoading(false);
           setCaptionFileMessage("");
           setCaptionDraft(null);
-          setCaptionUndo(null);
+          setCaptionHistory(EMPTY_CUE_HISTORY);
           setCaptionOffsetRaw("0");
           setCaptionText("");
           setCueSearchText("");
@@ -1260,7 +1285,10 @@ function VideoClip() {
           <p role="status" aria-live="polite" className="trim-note">{captionFileMessage}</p>
         </div>
         {captionUndo && <p>
-          <button ref={captionUndoButton} type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={undoCaptionRemoval}>Undo last cue change</button>
+          <button ref={captionUndoButton} data-caption-undo type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={undoCaptionRemoval}>Undo last cue change</button>
+        </p>}
+        {captionRedo && <p>
+          <button ref={captionRedoButton} data-caption-redo type="button" className="secondary" disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading} onClick={redoCaptionChange}>Redo last cue change</button>
         </p>}
         <p role="status" aria-live="polite">{captionMessage}</p>
       </details>
