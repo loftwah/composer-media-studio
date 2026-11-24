@@ -2,7 +2,7 @@ import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, srtForClipVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
 import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from "./clip-cue-search";
-import { fullSourceCaptionDownload } from "./clip-full-source-captions";
+import { fullSourceCaptionDownload, fullSourceCaptionSrt } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
 import { EMPTY_CUE_HISTORY, cueEditHistory, redoLastCueChange, undoLastCueChange, type CueHistory } from "./clip-cue-history";
 import { cueAuditionWindow } from "./clip-cue-audition";
@@ -377,18 +377,34 @@ function VideoClip() {
   );
   const fullSourceCaptionVtt = fullSourceCaption && "vtt" in fullSourceCaption ? fullSourceCaption.vtt : null;
   const fullSourceCaptionProblem = fullSourceCaption && "problem" in fullSourceCaption ? fullSourceCaption.problem : "";
-  const [fullSourceCaptionFile, setFullSourceCaptionFile] = useState<{ vtt: string; url: string } | null>(null);
+  // The optional SRT reuses the exact full-source VTT, so it carries every
+  // original-time cue and no trim, offset or preview setting. A real cue edit
+  // replaces the draft, which recomputes both strings and retires both URLs in
+  // the same effect cleanup below.
+  const fullSourceCaptionSrtText = useMemo(
+    () => fullSourceCaptionSrt(fullSourceCaptionVtt),
+    [fullSourceCaptionVtt],
+  );
+  const [fullSourceCaptionFile, setFullSourceCaptionFile] = useState<{ vtt: string; srt: string | null; url: string; srtUrl: string | null } | null>(null);
   useEffect(() => {
     if (!fullSourceCaptionVtt) {
       setFullSourceCaptionFile(null);
       return;
     }
     const url = URL.createObjectURL(new Blob([fullSourceCaptionVtt], { type: "text/vtt; charset=utf-8" }));
-    setFullSourceCaptionFile({ vtt: fullSourceCaptionVtt, url });
-    return () => URL.revokeObjectURL(url);
-  }, [fullSourceCaptionVtt]);
-  const currentFullSourceCaptionFile = fullSourceCaptionFile?.vtt === fullSourceCaptionVtt ? fullSourceCaptionFile : null;
+    const srtUrl = fullSourceCaptionSrtText
+      ? URL.createObjectURL(new Blob([fullSourceCaptionSrtText], { type: "application/x-subrip; charset=utf-8" }))
+      : null;
+    setFullSourceCaptionFile({ vtt: fullSourceCaptionVtt, srt: fullSourceCaptionSrtText, url, srtUrl });
+    return () => {
+      URL.revokeObjectURL(url);
+      if (srtUrl) URL.revokeObjectURL(srtUrl);
+    };
+  }, [fullSourceCaptionVtt, fullSourceCaptionSrtText]);
+  const currentFullSourceCaptionFile = fullSourceCaptionFile?.vtt === fullSourceCaptionVtt && fullSourceCaptionFile.srt === fullSourceCaptionSrtText
+    ? fullSourceCaptionFile : null;
   const fullSourceCaptionUrl = currentFullSourceCaptionFile?.url ?? null;
+  const fullSourceCaptionSrtUrl = currentFullSourceCaptionFile?.srtUrl ?? null;
   const sourceVtt = showSourceCaptions && captionDraft
     ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs, sourceCaptionPlacement)
     : null;
@@ -1479,7 +1495,8 @@ function VideoClip() {
           {fullSourceCaptionUrl && (
             <div>
               <p><a className="button secondary" href={fullSourceCaptionUrl} download={`${clipFilename}-full-source-captions.vtt`} aria-describedby="full-source-captions-note">Save full-source caption draft (VTT)</a></p>
-              <p id="full-source-captions-note" className="trim-note">Keeps every cue at its original video time, including cues outside this trim. To edit them again, open the VTT with Choose captions.</p>
+              {fullSourceCaptionSrtUrl && <p><a className="button secondary" href={fullSourceCaptionSrtUrl} download={`${clipFilename}-full-source-captions.srt`} aria-describedby="full-source-captions-note">Save full-source caption draft (SRT)</a></p>}
+              <p id="full-source-captions-note" className="trim-note">Keeps every cue at its original video time, including cues outside this trim. To edit them again, open a saved caption file with Choose captions.</p>
             </div>
           )}
           {fullSourceCaptionProblem && <p className="trim-note" role="status">{fullSourceCaptionProblem}</p>}
