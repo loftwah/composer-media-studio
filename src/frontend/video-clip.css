@@ -1,4 +1,5 @@
 .video-tool-player { display:block; width:min(100%,42rem); max-height:32rem; background:var(--paper-deep); }
+.video-tool-player[data-caption-contrast="contrast"]::cue { color:#fff2a8; background-color:#111111; }
 .video-tool-check { display:flex; gap:.6rem; align-items:center; }
 
 .video-tool-actions { display:flex; flex-wrap:wrap; gap:.75rem; }
