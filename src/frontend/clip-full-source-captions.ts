@@ -1,5 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import.ts";
-import { MAX_CAPTION_BYTES, srtForClipVtt } from "./clip-captions.ts";
+import { MAX_CAPTION_BYTES, clipCaptionSrtVariants, type ClipCaptionSrtVariants } from "./clip-captions.ts";
 import { manualCaptionTrackVtt } from "./clip-manual-cue.ts";
 import { MAX_PUBLIC_VIDEO_SOURCE_SECONDS } from "./video-clip-source.ts";
 
@@ -39,13 +39,22 @@ export function fullSourceCaptionDownload(cues: readonly ImportedCue[]): FullSou
 }
 
 /**
- * The optional full-source SRT sidecar. It reuses the exact canonical full-source
- * VTT and the same bounded importer and round-trip proof as every other SRT
- * sidecar, but spans the whole source timebase so every original-time cue
- * survives, including cues the current trim excludes. No trim, timing offset or
- * preview placement reaches it. Null means the cues cannot be represented as a
- * clean plain-text SRT; the full-source VTT stays valid either way.
+ * Both optional full-source SRT sidecars, derived once from the exact canonical
+ * full-source VTT. The plain candidate keeps the earlier unnamed-only meaning;
+ * the speaker-text candidate folds each named cue's speaker into its line. Both
+ * span the whole source timebase, so every original-time cue survives, including
+ * cues the current trim excludes. No trim, timing offset or preview placement
+ * reaches either. A missing or unreadable VTT yields null; a candidate is null
+ * when that form cannot be represented exactly.
+ */
+export function fullSourceCaptionSrtVariants(vtt: string | null): ClipCaptionSrtVariants | null {
+  return vtt ? clipCaptionSrtVariants(vtt, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000) : null;
+}
+
+/**
+ * The optional unnamed-only full-source SRT sidecar. Legacy callers keep exactly
+ * this result; a named cue still withholds it rather than dropping the speaker.
  */
 export function fullSourceCaptionSrt(vtt: string | null): string | null {
-  return vtt ? srtForClipVtt(vtt, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000) : null;
+  return fullSourceCaptionSrtVariants(vtt)?.plain ?? null;
 }

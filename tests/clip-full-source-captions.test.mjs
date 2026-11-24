@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
 import { serializeClipCaptions, sourcePreviewVtt, srtForClipVtt } from '../src/frontend/clip-captions.ts';
-import { fullSourceCaptionDownload, fullSourceCaptionSrt } from '../src/frontend/clip-full-source-captions.ts';
+import { fullSourceCaptionDownload, fullSourceCaptionSrt, fullSourceCaptionSrtVariants } from '../src/frontend/clip-full-source-captions.ts';
 import { manualCaptionTrackVtt } from '../src/frontend/clip-manual-cue.ts';
 import { MAX_PUBLIC_VIDEO_SOURCE_SECONDS } from '../src/frontend/video-clip-source.ts';
 
@@ -52,6 +52,11 @@ test('the full-source SRT keeps every original-time cue, including ones outside 
   const srt = fullSourceCaptionSrt(full.vtt);
   assert.equal(srt, '1\n00:00:00,500 --> 00:00:01,800\nBefore & &lt;early&gt;\n\n2\n00:00:02,500 --> 00:00:04,200\nInside\n\n3\n00:00:06,100 --> 00:00:07,800\nAfter\n');
   assert.deepEqual(parseCaptionFile(srt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000), cues);
+  // The legacy plain result and the unnamed-only variant share one parse.
+  const variants = fullSourceCaptionSrtVariants(full.vtt);
+  assert.equal(variants.plain, srt);
+  assert.equal(variants.named, false);
+  assert.equal(variants.speakerText, null);
   // It is the full-source timeline, not the trimmed SRT the receipt exposes.
   assert.notEqual(srt, srtForClipVtt(serializeClipCaptions(cues, 3, 5), 2000));
 });
@@ -89,5 +94,23 @@ test('the full-source VTT keeps a voice speaker and withholds SRT instead of dro
   });
   assert.ok('vtt' in full);
   assert.deepEqual(parseCaptionFile(full.vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000, { voices: true }), named);
+  assert.equal(fullSourceCaptionSrt(full.vtt), null);
+});
+test('the full-source speaker-text SRT keeps named and unnamed cues at their original times', () => {
+  const cues = [
+    { startMs: 500, endMs: 1800, text: 'Before & <early>', speaker: 'Dean & <Jane>' },
+    cue(2500, 4200, 'Unnamed'),
+  ];
+  const full = fullSourceCaptionDownload(cues);
+  assert.ok('vtt' in full);
+  const variants = fullSourceCaptionSrtVariants(full.vtt);
+  assert.equal(variants.named, true);
+  assert.equal(variants.plain, null);
+  assert.equal(variants.speakerText, '1\n00:00:00,500 --> 00:00:01,800\nDean & &lt;Jane&gt;: Before & &lt;early&gt;\n\n2\n00:00:02,500 --> 00:00:04,200\nUnnamed\n');
+  assert.deepEqual(parseCaptionFile(variants.speakerText, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000), [
+    { startMs: 500, endMs: 1800, text: 'Dean & <Jane>: Before & <early>', speaker: '' },
+    { startMs: 2500, endMs: 4200, text: 'Unnamed', speaker: '' },
+  ]);
+  // The legacy strict helper still withholds a named full-source SRT.
   assert.equal(fullSourceCaptionSrt(full.vtt), null);
 });
