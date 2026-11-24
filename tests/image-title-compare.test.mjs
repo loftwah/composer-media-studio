@@ -906,7 +906,8 @@ test("the local picker and drop keep their existing intake rules", () => {
 });
 
 test("the full-size framing preview is a bounded, honest browser-local overlay", () => {
-  const start = section.indexOf("<details");
+  const marker = section.indexOf('className="title-compare-full"');
+  const start = section.lastIndexOf("<details", marker);
   const end = section.indexOf("</details>", start);
   assert.ok(start >= 0 && end > start);
   const disclosure = section.slice(start, end);
