@@ -162,7 +162,7 @@ export function PromoDesk({
     "packaging-local": ["", "Local"],
   };
 
-  const stage = (key: string, name: string, detail: ReactNode, link?: { href: string; label: string }) => {
+  const stage = (key: string, name: string, detail: ReactNode, link?: { href: string; label: string; newTab?: boolean }) => {
     const [tone, label] = pill[key] ?? ["", key];
     const isReview = key.startsWith("review-");
     return (
@@ -170,7 +170,7 @@ export function PromoDesk({
         <span className={`status ${tone}`} role={isReview ? "status" : undefined}>{label}</span>
         <strong ref={isReview ? reviewLabelRef : undefined} tabIndex={isReview ? -1 : undefined}>{name}</strong>
         <span className="promo-desk-detail">{detail}</span>
-        {link && <a href={link.href}>{link.label}</a>}
+        {link && <a href={link.href} target={link.newTab ? "_blank" : undefined} rel={link.newTab ? "noopener noreferrer" : undefined}>{link.label}{link.newTab ? " (opens in a new tab)" : ""}</a>}
       </li>
     );
   };
@@ -290,7 +290,7 @@ export function PromoDesk({
       "packaging-local",
       "Packaging (device-local)",
       <>Title and thumbnail cards are built in Image Tools from files on this device and export as a ZIP — nothing is uploaded, and nothing is saved with this brief</>,
-      { href: "/tools/images#image-title-compare-heading", label: "Open Title + thumbnail compare" },
+      { href: "/tools/images#image-title-compare-heading", label: "Open Title + thumbnail compare", newTab: true },
     ),
   );
 
