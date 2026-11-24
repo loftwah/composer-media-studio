@@ -18,6 +18,11 @@ export type SnippetResult =
 
 export const MAX_SNIPPET_BYTES = 2 * 1024 * 1024;
 export const SNIPPET_WARN_BYTES = 128 * 1024;
+export const MAX_BASE64_LENGTH = 4 * Math.ceil(MAX_SNIPPET_BYTES / 3);
+// The whole paste is bounded before whitespace is removed. The allowance fits
+// ordinary line wrapping and indentation, plus the longest exact data-URI prefix.
+export const MAX_BASE64_INPUT_CHARACTERS =
+  MAX_BASE64_LENGTH + "data:image/jpeg;base64,".length + Math.ceil(MAX_BASE64_LENGTH / 8);
 
 export const SNIPPET_KINDS: ReadonlyArray<SnippetKind> = Object.freeze([
   "base64",
@@ -39,6 +44,10 @@ const SNIPPET_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 const BASE64_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_VALUES = new Int16Array(128).fill(-1);
+for (let index = 0; index < BASE64_ALPHABET.length; index += 1) {
+  BASE64_VALUES[BASE64_ALPHABET.charCodeAt(index)] = index;
+}
 
 const HTML_ESCAPES: Readonly<Record<string, string>> = Object.freeze({
   "&": "&amp;",
@@ -100,19 +109,32 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return chunks.join("");
 }
 
-/** Decode base64 for verification; returns null for malformed input. */
-export function base64ToBytes(text: string): Uint8Array | null {
-  const value = String(text ?? "").replace(/\s+/g, "");
+/**
+ * Decode bounded, canonical standard base64 with optional ordinary whitespace.
+ * Padding, alphabet and unused trailing bits are checked before byte allocation.
+ */
+export function base64ToBytes(text: string): Uint8Array<ArrayBuffer> | null {
+  const source = String(text ?? "");
+  if (source.length > MAX_BASE64_INPUT_CHARACTERS) return null;
+  const value = source.replace(/[ \t\r\n\f\v]+/g, "");
   if (!value) return new Uint8Array(0);
-  if (value.length % 4 !== 0) return null;
+  if (value.length > MAX_BASE64_LENGTH || value.length % 4 !== 0) return null;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return null;
   const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
-  const bytes = new Uint8Array((value.length / 4) * 3 - padding);
+  if (
+    (padding === 2 && (BASE64_VALUES[value.charCodeAt(value.length - 3)] & 0x0f) !== 0) ||
+    (padding === 1 && (BASE64_VALUES[value.charCodeAt(value.length - 2)] & 0x03) !== 0)
+  )
+    return null;
+  const byteLength = (value.length / 4) * 3 - padding;
+  if (byteLength > MAX_SNIPPET_BYTES) return null;
+  const bytes = new Uint8Array(byteLength);
   let offset = 0;
   for (let index = 0; index < value.length; index += 4) {
     let triple = 0;
     for (let step = 0; step < 4; step += 1) {
       const character = value[index + step];
-      const digit = character === "=" ? 0 : BASE64_ALPHABET.indexOf(character);
+      const digit = character === "=" ? 0 : BASE64_VALUES[value.charCodeAt(index + step)];
       if (digit < 0) return null;
       triple = (triple << 6) | digit;
     }
