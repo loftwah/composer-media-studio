@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { serializeClipCaptions, sourcePreviewVtt, srtForClipVtt } from '../src/frontend/clip-captions.ts';
-import { fullSourceCaptionDownload, fullSourceCaptionSrt, fullSourceCaptionSrtVariants } from '../src/frontend/clip-full-source-captions.ts';
+import { MAX_CAPTION_BYTES, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { fullSourceCaptionDownload, fullSourceCaptionSrt, fullSourceCaptionSrtVariants, fullSourceCaptionTranscript } from '../src/frontend/clip-full-source-captions.ts';
 import { manualCaptionTrackVtt } from '../src/frontend/clip-manual-cue.ts';
 import { MAX_PUBLIC_VIDEO_SOURCE_SECONDS } from '../src/frontend/video-clip-source.ts';
 
@@ -113,4 +113,46 @@ test('the full-source speaker-text SRT keeps named and unnamed cues at their ori
   ]);
   // The legacy strict helper still withholds a named full-source SRT.
   assert.equal(fullSourceCaptionSrt(full.vtt), null);
+});
+
+test('the full-source TXT has exact UTF-8 bytes, original times, ordered cues and only supplied speakers', () => {
+  const cues = [
+    { startMs: 500, endMs: 1800, text: 'Hello & <there> — café 東京', speaker: 'Dean & <Jane>' },
+    cue(2500, 4200, 'Unnamed “line”'),
+    { startMs: 6100, endMs: 7800, text: 'After', speaker: 'Zoë' },
+  ];
+  const full = fullSourceCaptionDownload(cues);
+  assert.ok('vtt' in full);
+  const expected = '[00:00.500 --> 00:01.800] Dean & <Jane>: Hello & <there> — café 東京\n'
+    + '[00:02.500 --> 00:04.200] Unnamed “line”\n'
+    + '[00:06.100 --> 00:07.800] Zoë: After\n';
+  const transcript = fullSourceCaptionTranscript(full.vtt);
+  assert.equal(transcript, expected);
+  assert.deepEqual(new TextEncoder().encode(transcript), new TextEncoder().encode(expected));
+  assert.equal(new TextDecoder().decode(new TextEncoder().encode(transcript)), expected);
+  assert.ok(transcript.endsWith('\n'));
+  assert.ok(!transcript.endsWith('\n\n'));
+  assert.ok(!transcript.includes('\r'));
+  assert.ok(!transcript.includes('\ufeff'));
+  assert.ok(!transcript.includes('&amp;'));
+  assert.ok(!transcript.includes('&lt;'));
+  assert.ok(!transcript.includes('&gt;'));
+  assert.ok(!transcript.includes('<v '));
+  // The first and last cues sit outside this trim; their source times survive.
+  assert.match(transcript, /^\[00:00\.500/);
+  assert.match(transcript, /\[00:06\.100 --> 00:07\.800\] Zoë: After\n$/);
+  assert.doesNotMatch(transcript, /Unnamed “line”: /);
+  // The formatter reads only the already-canonical VTT, never a video source,
+  // fingerprint, trim, offset or display filter.
+  assert.equal(fullSourceCaptionTranscript.length, 1);
+  assert.equal(fullSourceCaptionTranscript(full.vtt), transcript);
+});
+
+test('the full-source TXT withholds missing, unreadable and out-of-bounds VTT without source handling', () => {
+  assert.equal(fullSourceCaptionTranscript(null), null);
+  assert.equal(fullSourceCaptionTranscript(''), null);
+  assert.equal(fullSourceCaptionTranscript('not a caption file'), null);
+  assert.equal(fullSourceCaptionTranscript('x'.repeat(MAX_CAPTION_BYTES + 1)), null);
+  const tooLate = manualCaptionTrackVtt([cue(0, 181_000, 'Late')]);
+  assert.equal(fullSourceCaptionTranscript(tooLate), null);
 });
