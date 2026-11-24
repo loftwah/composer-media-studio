@@ -77,7 +77,6 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.ts";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.ts";
-import { composerShare } from "./lib/composer-share.ts";
 import { shell, loginPage, notFoundPage, helpPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
@@ -88,11 +87,12 @@ import { PUBLIC_CACHE_SECONDS, publicOrigin, publicDiscoveryResponse } from "./l
 import { checkPublicImage } from "./lib/public-image-privacy.ts";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
 import { publicCatalogue } from "./lib/public-catalogue.ts";
-import { handleGallery, homeShowcase, shareShowcaseFilms } from "./lib/gallery-showcase.ts";
+import { handleGallery, homeShowcase } from "./lib/gallery-showcase.ts";
 import { parseRange, rangeHeaders, servePublished } from "./lib/public-media.ts";
 import { handlePublicPublication } from "./lib/public-publication.ts";
 import { publicDiagnosticsResponse } from "./lib/public-diagnostics.ts";
 import { publicToolPageResponse } from "./lib/public-tool-pages.ts";
+import { shareRoutesResponse } from "./lib/public-share-routes.ts";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.ts";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.ts";
@@ -2166,26 +2166,10 @@ async function handlePublic(request, env, url) {
   }
 
   if (path === "/login") return handleLogin(request, env);
-  if (path === "/share-films.json" && env.WOODHOUSE_SHARE === "true") {
-    if (request.method !== "GET" && request.method !== "HEAD") throw new HttpError(405, "Method not allowed", "method_not_allowed");
-    const films = await shareShowcaseFilms(env);
-    return json({ version: 1, films }, 200, { "cache-control": "no-store" });
-  }
-  if (path.replace(/\/+$/, "") === "/portfolio" && env.WOODHOUSE_SHARE === "true") {
-    if (request.method !== "GET" && request.method !== "HEAD")
-      throw new HttpError(405, "Method not allowed", "method_not_allowed");
-    const assetId = url.searchParams.get("asset");
-    const validId = /^[a-z0-9][a-z0-9-]{0,127}$/;
-    if (assetId && !validId.test(assetId)) throw new HttpError(400, "Enter a valid Share asset ID.");
-    const target = new URL(assetId ? `${composerShare}/artwork/${assetId}` : composerShare);
-    const query = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
-    if (query) target.searchParams.set("art", query);
-    for (const name of ["project", "after"]) {
-      const value = url.searchParams.get(name);
-      if (value && validId.test(value)) target.searchParams.set(name, value);
-    }
-    return Response.redirect(target, 308);
-  }
+  // The share film feed and the legacy Portfolio redirect keep their original
+  // place after /login; their response assembly lives in public-share-routes.ts.
+  const shareResponse = shareRoutesResponse(path, request, url, env);
+  if (shareResponse) return shareResponse;
   // The four signed-out tool shells keep their original place in the route
   // order; their response assembly lives in public-tool-pages.ts.
   const toolPageResponse = publicToolPageResponse(path, BUILD.revision);
