@@ -58,5 +58,6 @@ test('voice annotations reject nesting, mixed content, styling and unbounded nam
   `<v ${'x'.repeat(81)}>Long</v>`,
   '<v Dean>Hello</v></v>',
   '<v Dean>Hello</v><v Sam>there</v>',
+  '<v Dean>Hello <00:00:00.500></v>',
  ])assert.throws(()=>parseCaptionFile(`WEBVTT\n\n00:00.000 --> 00:01.000\n${raw}`,0,10000,{voices:true}));
 });

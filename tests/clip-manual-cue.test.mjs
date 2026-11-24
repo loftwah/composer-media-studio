@@ -400,6 +400,64 @@ test('a manual or edited track is named as a local source, not the imported file
   assert.equal(manualCaptionSourceName({ name: 'Manual cues in Video Clip', local: true }), 'Manual cues in Video Clip');
 });
 
+test('the manual cue form adds and explicitly edits one plain speaker label', () => {
+  // Add accepts an optional name, trims it through the shared normaliser, and
+  // blank still means unnamed. An omitted field keeps the prior unnamed shape.
+  const named = accepted(appendManualClipCue([], {
+    text: 'Hello', startSeconds: '1', endSeconds: '2', speaker: '  Dean & Jane  ',
+  }, 10_000));
+  assert.deepEqual(named, [{ startMs: 1000, endMs: 2000, text: 'Hello', speaker: 'Dean & Jane' }]);
+  assert.equal(manualCaptionTrackVtt(named),
+    'WEBVTT\n\n00:01.000 --> 00:02.000\n<v Dean &amp; Jane>Hello</v>\n');
+  assert.deepEqual(parseCaptionFile(manualCaptionTrackVtt(named), 0, 10_000, { voices: true }), named);
+  assert.deepEqual(accepted(appendManualClipCue([], { text: 'Plain', startSeconds: '1', endSeconds: '2' }, 10_000)),
+    [{ startMs: 1000, endMs: 2000, text: 'Plain', speaker: '' }]);
+  assert.deepEqual(accepted(appendManualClipCue([], {
+    text: 'Blank', startSeconds: '1', endSeconds: '2', speaker: '   ',
+  }, 10_000)), [{ startMs: 1000, endMs: 2000, text: 'Blank', speaker: '' }]);
+
+  // Update cue saves a label change explicitly while keeping the entered text
+  // and source times, and a blank field removes the name.
+  const other = { startMs: 3000, endMs: 4000, text: 'Next', speaker: 'Other' };
+  const renamed = accepted(replaceClipDraftCue([...named, other], 0, {
+    text: 'Hello', startSeconds: '1', endSeconds: '2', speaker: 'Sam',
+  }, 10_000));
+  assert.deepEqual(renamed, [
+    { startMs: 1000, endMs: 2000, text: 'Hello', speaker: 'Sam' },
+    other,
+  ]);
+  const unnamed = accepted(replaceClipDraftCue(renamed, 0, {
+    text: 'Hello', startSeconds: '1', endSeconds: '2', speaker: '',
+  }, 10_000));
+  assert.deepEqual(unnamed, [
+    { startMs: 1000, endMs: 2000, text: 'Hello', speaker: '' },
+    other,
+  ]);
+  // An omitted speaker preserves the saved label exactly as before this field.
+  assert.deepEqual(accepted(replaceClipDraftCue(named, 0, {
+    text: 'Corrected', startSeconds: '1.25', endSeconds: '2.5',
+  }, 10_000)), [{ startMs: 1250, endMs: 2500, text: 'Corrected', speaker: 'Dean & Jane' }]);
+});
+
+test('the manual cue form refuses a speaker that is not one plain line of up to 80 characters', () => {
+  const existing = [{ startMs: 1000, endMs: 2000, text: 'Hello', speaker: 'Dean' }];
+  const snapshot = structuredClone(existing);
+  for (const speaker of ['x'.repeat(81), 'Two\nlines', 'Tab\there', 'Null\u0000name']) {
+    assert.equal(problem(appendManualClipCue([], {
+      text: 'Hello', startSeconds: '1', endSeconds: '2', speaker,
+    }, 10_000)), 'A speaker name needs one line of up to 80 plain characters.');
+    assert.equal(problem(replaceClipDraftCue(existing, 0, {
+      text: 'Hello', startSeconds: '1', endSeconds: '2', speaker,
+    }, 10_000)), 'A speaker name needs one line of up to 80 plain characters.');
+  }
+  // The exact 80-character bound is accepted.
+  assert.equal(accepted(appendManualClipCue([], {
+    text: 'Hello', startSeconds: '1', endSeconds: '2', speaker: 'x'.repeat(80),
+  }, 10_000))[0].speaker.length, 80);
+  // Refusals leave the caller's draft untouched.
+  assert.deepEqual(existing, snapshot);
+});
+
 test('a named cue keeps its speaker through text, time, split and merge edits', () => {
   const named = { startMs: 1000, endMs: 2000, text: 'Hello world', speaker: 'Dean & Jane' };
   const later = { startMs: 2000, endMs: 3000, text: 'Again', speaker: 'Dean & Jane' };

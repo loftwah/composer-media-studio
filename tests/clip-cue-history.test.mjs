@@ -52,6 +52,17 @@ test('removing the final cue round-trips through a null draft', () => {
   assert.equal(redone.history.redo, null);
 });
 
+test('undo and redo restore a named cue speaker unchanged', () => {
+  const named = cue => ({ ...cue, cues: [{ ...cue.cues[0], speaker: 'Dean & Jane' }] });
+  const namedBefore = named(before), namedAfter = named(after);
+  const undone = undoLastCueChange(cueEditHistory(namedBefore), namedAfter);
+  assert.equal(undone.draft, namedBefore);
+  assert.equal(undone.draft.cues[0].speaker, 'Dean & Jane');
+  const redone = redoLastCueChange(undone.history, undone.draft);
+  assert.equal(redone.draft, namedAfter);
+  assert.equal(redone.draft.cues[0].speaker, 'Dean & Jane');
+});
+
 test('a successful new edit or a source reset discards the old redo branch', () => {
   const undone = undoLastCueChange(cueEditHistory(before), after);
   assert.ok(undone.history.redo);

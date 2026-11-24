@@ -1,4 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import.ts";
+import { normalizeSpeaker } from "./caption-speaker.ts";
 import { MAX_CAPTION_BYTES, clipTimeStamp, serializeClipCaptions } from "./clip-captions.ts";
 
 export const MAX_MANUAL_CAPTION_CUES = 100;
@@ -8,6 +9,9 @@ export type ManualCueEntry = Readonly<{
   text: string;
   startSeconds: string;
   endSeconds: string;
+  // Optional so an existing caller keeps its prior behaviour. Omitted on a
+  // replacement preserves the cue's saved speaker; blank means unnamed.
+  speaker?: string;
 }>;
 
 export type ManualCueAddition =
@@ -207,9 +211,14 @@ function validatedManualCue(
   if (cues.some((cue, index) => index !== replaceIndex && startMs < cue.endMs && cue.startMs < endMs))
     return { problem: "This cue overlaps another cue. Choose a free start and end." };
 
-  // A replacement keeps the cue's existing speaker. Text, timing and split
-  // edits can never silently rename or drop a supplied voice annotation.
-  const speaker = replaceIndex === null ? "" : cues[replaceIndex]?.speaker ?? "";
+  // A supplied speaker is the explicit label for this save. When the field is
+  // omitted, a replacement keeps the cue's existing speaker so text and timing
+  // edits can never silently rename or drop a voice annotation. The shared
+  // normaliser accepts blank as unnamed and refuses anything else unrepresentable.
+  const savedSpeaker = replaceIndex === null ? "" : cues[replaceIndex]?.speaker ?? "";
+  const speaker = input.speaker === undefined ? savedSpeaker : normalizeSpeaker(input.speaker);
+  if (speaker === null)
+    return { problem: "A speaker name needs one line of up to 80 plain characters." };
   const edited = { startMs, endMs, text: input.text, speaker };
   const next = (replaceIndex === null
     ? [...cues, edited]

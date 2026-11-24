@@ -1,4 +1,5 @@
 import { parseCaptionFile, type CaptionImportOptions, type ImportedCue } from "./caption-import.ts";
+import { normalizeSpeaker } from "./caption-speaker.ts";
 
 export const MAX_CAPTION_BYTES = 64 * 1024;
 // A timing offset may move imported cues at most a minute earlier or later.
@@ -81,11 +82,20 @@ export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds
   // this one serializer so placement cannot change cue content. Voice
   // annotations are opt-in for Video Clip; unnamed cues keep their prior bytes.
   const setting = placement === "top" ? TOP_PREVIEW_CUE_SETTING : "";
-  const blocks = kept.map(({ from, to, text, speaker }) => {
+  const blocks: string[] = [];
+  for (const { from, to, text, speaker } of kept) {
     const plain = escapeVtt(text);
-    const body = options.voices === true && speaker ? `<v ${escapeVtt(speaker)}>${plain}</v>` : plain;
-    return `${clipTimeStamp(from)} --> ${clipTimeStamp(to)}${setting}\n${body}`;
-  });
+    let body = plain;
+    if (options.voices === true && speaker) {
+      // The same name bound the importer and manual form enforce. An invalid
+      // name makes the whole track unrepresentable rather than silently
+      // dropping the speaker or emitting an annotation that cannot re-import.
+      const name = normalizeSpeaker(speaker);
+      if (name === null) return null;
+      if (name) body = `<v ${escapeVtt(name)}>${plain}</v>`;
+    }
+    blocks.push(`${clipTimeStamp(from)} --> ${clipTimeStamp(to)}${setting}\n${body}`);
+  }
   return blocks.length ? `WEBVTT\n\n${blocks.join("\n\n")}\n` : null;
 }
 

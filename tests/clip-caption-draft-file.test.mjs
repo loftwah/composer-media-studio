@@ -97,6 +97,18 @@ test('the saved VTT must re-import under the existing bounds and stay canonical'
   assert.match(tooLate.problem, /could not be saved as WebVTT/);
 });
 
+test('a named cue keeps its voice speaker through the existing v1 JSON draft', () => {
+  const named = [{ startMs: 500, endMs: 1800, text: 'Hello & <there>', speaker: 'Dean & Jane' }];
+  const { text } = saved(0, named);
+  assert.equal(JSON.parse(text).captions.vtt,
+    'WEBVTT\n\n00:00.500 --> 00:01.800\n<v Dean &amp; Jane>Hello &amp; &lt;there&gt;</v>\n');
+  assert.deepEqual(parseCaptionDraftFile(text, source), { cues: named, offsetMs: 0 });
+  // An existing unnamed v1 draft keeps the same schema, bytes and cues.
+  const legacy = saved(0);
+  assert.doesNotMatch(JSON.parse(legacy.text).captions.vtt, /<v /);
+  assert.deepEqual(parseCaptionDraftFile(legacy.text, source), { cues, offsetMs: 0 });
+});
+
 test('saving refuses no cues, an unusable fingerprint, a bad offset and an oversized track', () => {
   assert.deepEqual(captionDraftFileText(source, [], 0), { problem: 'There are no caption cues to save in a draft.' });
   assert.match(captionDraftFileText({ ...source, bytes: 0 }, cues, 0).problem, /no usable fingerprint/);
