@@ -22,6 +22,14 @@ const reviewedCues: readonly ReviewedCue[] = [
   { startMs: 3850, endMs: 7700, text: "[Power-up chime]\nTake it with you." },
 ];
 
+/**
+ * The same reviewed cues as plain transcript lines, in cue order and with every
+ * line kept, for the collapsed public disclosure. The text is still unescaped
+ * source; the page renderer escapes each line. Nothing here is exposed without
+ * the exact slug and asset hash gate below.
+ */
+export const reviewedTranscriptLines: readonly string[] = reviewedCues.flatMap(cue => cue.text.split("\n"));
+
 function stamp(ms: number): string {
   const minutes = Math.floor(ms / 60_000).toString().padStart(2, "0");
   const seconds = Math.floor((ms % 60_000) / 1000).toString().padStart(2, "0");
