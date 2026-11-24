@@ -13,6 +13,7 @@ import {
   imagePixelProblem,
 } from "./image-limits.ts";
 import { inspectImage, sniffLocalImage, type ImageMetadataSummary } from "./image-metadata.ts";
+import { drawSample } from "./image-sample.ts";
 import { CROP_ANCHOR_LABELS, type CropAnchorKey } from "./image-ops.ts";
 import {
   ALT_MAX_LENGTH,
@@ -158,6 +159,13 @@ type ExportEntry = {
 
 const emptyPair = (): Pair => ({ title: "", alt: "", hypothesis: "", note: "", image: null, error: null, busy: false });
 
+/** Two deliberately fictional examples over the same local artwork. Top and
+ * bottom anchors expose different parts of this taller-than-feed illustration. */
+const SAMPLE_PAIRS = [
+  { id: "a", title: "The Lantern Keeper — a fictional short", anchor: "top" },
+  { id: "b", title: "A Map of Small Escapes — a fictional short", anchor: "bottom" },
+] as const;
+
 /** The occupancy facts the duplicate planner reads; the image itself is not
  * needed to know whether a pair is free. */
 function pairOccupancy(pair: Pair, anchor: CropAnchorKey): PairOccupancy {
@@ -266,7 +274,12 @@ export function TitleCompare({
   const [draftReading, setDraftReading] = useState(false);
   const draftFile = useRef<HTMLInputElement | null>(null);
   const draftRun = useRef(0);
+  const draftReadingRef = useRef(false);
   const draftChoices = useRef(0);
+  const [sampleBusy, setSampleBusy] = useState(false);
+  const [sampleMessage, setSampleMessage] = useState("");
+  const sampleBusyRef = useRef(false);
+  const sampleRun = useRef(0);
   const [copyMessage, setCopyMessage] = useState("");
   /** Prepared-export copy feedback belongs to one exact download: its key is
    * that export's object URL, so a replacement can never inherit an older
@@ -343,6 +356,9 @@ export function TitleCompare({
       pngCopyRun.current += 1;
       verifyRun.current += 1;
       draftRun.current += 1;
+      draftReadingRef.current = false;
+      sampleRun.current += 1;
+      sampleBusyRef.current = false;
       verifiedPngRef.current = null;
       verifiedManifestRef.current = null;
       for (const url of held) URL.revokeObjectURL(url);
@@ -603,6 +619,7 @@ export function TitleCompare({
       return false;
     };
     setDraftReading(true);
+    draftReadingRef.current = true;
     setDraftMessage("Reading the draft on this device…");
     try {
       const draft = await readTitleDraft(file);
@@ -651,7 +668,75 @@ export function TitleCompare({
     } catch (error) {
       if (stillApplicable()) setDraftMessage(error instanceof Error ? error.message : "Could not read the draft.");
     } finally {
-      if (current()) setDraftReading(false);
+      if (current()) {
+        draftReadingRef.current = false;
+        setDraftReading(false);
+      }
+    }
+  }
+
+  /** Fill only the two empty example targets. The shared artwork is encoded and
+   * decoded once, then each pair receives the same validated File under its own
+   * tracked object URL. Any pair edit or draft import retires the pending claim. */
+  async function trySamplePairs(): Promise<void> {
+    if (sampleBusyRef.current || draftReadingRef.current) return;
+    if (!SAMPLE_PAIRS.every(({ id }) => pairIsEmpty(pairOccupancy(pairs[PAIR_IDS.indexOf(id)], anchors[id]))))
+      return;
+
+    sampleBusyRef.current = true;
+    const run = ++sampleRun.current;
+    const revisions = [...pairEdits.current];
+    const draftAttempt = draftRun.current;
+    const current = () => mounted.current && sampleRun.current === run;
+    const unchanged = () =>
+      draftRun.current === draftAttempt &&
+      !draftReadingRef.current &&
+      revisions.every((revision, index) => pairEdits.current[index] === revision);
+    setSampleBusy(true);
+    setSampleMessage("Making sample pairs on this device…");
+    const canvas = document.createElement("canvas");
+    canvas.width = 1400;
+    canvas.height = 900;
+    try {
+      drawSample(canvas);
+      const blob = await canvasToBlob(canvas, "image/png");
+      if (!current()) return;
+      const file = new File([blob], "studio-title-compare-sample.png", { type: "image/png" });
+      const image = await validateTitleThumbnail(file);
+      if (!current()) return;
+      if (
+        !unchanged() ||
+        !SAMPLE_PAIRS.every(({ id }) => pairIsEmpty(pairOccupancy(pairs[PAIR_IDS.indexOf(id)], anchors[id])))
+      ) {
+        setSampleMessage("Your newer edits were kept. Try sample pairs again when Pairs A and B are empty.");
+        return;
+      }
+
+      const firstUrl = trackUrl(file);
+      const secondUrl = trackUrl(file);
+      setPairs((current) =>
+        current.map((pair, index) => {
+          if (index === 0)
+            return { ...pair, title: SAMPLE_PAIRS[0].title, image: { ...image, url: firstUrl }, error: null, busy: false };
+          if (index === 1)
+            return { ...pair, title: SAMPLE_PAIRS[1].title, image: { ...image, url: secondUrl }, error: null, busy: false };
+          return pair;
+        }),
+      );
+      pairEdits.current[0] += 1;
+      pairEdits.current[1] += 1;
+      setAnchors((current) => ({ ...current, a: SAMPLE_PAIRS[0].anchor, b: SAMPLE_PAIRS[1].anchor }));
+      setSampleMessage("Sample pairs are ready. Edit either title or crop.");
+    } catch {
+      if (current())
+        setSampleMessage("Could not prepare the sample pairs. Try again.");
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+      if (current()) {
+        sampleBusyRef.current = false;
+        setSampleBusy(false);
+      }
     }
   }
 
@@ -1250,6 +1335,10 @@ export function TitleCompare({
   );
   const duplicateSourceComplete = completePair(selected);
   const canDuplicatePair = duplicateSourceComplete && duplicateTarget !== null;
+  const canTrySamplePairs =
+    !sampleBusy &&
+    !draftReading &&
+    SAMPLE_PAIRS.every(({ id }) => pairIsEmpty(pairOccupancy(pairs[PAIR_IDS.indexOf(id)], anchors[id])));
   const duplicateNote = !duplicateSourceComplete
     ? `Add a title and thumbnail to ${selectedLabel} to duplicate it.`
     : duplicateTarget
@@ -1297,9 +1386,33 @@ export function TitleCompare({
           {preferredId ? ` · Pair ${PAIR_LABELS[preferredId]} preferred` : ""}
         </span>
       </div>
-      <p className="trim-note" id="image-title-compare-note">
-        Add a title and thumbnail to each pair. Compare them at two feed sizes.
-      </p>
+      <div className="title-compare-intro">
+        <div className="title-compare-intro-row">
+          <p className="trim-note" id="image-title-compare-note">
+            Add a title and thumbnail to each pair. Compare them at two feed sizes.
+          </p>
+          <button
+            type="button"
+            className="secondary title-compare-sample"
+            data-title-compare-sample
+            data-title-compare-sample-state={canTrySamplePairs ? "ready" : "unavailable"}
+            aria-disabled={!canTrySamplePairs}
+            aria-busy={sampleBusy}
+            aria-describedby="image-title-compare-note image-title-compare-sample-status"
+            onClick={() => void trySamplePairs()}
+          >
+            Try sample pairs
+          </button>
+        </div>
+        <p
+          className="trim-note title-compare-sample-status"
+          id="image-title-compare-sample-status"
+          role="status"
+          aria-live="polite"
+        >
+          {sampleMessage || (canTrySamplePairs ? "" : "Sample pairs need empty Pairs A and B.")}
+        </p>
+      </div>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
           <legend>Combinations</legend>
