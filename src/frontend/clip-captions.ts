@@ -8,6 +8,16 @@ export const MAX_CAPTION_OFFSET_SECONDS = 60;
 // never part of a saved or exported receipt.
 export type ClipCaptionTrack = Readonly<{ url: string; english: boolean; local?: true }>;
 
+/**
+ * Preview-only cue placement on the original video. No download, trim, source
+ * cue, snapshot, receipt or MP4 export reads this. The default emits the exact
+ * bytes the preview has always used; "top" adds the W3C WebVTT line cue setting
+ * at a fixed safe percentage so captions clear the lower frame.
+ * https://www.w3.org/TR/webvtt1/#webvtt-line-cue-setting
+ */
+export type CaptionPreviewPlacement = "default" | "top";
+const TOP_PREVIEW_CUE_SETTING = " line:12%";
+
 // A receipt records the source caption file's identity, never its cue text.
 // Zero offset stays absent so earlier receipts keep the same shape.
 export function captionReceiptFields(caption: Readonly<{ name: string; sourceSha256: string; vtt: string | null }>, offsetMs: number) {
@@ -61,12 +71,16 @@ export function sourceCaptionCues(cues: readonly ImportedCue[]): SourceCaptionCu
   return cues.map((cue, sourceIndex) => ({ startMs: cue.startMs, endMs: cue.endMs, text: cue.text, sourceIndex }));
 }
 
-export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0) {
+export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0, placement: CaptionPreviewPlacement = "default") {
   const kept = clipCaptionCues(cues, startSeconds, endSeconds, offsetMs);
   if (!kept) return null;
+  // Only the original-video preview passes a placement; every other caller
+  // takes the default and keeps byte-identical output. Text escaping stays in
+  // this one serializer so placement cannot change cue content.
+  const setting = placement === "top" ? TOP_PREVIEW_CUE_SETTING : "";
   const blocks = kept.map(({ from, to, text }) => {
     const plain = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-    return `${clipTimeStamp(from)} --> ${clipTimeStamp(to)}\n${plain}`;
+    return `${clipTimeStamp(from)} --> ${clipTimeStamp(to)}${setting}\n${plain}`;
   });
   return blocks.length ? `WEBVTT\n\n${blocks.join("\n\n")}\n` : null;
 }
@@ -83,10 +97,11 @@ export function survivingClipCaptionCount(cues: readonly ImportedCue[], startSec
  * same serializer and offset projection as the export, but spans 0 through the
  * full source duration so a draft trim cannot hide cues here. An invalid or
  * missing offset yields no track rather than a preview the export would reject.
+ * Placement changes cue settings only; times, text and escaping are shared.
  */
-export function sourcePreviewVtt(cues: readonly ImportedCue[], durationSeconds: number, offsetMs: number | null): string | null {
+export function sourcePreviewVtt(cues: readonly ImportedCue[], durationSeconds: number, offsetMs: number | null, placement: CaptionPreviewPlacement = "default"): string | null {
   if (offsetMs === null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return null;
-  return serializeClipCaptions(cues, 0, durationSeconds, offsetMs);
+  return serializeClipCaptions(cues, 0, durationSeconds, offsetMs, placement);
 }
 
 // SRT stamps carry hours and use a comma before milliseconds; WebVTT omits

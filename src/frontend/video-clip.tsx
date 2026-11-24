@@ -1,6 +1,6 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
-import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, srtForClipVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
 import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from "./clip-cue-search";
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
@@ -161,6 +161,9 @@ function VideoClip() {
     url: string;
   } | null>(null);
   const [showSourceCaptions, setShowSourceCaptions] = useState(false);
+  // Display-only preview option. It changes cue settings on the native track
+  // over the original video, never the draft, sidecars, receipt or export.
+  const [sourceCaptionPlacement, setSourceCaptionPlacement] = useState<CaptionPreviewPlacement>("default");
   const [sourceCaptionTrack, setSourceCaptionTrack] = useState<{ vtt: string; url: string } | null>(null);
   const [sourceTrackProblem, setSourceTrackProblem] = useState("");
   // A cue audition is a short, explicitly started play of the existing source
@@ -387,7 +390,7 @@ function VideoClip() {
   const currentFullSourceCaptionFile = fullSourceCaptionFile?.vtt === fullSourceCaptionVtt ? fullSourceCaptionFile : null;
   const fullSourceCaptionUrl = currentFullSourceCaptionFile?.url ?? null;
   const sourceVtt = showSourceCaptions && captionDraft
-    ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs)
+    ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs, sourceCaptionPlacement)
     : null;
   useEffect(() => {
     if (!sourceVtt) {
@@ -410,13 +413,19 @@ function VideoClip() {
       return;
     }
     const failed = () => setSourceTrackProblem("Couldn’t load the caption preview. Turn it off and back on to retry.");
-    const sync = () => { if (track.mode !== "showing") setShowSourceCaptions(false); };
+    // A track retired during a placement switch can emit a late change. Only a
+    // still-mounted track may switch the preview off through native controls.
+    const sync = () => { if (element.isConnected && track.mode !== "showing") setShowSourceCaptions(false); };
     element.addEventListener("error", failed);
     track.mode = "showing";
     tracks.addEventListener("change", sync);
     return () => {
       element.removeEventListener("error", failed);
       tracks.removeEventListener("change", sync);
+      // Retire this native track and its loaded cues without reloading,
+      // seeking or pausing the video. The blob URL/content guards above then
+      // mount the replacement track for the new placement.
+      if (track.mode !== "disabled") track.mode = "disabled";
     };
   }, [sourceCaptionUrl]);
   const sourcePreviewNote = !showSourceCaptions ? ""
@@ -1483,7 +1492,17 @@ function VideoClip() {
             <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading || captionFileLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>
             Preview draft captions on original video
           </label>
-          <p className="trim-note">The preview uses the full video and the timing offset above. The cue count applies to the trimmed MP4.</p>
+          {showSourceCaptions && <div className="trim-fields">
+            <label>Preview caption placement<select
+              aria-describedby="source-caption-note"
+              value={sourceCaptionPlacement}
+              disabled={busy || checking || importing || receiptLoading || captionFileLoading}
+              onChange={event => setSourceCaptionPlacement(event.currentTarget.value === "top" ? "top" : "default")}>
+              <option value="default">Default</option>
+              <option value="top">Top</option>
+            </select></label>
+          </div>}
+          <p id="source-caption-note" className="trim-note">The preview uses the full video and the timing offset above. Choose Top to clear the lower part of the preview. The cue count applies to the trimmed MP4.</p>
           {sourcePreviewNote && <p className="trim-note" role="status">{sourcePreviewNote}</p>}
         </div>}
         <div>
