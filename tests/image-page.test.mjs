@@ -147,6 +147,11 @@ test("the workbench ships local photo adjustments with real pixel values", () =>
   assert.match(workbench, /adjustPixels\(pixels\.data, \{/);
   assert.match(workbench, /adjustmentsAreNeutral\(settings\.adjust\)/);
   assert.match(workbench, /Reset adjustments/);
+  assert.match(workbench, /key === "highlights"\s*\?\s*"image-highlights-note"/);
+  assert.match(workbench, /id="image-highlights-note"/);
+  assert.match(workbench, /Highlights affects only the brighter tones/);
+  assert.match(workbench, /negative darkens them/);
+  assert.match(workbench, /cannot restore detail already lost to clipping/);
   assert.match(workbench, /alpha channel is never changed/);
   assert.match(workbench, /Adjustments changed \{selected\.result\.adjustChanged\.toLocaleString\(\)\}/);
   assert.match(workbench, /adjustments: describeAdjustments\(selected\.result\.settings\.adjust\)/);
