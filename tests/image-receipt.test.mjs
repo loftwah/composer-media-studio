@@ -92,6 +92,29 @@ test("neutral tint keeps exact v1 settings and an applied tint remains recorded"
   assert.equal(render().transform.settings.adjust.tint, -100);
 });
 
+test("neutral shadows is omitted from v1 settings and an applied value remains recorded", () => {
+  const result = makeResult();
+  result.settings.adjust = { exposure: 4, contrast: 6 };
+  const render = () => buildImageReceipt({ sourceHash: SOURCE_HASH, result });
+  const previous = JSON.stringify(render());
+
+  result.settings.adjust = { exposure: 4, contrast: 6, shadows: 0 };
+  assert.equal(JSON.stringify(render()), previous, "a stored neutral shadow keeps the prior receipt");
+
+  result.settings.adjust = { exposure: 4, contrast: 6, shadows: 0, tint: 0 };
+  assert.equal(JSON.stringify(render()), previous, "both neutral keys are omitted together");
+
+  result.settings.adjust = { exposure: 4, contrast: 6, shadows: 0, tint: -20 };
+  assert.deepEqual(render().transform.settings.adjust, { exposure: 4, contrast: 6, tint: -20 });
+
+  result.settings.adjust = { exposure: 4, contrast: 6, shadows: 30, tint: 0 };
+  assert.deepEqual(render().transform.settings.adjust, { exposure: 4, contrast: 6, shadows: 30 });
+  assert.equal(
+    buildImageReceipt({ sourceHash: SOURCE_HASH, result }).transform.settings.adjust.shadows,
+    30,
+  );
+});
+
 test("receipt carries no raw bytes, filename, EXIF, private data or status guesses", () => {
   const result = makeResult();
   result.blob = new Uint8Array([1]);
