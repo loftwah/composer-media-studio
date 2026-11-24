@@ -3728,10 +3728,15 @@ function Images() {
                   step="1"
                   value={settings.adjust[key]}
                   disabled={running}
+                  aria-describedby={key === "tint" ? "image-tint-note" : undefined}
                   onChange={(event) => setAdjustment(key, Number(event.target.value))}
                 />
               </label>
             ))}
+            <p className="trim-note" id="image-tint-note">
+              Tint moves the green–magenta axis independently of Temperature: negative
+              adds green, positive adds magenta.
+            </p>
             <div className="image-control-actions">
               <button
                 type="button"
@@ -3743,7 +3748,7 @@ function Images() {
               </button>
             </div>
             <p className="trim-note">
-              Presets are just named values for these four controls, so the result
+              Presets are just named values for these controls, so the result
               caption states the real numbers. Adjustments are applied to the exported
               pixels after resize and crop; the alpha channel is never changed and the
               original File stays untouched.

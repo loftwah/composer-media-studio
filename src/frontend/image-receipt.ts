@@ -39,6 +39,14 @@ export type ImageReceipt = {
 };
 
 export function buildImageReceipt({ sourceHash, result }: ImageReceiptInput): ImageReceipt {
+  const settings = Object.fromEntries(SETTINGS.map((name) => [name, result.settings[name]]));
+  const adjust = settings.adjust;
+  // Include tint only when it affected the render. Earlier v1 receipts have
+  // no tint field in the same neutral case.
+  if (adjust && typeof adjust === "object" && "tint" in adjust && adjust.tint === 0) {
+    const { tint: _neutralTint, ...legacyAdjust } = adjust;
+    settings.adjust = legacyAdjust;
+  }
   return {
     schema: IMAGE_RECEIPT_SCHEMA,
     version: IMAGE_RECEIPT_VERSION,
@@ -46,7 +54,7 @@ export function buildImageReceipt({ sourceHash, result }: ImageReceiptInput): Im
     source: { sha256: sourceHash },
     transform: {
       plan: result.plan,
-      settings: Object.fromEntries(SETTINGS.map((name) => [name, result.settings[name]])),
+      settings,
     },
     output: {
       width: result.width,

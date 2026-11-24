@@ -26,18 +26,21 @@ test("adjustments are whole numbers inside the documented range", () => {
     contrast: -100,
     saturation: 8,
     temperature: 0,
+    tint: 0,
   });
   assert.deepEqual(normaliseAdjustments(null), {
     exposure: 0,
     contrast: 0,
     saturation: 0,
     temperature: 0,
+    tint: 0,
   });
   assert.deepEqual(normaliseAdjustments({ exposure: "abc" }), {
     exposure: 0,
     contrast: 0,
     saturation: 0,
     temperature: 0,
+    tint: 0,
   });
   assert.equal(adjustmentsAreNeutral({ exposure: 0, contrast: 0 }), true);
   assert.equal(adjustmentsAreNeutral({ exposure: 1 }), false);
@@ -142,6 +145,87 @@ test("temperature warms red and cools blue", () => {
     adjustments: { temperature: -50 },
   });
   assert.deepEqual([...cool.pixels], [110, 128, 146, 255]);
+});
+
+test("tint shifts the green-magenta axis independently of temperature", () => {
+  const magenta = adjustPixels(single(128, 128, 128), {
+    width: 1,
+    height: 1,
+    adjustments: { tint: 100 },
+  });
+  assert.deepEqual([...magenta.pixels], [128, 92, 128, 255], "positive tint removes green toward magenta");
+
+  const green = adjustPixels(single(128, 128, 128), {
+    width: 1,
+    height: 1,
+    adjustments: { tint: -100 },
+  });
+  assert.deepEqual([...green.pixels], [128, 164, 128, 255], "negative tint adds green");
+
+  const half = adjustPixels(single(128, 128, 128), {
+    width: 1,
+    height: 1,
+    adjustments: { tint: 50 },
+  });
+  assert.deepEqual([...half.pixels], [128, 110, 128, 255], "bounded and deterministic");
+
+  const both = adjustPixels(single(128, 128, 128), {
+    width: 1,
+    height: 1,
+    adjustments: { temperature: 100, tint: 100 },
+  });
+  assert.deepEqual([...both.pixels], [164, 92, 92, 255], "temperature moves red/blue, tint only green");
+});
+
+test("tint keeps alpha and transparent pixels and preserves prior pixel compatibility", () => {
+  const source = pixels(
+    10, 20, 30, 0,
+    200, 100, 50, 128,
+  );
+  const result = adjustPixels(source, {
+    width: 2,
+    height: 1,
+    adjustments: { tint: 100 },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual([...source.slice(0, 4)], [10, 20, 30, 0], "transparent padding is untouched");
+  assert.deepEqual([...source.slice(4)], [200, 64, 50, 128], "green shifts, alpha and other channels do not");
+  assert.equal(result.changed, 1);
+
+  const defaults = single(120, 40, 200);
+  const neutral = adjustPixels(defaults, { width: 1, height: 1, adjustments: { tint: 0 } });
+  assert.equal(neutral.neutral, true);
+  assert.equal(neutral.changed, 0);
+  assert.equal(neutral.pixels, defaults);
+  assert.deepEqual([...defaults], [120, 40, 200, 255], "zero writes nothing");
+
+  const render = (adjustments) => [...adjustPixels(single(120, 40, 200), {
+    width: 1,
+    height: 1,
+    adjustments,
+  }).pixels];
+  assert.deepEqual(
+    render({ exposure: 8, contrast: 4 }),
+    render({ exposure: 8, contrast: 4, tint: 0 }),
+    "saved partial settings without tint render identically",
+  );
+  for (const preset of ADJUSTMENT_PRESETS)
+    assert.equal(preset.adjustments.tint, 0, `${preset.id} keeps its prior pixels`);
+});
+
+test("tint is clamped, neutralised and described like the other adjustments", () => {
+  assert.equal(normaliseAdjustments({ tint: 150 }).tint, 100);
+  assert.equal(normaliseAdjustments({ tint: -150 }).tint, -100);
+  assert.equal(adjustmentsAreNeutral({ tint: 0 }), true);
+  assert.equal(adjustmentsAreNeutral({ tint: 1 }), false);
+  assert.equal(
+    presetIdFor({ exposure: 4, contrast: 6, saturation: 10, temperature: 32 }),
+    "warm",
+    "a saved partial preset still matches",
+  );
+  assert.equal(describeAdjustments({ tint: 25 }), "tint +25");
+  assert.equal(describeAdjustments({ tint: -25 }), "tint -25");
+  assert.equal(describeAdjustments({ tint: 0 }), "");
 });
 
 test("fully transparent pixels keep their colour and every alpha byte", () => {

@@ -82,6 +82,16 @@ test("receipt has the exact compact, versioned shape from the completed render",
   });
 });
 
+test("neutral tint keeps exact v1 settings and an applied tint remains recorded", () => {
+  const result = makeResult();
+  const render = () => buildImageReceipt({ sourceHash: SOURCE_HASH, result });
+  const previous = JSON.stringify(render());
+  result.settings.adjust.tint = 0;
+  assert.equal(JSON.stringify(render()), previous);
+  result.settings.adjust.tint = -100;
+  assert.equal(render().transform.settings.adjust.tint, -100);
+});
+
 test("receipt carries no raw bytes, filename, EXIF, private data or status guesses", () => {
   const result = makeResult();
   result.blob = new Uint8Array([1]);
