@@ -1,8 +1,8 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
-import { MAX_SPEAKER_CHARS } from "./caption-speaker.ts";
+import { MAX_SPEAKER_CHARS, renameSpeakerCues } from "./caption-speaker.ts";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipCaptionSrtVariants, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
-import { ALL_CUE_SPEAKERS, MAX_CUE_SEARCH_CHARS, UNNAMED_CUE_SPEAKER, cueMergeVisibility, cueSearchQuery, cueSpeakerFilterForDraft, cueSpeakerName, cueSpeakerOptions, filterCuesByTextAndSpeaker } from "./clip-cue-search";
+import { ALL_CUE_SPEAKERS, MAX_CUE_SEARCH_CHARS, UNNAMED_CUE_SPEAKER, cueMergeVisibility, cueSearchQuery, cueSpeakerFilterForDraft, cueSpeakerName, cueSpeakerOptionValue, cueSpeakerOptions, filterCuesByTextAndSpeaker } from "./clip-cue-search";
 import { fullSourceCaptionDownload, fullSourceCaptionSrtVariants, fullSourceCaptionTranscript } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
 import { EMPTY_CUE_HISTORY, cueEditHistory, redoLastCueChange, undoLastCueChange, type CueHistory } from "./clip-cue-history";
@@ -149,6 +149,8 @@ function VideoClip() {
   // that name remains in the current draft.
   const [cueSearchText, setCueSearchText] = useState("");
   const [cueSpeakerSelection, setCueSpeakerSelection] = useState(ALL_CUE_SPEAKERS);
+  const [cueSpeakerRenameText, setCueSpeakerRenameText] = useState("");
+  const [cueSpeakerRenameMessage, setCueSpeakerRenameMessage] = useState("");
   const cueSpeaker = cueSpeakerFilterForDraft(cueSpeakerSelection, captionDraft?.cues ?? []);
   useEffect(() => {
     if (cueSpeakerSelection !== cueSpeaker) setCueSpeakerSelection(cueSpeaker);
@@ -162,6 +164,7 @@ function VideoClip() {
   const [cuePlayheadStatus, setCuePlayheadStatus] = useState("");
   const cueReview = useRef<HTMLDetailsElement>(null);
   const cueSearchInput = useRef<HTMLInputElement>(null);
+  const cueSpeakerRenameInput = useRef<HTMLInputElement>(null);
   const manualCueTextInput = useRef<HTMLInputElement>(null);
   const manualCueDetails = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -334,6 +337,9 @@ function VideoClip() {
     setCuePlayheadStatus("");
   }, [captionDraft, source, start, end, captionOffsetMs, cueView, cueSearchText, cueSpeaker]);
   const cueSpeakerFilterName = cueSpeakerName(cueSpeaker);
+  const namedCueSpeaker = cueSpeakerFilterName ? cueSpeakerFilterName : null;
+  const captionActionsBusy = busy || checking || importing || receiptLoading || captionLoading || captionFileLoading || sourceLoading || handoffBusy;
+  const cueSpeakerRenameDisabled = namedCueSpeaker === null || cueEditing !== null || captionActionsBusy;
   const cueFilterDescription = [
     cueQuery ? `text “${cueQuery}”` : "",
     cueSpeakerFilterName !== null
@@ -781,6 +787,8 @@ function VideoClip() {
   function clearCueFilters() {
     setCueSearchText("");
     setCueSpeakerSelection(ALL_CUE_SPEAKERS);
+    setCueSpeakerRenameText("");
+    setCueSpeakerRenameMessage("");
     cueSearchInput.current?.focus();
   }
   // Switching which cue rows are shown never edits the draft, trim or offset.
@@ -981,6 +989,56 @@ function VideoClip() {
         setCaptionMessage(error instanceof Error ? error.message : "Could not merge the cues in this browser.");
     } finally {
       if (request === captionRequest.current) setCaptionLoading(false);
+    }
+  }
+  // The selected speaker filter chooses one exact name, but the rename always
+  // reads the full source draft. Only that speaker field changes; the existing
+  // edited-track digest, request guard and one-step cue history stay authoritative.
+  async function renameSelectedCueSpeaker() {
+    if (!captionDraft || !namedCueSpeaker || cueEditing || captionActionsBusy) return;
+    const previousDraft = captionDraft;
+    const from = namedCueSpeaker;
+    const renamed = renameSpeakerCues(previousDraft.cues, from, cueSpeakerRenameText);
+    if ("problem" in renamed) {
+      setCueSpeakerRenameMessage(renamed.problem);
+      cueSpeakerRenameInput.current?.focus();
+      return;
+    }
+    const track = manualCaptionTrackVtt(renamed.cues);
+    if (!track) {
+      setCueSpeakerRenameMessage("This caption draft could not be renamed. Check its cue times and try again.");
+      return;
+    }
+    if (new TextEncoder().encode(track).byteLength > MAX_CAPTION_BYTES) {
+      setCueSpeakerRenameMessage("That name would put the full-source caption track over 64 KB. Choose a shorter name.");
+      cueSpeakerRenameInput.current?.focus();
+      return;
+    }
+    const request = ++captionRequest.current;
+    const focused = document.activeElement;
+    setCaptionLoading(true);
+    setCueSpeakerRenameMessage(`Renaming “${from}” on every full-source cue…`);
+    try {
+      const updated = await editedCaptionDraft(previousDraft, renamed.cues);
+      if (request !== captionRequest.current) return;
+      setCaptionDraft(updated);
+      setCaptionHistory(cueEditHistory(previousDraft));
+      setCueSpeakerSelection(cueSpeakerOptionValue(renamed.speaker));
+      setCueSpeakerRenameText("");
+      const count = renamed.renamed;
+      setCueSpeakerRenameMessage(`Renamed ${count} full-source ${count === 1 ? "cue" : "cues"} from “${from}” to “${renamed.speaker}”. Undo is available below.`);
+    } catch (error) {
+      if (request === captionRequest.current)
+        setCueSpeakerRenameMessage(error instanceof Error ? error.message : "Could not rename the speaker in this browser.");
+    } finally {
+      if (request === captionRequest.current) {
+        setCaptionLoading(false);
+        requestAnimationFrame(() => {
+          if (request === captionRequest.current && focused instanceof HTMLElement &&
+            focused.isConnected && document.activeElement === document.body)
+            focused.focus({ preventScroll: true });
+        });
+      }
     }
   }
   // Move between the exact drafts on either side of the last cue edit. Both
@@ -1577,7 +1635,11 @@ function VideoClip() {
                     <select id="trim-cue-speaker" value={cueSpeaker}
                       aria-describedby="trim-cue-search-help trim-cue-search-count"
                       disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
-                      onChange={event => setCueSpeakerSelection(event.currentTarget.value)}>
+                      onChange={event => {
+                        setCueSpeakerSelection(event.currentTarget.value);
+                        setCueSpeakerRenameText("");
+                        setCueSpeakerRenameMessage("");
+                      }}>
                       <option value={ALL_CUE_SPEAKERS}>All speakers</option>
                       <option value={UNNAMED_CUE_SPEAKER}>No speaker</option>
                       {cueSpeakerChoices.length > 0 && (
@@ -1591,7 +1653,34 @@ function VideoClip() {
                     disabled={(!cueSearchText && cueSpeaker === ALL_CUE_SPEAKERS) || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                     onClick={clearCueFilters}>Clear</button>
                 </div>
-                <p id="trim-cue-search-help" className="trim-note">These filters only change the rows below. The saved draft, preview, offset and downloads keep every cue.</p>
+                {namedCueSpeaker !== null && (
+                  <form className="trim-cue-search-controls trim-cue-speaker-rename"
+                    aria-label={`Rename speaker ${namedCueSpeaker}`}
+                    aria-busy={captionLoading || undefined}
+                    onSubmit={event => {
+                      event.preventDefault();
+                      void renameSelectedCueSpeaker();
+                    }}>
+                    <label className="trim-cue-text-filter trim-cue-text" htmlFor="trim-cue-speaker-rename">New speaker name
+                      <input id="trim-cue-speaker-rename" ref={cueSpeakerRenameInput} type="text"
+                        value={cueSpeakerRenameText} maxLength={MAX_SPEAKER_CHARS}
+                        spellCheck={false} autoComplete="off"
+                        aria-describedby="trim-cue-speaker-rename-help trim-cue-speaker-rename-status"
+                        disabled={cueSpeakerRenameDisabled}
+                        onChange={event => setCueSpeakerRenameText(event.currentTarget.value)}
+                      />
+                    </label>
+                    <button type="submit" className="secondary trim-cue-search-clear"
+                      disabled={cueSpeakerRenameDisabled}>Rename speaker</button>
+                  </form>
+                )}
+                {namedCueSpeaker !== null && (
+                  <p id="trim-cue-speaker-rename-help" className="trim-note trim-cue-text">{cueEditing
+                    ? `Finish or cancel the open cue edit before renaming “${namedCueSpeaker}”.`
+                    : `Applies to every cue named “${namedCueSpeaker}”, including cues outside the trim or search.`}</p>
+                )}
+                <p id="trim-cue-speaker-rename-status" className="trim-note" role="status">{namedCueSpeaker && cueSpeakerRenameMessage}</p>
+                <p id="trim-cue-search-help" className="trim-note">The filters change the rows shown below. The saved draft, preview, offset and downloads include every cue.</p>
                 <p id="trim-cue-search-count" className="trim-note" role="status" aria-live="polite"
                   data-empty={hasCueFilters && reviewVisibleCueCount === 0 ? "true" : undefined}>
                   {cueReviewStatus}

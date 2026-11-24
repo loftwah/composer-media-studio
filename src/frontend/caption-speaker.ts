@@ -15,3 +15,45 @@ export function normalizeSpeaker(value: string): string | null {
   const name = value.trim();
   return name.length <= MAX_SPEAKER_CHARS && !NOT_PLAIN.test(name) ? name : null;
 }
+
+import type { ImportedCue } from "./caption-import.ts";
+
+type SpeakerRenameResult =
+  | Readonly<{ cues: ImportedCue[]; speaker: string; renamed: number }>
+  | Readonly<{ problem: string }>;
+
+/**
+ * Rename one exact speaker across the full cue list. The new name uses the same
+ * bound and plain-line rule as import and manual cues. An exact existing name is
+ * never merged; a case-only correction is allowed when no other exact speaker
+ * already owns it. Unmatched cue objects are returned untouched.
+ */
+export function renameSpeakerCues(
+  cues: readonly ImportedCue[],
+  speaker: string,
+  value: string,
+): SpeakerRenameResult {
+  if (!speaker || !cues.some(cue => cue.speaker === speaker)) {
+    return { problem: `The speaker “${speaker}” is no longer in this draft. Choose another speaker.` };
+  }
+  const name = normalizeSpeaker(value);
+  if (name === "") {
+    return { problem: "Enter a new speaker name. The current speaker was not changed." };
+  }
+  if (name === null) {
+    return { problem: `Use one line of up to ${MAX_SPEAKER_CHARS} plain characters. The current speaker was not changed.` };
+  }
+  if (name === speaker) {
+    return { problem: `“${speaker}” is already this speaker’s name. Enter a different name.` };
+  }
+  if (cues.some(cue => cue.speaker === name)) {
+    return { problem: `“${name}” already belongs to another speaker. Choose a unique name, or rename that speaker first.` };
+  }
+  let renamed = 0;
+  const nextCues = cues.map(cue => {
+    if (cue.speaker !== speaker) return cue;
+    renamed++;
+    return { ...cue, speaker: name };
+  });
+  return { cues: nextCues, speaker: name, renamed };
+}
