@@ -496,6 +496,23 @@ function VideoClip() {
   const fullSourceCaptionSrtUrl = currentFullSourceCaptionFile?.srtUrl ?? null;
   const fullSourceCaptionSpeakerSrtUrl = currentFullSourceCaptionFile?.speakerSrtUrl ?? null;
   const fullSourceCaptionTranscriptUrl = currentFullSourceCaptionFile?.transcriptUrl ?? null;
+  const [fullSourceTranscriptCopyStatus, setFullSourceTranscriptCopyStatus] = useState<{ file: typeof currentFullSourceCaptionFile; message: string } | null>(null);
+  const fullSourceTranscriptCopyAttempt = useRef(0);
+  async function copyFullSourceTranscript() {
+    const prepared = currentFullSourceCaptionFile;
+    if (!prepared || prepared.transcript === null) return;
+    const attempt = ++fullSourceTranscriptCopyAttempt.current;
+    setFullSourceTranscriptCopyStatus({ file: prepared, message: "Copying transcript…" });
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(prepared.transcript);
+      if (attempt !== fullSourceTranscriptCopyAttempt.current) return;
+      setFullSourceTranscriptCopyStatus({ file: prepared, message: "Transcript copied." });
+    } catch {
+      if (attempt !== fullSourceTranscriptCopyAttempt.current) return;
+      setFullSourceTranscriptCopyStatus({ file: prepared, message: "Clipboard unavailable or denied. Use Save full-source transcript (TXT)." });
+    }
+  }
   const sourceVtt = showSourceCaptions && captionDraft
     ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs, sourceCaptionPlacement, { voices: true })
     : null;
@@ -1673,7 +1690,8 @@ function VideoClip() {
               <p><a className="button secondary" href={fullSourceCaptionUrl} download={`${clipFilename}-full-source-captions.vtt`} aria-describedby="full-source-captions-note">Save full-source caption draft (VTT)</a></p>
               {fullSourceCaptionSrtUrl && <p><a className="button secondary" href={fullSourceCaptionSrtUrl} download={`${clipFilename}-full-source-captions.srt`} aria-describedby="full-source-captions-note">Save full-source caption draft (SRT)</a></p>}
               {fullSourceCaptionSpeakerSrtUrl && <p><a className="button secondary" href={fullSourceCaptionSpeakerSrtUrl} download={`${clipFilename}-full-source-captions-speakers.srt`} aria-describedby="full-source-captions-note">Save full-source caption draft (SRT, speaker names as text)</a></p>}
-              {fullSourceCaptionTranscriptUrl && <p><a className="button secondary" href={fullSourceCaptionTranscriptUrl} download={`${clipFilename}-full-source-transcript.txt`} aria-describedby="full-source-captions-note">Save full-source transcript (TXT)</a></p>}
+              {fullSourceCaptionTranscriptUrl && <p><a className="button secondary" href={fullSourceCaptionTranscriptUrl} download={`${clipFilename}-full-source-transcript.txt`} aria-describedby="full-source-captions-note">Save full-source transcript (TXT)</a>{" "}<button type="button" className="button secondary" aria-describedby="full-source-captions-note" onClick={() => void copyFullSourceTranscript()}>Copy full-source transcript</button></p>}
+              {fullSourceTranscriptCopyStatus?.file === currentFullSourceCaptionFile && <p className="trim-note" role="status">{fullSourceTranscriptCopyStatus.message}</p>}
               <p id="full-source-captions-note" className="trim-note">Includes every current source cue at its original video time, even while filtering or trimming. TXT is plain Unicode text with each supplied speaker name; it does not apply the timing offset. To edit cues again, open a saved VTT or SRT with Choose captions.</p>
             </div>
           )}
