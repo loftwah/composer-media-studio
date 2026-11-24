@@ -237,6 +237,35 @@ test("chooser intake restores focus only when the picker owned it and focus stay
   assert.ok(!/addFiles\(files\)/.test(workbench.replace("void addFiles(files, true)", "")), "paste and drop do not pass the picker flag");
 });
 
+test("Base64 intake is a bounded local disclosure that reuses addFiles without resetting source state", () => {
+  assert.match(workbench, /import \{ imageFileFromBase64 \} from "\.\/image-base64-input\.ts"/);
+  const dropAt = workbench.indexOf('<label\n          className={`image-drop');
+  const disclosureAt = workbench.indexOf('<details className="image-base64-intake">');
+  const publicSourceAt = workbench.indexOf('{publicImageSource?.kind === "poster"');
+  assert.ok(dropAt > 0 && disclosureAt > dropAt && publicSourceAt > disclosureAt);
+  assert.match(workbench, /<summary>Paste Base64 or data URI<\/summary>/);
+  assert.match(workbench, /value\.length > MAX_BASE64_INPUT_CHARACTERS/);
+  assert.match(workbench, /aria-describedby=\{base64Message/);
+  assert.match(workbench, /aria-invalid=\{base64Message \? true : undefined\}/);
+  assert.match(workbench, /<button\s+type="button"\s+className="secondary"\s+disabled=\{!base64Text[\s\S]*?onClick=\{addBase64Image\}/);
+
+  const handlerAt = workbench.indexOf("  function addBase64Image(): void {");
+  const handlerEnd = workbench.indexOf("  async function loadPublicImage", handlerAt);
+  assert.ok(handlerAt > 0 && handlerEnd > handlerAt);
+  const handler = workbench.slice(handlerAt, handlerEnd);
+  assert.match(handler, /if \("problem" in prepared\) \{\s*setBase64Message\(prepared\.problem\);\s*return;\s*\}/);
+  assert.match(handler, /void addFiles\(\[prepared\.file\], false, undefined, \(item\) => \{/);
+  assert.match(handler, /setSelectedId\(\(previous\) => previous \|\| item\.id\);/);
+  assert.match(handler, /setBase64Text\(""\);/);
+  for (const forbidden of ["setItems(", "clearBatchExports(", "resetAll(", "setRejections("]) {
+    assert.ok(!handler.includes(forbidden), `refused paste must not call ${forbidden}`);
+  }
+  assert.doesNotMatch(handler, /onPaste|clipboardData|getData\(/);
+  assert.match(workbench, /setBase64Text\(""\);\s*setBase64Message\(""\);\s*setRejections\(\[\]\);/);
+  assert.match(workbench, /const files = \[\.\.\.\(event\.clipboardData\?\.files \?\? \[\]\)\]/);
+  assert.match(workbench, /void addFilesRef\.current\(files\);/);
+});
+
 test("the metadata strip button keeps keyboard focus while the bytes load", () => {
   assert.match(workbench, /disabled=\{running \|\| importing\} aria-disabled=\{stripBusy \|\| running\} onClick=\{\(\) => void stripSelected\(\)\}/);
   assert.match(workbench, /if \(!selected \|\| stripBusy \|\| running \|\| importing\) return;/);

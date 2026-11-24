@@ -83,6 +83,45 @@
   cursor: not-allowed;
 }
 
+.image-base64-intake {
+  min-width: 0;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.image-base64-intake > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.image-base64-intake[open] > summary {
+  margin-bottom: 0.65rem;
+}
+
+.image-base64-intake > .trim-note {
+  max-width: 72ch;
+}
+
+.image-base64-intake textarea {
+  min-height: 8rem;
+  margin-top: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1rem;
+  line-height: 1.45;
+  resize: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.image-base64-intake textarea[readonly] {
+  color: var(--muted);
+}
+
+.image-base64-intake .image-control-actions {
+  margin-top: 0.65rem;
+}
+
 .image-source-actions,
 .image-control-actions {
   display: flex;

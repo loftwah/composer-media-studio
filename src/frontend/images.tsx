@@ -36,6 +36,7 @@ import {
   type Adjustments,
 } from "./image-adjust.ts";
 import {
+  MAX_BASE64_INPUT_CHARACTERS,
   MAX_SNIPPET_BYTES,
   SNIPPET_KINDS,
   SNIPPET_LABELS,
@@ -43,6 +44,7 @@ import {
   type SnippetKind,
   type SnippetResult,
 } from "./image-snippets.ts";
+import { imageFileFromBase64 } from "./image-base64-input.ts";
 import {
   MAX_PALETTE_COLOURS,
   PALETTE_WORKING_EDGE,
@@ -1027,6 +1029,8 @@ function Images() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [previewBackdrop, setPreviewBackdrop] = useState<PreviewBackdrop>("checkerboard");
   const [message, setMessage] = useState("");
+  const [base64Text, setBase64Text] = useState("");
+  const [base64Message, setBase64Message] = useState("");
   // Blocked drop/paste needs its own status: `message` is reused for progress
   // and would otherwise erase the "add it again" instruction mid-work.
   const [sourceNotice, setSourceNotice] = useState("");
@@ -1677,6 +1681,24 @@ function Images() {
   }
   addFilesRef.current = addFiles;
 
+  // The paste box is an alternate local source for the same intake. Refused text
+  // never reaches addFiles, and the field is cleared only after a File is added.
+  function addBase64Image(): void {
+    if (!base64Text || addingRef.current || runningRef.current || socialController.current ||
+      items.length >= MAX_BATCH_IMAGES) return;
+    const prepared = imageFileFromBase64(base64Text);
+    if ("problem" in prepared) {
+      setBase64Message(prepared.problem);
+      return;
+    }
+    setBase64Message("");
+    void addFiles([prepared.file], false, undefined, (item) => {
+      setSelectedId((previous) => previous || item.id);
+      setBase64Text("");
+      setBase64Message("");
+    });
+  }
+
   async function loadPublicImage(): Promise<void> {
     if (!publicImageSource || publicImageLoaded || publicImageRequest.current || addingRef.current ||
       runningRef.current || socialController.current || items.length >= MAX_BATCH_IMAGES) return;
@@ -1858,6 +1880,8 @@ function Images() {
     setAlphaMessage("");
     setMessage("Cleared. Nothing remains in this tab.");
     setSourceNotice("");
+    setBase64Text("");
+    setBase64Message("");
     setRejections([]);
     setBatch({ total: 0, completed: 0, current: "" });
     setSocialOutputs([]);
@@ -3251,6 +3275,55 @@ function Images() {
             }}
           />
         </label>
+        <details className="image-base64-intake">
+          <summary>Paste Base64 or data URI</summary>
+          <p className="trim-note" id="image-base64-intake-note">
+            Paste standard Base64 or a PNG, JPEG or WebP data URI from Embed code.
+            Images can be up to {MAX_SNIPPET_BYTES / 1024 / 1024} MiB before encoding.
+          </p>
+          <label>
+            Base64 or data URI
+            <textarea
+              rows={6}
+              spellCheck={false}
+              autoCapitalize="off"
+              placeholder="Paste Base64 or data:image/png;base64,…"
+              aria-describedby={base64Message
+                ? "image-base64-intake-note image-base64-intake-error"
+                : "image-base64-intake-note"}
+              aria-invalid={base64Message ? true : undefined}
+              value={base64Text}
+              readOnly={adding}
+              disabled={running || socialBusy || items.length >= MAX_BATCH_IMAGES}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                if (value.length > MAX_BASE64_INPUT_CHARACTERS) {
+                  setBase64Text("");
+                  setBase64Message("This paste is too long. Use a smaller image or choose the original file.");
+                  return;
+                }
+                setBase64Text(value);
+                setBase64Message("");
+              }}
+            />
+          </label>
+          <div className="image-control-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={!base64Text || running || socialBusy || items.length >= MAX_BATCH_IMAGES}
+              aria-disabled={adding}
+              onClick={addBase64Image}
+            >
+              Add pasted image
+            </button>
+          </div>
+          {base64Message && (
+            <p className="image-status" id="image-base64-intake-error" role="alert">
+              {base64Message}
+            </p>
+          )}
+        </details>
         {publicImageSource?.kind === "poster" && (
           <p className="trim-note">
             <a href={sourceFilmPath(publicImageSource.path) ?? undefined}>Source film</a>
