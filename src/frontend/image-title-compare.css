@@ -504,7 +504,26 @@
 /* Phone: the pair controls and the previews stack, and the row preview keeps
    its real pixel size while the card preview fills the column. */
 
+.title-compare-preview-jump {
+  display: none;
+}
+
+.title-compare-previews:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 4px;
+}
+
 @media (max-width: 820px) {
+  .title-compare-preview-jump {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .title-compare-previews {
+    scroll-margin-block-start: 5rem;
+  }
+
   .image-title-compare .title-compare-grid {
     grid-template-columns: 1fr;
   }
