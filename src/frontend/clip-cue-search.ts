@@ -22,6 +22,58 @@ export function filterCuesByText<C extends SearchableCue>(cues: readonly C[], ra
   return cues.filter(cue => cue.text.normalize("NFC").toLowerCase().includes(query));
 }
 
+export const ALL_CUE_SPEAKERS = "all";
+export const UNNAMED_CUE_SPEAKER = "unnamed";
+const NAMED_CUE_SPEAKER_PREFIX = "speaker:";
+
+/**
+ * Option values are namespaced, so real speakers named "All speakers" or
+ * "Unnamed" can never collide with the two synthetic choices. The name itself
+ * stays exact: no trimming, case folding or Unicode normalisation.
+ */
+export function cueSpeakerOptionValue(speaker: string): string {
+  return speaker ? `${NAMED_CUE_SPEAKER_PREFIX}${speaker}` : UNNAMED_CUE_SPEAKER;
+}
+
+/** null means all speakers; an empty string means the unnamed choice. */
+export function cueSpeakerName(option: string): string | null {
+  if (option === ALL_CUE_SPEAKERS) return null;
+  if (option === UNNAMED_CUE_SPEAKER) return "";
+  return option.startsWith(NAMED_CUE_SPEAKER_PREFIX)
+    ? option.slice(NAMED_CUE_SPEAKER_PREFIX.length)
+    : null;
+}
+
+/** Actual distinct draft names, in first-appearance order. */
+export function cueSpeakerOptions(cues: readonly Readonly<{ speaker: string }>[]): string[] {
+  return [...new Set(cues.map(cue => cue.speaker).filter(Boolean))].map(cueSpeakerOptionValue);
+}
+
+/** A removed or renamed speaker immediately falls back to All speakers. */
+export function cueSpeakerFilterForDraft(
+  option: string,
+  cues: readonly Readonly<{ speaker: string }>[],
+): string {
+  if (option === ALL_CUE_SPEAKERS || option === UNNAMED_CUE_SPEAKER) return option;
+  const speaker = cueSpeakerName(option);
+  return speaker !== null && cues.some(cue => cue.speaker === speaker)
+    ? option
+    : ALL_CUE_SPEAKERS;
+}
+
+type ReviewCue = SearchableCue & Readonly<{ speaker: string }>;
+
+/** Exact speaker choice AND the existing bounded text query, in source order. */
+export function filterCuesByTextAndSpeaker<C extends ReviewCue>(
+  cues: readonly C[],
+  rawText: string,
+  speakerOption: string,
+): C[] {
+  const speaker = cueSpeakerName(speakerOption);
+  return filterCuesByText(cues, rawText)
+    .filter(cue => speaker === null || cue.speaker === speaker);
+}
+
 export type CueMergeVisibility<C> = Readonly<{
   /** The genuine next cue in the full trimmed list, hidden or not. */
   next: C | null;

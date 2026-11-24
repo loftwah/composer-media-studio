@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from '../src/frontend/clip-cue-search.ts';
+import { ALL_CUE_SPEAKERS, MAX_CUE_SEARCH_CHARS, UNNAMED_CUE_SPEAKER, cueMergeVisibility, cueSearchQuery, cueSpeakerFilterForDraft, cueSpeakerName, cueSpeakerOptionValue, cueSpeakerOptions, filterCuesByText, filterCuesByTextAndSpeaker } from '../src/frontend/clip-cue-search.ts';
 import { sourceCaptionCues } from '../src/frontend/clip-captions.ts';
 
 const reviewed = (sourceIndex, text) => ({ from: sourceIndex * 1000, to: sourceIndex * 1000 + 900, sourceStartMs: sourceIndex * 1000, text, sourceIndex });
@@ -103,4 +103,83 @@ test('All source cues merges a genuinely adjacent cue outside the trim but never
   });
   // An original time gap is never offered, even with both rows visible.
   assert.equal(cueMergeVisibility(full, full[1], full, draft).mergeWith, null);
+});
+
+test('speaker choices contain only distinct exact draft names with collision-safe values', () => {
+  const draft = [
+    cue(0, 1000, 'One', ''),
+    cue(1000, 2000, 'Two', 'Ann'),
+    cue(2000, 3000, 'Three', 'Ann'),
+    cue(3000, 4000, 'Four', 'Unnamed'),
+    cue(4000, 5000, 'Five', 'All speakers'),
+    cue(5000, 6000, 'Six', 'ann'),
+  ];
+  const options = cueSpeakerOptions(draft);
+  assert.deepEqual(options, [
+    cueSpeakerOptionValue('Ann'),
+    cueSpeakerOptionValue('Unnamed'),
+    cueSpeakerOptionValue('All speakers'),
+    cueSpeakerOptionValue('ann'),
+  ]);
+  assert.equal(new Set(options).size, options.length);
+  assert.notEqual(cueSpeakerOptionValue('All speakers'), ALL_CUE_SPEAKERS);
+  assert.notEqual(cueSpeakerOptionValue('Unnamed'), UNNAMED_CUE_SPEAKER);
+  assert.equal(cueSpeakerName(ALL_CUE_SPEAKERS), null);
+  assert.equal(cueSpeakerName(UNNAMED_CUE_SPEAKER), '');
+  assert.equal(cueSpeakerName(cueSpeakerOptionValue('All speakers')), 'All speakers');
+  assert.equal(cueSpeakerName(cueSpeakerOptionValue('Unnamed')), 'Unnamed');
+});
+
+test('exact speaker and text filters combine without changing row order, identity or timing', () => {
+  const rows = [
+    { ...reviewed(4, 'Café opening'), speaker: 'Ann' },
+    { ...reviewed(1, 'Café opening'), speaker: 'ann' },
+    { ...reviewed(7, 'Café opening'), speaker: '' },
+    { ...reviewed(2, 'Café opening'), speaker: 'All speakers' },
+    { ...reviewed(9, 'Café opening'), speaker: 'Unnamed' },
+    { ...reviewed(3, 'Other line'), speaker: 'Ann' },
+  ];
+  const before = structuredClone(rows);
+  const indexes = (text, speaker) => filterCuesByTextAndSpeaker(rows, text, speaker).map(row => row.sourceIndex);
+  assert.deepEqual(indexes('cafe\u0301', ALL_CUE_SPEAKERS), [4, 1, 7, 2, 9]);
+  assert.deepEqual(indexes('CAFÉ', cueSpeakerOptionValue('Ann')), [4]);
+  assert.deepEqual(indexes('café', cueSpeakerOptionValue('ann')), [1]);
+  assert.deepEqual(indexes('café', UNNAMED_CUE_SPEAKER), [7]);
+  assert.deepEqual(indexes('café', cueSpeakerOptionValue('All speakers')), [2]);
+  assert.deepEqual(indexes('café', cueSpeakerOptionValue('Unnamed')), [9]);
+  assert.deepEqual(indexes('other', cueSpeakerOptionValue('Ann')), [3]);
+  assert.deepEqual(indexes('missing', cueSpeakerOptionValue('Ann')), []);
+  assert.deepEqual(filterCuesByTextAndSpeaker(rows, 'café', cueSpeakerOptionValue('Ann')), [rows[0]]);
+  assert.deepEqual(rows, before);
+});
+
+test('a selected speaker retires only when its exact name leaves the current draft', () => {
+  const named = cueSpeakerOptionValue('Ann');
+  assert.equal(cueSpeakerFilterForDraft(named, [cue(0, 1000, 'A', 'Ann')]), named);
+  assert.equal(cueSpeakerFilterForDraft(named, [cue(0, 1000, 'A', 'ann')]), ALL_CUE_SPEAKERS);
+  assert.equal(cueSpeakerFilterForDraft(named, []), ALL_CUE_SPEAKERS);
+  assert.equal(cueSpeakerFilterForDraft(ALL_CUE_SPEAKERS, []), ALL_CUE_SPEAKERS);
+  assert.equal(cueSpeakerFilterForDraft(UNNAMED_CUE_SPEAKER, []), UNNAMED_CUE_SPEAKER);
+  const literal = cueSpeakerOptionValue('Unnamed');
+  assert.equal(cueSpeakerFilterForDraft(literal, [cue(0, 1000, 'A', 'Unnamed')]), literal);
+  assert.equal(cueSpeakerFilterForDraft(literal, [cue(0, 1000, 'A', '')]), ALL_CUE_SPEAKERS);
+});
+
+test('combined filters keep merge adjacency tied to the full list', () => {
+  const draft = [
+    cue(0, 1000, 'Alpha common', 'Ann'),
+    cue(1000, 2000, 'Alpha pair', 'Ann'),
+    cue(2000, 3000, 'Middle', 'Bob'),
+    cue(3000, 4000, 'Omega common', 'Ann'),
+  ];
+  const full = draft.map((item, sourceIndex) => ({ ...reviewed(sourceIndex, item.text), speaker: item.speaker }));
+  const ann = cueSpeakerOptionValue('Ann');
+  const pair = filterCuesByTextAndSpeaker(full, 'Alpha', ann);
+  assert.deepEqual(pair.map(row => row.sourceIndex), [0, 1]);
+  assert.equal(cueMergeVisibility(full, full[0], pair, draft).mergeWith, full[1]);
+  const common = filterCuesByTextAndSpeaker(full, 'common', ann);
+  assert.deepEqual(common.map(row => row.sourceIndex), [0, 3]);
+  assert.deepEqual(cueMergeVisibility(full, full[0], common, draft), {
+    next: full[1], mergeWith: null, hiddenMergeWith: full[1],
+  });
 });

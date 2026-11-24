@@ -16,9 +16,13 @@
 .trim-cue-view-unknown { margin:.2rem 0 .6rem; }
 .trim-cue-source-time { white-space:normal; overflow-wrap:anywhere; }
 .trim-cue-search { display:grid; gap:.35rem; }
-.trim-cue-search > label { font-weight:600; }
 .trim-cue-search-controls { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
-.trim-cue-search-controls input[type=search] { flex:1 1 14rem; min-width:0; }
+.trim-cue-search-controls > label { min-width:0; }
+.trim-cue-text-filter { flex:1 1 16rem; }
+.trim-cue-speaker-filter { flex:1 1 12rem; }
+.trim-cue-search-controls select { min-width:0; }
+.trim-cue-search-clear { align-self:flex-end; }
+.trim-cue-search-count[data-empty="true"] { color:var(--ink); font-weight:600; }
 .trim-cue-list { display:grid; gap:.35rem; max-height:16rem; margin:.5rem 0; padding:0; overflow:auto; overscroll-behavior:contain; list-style:none; }
 .trim-cue-list li { margin:0; }
 .trim-cue-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.35rem; align-items:stretch; }
@@ -36,7 +40,7 @@
   .trim-cue-actions { display:flex; flex-wrap:wrap; }
   .trim-cue-jump { grid-template-columns:minmax(0,1fr); gap:.25rem; align-content:start; }
   .trim-cue-time { white-space:normal; overflow-wrap:anywhere; }
-  .trim-cue-search-controls input[type=search] { flex-basis:100%; }
+  .trim-cue-search-controls > label { flex-basis:100%; }
 }
 .trim-cue-split { border-top:1px solid var(--line); padding-top:.75rem; }
 .trim-cue-split > summary { cursor:pointer; font-weight:700; min-height:44px; align-content:center; }
