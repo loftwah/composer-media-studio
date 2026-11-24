@@ -1,7 +1,7 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { MAX_SPEAKER_CHARS, renameSpeakerCues } from "./caption-speaker.ts";
 import { captionFileFromText } from "./caption-paste";
-import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipCaptionSrtVariants, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, captionTranscript, clipCaptionCues, clipCaptionSrtVariants, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
 import { ALL_CUE_SPEAKERS, MAX_CUE_SEARCH_CHARS, UNNAMED_CUE_SPEAKER, cueMergeVisibility, cueSearchQuery, cueSpeakerFilterForDraft, cueSpeakerName, cueSpeakerOptionValue, cueSpeakerOptions, filterCuesByTextAndSpeaker } from "./clip-cue-search";
 import { fullSourceCaptionDownload, fullSourceCaptionSrtVariants, fullSourceCaptionTranscript } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
@@ -395,23 +395,27 @@ function VideoClip() {
   );
 
   // Draft sidecars: the same serializer the MP4 export uses, over the live trim,
-  // offset and cue count, so no video has to be encoded. One bounded parse of
-  // that exact VTT yields the unchanged unnamed-only SRT and, when a surviving
-  // cue is named, the speaker-name-as-text SRT. An invalid trim or offset, or no
-  // surviving cue, yields no download.
+  // offset and cue count, so no video has to be encoded. The SRT variants and
+  // trim-relative TXT derive from that exact VTT. An invalid trim or offset, or
+  // no surviving cue, yields no download.
   const draftCaptionVtt = captionDraft && validTrim && captionOffsetMs !== null
     && survivingCaptionCount !== null && survivingCaptionCount > 0
     ? serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs, "default", { voices: true })
     : null;
+  const draftCaptionDurationMs = Math.round(end * 1000) - Math.round(start * 1000);
   const draftCaptionSrt = draftCaptionVtt
-    ? clipCaptionSrtVariants(draftCaptionVtt, Math.round(end * 1000) - Math.round(start * 1000))
+    ? clipCaptionSrtVariants(draftCaptionVtt, draftCaptionDurationMs)
     : null;
   const draftCaptionSrtText = draftCaptionSrt?.plain ?? null;
   const draftCaptionSpeakerSrtText = draftCaptionSrt?.speakerText ?? null;
+  const draftCaptionTranscriptText = useMemo(
+    () => captionTranscript(draftCaptionVtt, draftCaptionDurationMs),
+    [draftCaptionVtt, draftCaptionDurationMs],
+  );
   // This is the named state of this trim's canonical VTT, not the whole draft:
   // a trim that excludes every named cue still gets the unchanged plain SRT.
   const draftCaptionHasSpeakers = draftCaptionSrt?.named === true;
-  const [draftCaptionFile, setDraftCaptionFile] = useState<{ vtt: string; vttUrl: string; srt: string | null; srtUrl: string | null; speakerSrt: string | null; speakerSrtUrl: string | null } | null>(null);
+  const [draftCaptionFile, setDraftCaptionFile] = useState<{ vtt: string; vttUrl: string; srt: string | null; srtUrl: string | null; speakerSrt: string | null; speakerSrtUrl: string | null; transcript: string | null; transcriptUrl: string | null } | null>(null);
   useEffect(() => {
     if (!draftCaptionVtt) {
       setDraftCaptionFile(null);
@@ -424,22 +428,28 @@ function VideoClip() {
     const speakerSrtUrl = draftCaptionSpeakerSrtText
       ? URL.createObjectURL(new Blob([draftCaptionSpeakerSrtText], { type: "application/x-subrip; charset=utf-8" }))
       : null;
-    setDraftCaptionFile({ vtt: draftCaptionVtt, vttUrl, srt: draftCaptionSrtText, srtUrl, speakerSrt: draftCaptionSpeakerSrtText, speakerSrtUrl });
+    const transcriptUrl = draftCaptionTranscriptText
+      ? URL.createObjectURL(new Blob([draftCaptionTranscriptText], { type: "text/plain;charset=utf-8" }))
+      : null;
+    setDraftCaptionFile({ vtt: draftCaptionVtt, vttUrl, srt: draftCaptionSrtText, srtUrl, speakerSrt: draftCaptionSpeakerSrtText, speakerSrtUrl, transcript: draftCaptionTranscriptText, transcriptUrl });
     return () => {
       URL.revokeObjectURL(vttUrl);
       if (srtUrl) URL.revokeObjectURL(srtUrl);
       if (speakerSrtUrl) URL.revokeObjectURL(speakerSrtUrl);
+      if (transcriptUrl) URL.revokeObjectURL(transcriptUrl);
     };
-  }, [draftCaptionVtt, draftCaptionSrtText, draftCaptionSpeakerSrtText]);
+  }, [draftCaptionVtt, draftCaptionSrtText, draftCaptionSpeakerSrtText, draftCaptionTranscriptText]);
   // Each link stays live only while its URL belongs to the exact serialized
   // content on screen, so a changed trim or offset cannot download a stale file.
   const currentDraftFile = draftCaptionFile?.vtt === draftCaptionVtt
     && draftCaptionFile.srt === draftCaptionSrtText
     && draftCaptionFile.speakerSrt === draftCaptionSpeakerSrtText
+    && draftCaptionFile.transcript === draftCaptionTranscriptText
     ? draftCaptionFile : null;
   const draftCaptionUrl = currentDraftFile?.vttUrl ?? null;
   const draftSrtUrl = currentDraftFile?.srtUrl ?? null;
   const draftSpeakerSrtUrl = currentDraftFile?.speakerSrtUrl ?? null;
+  const draftCaptionTranscriptUrl = currentDraftFile?.transcriptUrl ?? null;
   // The full-source draft is the canonical VTT for every cue, with its original
   // times and text. It is independent of the trim and the timing offset, so a
   // creator can save and re-import it before encoding. The same content-match
@@ -1792,7 +1802,8 @@ function VideoClip() {
             <p><a className="button secondary" href={draftCaptionUrl} download={`${clipFilename}-draft-captions.vtt`} aria-describedby="draft-captions-note">Save draft trim captions (VTT)</a></p>
             {draftSrtUrl && <p><a className="button secondary" href={draftSrtUrl} download={`${clipFilename}-draft-captions.srt`} aria-describedby="draft-captions-note">Save draft trim captions (SRT)</a></p>}
             {draftSpeakerSrtUrl && <p><a className="button secondary" href={draftSpeakerSrtUrl} download={`${clipFilename}-draft-captions-speakers.srt`} aria-describedby="draft-captions-note">Save draft trim captions (SRT, speaker names as text)</a></p>}
-            <p id="draft-captions-note" className="trim-note">These files use the current trim and timing offset. Finished clips keep their original caption files.</p>
+            {draftCaptionTranscriptUrl && <p><a className="button secondary" href={draftCaptionTranscriptUrl} download={`${clipFilename}-draft-trim-transcript.txt`} aria-describedby="draft-captions-note">Save draft trim transcript (TXT)</a></p>}
+            <p id="draft-captions-note" className="trim-note">These files use the current trim and timing offset. TXT uses trim-relative times and supplied speaker names. Finished clips keep their original caption files.</p>
           </div>}
           <label className="video-tool-check">
             <input type="checkbox" checked={showSourceCaptions} disabled={busy || checking || importing || receiptLoading || captionFileLoading} onChange={event => setShowSourceCaptions(event.currentTarget.checked)}/>

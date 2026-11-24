@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { MAX_CAPTION_BYTES, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { MAX_CAPTION_BYTES, captionTranscript, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt } from '../src/frontend/clip-captions.ts';
 import { fullSourceCaptionDownload, fullSourceCaptionSrt, fullSourceCaptionSrtVariants, fullSourceCaptionTranscript } from '../src/frontend/clip-full-source-captions.ts';
 import { manualCaptionTrackVtt } from '../src/frontend/clip-manual-cue.ts';
 import { MAX_PUBLIC_VIDEO_SOURCE_SECONDS } from '../src/frontend/video-clip-source.ts';
@@ -146,6 +146,27 @@ test('the full-source TXT has exact UTF-8 bytes, original times, ordered cues an
   // fingerprint, trim, offset or display filter.
   assert.equal(fullSourceCaptionTranscript.length, 1);
   assert.equal(fullSourceCaptionTranscript(full.vtt), transcript);
+});
+
+test('a trim TXT reads the exact offset, clipped and rebased VTT with supplied speakers', () => {
+  const cues = [
+    { startMs: 500, endMs: 1500, text: 'Before', speaker: 'Early' },
+    { startMs: 1500, endMs: 3500, text: 'Hello & <there> — café 東京', speaker: 'Dean & <Jane>' },
+    { startMs: 3500, endMs: 5500, text: 'After', speaker: 'Late' },
+  ];
+  const vtt = serializeClipCaptions(cues, 2, 5, 1000, 'default', { voices: true });
+  assert.equal(vtt, 'WEBVTT\n\n00:00.000 --> 00:00.500\n<v Early>Before</v>\n\n00:00.500 --> 00:02.500\n<v Dean &amp; &lt;Jane&gt;>Hello &amp; &lt;there&gt; — café 東京</v>\n\n00:02.500 --> 00:03.000\n<v Late>After</v>\n');
+  const expected = '[00:00.000 --> 00:00.500] Early: Before\n'
+    + '[00:00.500 --> 00:02.500] Dean & <Jane>: Hello & <there> — café 東京\n'
+    + '[00:02.500 --> 00:03.000] Late: After\n';
+  const transcript = captionTranscript(vtt, 3000);
+  assert.equal(transcript, expected);
+  assert.deepEqual(new TextEncoder().encode(transcript), new TextEncoder().encode(expected));
+  assert.ok(!transcript.includes('\r'));
+  assert.equal(captionTranscript(null, 3000), null);
+  assert.equal(captionTranscript('WEBVTT\n\n', 3000), null);
+  assert.equal(captionTranscript(vtt, 2999), null);
+  assert.equal(captionTranscript(vtt, 0), null);
 });
 
 test('the full-source TXT withholds missing, unreadable and out-of-bounds VTT without source handling', () => {
