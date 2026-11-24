@@ -35,7 +35,8 @@
   min-width: 0;
 }
 
-.title-compare-sample {
+.title-compare-sample,
+.title-compare-open-draft {
   flex: none;
   min-height: 44px;
 }
@@ -50,7 +51,8 @@
   background: transparent;
 }
 
-.title-compare-sample-status {
+.title-compare-sample-status,
+.title-compare-draft-status {
   margin: 0;
 }
 

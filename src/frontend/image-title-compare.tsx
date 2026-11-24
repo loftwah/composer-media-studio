@@ -270,7 +270,8 @@ export function TitleCompare({
   const [exports, setExports] = useState<ExportEntry[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
-  const [draftMessage, setDraftMessage] = useState("");
+  const [draftSaveMessage, setDraftSaveMessage] = useState("");
+  const [draftOpenMessage, setDraftOpenMessage] = useState("");
   const [draftReading, setDraftReading] = useState(false);
   const draftFile = useRef<HTMLInputElement | null>(null);
   const draftRun = useRef(0);
@@ -599,7 +600,7 @@ export function TitleCompare({
       link.href = url;
       link.download = titleCompareDraftName;
       link.click();
-      setDraftMessage("Draft download started. Keep the file to reopen your pairs.");
+      setDraftSaveMessage("Draft download started. Keep the file to reopen your pairs.");
     } finally {
       setTimeout(() => releaseUrl(url), 1000);
     }
@@ -616,12 +617,12 @@ export function TitleCompare({
     const stillApplicable = () => {
       if (!current()) return false;
       if (!edited()) return true;
-      setDraftMessage("Your newer edits were kept. Open the draft again if you want to replace them.");
+      setDraftOpenMessage("Your newer edits were kept. Open the draft again if you want to replace them.");
       return false;
     };
     setDraftReading(true);
     draftReadingRef.current = true;
-    setDraftMessage("Reading the draft on this device…");
+    setDraftOpenMessage("Reading the draft on this device…");
     try {
       const draft = await readTitleDraft(file);
       if (!stillApplicable()) return;
@@ -634,7 +635,7 @@ export function TitleCompare({
       const occupied = pairs.some((pair, index) => pair.image || pair.title || pair.alt
         || pair.hypothesis || pair.note || anchors[PAIR_IDS[index]] !== "centre");
       if (occupied && !window.confirm("Replace the current three pairs with this draft?")) {
-        setDraftMessage("Draft opening canceled. Your current pairs are still here.");
+        setDraftOpenMessage("Draft opening canceled. Your current pairs are still here.");
         return;
       }
 
@@ -665,9 +666,9 @@ export function TitleCompare({
       setSelectedId(draft.selectedId);
       setPreferredId(draft.preferredId);
       setDuplicateMessage("");
-      setDraftMessage("Editable draft opened. All three pairs are available.");
+      setDraftOpenMessage("Editable draft opened. All three pairs are available.");
     } catch (error) {
-      if (stillApplicable()) setDraftMessage(error instanceof Error ? error.message : "Could not read the draft.");
+      if (stillApplicable()) setDraftOpenMessage(error instanceof Error ? error.message : "Could not read the draft.");
     } finally {
       if (current()) {
         draftReadingRef.current = false;
@@ -1404,6 +1405,14 @@ export function TitleCompare({
           >
             Try sample pairs
           </button>
+          <button type="button" className="secondary title-compare-open-draft" disabled={draftReading || pairs.some(pair => pair.busy)}
+            onClick={() => draftFile.current?.click()}>Open editable draft</button>
+          <input ref={draftFile} hidden type="file" accept=".studio-draft" aria-label="Open editable draft file"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) void openEditableDraft(file);
+            }} />
           {pairs.some(pair => pair.image !== null) && (
             <button
               type="button"
@@ -1426,6 +1435,7 @@ export function TitleCompare({
         >
           {sampleMessage || (canTrySamplePairs ? "" : "Sample pairs need empty Pairs A and B.")}
         </p>
+        <p className="trim-note title-compare-draft-status" role="status">{draftOpenMessage}</p>
       </div>
       <div className="title-compare-grid">
         <fieldset className="image-controls title-compare-controls">
@@ -1870,17 +1880,9 @@ export function TitleCompare({
       <div className="image-control-actions title-compare-draft" role="group" aria-label="Editable packaging draft">
         <button type="button" className="secondary" disabled={draftReading || pairs.some(pair => pair.busy)}
           onClick={downloadEditableDraft}>Save editable draft</button>
-        <button type="button" className="secondary" disabled={draftReading || pairs.some(pair => pair.busy)}
-          onClick={() => draftFile.current?.click()}>Open editable draft</button>
-        <input ref={draftFile} hidden type="file" accept=".studio-draft" aria-label="Open editable draft file"
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            if (file) void openEditableDraft(file);
-          }} />
       </div>
       <p className="trim-note">The draft file contains all three pairs and their original thumbnails. It stays on your device.</p>
-      <p className="trim-note" role="status">{draftMessage}</p>
+      <p className="trim-note" role="status">{draftSaveMessage}</p>
       <div className="image-control-actions" role="group" aria-label="Prepared pairs">
         <button
           type="button"
