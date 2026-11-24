@@ -290,6 +290,26 @@
   overflow-wrap: anywhere;
 }
 
+.image-alpha-map-figure {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.image-alpha-map {
+  display: block;
+  width: auto;
+  height: auto;
+  min-width: min(100%, 8rem);
+  max-width: 100%;
+  max-height: min(40vh, 20rem);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-deep);
+  image-rendering: pixelated;
+}
+
 .image-palette {
   list-style: none;
   margin: 0;

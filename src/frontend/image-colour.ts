@@ -524,6 +524,67 @@ export function alphaProfile(
   };
 }
 
+const ALPHA_MAP_MAX_EDGE = 512;
+
+export type AlphaMap = {
+  width: number;
+  height: number;
+  sampled: boolean;
+  pixels: Uint8ClampedArray;
+};
+
+type AlphaMapPlan = {
+  map: AlphaMap;
+  sourceWidth: number;
+  columns: Uint32Array;
+  rows: Uint32Array;
+};
+
+function nearestIndices(source: number, target: number): Uint32Array {
+  return Uint32Array.from({ length: target }, (_, index) =>
+    Math.min(source - 1, Math.floor(((index + 0.5) * source) / target)));
+}
+
+/** Allocate only the display grid, capped at 512 pixels on its long edge. */
+export function alphaMapPlan(width: number, height: number): AlphaMapPlan | null {
+  if (!isPositiveInteger(width) || !isPositiveInteger(height)) return null;
+  const scale = Math.min(1, ALPHA_MAP_MAX_EDGE / Math.max(width, height));
+  const mapWidth = Math.max(1, Math.round(width * scale));
+  const mapHeight = Math.max(1, Math.round(height * scale));
+  return {
+    map: {
+      width: mapWidth,
+      height: mapHeight,
+      sampled: scale < 1,
+      pixels: new Uint8ClampedArray(mapWidth * mapHeight * 4),
+    },
+    sourceWidth: width,
+    columns: nearestIndices(width, mapWidth),
+    rows: nearestIndices(height, mapHeight),
+  };
+}
+
+/** Copy alpha bytes into grayscale map pixels whose source is in this band. */
+export function writeAlphaMapBand(
+  { map, sourceWidth, columns, rows }: AlphaMapPlan,
+  band: Uint8Array | Uint8ClampedArray,
+  sourceY: number,
+): void {
+  const bandRows = Math.floor(band.length / (sourceWidth * 4));
+  for (let mapY = 0; mapY < map.height; mapY += 1) {
+    const bandRow = rows[mapY] - sourceY;
+    if (bandRow < 0 || bandRow >= bandRows) continue;
+    for (let mapX = 0; mapX < map.width; mapX += 1) {
+      const alpha = band[(bandRow * sourceWidth + columns[mapX]) * 4 + 3];
+      const offset = (mapY * map.width + mapX) * 4;
+      map.pixels[offset] = alpha;
+      map.pixels[offset + 1] = alpha;
+      map.pixels[offset + 2] = alpha;
+      map.pixels[offset + 3] = 255;
+    }
+  }
+}
+
 /**
  * Move an alpha-bounds rectangle into the rotated/flipped canvas space used by
  * `drawUserTransform` (flips first, then the clockwise quarter turns).

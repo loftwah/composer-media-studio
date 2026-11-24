@@ -47,7 +47,9 @@ import {
   MAX_PALETTE_COLOURS,
   PALETTE_WORKING_EDGE,
   alphaBounds,
+  alphaMapPlan,
   alphaProfile,
+  writeAlphaMapBand,
   extractPalette,
   formatHsl,
   formatRgb,
@@ -59,6 +61,7 @@ import {
   pickImagePixel,
   rgbToHex,
   rgbToHsl,
+  type AlphaMap,
   type AlphaProfileResult,
   type ImageBounds,
   type PaletteResult,
@@ -252,6 +255,7 @@ type SnippetState = {
 type AlphaInspectState = {
   key: string;
   result: Extract<AlphaProfileResult, { ok: true }>;
+  map: AlphaMap;
 };
 
 type StrippedImage = {
@@ -974,6 +978,32 @@ function publicImageSourceFromHash(): PublicImageSource | null {
   return poster ? { kind: "poster", path: poster } : null;
 }
 
+// The map is display only: it is painted from the same in-memory pixels that
+// the exact counts used, and nothing reads it back for an export.
+function AlphaMapCanvas({ map, label }: { map: AlphaMap; label: string }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const image = context.createImageData(map.width, map.height);
+    image.data.set(map.pixels);
+    context.putImageData(image, 0, 0);
+  }, [map]);
+  return (
+    <canvas
+      ref={canvasRef}
+      className="image-alpha-map"
+      width={map.width}
+      height={map.height}
+      role="img"
+      aria-label={label}
+      aria-describedby="image-alpha-map-note"
+    />
+  );
+}
+
 function Images() {
   const [publicImageSource] = useState(publicImageSourceFromHash);
   const publicImageLabel = publicImageSource ? publicImageLabels[publicImageSource.kind].source : "";
@@ -1163,6 +1193,8 @@ function Images() {
   // row or regenerating can never leave an earlier result's counts on screen.
   const visibleAlpha =
     alphaInspect?.key === outputResultKey ? alphaInspect.result : null;
+  const visibleAlphaMap =
+    alphaInspect?.key === outputResultKey ? alphaInspect.map : null;
   const canCopyPng =
     typeof window !== "undefined" &&
     typeof window.ClipboardItem === "function" &&
@@ -3056,6 +3088,8 @@ function Images() {
       if (bitmap.width !== result.width || bitmap.height !== result.height)
         throw new Error("The decoded result size did not match the completed result.");
       const { width, height } = result;
+      const mapPlan = alphaMapPlan(width, height);
+      if (!mapPlan) throw new Error("The decoded result dimensions are not usable.");
       // Read the bitmap at its native scale in bands to bound canvas and
       // readback memory even for a large completed image.
       const bandRows = Math.min(height, Math.max(1, Math.floor(512_000 / width)));
@@ -3080,6 +3114,7 @@ function Images() {
         const data = context.getImageData(0, 0, width, rows).data;
         const band = alphaProfile(data, { width, height: rows });
         if (!band.ok) throw new Error(band.error);
+        writeAlphaMapBand(mapPlan, data, y);
         profile.transparent += band.transparent;
         profile.partial += band.partial;
         profile.opaque += band.opaque;
@@ -3089,7 +3124,7 @@ function Images() {
         }
       }
       if (!isCurrent()) return;
-      setAlphaInspect({ key, result: profile });
+      setAlphaInspect({ key, result: profile, map: mapPlan.map });
       setAlphaMessage(
         `Read ${profile.totalPixels.toLocaleString()} exact pixels from this completed result. Nothing was uploaded.`,
       );
@@ -4163,6 +4198,20 @@ function Images() {
                     <dd>{visibleAlpha.opaque.toLocaleString()} px · {percentOf(visibleAlpha.opaque, visibleAlpha.totalPixels)}%</dd>
                   </div>
                 </dl>
+                {visibleAlphaMap && (
+                  <figure className="image-alpha-map-figure">
+                    <AlphaMapCanvas
+                      map={visibleAlphaMap}
+                      label={`Alpha map of the finished result at ${visibleAlphaMap.width} × ${visibleAlphaMap.height}${visibleAlphaMap.sampled ? ", sampled from the full result" : ", native pixels"}`}
+                    />
+                    <figcaption className="trim-note" id="image-alpha-map-note">
+                      Black is transparent, white is opaque and grey shows the alpha value.
+                      {visibleAlphaMap.sampled
+                        ? " This preview samples the finished image. The counts use every pixel."
+                        : " This preview shows every pixel at its native size."}
+                    </figcaption>
+                  </figure>
+                )}
                 <p className="trim-note">
                   {visibleAlpha.totalPixels.toLocaleString()} pixels at{" "}
                   {visibleAlpha.width} × {visibleAlpha.height}, decoded from the exact
