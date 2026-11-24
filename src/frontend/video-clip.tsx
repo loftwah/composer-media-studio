@@ -117,11 +117,14 @@ function VideoClip() {
   const captionUndo = captionHistory.undo;
   const captionRedo = captionHistory.redo;
   const captionUndoButton = useRef<HTMLButtonElement>(null);
+  const captionUndoWithSpeakerFocus = useRef<CaptionDraft | null>(null);
   const captionRedoButton = useRef<HTMLButtonElement>(null);
   // When an edit removes the focused row (or Undo/Redo removes its own button),
   // focus falls to the body. Move it to the control that is now available.
   useEffect(() => {
-    if (document.activeElement !== document.body) return;
+    const returnsToSpeaker = captionUndo !== null && captionUndo === captionUndoWithSpeakerFocus.current;
+    captionUndoWithSpeakerFocus.current = null;
+    if (returnsToSpeaker || document.activeElement !== document.body) return;
     if (captionUndo) captionUndoButton.current?.focus();
     else if (captionRedo) captionRedoButton.current?.focus();
   }, [captionUndo, captionRedo]);
@@ -1040,6 +1043,7 @@ function VideoClip() {
       const updated = await editedCaptionDraft(previousDraft, change.cues);
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
+      if (returnToSpeaker) captionUndoWithSpeakerFocus.current = previousDraft;
       setCaptionHistory(cueEditHistory(previousDraft));
       setCueSpeakerSelection(removeName ? UNNAMED_CUE_SPEAKER : cueSpeakerOptionValue(change.speaker));
       setCueSpeakerRenameText("");
