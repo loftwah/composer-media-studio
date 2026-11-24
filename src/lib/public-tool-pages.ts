@@ -1,7 +1,8 @@
 // MIT. Signed-out public utility pages: the four browser-local media tool
 // shells, the help page and the 404 shell. Moved verbatim out of ui.mjs for
 // #198; the rendered bytes are unchanged. page-head.ts owns the shared document
-// chrome, and util.mjs supplies escapeHtml.
+// chrome, and util.mjs supplies escapeHtml. The four tool routes' response
+// assembly is also owned here so the Worker only supplies the current revision.
 
 import { escapeHtml } from "./util.mjs";
 import { head, brandMark as mark, brandByline } from "./page-head.ts";
@@ -115,4 +116,30 @@ export function helpPage({ composerOrigin = null, storyUrl = null }: HelpPageOpt
 </main>
 </body>
 </html>`;
+}
+
+/** The four tool shells share one public cache window and content type. */
+const TOOL_PAGE_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  "cache-control": "public, max-age=60",
+};
+
+/**
+ * Assemble one signed-out utility tool response. Returns null for every other
+ * path so the Worker keeps the exact existing branch order. No method check is
+ * added: these routes answered every method before the extraction and still do.
+ */
+export function publicToolPageResponse(path: string, revision: string): Response | null {
+  switch (path) {
+    case "/tools/add-music":
+      return new Response(addMusicPage({ revision }), { headers: TOOL_PAGE_HEADERS });
+    case "/tools/video-clip":
+      return new Response(videoClipPage({ revision }), { headers: TOOL_PAGE_HEADERS });
+    case "/tools/audio-trim":
+      return new Response(audioTrimPage({ revision }), { headers: TOOL_PAGE_HEADERS });
+    case "/tools/images":
+      return new Response(imagesPage({ revision }), { headers: TOOL_PAGE_HEADERS });
+    default:
+      return null;
+  }
 }
