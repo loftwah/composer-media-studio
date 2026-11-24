@@ -37,3 +37,11 @@ test("GIF command refuses to overwrite an existing output before opening files",
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("GIF command validates the optional full ordered per-frame delay vector before opening files", () => {
+  const target = ["--output", "unused.gif"];
+  refusal([...sources, ...operation, "--frame-delays-ms", "350", ...target], /exactly 2/);
+  refusal([...sources, ...operation, "--frame-delays-ms", "350,355", ...target], /10 ms steps/);
+  refusal([...sources, ...operation, "--frame-delays-ms", "90,350", ...target], /100 to 2000/);
+  refusal([...sources, ...operation, "--frame-delays-ms", "350,,500", ...target], /whole milliseconds/);
+});

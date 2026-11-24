@@ -21,7 +21,7 @@ Projects, uploads, thumbnails, the viewer, search and filters, renaming, downloa
 - **Limits and honest refusals:** SVG, HTML and other active content are refused, as are HEIC/HEIF, AVIF, unsupported containers and GIF input in this slice. Corrupt or malformed files fail before processing. Object URLs and bitmaps are released on remove, clear and page unmount. There is no server upload on the local path.
 - **Explicit Studio import only:** a result can be imported only after checking a signed-in Studio session, choosing an existing project and clicking upload. The caption records the source filename, source SHA-256 and transform settings, including crop position and adjustment values. The result becomes a new private library asset; nothing is published automatically.
 
-The workbench is part of [issue #183](https://github.com/loftwah/composer-media-studio/issues/183). In Batch, **Sprite atlas · native size** assembles two to twenty completed PNGs with transparent padding. The column control shows the planned dimensions before drawing, and the download includes ordered pixel rectangles in a separate JSON file. **Make an animated GIF** writes a real GIF89a from 2–8 admitted source stills in list order at one square frame up to 320 px, one 100–2000 ms delay in 10 ms units, one opaque matte and an optional loop, then previews and downloads the actual encoded bytes. It uses a fixed 256-colour palette with no dithering, so gradients can band, and it does not apply edits, per-row formats or completed results. Perceptual compression presets, alpha-edge fringe inspection, local background removal, provider upscale, PDF, HTML-to-image and captions remain open or delegated. **Cover, mosaic or blur an area** works on up to eight whole-pixel rectangles and saves a separate PNG. **Solid cover** is the default and fills them with opaque black; **Mosaic** is a decorative browser-local pixelation with a fixed block pattern that can leave content recognisable; **Soft blur** is a decorative local two-pass blur that reads only pixels inside each rectangle, capped at 2 million selected pixels per export. Neither decorative treatment conceals content, so use Solid cover for private or identifying material. Only the selected rectangles change; the image outside them and the completed source stay as they were. The local cover command (`scripts/local-cover-area.mjs`) takes an explicitly selected PNG and repeated `--area left,top,width,height` options. It fills solid black by default; `--treatment mosaic` or `--treatment blur` uses the same rectangles for a decorative PNG, reported honestly in the JSON rather than as a redaction. Face detection remains open. In Launch Kit, open **Import a Media Studio palette** and choose the palette JSON you downloaded. The JSON stays on your device. See [the coverage matrix](docs/image-tools-coverage.md) for the exact shipped, delegated and deferred state. Older local tools remain at `/tools/audio-trim`, `/tools/video-clip` and `/tools/add-music`.
+The workbench is part of [issue #183](https://github.com/loftwah/composer-media-studio/issues/183). In Batch, **Sprite atlas · native size** assembles two to twenty completed PNGs with transparent padding. The column control shows the planned dimensions before drawing, and the download includes ordered pixel rectangles in a separate JSON file. **Make an animated GIF** writes a real GIF89a from 2–8 admitted source stills in list order at one square frame up to 320 px, a batch delay of 100–2000 ms in 10 ms units, an optional exact per-frame delay vector in 10 ms steps (a blank row inherits the batch delay), one opaque matte and an optional loop, then previews and downloads the actual encoded bytes. It uses a fixed 256-colour palette with no dithering, so gradients can band, and it does not apply edits, per-row formats or completed results. Perceptual compression presets, alpha-edge fringe inspection, local background removal, provider upscale, PDF, HTML-to-image and captions remain open or delegated. **Cover, mosaic or blur an area** works on up to eight whole-pixel rectangles and saves a separate PNG. **Solid cover** is the default and fills them with opaque black; **Mosaic** is a decorative browser-local pixelation with a fixed block pattern that can leave content recognisable; **Soft blur** is a decorative local two-pass blur that reads only pixels inside each rectangle, capped at 2 million selected pixels per export. Neither decorative treatment conceals content, so use Solid cover for private or identifying material. Only the selected rectangles change; the image outside them and the completed source stay as they were. The local cover command (`scripts/local-cover-area.mjs`) takes an explicitly selected PNG and repeated `--area left,top,width,height` options. It fills solid black by default; `--treatment mosaic` or `--treatment blur` uses the same rectangles for a decorative PNG, reported honestly in the JSON rather than as a redaction. Face detection remains open. In Launch Kit, open **Import a Media Studio palette** and choose the palette JSON you downloaded. The JSON stays on your device. See [the coverage matrix](docs/image-tools-coverage.md) for the exact shipped, delegated and deferred state. Older local tools remain at `/tools/audio-trim`, `/tools/video-clip` and `/tools/add-music`.
 
 ## Generation
 
@@ -135,11 +135,23 @@ PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   --frame-size 160 --delay 350 --output ./animation.gif
 ```
 
+Add an exact per-frame vector in source order when the frames should differ:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-gif.mjs --source ./first.png --source ./next.png \
+  --frame-size 160 --delay 350 --frame-delays-ms 120,480 \
+  --output ./animation.gif
+```
+
 Choose a square size of 96, 128, 160, 240 or 320 px and a delay of 100–2000 ms in
-10 ms steps. The optional `--matte '#ffffff'` sets the opaque background. Repeat
-is the default. Use `--once` to stop after one play. The isolated Chrome workbench
-writes the same GIF as Image Tools and reports ordered source hashes, settings,
-the output SHA-256 and the network pass-through count.
+10 ms steps. Add `--frame-delays-ms 120,480,900` to set an exact delay for every
+source in that same order; omit it to use `--delay` for every frame. The vector
+must name each `--source` once. The optional `--matte '#ffffff'` sets the opaque
+background. Repeat is the default. Use `--once` to stop after one play. The
+isolated Chrome workbench writes the same GIF as Image Tools, reads the delay
+control blocks back from the downloaded bytes and reports ordered source hashes,
+settings, the output SHA-256 and the network pass-through count.
 
 ## Make a contact sheet from explicit local files
 
