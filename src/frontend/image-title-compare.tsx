@@ -38,6 +38,11 @@ import {
   type PairId,
   type PairOccupancy,
 } from "./image-title-compare-plan.ts";
+import {
+  MAX_PACKAGING_MANIFEST_BYTES,
+  verifyPackagingFiles,
+  type PackagingVerifyOutcome,
+} from "./image-title-compare-verify.ts";
 import { createZip, ZIP_MIME, type ZipEntryInput } from "./image-zip.ts";
 import "./image-title-compare.css";
 
@@ -48,6 +53,18 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+}
+
+/** One exact discrepancy, using only validated manifest facts and the PNG's
+ * own measured facts. No filename, title or note is repeated here. */
+function packagingDifferenceMessage(
+  outcome: Extract<PackagingVerifyOutcome, { status: "different" }>,
+): string {
+  if (outcome.reason === "size")
+    return `Different. The PNG is ${outcome.actualBytes} bytes; the manifest names ${outcome.facts.pngBytes} bytes.`;
+  if (outcome.reason === "dimensions")
+    return `Different. The PNG is ${outcome.actualWidth} × ${outcome.actualHeight} px; the manifest names ${outcome.facts.width} × ${outcome.facts.height} px.`;
+  return "Different. The PNG's SHA-256 does not match the manifest, so these are not the bytes it describes.";
 }
 
 type PairImage = {
@@ -92,6 +109,8 @@ export type PreparedTitleImage = {
   width: number;
   height: number;
 };
+
+type PackagingVerifyPhase = "idle" | "checking" | "matched" | "different" | "invalid";
 
 type ExportEntry = {
   kind: "png" | "manifest" | "bundle" | "set";
@@ -180,6 +199,14 @@ export function TitleCompare({
   /** PNG copy feedback belongs to one exact prepared download: its key is that
    * export's object URL, so a replacement can never inherit an older message. */
   const [pngCopy, setPngCopy] = useState<{ key: string; message: string; ok: boolean } | null>(null);
+  /** The separate packaging check. Both files are browser-local, its result is
+   * display state only, and it never edits a pair, note, crop, preference or
+   * prepared download. */
+  const [verifyManifestFile, setVerifyManifestFile] = useState<File | null>(null);
+  const [verifyPngFile, setVerifyPngFile] = useState<File | null>(null);
+  const [verifyPhase, setVerifyPhase] = useState<PackagingVerifyPhase>("idle");
+  const [verifyMessage, setVerifyMessage] = useState("");
+  const [verifyOutcome, setVerifyOutcome] = useState<PackagingVerifyOutcome | null>(null);
   /** The last duplicate confirmation. A status message, not pair state: the
    * copied title, note, crop and URL live in the pairs themselves. */
   const [duplicateMessage, setDuplicateMessage] = useState("");
@@ -203,6 +230,9 @@ export function TitleCompare({
   /** One run per PNG copy. Replacing or clearing the exports retires a write
    * that started against a PNG that is no longer prepared. */
   const pngCopyRun = useRef(0);
+  /** One run per packaging check, so changing either selection or unmounting
+   * retires a slow response before it can report on other files. */
+  const verifyRun = useRef(0);
 
   // A hash link into this section lands on a page whose heading only exists
   // after React mounts, so the browser's native fragment scroll misses it
@@ -226,6 +256,7 @@ export function TitleCompare({
       exportRun.current += 1;
       copyRun.current += 1;
       pngCopyRun.current += 1;
+      verifyRun.current += 1;
       for (const url of held) URL.revokeObjectURL(url);
       held.clear();
       exportsRef.current = [];
@@ -799,6 +830,52 @@ export function TitleCompare({
     }
   }
 
+  /** Either new selection retires an in-flight check and any result that
+   * described the files selected before it. */
+  function clearVerify(): void {
+    verifyRun.current += 1;
+    setVerifyPhase("idle");
+    setVerifyMessage("");
+    setVerifyOutcome(null);
+  }
+
+  /** The explicit check reads only the two selected files. A response is
+   * published only when it still belongs to both current selections and this
+   * tab; it never reaches into pair, crop, note, preference or export state. */
+  async function checkPackagingPair(): Promise<void> {
+    if (!verifyManifestFile || !verifyPngFile) {
+      clearVerify();
+      setVerifyPhase("invalid");
+      setVerifyMessage("Choose the packaging manifest JSON and the exported PNG before verifying.");
+      return;
+    }
+    const attempt = ++verifyRun.current;
+    const current = () => mounted.current && verifyRun.current === attempt;
+    setVerifyPhase("checking");
+    setVerifyMessage("Checking the selected manifest and PNG on this device…");
+    setVerifyOutcome(null);
+    try {
+      const outcome = await verifyPackagingFiles(verifyManifestFile, verifyPngFile);
+      if (!current()) return;
+      setVerifyOutcome(outcome);
+      if (outcome.status === "matched") {
+        setVerifyPhase("matched");
+        setVerifyMessage("Matched. The PNG's type, byte size, dimensions and SHA-256 agree with the manifest.");
+      } else if (outcome.status === "invalid") {
+        setVerifyPhase("invalid");
+        setVerifyMessage(outcome.message);
+      } else {
+        setVerifyPhase("different");
+        setVerifyMessage(packagingDifferenceMessage(outcome));
+      }
+    } catch {
+      if (!current()) return;
+      setVerifyOutcome(null);
+      setVerifyPhase("invalid");
+      setVerifyMessage("The selected files could not be checked.");
+    }
+  }
+
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
   const selected = pairs[selectedIndex];
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
@@ -1329,6 +1406,73 @@ export function TitleCompare({
           )}
         </p>
       ))}
+      <details className="title-compare-verify" data-title-compare-verify>
+        <summary>Verify a packaging PNG</summary>
+        <p className="trim-note" id="image-title-compare-verify-note">
+          Compare the exported PNG’s dimensions, byte size and SHA-256 with its manifest.
+          Both files stay on this device.
+        </p>
+        <div className="trim-fields title-compare-verify-fields">
+          <label className="trim-file">
+            {`Packaging manifest (JSON, up to ${MAX_PACKAGING_MANIFEST_BYTES / 1024} KiB)`}
+            <input
+              type="file"
+              accept="application/json,.json"
+              data-title-compare-verify-manifest
+              onChange={(event) => {
+                setVerifyManifestFile(event.currentTarget.files?.[0] ?? null);
+                clearVerify();
+              }}
+            />
+          </label>
+          <label className="trim-file">
+            {`Exported PNG (up to ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MiB)`}
+            <input
+              type="file"
+              accept="image/png,.png"
+              data-title-compare-verify-png
+              onChange={(event) => {
+                setVerifyPngFile(event.currentTarget.files?.[0] ?? null);
+                clearVerify();
+              }}
+            />
+          </label>
+        </div>
+        <p className="title-compare-verify-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={verifyPhase === "checking"}
+            aria-busy={verifyPhase === "checking"}
+            aria-describedby="image-title-compare-verify-note"
+            data-title-compare-verify-check
+            onClick={() => void checkPackagingPair()}
+          >
+            {verifyPhase === "checking" ? "Verifying…" : "Verify PNG against manifest"}
+          </button>
+        </p>
+        <p
+          className={`trim-note title-compare-verify-status${
+            verifyPhase === "matched"
+              ? " is-matched"
+              : verifyPhase === "different"
+                ? " is-different"
+                : verifyPhase === "invalid"
+                  ? " is-invalid"
+                  : ""
+          }`}
+          role={verifyPhase === "invalid" ? "alert" : "status"}
+          aria-live="polite"
+          data-title-compare-verify-status={verifyPhase}
+        >
+          {verifyMessage}
+        </p>
+        {verifyPhase === "matched" && verifyOutcome?.status === "matched" && (
+          <p className="trim-note title-compare-verify-facts" data-title-compare-verify-facts>
+            {`${verifyOutcome.facts.width} × ${verifyOutcome.facts.height} px · ${formatBytes(verifyOutcome.facts.pngBytes)} · SHA-256 ${verifyOutcome.facts.sha256.slice(0, 16)}…`}
+          </p>
+        )}
+      </details>
     </section>
   );
 }

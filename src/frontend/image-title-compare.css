@@ -357,6 +357,50 @@
   pointer-events: none;
 }
 
+/* Packaging PNG check. A native disclosure keeps the workbench's focus and
+   every pair control live; the check only reports on the two chosen files. */
+
+.title-compare-verify {
+  margin-top: 1.25rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.title-compare-verify > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--teal);
+}
+
+.title-compare-verify > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: calc(var(--radius) * 0.4);
+}
+
+.title-compare-verify-fields {
+  margin-top: 0.75rem;
+}
+
+.title-compare-verify-actions {
+  margin: 0.75rem 0 0;
+}
+
+.title-compare-verify-status.is-matched {
+  color: var(--teal);
+}
+
+.title-compare-verify-status.is-different,
+.title-compare-verify-status.is-invalid {
+  color: var(--danger);
+}
+
+.title-compare-verify-facts {
+  margin: 0.5rem 0 0;
+}
+
 /* Phone: the pair controls and the previews stack, and the row preview keeps
    its real pixel size while the card preview fills the column. */
 
