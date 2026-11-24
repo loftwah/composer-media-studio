@@ -12,6 +12,7 @@ import {
   FEED_SIZES,
   MANIFEST_SCHEMA,
   MANIFEST_VERSION,
+  TITLE_MAX_LENGTH,
   type FeedSize,
 } from "./image-title-compare-plan.ts";
 
@@ -70,11 +71,8 @@ export class PackagingManifestError extends Error {
   }
 }
 
-/**
- * Read only the versioned facts this check can compare. Every failure is an
- * invalid input rather than a guess, and no manifest text is echoed back.
- */
-export function parsePackagingManifest(text: string): PackagingManifestFacts {
+/** Parse one bounded, exact v1 packaging manifest without echoing its text. */
+function parsePackagingManifestValue(text: string): Record<string, unknown> {
   if (typeof text !== "string" || text === "")
     throw new PackagingManifestError("Choose the packaging manifest JSON file.");
   if (new TextEncoder().encode(text).byteLength > MAX_PACKAGING_MANIFEST_BYTES)
@@ -92,6 +90,15 @@ export function parsePackagingManifest(text: string): PackagingManifestFacts {
     throw new PackagingManifestError("That file is not a Title + thumbnail compare packaging manifest.");
   if (value.version !== MANIFEST_VERSION)
     throw new PackagingManifestError(`Only packaging manifest version ${MANIFEST_VERSION} is supported here.`);
+  return value;
+}
+
+/**
+ * Read only the versioned facts this check can compare. Every failure is an
+ * invalid input rather than a guess, and no manifest text is echoed back.
+ */
+export function parsePackagingManifest(text: string): PackagingManifestFacts {
+  const value = parsePackagingManifestValue(text);
 
   const render = value.render;
   if (!isRecord(render))
@@ -126,6 +133,37 @@ export function parsePackagingManifest(text: string): PackagingManifestFacts {
     throw new PackagingManifestError("That manifest does not carry a valid lowercase SHA-256 digest.");
 
   return { size, width: size.width, height: size.height, pngBytes, sha256 };
+}
+
+/** The distinct recovery path alone may read the same bounded v1 manifest's
+ * title. It stays untrusted plain text: no markup, crop, note, alt text,
+ * hypothesis or preference is interpreted or returned. */
+export async function readPackagingTitle(
+  manifestFile: File | null | undefined,
+): Promise<string> {
+  if (!manifestFile)
+    throw new PackagingManifestError("Choose the packaging manifest JSON file.");
+  if (manifestFile.size === 0 || manifestFile.size > MAX_PACKAGING_MANIFEST_BYTES)
+    throw new PackagingManifestError("Choose a packaging manifest JSON file of 32 KiB or less.");
+
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(await manifestFile.arrayBuffer());
+  } catch {
+    throw new PackagingManifestError("That manifest JSON could not be read.");
+  }
+  const value = parsePackagingManifestValue(text);
+  const title = value.title;
+  if (
+    !isRecord(title) ||
+    typeof title.text !== "string" ||
+    title.text.trim() === "" ||
+    title.text.length > TITLE_MAX_LENGTH
+  )
+    throw new PackagingManifestError(
+      `That manifest title must be nonblank text of ${TITLE_MAX_LENGTH} characters or fewer.`,
+    );
+  return title.text;
 }
 
 /** Compare the already-parsed facts with the selected PNG bytes. Type, exact

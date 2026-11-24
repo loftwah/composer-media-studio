@@ -9,11 +9,13 @@ import {
   FEED_SIZES,
   MANIFEST_SCHEMA,
   MANIFEST_VERSION,
+  TITLE_MAX_LENGTH,
   pairIsEmpty,
 } from "../src/frontend/image-title-compare-plan.ts";
 import {
   MAX_PACKAGING_MANIFEST_BYTES,
   parsePackagingManifest,
+  readPackagingTitle,
   verifyPackagingFiles,
 } from "../src/frontend/image-title-compare-verify.ts";
 import { crc32 } from "../src/frontend/image-zip.ts";
@@ -158,6 +160,72 @@ test("the manifest JSON is bounded before it is parsed", () => {
   );
 });
 
+test("only the explicit title reader accepts bounded nonblank v1 title text", async () => {
+  const bytes = png(640, 360);
+  const title = '  <img src=x onerror="alert(1)"> & editable title  ';
+  const value = manifest(bytes, {
+    // The editor's existing limit, not an untrusted maxLength field, is authoritative.
+    title: { text: title, maxLength: 1 },
+    note: "Do not import this note",
+    alt: "Do not import this description",
+    hypothesis: "Do not import this expectation",
+    preferredPairId: "b",
+    crop: { mode: "cover", anchor: "left", sourceRect: { left: 0, top: 0, width: 640, height: 360 } },
+  });
+  const titleFile = fileFor(JSON.stringify(value), "manifest.json", "application/json");
+  assert.equal(await readPackagingTitle(titleFile), title);
+  // Reading a title never widens the verify-only facts contract.
+  assert.doesNotMatch(JSON.stringify(parsePackagingManifest(JSON.stringify(value))), /img src|editable title|Do not import/);
+
+  for (const invalidValue of [
+    manifest(bytes, { schema: "other/manifest" }),
+    manifest(bytes, { version: String(MANIFEST_VERSION) }),
+    manifest(bytes, { version: MANIFEST_VERSION + 1 }),
+    manifest(bytes, { title: null }),
+    manifest(bytes, { title: { text: 7, maxLength: TITLE_MAX_LENGTH } }),
+    manifest(bytes, { title: { text: " \n\t ", maxLength: TITLE_MAX_LENGTH } }),
+    manifest(bytes, { title: { text: "x".repeat(TITLE_MAX_LENGTH + 1), maxLength: TITLE_MAX_LENGTH } }),
+  ])
+    await assert.rejects(
+      readPackagingTitle(fileFor(JSON.stringify(invalidValue), "manifest.json", "application/json")),
+      /manifest|version|title/,
+    );
+
+  const atLimit = manifest(bytes, {
+    title: { text: "x".repeat(TITLE_MAX_LENGTH), maxLength: TITLE_MAX_LENGTH },
+  });
+  assert.equal(
+    await readPackagingTitle(fileFor(JSON.stringify(atLimit), "manifest.json", "application/json")),
+    "x".repeat(TITLE_MAX_LENGTH),
+  );
+});
+
+test("title recovery bounds the selected manifest before reading it", async () => {
+  for (const size of [0, MAX_PACKAGING_MANIFEST_BYTES + 1]) {
+    let reads = 0;
+    const oversized = {
+      size,
+      async arrayBuffer() {
+        reads += 1;
+        return "{}";
+      },
+    };
+    await assert.rejects(readPackagingTitle(oversized), /32 KiB or less/);
+    assert.equal(reads, 0);
+  }
+
+  let reads = 0;
+  const unreadable = {
+    size: 1,
+    async arrayBuffer() {
+      reads += 1;
+      throw new Error("private read failure");
+    },
+  };
+  await assert.rejects(readPackagingTitle(unreadable), /could not be read/);
+  assert.equal(reads, 1);
+});
+
 test("a matching PNG is reported as matched, with only validated facts", async () => {
   const bytes = png(640, 360, 11);
   const outcome = await verify(manifest(bytes), bytes);
@@ -300,6 +368,7 @@ test("the disclosure is wired to both separate file inputs and a distinct status
   // No selected filename or manifest free text reaches the panel.
   assert.doesNotMatch(section, /verifyManifestFile\.name|verifyPngFile\.name/);
   assert.doesNotMatch(section, /verifyOutcome\.facts\.(?:title|note|source|png\.fileName)/);
+  assert.doesNotMatch(section, /dangerouslySetInnerHTML/);
 
   // The verifier itself never reaches the network or persists anything.
   for (const forbidden of [
@@ -325,6 +394,7 @@ test("changing either verification source synchronously retires the exact reusab
   const clearStart = section.indexOf("function clearVerify");
   const clear = section.slice(clearStart, section.indexOf("\n  }", clearStart));
   assert.match(clear, /verifyRun\.current \+= 1;\s*verifiedPngRef\.current = null;/);
+  assert.match(clear, /verifiedManifestRef\.current = null;/);
   assert.match(clear, /setVerifyReuseMessage\(""\)/);
 });
 
@@ -333,12 +403,14 @@ test("normal image intake can guard an empty-only claim until its last await", (
   const end = section.indexOf("\n  /** Use the finished Image Tools result", start);
   assert.ok(start >= 0 && end > start);
   const intake = section.slice(start, end);
-  assert.match(intake, /options: \{ emptyRevision\?: number; canCommit\?: \(\) => boolean \}/);
+  assert.match(intake, /options: \{ emptyRevision\?: number; canCommit\?: \(\) => boolean; title\?: string \}/);
   assert.match(intake, /pairEdits\.current\[index\] !== options\.emptyRevision\)\s*return false;/);
   assert.match(intake, /const run = \+\+loadRuns\.current\[index\];/);
   assert.match(intake, /const revision = pairEdits\.current\[index\];/);
   assert.match(intake, /const accepted = \(\) => unchanged\(\) && \(options\.canCommit\?\.\(\) \?\? true\);/);
   assert.match(intake, /if \(!accepted\(\)\) \{\s*setPair\(index, \{ busy: false \}\);\s*return false;/);
+  assert.match(intake, /\.\.\.\(options\.title !== undefined \? \{ title: options\.title \} : \{\}\),/);
+  assert.ok(intake.indexOf("if (!accepted())") < intake.indexOf("options.title !== undefined"));
   assert.match(intake, /new Uint8Array\(await file\.arrayBuffer\(\)\)/);
   assert.match(intake, /inspectImage\(bytes\)/);
   assert.match(intake, /imagePixelProblem\(source\.orientedWidth, source\.orientedHeight\)/);
@@ -354,7 +426,7 @@ test("normal image intake can guard an empty-only claim until its last await", (
 
 test("the reuse action claims only an empty pair and passes the exact verified File through chooseImage", () => {
   const start = section.indexOf("async function reuseVerifiedPng");
-  const end = section.indexOf("\n  const selectedIndex", start);
+  const end = section.indexOf("\n  /** The distinct recovery action", start);
   assert.ok(start >= 0 && end > start);
   const reuse = section.slice(start, end);
   assert.match(reuse, /const file = verifiedPngRef\.current;/);
@@ -395,4 +467,41 @@ test("one matched-only reuse option names the first empty pair or explains that 
   assert.match(section, /data-title-compare-verify-reuse-status/);
   const stylesheet = readFileSync(new URL("../src/frontend/image-title-compare.css", import.meta.url), "utf8");
   assert.match(stylesheet, /\.title-compare-verify-reuse \{/);
+});
+
+test("the distinct restore action keeps the exact source and generation current through title intake", () => {
+  const start = section.indexOf("async function restoreVerifiedTitleAndPng");
+  const end = section.indexOf("\n  const selectedIndex", start);
+  assert.ok(start >= 0 && end > start);
+  const restore = section.slice(start, end);
+  assert.match(restore, /const file = verifiedPngRef\.current;/);
+  assert.match(restore, /const manifestFile = verifiedManifestRef\.current;/);
+  assert.match(restore, /const attempt = verifyRun\.current;/);
+  assert.match(restore, /verifyPhase !== "matched"\s*\|\|\s*verifyOutcome\?\.status !== "matched"/);
+  assert.match(restore, /file !== verifyPngFile/);
+  assert.match(restore, /manifestFile !== verifyManifestFile/);
+  assert.match(restore, /pairEdits\.current\[targetIndex\] !== emptyRevision/);
+  assert.match(restore, /pairIsEmpty\(pairOccupancy\(pairs\[targetIndex\], anchors\[target\]\)\)/);
+  assert.match(restore, /verifyRun\.current === attempt &&\s*verifiedPngRef\.current === file &&\s*verifiedManifestRef\.current === manifestFile;/);
+  assert.match(restore, /await readPackagingTitle\(manifestFile\)/);
+  assert.match(restore, /if \(!current\(\)\) return;/);
+  assert.match(restore, /await chooseImage\(targetIndex, file, \{\s*emptyRevision,\s*title,\s*canCommit: current,\s*\}\);/);
+  // A title refusal changes only recovery feedback, never the matched facts or
+  // the independent PNG-only action. Only title + image reach the pair.
+  assert.doesNotMatch(restore, /setVerifyPhase|setVerifyOutcome|setVerifyMessage|setAnchors|setPreferredId|setPairs|note:|alt:|hypothesis:/);
+});
+
+test("the PNG-only action stays exact beside a distinct React-text title restore", () => {
+  assert.equal(section.split("Use verified PNG in an empty pair").length, 2);
+  assert.equal(section.split("Restore title and PNG in an empty pair").length, 2);
+  assert.ok(section.indexOf("Use verified PNG in an empty pair") < section.indexOf("Restore title and PNG in an empty pair"));
+  assert.match(section, /className="image-control-actions title-compare-verify-reuse-actions"/);
+  assert.match(section, /data-title-compare-verify-restore-use/);
+  assert.match(section, /data-title-compare-verify-restore-target=\{verifiedReuseTarget \?\? undefined\}/);
+  assert.match(section, /data-title-compare-verify-restore-state=\{verifiedReuseTarget \? "ready" : "no-empty"\}/);
+  assert.match(section, /void restoreVerifiedTitleAndPng\(verifiedReuseTarget, verifiedReuseRevision\)/);
+  assert.match(section, /Restore the editable title from the manifest\. The PNG uses its original exported crop\./);
+  assert.match(section, /value=\{pair\.title\}/);
+  assert.match(section, /\{pair\.title \|\| <em>Untitled \{PAIR_LABELS\[id\]\}<\/em>\}/);
+  assert.doesNotMatch(section, /dangerouslySetInnerHTML/);
 });
