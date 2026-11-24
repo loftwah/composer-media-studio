@@ -2,7 +2,7 @@ import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { MAX_SPEAKER_CHARS } from "./caption-speaker.ts";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipCaptionSrtVariants, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
-import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from "./clip-cue-search";
+import { ALL_CUE_SPEAKERS, MAX_CUE_SEARCH_CHARS, UNNAMED_CUE_SPEAKER, cueMergeVisibility, cueSearchQuery, cueSpeakerFilterForDraft, cueSpeakerName, cueSpeakerOptions, filterCuesByTextAndSpeaker } from "./clip-cue-search";
 import { fullSourceCaptionDownload, fullSourceCaptionSrtVariants } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
 import { EMPTY_CUE_HISTORY, cueEditHistory, redoLastCueChange, undoLastCueChange, type CueHistory } from "./clip-cue-history";
@@ -143,10 +143,16 @@ function VideoClip() {
   // replacement or source change replaces that draft (or clears it), so a
   // stale edit can never overwrite newer cues with an old index.
   const [cueEditing, setCueEditing] = useState<{ sourceIndex: number; draft: CaptionDraft } | null>(null);
-  // Display-only filter for the Review cues rows. It never feeds an edit, the
+  // Display-only filters for the Review cues rows. They never feed an edit, the
   // offset, the preview track, the export or any download. A new caption source
-  // clears it; an edit or removal leaves it so the owner sees the updated list.
+  // clears them; an edit or removal keeps an exact speaker choice only while
+  // that name remains in the current draft.
   const [cueSearchText, setCueSearchText] = useState("");
+  const [cueSpeakerSelection, setCueSpeakerSelection] = useState(ALL_CUE_SPEAKERS);
+  const cueSpeaker = cueSpeakerFilterForDraft(cueSpeakerSelection, captionDraft?.cues ?? []);
+  useEffect(() => {
+    if (cueSpeakerSelection !== cueSpeaker) setCueSpeakerSelection(cueSpeaker);
+  }, [cueSpeaker, cueSpeakerSelection]);
   // Which list the caption reviewer shows. The default in-trim rows stay the
   // primary view; All source cues exists so a stored cue outside the trim (or
   // any cue when the trim or offset is invalid) can still be reviewed, edited
@@ -305,16 +311,47 @@ function VideoClip() {
     ? clipCaptionCues(captionDraft.cues, start, end, captionOffsetMs)
     : null;
   const survivingCaptionCount = trimmedCaptionCues?.length ?? null;
-  // Only these two values depend on the search text. The projection above stays
-  // the single source for the count, previews, MP4 captions and both sidecars.
+  // Only these display rows depend on the text and speaker filters. The full
+  // projection above stays the single source for counts, previews, MP4 captions
+  // and both sidecars; filtering never changes a cue's identity or timing.
   const cueQuery = cueSearchQuery(cueSearchText);
-  const visibleCues = trimmedCaptionCues ? filterCuesByText(trimmedCaptionCues, cueSearchText) : [];
+  const visibleCues = trimmedCaptionCues
+    ? filterCuesByTextAndSpeaker(trimmedCaptionCues, cueSearchText, cueSpeaker)
+    : [];
   // Every stored cue at its unshifted original-video time, keyed by the same
-  // source index the trimmed projection carries. The same bounded text filter
+  // source index the trimmed projection carries. Choices come from the FULL
+  // draft, including names outside this trim, and the same combined filter
   // applies to whichever list is shown. These rows never feed the count, the
   // preview track, the offset, the receipt or either export.
   const allSourceCues = captionDraft ? sourceCaptionCues(captionDraft.cues) : [];
-  const visibleSourceCues = captionDraft ? filterCuesByText(allSourceCues, cueSearchText) : [];
+  const cueSpeakerChoices = cueSpeakerOptions(captionDraft?.cues ?? []);
+  const visibleSourceCues = captionDraft
+    ? filterCuesByTextAndSpeaker(allSourceCues, cueSearchText, cueSpeaker)
+    : [];
+  const cueSpeakerFilterName = cueSpeakerName(cueSpeaker);
+  const cueFilterDescription = [
+    cueQuery ? `text “${cueQuery}”` : "",
+    cueSpeakerFilterName !== null
+      ? cueSpeakerFilterName === "" ? "the Unnamed speaker" : `speaker “${cueSpeakerFilterName}”`
+      : "",
+  ].filter(Boolean).join(" and ");
+  const hasCueFilters = cueFilterDescription !== "";
+  const reviewCueTotal = cueView === "trim" ? trimmedCaptionCues?.length ?? null : allSourceCues.length;
+  const reviewVisibleCueCount = cueView === "trim" ? visibleCues.length : visibleSourceCues.length;
+  const reviewCueNoun = reviewCueTotal === 1 ? "cue" : "cues";
+  const reviewCueLabel = cueView === "trim" ? `${reviewCueNoun} in this trim` : `source ${reviewCueNoun}`;
+  const reviewCueVerb = reviewVisibleCueCount === 1 ? "matches" : "match";
+  const cueReviewStatus = reviewCueTotal === null
+    ? "No in-trim cue list while the trim or timing offset is invalid."
+    : reviewCueTotal === 0 && !hasCueFilters
+      ? cueView === "trim"
+        ? "No cues in this trim. Adjust the trim or timing offset, or review All source cues."
+        : "No source cues in this draft."
+      : !hasCueFilters
+        ? `Showing all ${reviewCueTotal} ${reviewCueLabel}.`
+        : reviewVisibleCueCount === 0
+          ? `No ${reviewCueLabel} ${reviewCueVerb} ${cueFilterDescription}. Clear both to show all ${reviewCueTotal}.`
+          : `${reviewVisibleCueCount} of ${reviewCueTotal} ${reviewCueLabel} ${reviewCueVerb} ${cueFilterDescription}.`;
   // A running audition belongs to one exact source, draft, trim and offset. If
   // any of those change it is no longer the same cue window, so stop and say so
   // rather than leave the old seconds playing over newer work.
@@ -535,6 +572,7 @@ function VideoClip() {
       captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionHistory(EMPTY_CUE_HISTORY); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
       setCueSearchText("");
+      setCueSpeakerSelection(ALL_CUE_SPEAKERS);
       setCueView("trim");
       resetCueEditor(); setManualCueMessage("");
       setShowSourceCaptions(false);
@@ -597,6 +635,7 @@ function VideoClip() {
       setCaptionHistory(EMPTY_CUE_HISTORY);
       setCaptionOffsetRaw("0");
       setCueSearchText("");
+      setCueSpeakerSelection(ALL_CUE_SPEAKERS);
       setCueView("trim");
       resetCueEditor();
       setManualCueMessage("");
@@ -664,6 +703,7 @@ function VideoClip() {
       setCaptionOffsetRaw(String(restored.offsetMs / 1000));
       setCaptionText("");
       setCueSearchText("");
+      setCueSpeakerSelection(ALL_CUE_SPEAKERS);
       setCueView("trim");
       resetCueEditor();
       setManualCueMessage("");
@@ -702,10 +742,11 @@ function VideoClip() {
     setCueSplitAt("");
     setCueSplitWord(1);
   }
-  // Clearing a display filter is not a draft edit. Returning focus to the field
-  // keeps the row-level and empty-state Clear search buttons keyboard friendly.
-  function clearCueSearch() {
+  // Clearing display filters is not a draft edit. Returning focus to the text
+  // field keeps the main and merge-recovery Clear buttons keyboard friendly.
+  function clearCueFilters() {
     setCueSearchText("");
+    setCueSpeakerSelection(ALL_CUE_SPEAKERS);
     cueSearchInput.current?.focus();
   }
   // Switching which cue rows are shown never edits the draft, trim or offset.
@@ -1386,6 +1427,7 @@ function VideoClip() {
           setCaptionOffsetRaw("0");
           setCaptionText("");
           setCueSearchText("");
+          setCueSpeakerSelection(ALL_CUE_SPEAKERS);
           setCueView("trim");
           resetCueEditor();
           setManualCueMessage("");
@@ -1437,35 +1479,37 @@ function VideoClip() {
                 <p className="notice trim-cue-view-unknown">The trim or timing offset is not valid, so there is no in-trim cue list. All source cues still lists every stored cue at its original video time.</p>
               )}
               <div className="trim-cue-search">
-                <label htmlFor="trim-cue-search">Find a caption by its text</label>
                 <div className="trim-cue-search-controls">
-                  <input id="trim-cue-search" ref={cueSearchInput} type="search"
-                    value={cueSearchText} maxLength={MAX_CUE_SEARCH_CHARS} placeholder="Search cue text" autoComplete="off"
-                    aria-describedby="trim-cue-search-help trim-cue-search-count"
-                    disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
-                    onChange={event => setCueSearchText(event.currentTarget.value)} />
+                  <label className="trim-cue-text-filter" htmlFor="trim-cue-search">Find a caption by its text
+                    <input id="trim-cue-search" ref={cueSearchInput} type="search"
+                      value={cueSearchText} maxLength={MAX_CUE_SEARCH_CHARS} placeholder="Search cue text" autoComplete="off"
+                      aria-describedby="trim-cue-search-help trim-cue-search-count"
+                      disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                      onChange={event => setCueSearchText(event.currentTarget.value)} />
+                  </label>
+                  <label className="trim-cue-speaker-filter" htmlFor="trim-cue-speaker">Speaker
+                    <select id="trim-cue-speaker" value={cueSpeaker}
+                      aria-describedby="trim-cue-search-help trim-cue-search-count"
+                      disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                      onChange={event => setCueSpeakerSelection(event.currentTarget.value)}>
+                      <option value={ALL_CUE_SPEAKERS}>All speakers</option>
+                      <option value={UNNAMED_CUE_SPEAKER}>No speaker</option>
+                      {cueSpeakerChoices.length > 0 && (
+                        <optgroup label="Named speakers">
+                          {cueSpeakerChoices.map(option => <option key={option} value={option}>{cueSpeakerName(option)}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                  </label>
                   <button type="button" className="secondary trim-cue-search-clear"
-                    disabled={!cueSearchText || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
-                    onClick={clearCueSearch}>Clear</button>
+                    disabled={(!cueSearchText && cueSpeaker === ALL_CUE_SPEAKERS) || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                    onClick={clearCueFilters}>Clear</button>
                 </div>
-                <p id="trim-cue-search-help" className="trim-note">This search only filters the rows below. The saved draft, preview, offset and downloads keep every cue.</p>
-                <p id="trim-cue-search-count" className="trim-note" role="status" aria-live="polite">
-                  {cueView === "trim"
-                    ? cueQuery
-                      ? `${visibleCues.length} of ${trimmedCaptionCues?.length ?? 0} ${(trimmedCaptionCues?.length ?? 0) === 1 ? "cue" : "cues"} match “${cueQuery}”.`
-                      : trimmedCaptionCues
-                        ? `Showing all ${trimmedCaptionCues.length} ${trimmedCaptionCues.length === 1 ? "cue" : "cues"}.`
-                        : "No in-trim cue list while the trim or timing offset is invalid."
-                    : cueQuery
-                      ? `${visibleSourceCues.length} of ${allSourceCues.length} source ${allSourceCues.length === 1 ? "cue" : "cues"} match “${cueQuery}”.`
-                      : `Showing all ${allSourceCues.length} source ${allSourceCues.length === 1 ? "cue" : "cues"}.`}
+                <p id="trim-cue-search-help" className="trim-note">These filters only change the rows below. The saved draft, preview, offset and downloads keep every cue.</p>
+                <p id="trim-cue-search-count" className="trim-note" role="status" aria-live="polite"
+                  data-empty={hasCueFilters && reviewVisibleCueCount === 0 ? "true" : undefined}>
+                  {cueReviewStatus}
                 </p>
-                {cueView === "trim" && trimmedCaptionCues && trimmedCaptionCues.length > 0 && cueQuery && visibleCues.length === 0 && (
-                  <p className="notice trim-cue-search-empty">No cues in this trim match “{cueQuery}”. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show all {trimmedCaptionCues.length}.</p>
-                )}
-                {cueView === "source" && cueQuery && visibleSourceCues.length === 0 && (
-                  <p className="notice trim-cue-search-empty">No source cues match “{cueQuery}”. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show all {allSourceCues.length}.</p>
-                )}
               </div>
               {cueView === "trim" && trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
                 <ol className="trim-cue-list" aria-label="Caption cues in this trim">
@@ -1507,7 +1551,7 @@ function VideoClip() {
                         </div>
                         {hiddenMergeWith && (
                           <p className="trim-note trim-cue-hidden-merge">
-                            Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.from)}–{clipTimeStamp(hiddenMergeWith.to)} (“{cueLine(hiddenMergeWith)}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
+                            Merge is hidden by the current filters: cue {clipTimeStamp(hiddenMergeWith.from)}–{clipTimeStamp(hiddenMergeWith.to)} (“{cueLine(hiddenMergeWith)}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueFilters}>Clear filters</button> to show it here.
                           </p>
                         )}
                       </li>
@@ -1544,7 +1588,7 @@ function VideoClip() {
                         </div>
                         {hiddenMergeWith && (
                           <p className="trim-note trim-cue-hidden-merge">
-                            Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.startMs)}–{clipTimeStamp(hiddenMergeWith.endMs)} (“{cueLine(hiddenMergeWith)}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
+                            Merge is hidden by the current filters: cue {clipTimeStamp(hiddenMergeWith.startMs)}–{clipTimeStamp(hiddenMergeWith.endMs)} (“{cueLine(hiddenMergeWith)}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueFilters}>Clear filters</button> to show it here.
                           </p>
                         )}
                       </li>
