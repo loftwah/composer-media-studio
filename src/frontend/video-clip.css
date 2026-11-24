@@ -25,6 +25,8 @@
 .trim-cue-time { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .trim-cue-text { overflow-wrap:anywhere; }
 @media (max-width:600px) {
+  .trim-cue-row { grid-template-columns:minmax(0,1fr); padding-bottom:.4rem; }
+  .trim-cue-actions { display:flex; flex-wrap:wrap; }
   .trim-cue-jump { grid-template-columns:minmax(0,1fr); gap:.25rem; align-content:start; }
   .trim-cue-time { white-space:normal; overflow-wrap:anywhere; }
   .trim-cue-search-controls input[type=search] { flex-basis:100%; }
