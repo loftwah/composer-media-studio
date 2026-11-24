@@ -1,9 +1,11 @@
 // MIT. Browser-local check that one exported packaging PNG matches the
 // versioned Title + thumbnail compare manifest written beside it. It reads only
-// the two files the visitor selects, validates the manifest's small fact subset
-// and compares the PNG's own type, byte length, dimensions and SHA-256. Nothing
-// is uploaded, persisted or changed, and a match says nothing about who made or
-// owns the image, where the original came from, or any project approval.
+// the files the visitor selects, validates the manifest's small fact subset
+// and compares the PNG's own type, byte length, dimensions and SHA-256. After a
+// PNG match, an optional original thumbnail can be compared with the manifest's
+// additive source.sha256. Nothing is uploaded, persisted or changed, and a match
+// says nothing about who made or owns the image, where the original came from,
+// or any rights, asset or audience approval.
 
 import { sha256Hex } from "../lib/util.mjs";
 import { MAX_IMAGE_INPUT_BYTES, imageInputProblem } from "./image-limits.ts";
@@ -21,17 +23,27 @@ export const MAX_PACKAGING_MANIFEST_BYTES = 32 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/;
 
 /** The manifest facts this check is allowed to read and show. Deliberately no
- * title, note, source name, PNG filename or other free text. */
+ * title, note, source name, PNG filename or other free text. A missing source
+ * digest is legacy-compatible; null means the supplied digest was invalid. */
 export type PackagingManifestFacts = {
   size: FeedSize;
   width: number;
   height: number;
   pngBytes: number;
   sha256: string;
+  sourceSha256?: string | null;
 };
 
+/** The independent result for an optional original thumbnail. It never changes
+ * the PNG outcome or makes a rights, asset or audience claim. */
+export type PackagingOriginalOutcome =
+  | { status: "matched" }
+  | { status: "different" }
+  | { status: "legacy" }
+  | { status: "invalid"; message: string };
+
 export type PackagingVerifyOutcome =
-  | { status: "matched"; facts: PackagingManifestFacts }
+  | { status: "matched"; facts: PackagingManifestFacts; original?: PackagingOriginalOutcome }
   | {
       status: "different";
       reason: "size";
@@ -132,7 +144,21 @@ export function parsePackagingManifest(text: string): PackagingManifestFacts {
   if (typeof sha256 !== "string" || !SHA256.test(sha256))
     throw new PackagingManifestError("That manifest does not carry a valid lowercase SHA-256 digest.");
 
-  return { size, width: size.width, height: size.height, pngBytes, sha256 };
+  const sourceSha256 =
+    isRecord(value.source) && value.source.sha256 !== undefined
+      ? typeof value.source.sha256 === "string" && SHA256.test(value.source.sha256)
+        ? value.source.sha256
+        : null
+      : undefined;
+
+  return {
+    size,
+    width: size.width,
+    height: size.height,
+    pngBytes,
+    sha256,
+    ...(sourceSha256 !== undefined ? { sourceSha256 } : {}),
+  };
 }
 
 /** The distinct recovery path alone may read the same bounded v1 manifest's
@@ -215,14 +241,49 @@ export async function verifyPackagingBytes(
   return { status: "matched", facts };
 }
 
+/** Compare one already-bounded original with the additive source digest. This
+ * runs only after the PNG matched, and its result cannot change that match. */
+async function verifyPackagingOriginal(
+  facts: PackagingManifestFacts,
+  originalFile: File,
+  inputProblem: string | null,
+): Promise<PackagingOriginalOutcome> {
+  if (facts.sourceSha256 === undefined) return { status: "legacy" };
+  if (facts.sourceSha256 === null)
+    return { status: "invalid", message: "The manifest's source SHA-256 is invalid." };
+  if (inputProblem) return { status: "invalid", message: inputProblem };
+
+  let bytes: Uint8Array<ArrayBuffer>;
+  try {
+    bytes = new Uint8Array(await originalFile.arrayBuffer());
+  } catch {
+    return { status: "invalid", message: "That file could not be read." };
+  }
+  const sizeProblem = imageInputProblem({ size: bytes.byteLength });
+  if (sizeProblem) return { status: "invalid", message: sizeProblem };
+
+  let actualSha256: string;
+  try {
+    actualSha256 = await sha256Hex(bytes);
+  } catch {
+    return { status: "invalid", message: "This browser could not hash the original thumbnail." };
+  }
+  return actualSha256 === facts.sourceSha256
+    ? { status: "matched" }
+    : { status: "different" };
+}
+
 /**
- * The explicit check behind the disclosure. Both files are bounded before they
- * are read; the manifest is parsed for its required subset and the PNG is then
- * compared byte-for-byte and digest-for-digest.
+ * The explicit check behind the disclosure. The manifest and PNG are bounded
+ * before they are read; the manifest is parsed once for its required subset and
+ * optional source digest. The PNG is then compared byte-for-byte and
+ * digest-for-digest. Only after a PNG match is an optional original read and
+ * hashed locally against source.sha256, with the same image input byte cap.
  */
 export async function verifyPackagingFiles(
   manifestFile: File | null | undefined,
   pngFile: File | null | undefined,
+  originalFile?: File | null,
 ): Promise<PackagingVerifyOutcome> {
   if (!manifestFile) return invalid("Choose the packaging manifest JSON file.");
   if (manifestFile.size === 0 || manifestFile.size > MAX_PACKAGING_MANIFEST_BYTES)
@@ -231,6 +292,12 @@ export async function verifyPackagingFiles(
   if (!pngFile) return invalid("Choose the PNG exported with this manifest.");
   const pngProblem = imageInputProblem({ name: pngFile.name, type: pngFile.type, size: pngFile.size });
   if (pngProblem) return invalid(pngProblem);
+
+  // Preflight the optional original before any selected file is read. A problem
+  // is reported only after the required PNG mode has had its independent match.
+  const originalProblem = originalFile
+    ? imageInputProblem({ name: originalFile.name, type: originalFile.type, size: originalFile.size })
+    : null;
 
   let text: string;
   try {
@@ -254,5 +321,10 @@ export async function verifyPackagingFiles(
   } catch {
     return invalid("That PNG could not be read.");
   }
-  return verifyPackagingBytes(facts, bytes);
+  const outcome = await verifyPackagingBytes(facts, bytes);
+  if (outcome.status !== "matched" || !originalFile) return outcome;
+  return {
+    ...outcome,
+    original: await verifyPackagingOriginal(facts, originalFile, originalProblem),
+  };
 }

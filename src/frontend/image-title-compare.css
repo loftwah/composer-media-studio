@@ -484,7 +484,8 @@
   color: var(--danger);
 }
 
-.title-compare-verify-facts {
+.title-compare-verify-facts,
+.title-compare-verify-original {
   margin: 0.5rem 0 0;
 }
 
