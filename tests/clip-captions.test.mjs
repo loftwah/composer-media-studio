@@ -188,6 +188,9 @@ test('Video Clip voice output escapes and round-trips while unnamed bytes stay i
   // Placement changes only the cue setting; the voice body is shared.
   assert.equal(sourcePreviewVtt(cues, 3, 0, 'top', { voices: true }),
     'WEBVTT\n\n00:01.000 --> 00:02.000 line:12%\n<v Dean &amp; Jane>A &amp; &lt;B&gt;</v>\n\n00:02.000 --> 00:03.000 line:12%\nUnnamed\n');
+  // An invalid internal name is refused rather than emitted or silently dropped.
+  assert.equal(serializeClipCaptions([{ ...cues[0], speaker: 'x'.repeat(81) }], 0, 3, 0, 'default', { voices: true }), null);
+  assert.equal(serializeClipCaptions([{ ...cues[0], speaker: 'Two\nlines' }], 0, 3, 0, 'default', { voices: true }), null);
 });
 test('cue review projections keep a supplied speaker separate from the words', () => {
   const cues = [{ startMs: 1000, endMs: 2000, text: 'A & B', speaker: 'Dean' }];

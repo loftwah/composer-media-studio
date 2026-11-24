@@ -1,4 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
+import { MAX_SPEAKER_CHARS } from "./caption-speaker.ts";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, srtForClipVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
 import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from "./clip-cue-search";
@@ -124,6 +125,9 @@ function VideoClip() {
   const [captionOffsetRaw, setCaptionOffsetRaw] = useState("0");
   const [captionText, setCaptionText] = useState("");
   const [manualCueText, setManualCueText] = useState("");
+  // Optional plain speaker label. Blank means unnamed, and the shared normaliser
+  // in replace/add is the only place the value is bounded and trimmed.
+  const [manualCueSpeaker, setManualCueSpeaker] = useState("");
   const [manualCueStart, setManualCueStart] = useState("");
   const [manualCueEnd, setManualCueEnd] = useState("");
   const [manualCueMessage, setManualCueMessage] = useState("");
@@ -666,6 +670,7 @@ function VideoClip() {
   function resetCueEditor() {
     setCueEditing(null);
     setManualCueText("");
+    setManualCueSpeaker("");
     setManualCueStart("");
     setManualCueEnd("");
     setCueSplitAt("");
@@ -693,6 +698,7 @@ function VideoClip() {
     if (!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
     const added = appendManualClipCue(captionDraft?.cues ?? [], {
       text: manualCueText, startSeconds: manualCueStart, endSeconds: manualCueEnd,
+      speaker: manualCueSpeaker,
     }, Math.round(duration * 1000));
     if ("problem" in added) { setManualCueMessage(added.problem); return; }
     const request = ++captionRequest.current;
@@ -722,6 +728,9 @@ function VideoClip() {
     if (manualCueDetails.current) manualCueDetails.current.open = true;
     setCueEditing({ sourceIndex, draft: captionDraft });
     setManualCueText(cue.text);
+    // Load the imported or previously saved label so Update cue can keep it,
+    // clear it, or give an unnamed cue a name.
+    setManualCueSpeaker(cue.speaker);
     setManualCueStart((cue.startMs / 1000).toFixed(3));
     setManualCueEnd((cue.endMs / 1000).toFixed(3));
     const split = defaultClipCueSplit(cue);
@@ -748,6 +757,7 @@ function VideoClip() {
     const previousDraft = captionDraft;
     const replaced = replaceClipDraftCue(previousDraft.cues, cueEditing.sourceIndex, {
       text: manualCueText, startSeconds: manualCueStart, endSeconds: manualCueEnd,
+      speaker: manualCueSpeaker,
     }, Math.round(duration * 1000));
     if ("problem" in replaced) { setManualCueMessage(replaced.problem); return; }
     const request = ++captionRequest.current;
@@ -780,6 +790,7 @@ function VideoClip() {
       return;
     }
     if (manualCueText !== sourceCue.text ||
+      manualCueSpeaker !== sourceCue.speaker ||
       Number(manualCueStart) !== sourceCue.startMs / 1000 ||
       Number(manualCueEnd) !== sourceCue.endMs / 1000) {
       setManualCueMessage("Save your cue edits with Update cue before splitting.");
@@ -1262,6 +1273,13 @@ function VideoClip() {
             disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
             onChange={event => setManualCueText(event.currentTarget.value)}
           /></label>
+          <label>Speaker (optional)<input type="text" spellCheck={false} maxLength={MAX_SPEAKER_CHARS}
+            aria-describedby="manual-cue-speaker-help"
+            value={manualCueSpeaker}
+            disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+            onChange={event => setManualCueSpeaker(event.currentTarget.value)}
+          /></label>
+          <p id="manual-cue-speaker-help" className="trim-note">Use one line of up to {MAX_SPEAKER_CHARS} characters. WebVTT keeps the name.</p>
           <div className="trim-fields">
             <div>
               <label>Cue start (seconds)<input type="number" min="0" max={duration} step="0.001"

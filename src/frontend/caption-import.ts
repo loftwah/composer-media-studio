@@ -1,3 +1,5 @@
+import { normalizeSpeaker } from "./caption-speaker.ts";
+
 /** Bounded, plain-text SRT/WebVTT import. Times are relative to the chosen song segment. */
 export type ImportedCue = { startMs:number;endMs:number;text:string;speaker:string };
 /**
@@ -6,7 +8,6 @@ export type ImportedCue = { startMs:number;endMs:number;text:string;speaker:stri
  * keep rejecting all WebVTT markup, including voice tags.
  */
 export type CaptionImportOptions = Readonly<{ voices?: boolean }>;
-const MAX_SPEAKER_CHARS = 80;
 const fail = (message:string):never => {throw new Error(message);};
 function timestamp(value:string, format:'srt'|'vtt'):number {
   const match = format === 'srt' ? /^(\d{2,}):(\d{2}):(\d{2}),(\d{3})$/.exec(value) : /^(?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3})$/.exec(value);
@@ -38,17 +39,17 @@ function voiceCue(value:string, format:'srt'|'vtt', enabled:boolean):Readonly<{s
   if (opening[1] !== undefined) return fail('Remove voice annotation classes and styling before import.');
   const name=(opening[2] ?? '').trim();
   if (!name) return fail('Name the speaker in the voice annotation.');
-  const speaker=vttEntities(name).trim();
-  if (!speaker || speaker.length>MAX_SPEAKER_CHARS || /[\u0000-\u001f\u007f\ufffd]/.test(speaker)) return fail('A speaker name needs one line of up to 80 plain characters.');
+  const speaker=normalizeSpeaker(vttEntities(name));
+  if (!speaker) return fail('A speaker name needs one line of up to 80 plain characters.');
   let text=value.slice(opening[0].length);
   const closing=text.lastIndexOf('</v>');
   if (closing >= 0) {
     if (closing !== text.length-4) return fail('A closing </v> must end the whole cue.');
     text=text.slice(0,closing);
   }
-  // Reject a second annotation, a nested tag, or an opening voice tag that was
-  // left in the words instead of wrapping the cue.
-  if (/<\/?v(?:\s|\.|>)/i.test(text)) return fail('Use one plain <v Speaker> voice annotation around the whole cue.');
+  // Reject a second annotation, a nested tag, a WebVTT timestamp, or an opening
+  // voice tag that was left in the words instead of wrapping the cue.
+  if (/<\/?v(?:\s|\.|>)/i.test(text) || /<\d{2,}:\d{2}(?::\d{2})?[.,]\d{3}>/.test(text)) return fail('Use one plain <v Speaker> voice annotation around the whole cue.');
   return {speaker,text};
 }
 export function parseCaptionFile(source:string, segmentStartMs:number, segmentEndMs:number, options:CaptionImportOptions = {}):ImportedCue[] {
