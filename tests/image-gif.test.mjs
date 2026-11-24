@@ -2,6 +2,7 @@
 // declared limits, frame placement, GIF89a structure, shared palette and the
 // 9-bit literal LZW payload that Pillow and ordinary decoders read.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   GIF_DELAY_STEP_MS,
@@ -62,9 +63,95 @@ function decodeFrame(data) {
   return indices;
 }
 
+// A full GIF LZW decoder, including the growing dictionary and Clear resets.
+// It reports the code width it actually reached so a fixed 9-bit stream can be
+// proved rather than assumed.
+function decodeLzw(data) {
+  const clear = 256;
+  const end = 257;
+  const indices = [];
+  let dictionary = [];
+  let next = 258;
+  let width = 9;
+  let maxWidth = 9;
+  let clears = 0;
+  let maxCode = 0;
+  let previous = null;
+  const reset = () => {
+    dictionary = [];
+    for (let index = 0; index < 256; index += 1) dictionary[index] = [index];
+    next = 258;
+    width = 9;
+  };
+  reset();
+  let accumulator = 0;
+  let bits = 0;
+  let offset = 0;
+  const read = () => {
+    while (bits < width) {
+      if (offset >= data.length) return -1;
+      accumulator |= data[offset] << bits;
+      offset += 1;
+      bits += 8;
+    }
+    const code = accumulator & ((1 << width) - 1);
+    accumulator >>>= width;
+    bits -= width;
+    return code;
+  };
+  for (;;) {
+    const code = read();
+    assert.notEqual(code, -1, "the LZW stream ends without an End code");
+    if (code === clear) {
+      reset();
+      previous = null;
+      clears += 1;
+      continue;
+    }
+    if (code === end) break;
+    maxCode = Math.max(maxCode, code);
+    let entry;
+    if (code < next && dictionary[code]) entry = dictionary[code];
+    else if (code === next && previous) entry = previous.concat(previous[0]);
+    else assert.fail(`unexpected LZW code ${code} at next ${next}`);
+    indices.push(...entry);
+    if (previous) {
+      dictionary[next] = previous.concat(entry[0]);
+      next += 1;
+      if (next === (1 << width)) {
+        width += 1;
+        maxWidth = Math.max(maxWidth, width);
+      }
+    }
+    previous = entry;
+  }
+  return { indices, clears, maxCode, maxWidth };
+}
 
+function imageData(parsed) {
+  return parsed.frames.map((block) => decodeLzw(block.data));
+}
 
+// A filled frame with flat bands and a gradient, repeated across many pixels so
+// the dictionary can do realistic work. Deterministic and independent of files.
+function typicalFrame(width, height, shift) {
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const band = ((x + shift) >> 4) + (y >> 4);
+      rgba[offset] = (x * 4 + shift * 7) & 0xff;
+      rgba[offset + 1] = (y * 3 + 40) & 0xff;
+      rgba[offset + 2] = band % 2 ? 32 : 220;
+      rgba[offset + 3] = 255;
+    }
+  }
+  return rgba;
+}
 
+// The bytes this writer produced for the fixture before the compact option
+// existed. The opt-in path must not change the default stream.
+const LEGACY_FIXTURE_SHA256 = "10561d5659861891e5e933d38974501b8aefabb0acdd43a8f9080982db685b13";
 
 function parseGif(bytes) {
   assert.equal(String.fromCharCode(...bytes.subarray(0, 6)), "GIF89a");
@@ -302,4 +389,84 @@ test("a frame whose byte length does not match the declared square is refused", 
     () => encodeGif({ frames: [frame([1, 2, 3], 1, 1)], width: 1, height: 1, delayMs: 5 }),
     RangeError,
   );
+});
+
+test("compact mode is opt-in and leaves the legacy literal bytes exactly as they were", () => {
+  const settings = {
+    frames: [typicalFrame(64, 64, 0), typicalFrame(64, 64, 5)],
+    width: 64,
+    height: 64,
+    delayMs: 350,
+    loop: true,
+  };
+  const legacy = encodeGif(settings);
+  assert.equal(legacy.length, 10137);
+  assert.equal(createHash("sha256").update(legacy).digest("hex"), LEGACY_FIXTURE_SHA256);
+  assert.deepEqual([...encodeGif({ ...settings, compact: false })], [...legacy]);
+
+  const compact = encodeGif({ ...settings, compact: true });
+  assert.ok(compact.length < legacy.length, "compact mode should be smaller");
+  assert.equal(String.fromCharCode(...compact.subarray(0, 6)), "GIF89a");
+  assert.equal(compact.at(-1), 0x3b);
+});
+
+test("compact LZW keeps the palette, bounds, delays, loop and decoded pixels", () => {
+  const width = 64;
+  const height = 64;
+  const frameDelaysMs = [120, 480];
+  const settings = {
+    frames: [typicalFrame(width, height, 0), typicalFrame(width, height, 5)],
+    width,
+    height,
+    delayMs: 350,
+    frameDelaysMs,
+    loop: true,
+  };
+  const legacy = parseGif(encodeGif(settings));
+  const compact = parseGif(encodeGif({ ...settings, compact: true }));
+
+  assert.deepEqual([...compact.palette], [...legacy.palette]);
+  assert.deepEqual([...compact.palette], [...GIF_PALETTE]);
+  assert.equal(compact.loopExtension, true);
+  assert.equal(legacy.loopExtension, true);
+  assert.equal(compact.frames.length, legacy.frames.length);
+  for (let index = 0; index < compact.frames.length; index += 1) {
+    assert.deepEqual(compact.frames[index].descriptor, legacy.frames[index].descriptor);
+    assert.deepEqual(compact.frames[index].descriptor, {
+      left: 0,
+      top: 0,
+      width,
+      height,
+    });
+    assert.equal(compact.frames[index].delayUnits, legacy.frames[index].delayUnits);
+    assert.equal(compact.frames[index].delayUnits, frameDelaysMs[index] / 10);
+  }
+
+  const legacyPixels = imageData(legacy);
+  const compactPixels = imageData(compact);
+  assert.deepEqual(compactPixels.map((block) => block.indices), legacyPixels.map((block) => block.indices));
+  assert.equal(compactPixels[0].indices.length, width * height);
+
+  // Filled frames build real dictionary entries, then reset before the decoder
+  // would need a 10-bit code. Every compact code stayed 9 bits wide.
+  for (const block of compactPixels) {
+    assert.ok(block.clears > 1, "the compact stream should reset the dictionary");
+    assert.ok(block.maxCode > 257, "the compact stream should use dictionary codes");
+    assert.equal(block.maxWidth, 9, "compact codes must stay 9 bits wide");
+  }
+});
+
+test("compact mode measurably shrinks typical filled frames", () => {
+  const width = 320;
+  const height = 320;
+  const frames = [typicalFrame(width, height, 0), typicalFrame(width, height, 40)];
+  const legacy = encodeGif({ frames, width, height, delayMs: 500, loop: true });
+  const compact = encodeGif({ frames, width, height, delayMs: 500, loop: true, compact: true });
+  assert.ok(
+    compact.length * 2 < legacy.length,
+    `expected at least half the bytes, got ${compact.length} of ${legacy.length}`,
+  );
+  const compactPixels = imageData(parseGif(compact));
+  const legacyPixels = imageData(parseGif(legacy));
+  assert.deepEqual(compactPixels.map((block) => block.indices), legacyPixels.map((block) => block.indices));
 });

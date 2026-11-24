@@ -270,8 +270,12 @@ test("batch writes a bounded GIF from the ordered source stills", () => {
   );
   assert.match(
     workbench,
-    /encodeGif\(\{\s*frames,\s*width: size,\s*height: size,\s*delayMs,\s*\.\.\.\(hasOverrides \? \{ frameDelaysMs \} : \{\}\),\s*loop,\s*\}\)/,
+    /encodeGif\(\{\s*frames,\s*width: size,\s*height: size,\s*delayMs,\s*\.\.\.\(hasOverrides \? \{ frameDelaysMs \} : \{\}\),\s*loop,\s*compact,\s*\}\)/,
   );
+  assert.match(workbench, /const \[gifCompact, setGifCompact\] = useState\(false\)/);
+  assert.match(workbench, /const compact = gifCompact/);
+  assert.match(workbench, /GIF compact setting changed\. Make the GIF again\./);
+  assert.match(workbench, /Compact file/);
   assert.match(workbench, /if \(attempt !== gifRevision\.current\) return;/);
   assert.match(workbench, /gifOutputDelaySummary\?\.token/);
   assert.match(workbench, /gifOutputDelaySummary\?\.phrase/);

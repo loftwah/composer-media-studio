@@ -27,6 +27,7 @@ const GIF_LABELS = Object.freeze({
   delay: "GIF delay (ms per frame)",
   matte: "GIF matte",
   loop: "Repeat after the last frame",
+  compact: "Compact file",
 });
 
 const GIF_DOWNLOAD_LABEL = /^Download GIF/;
@@ -163,6 +164,7 @@ async function main() {
       matte: { type: "string" },
       loop: { type: "boolean" },
       once: { type: "boolean" },
+      compact: { type: "boolean" },
     },
   });
   const sourcePaths = values.source ?? [];
@@ -174,6 +176,7 @@ async function main() {
   const frameDelaysMs = parseGifFrameDelays(values["frame-delays-ms"], sourcePaths.length);
   const matte = parseGifMatte(values.matte);
   const loop = resolveGifPlayback(values);
+  const compact = values.compact === true;
   const effectiveDelaysMs = frameDelaysMs ?? sourcePaths.map(() => delayMs);
   const delaySummary = gifDelaySummary(effectiveDelaysMs);
   const settings = {
@@ -183,6 +186,7 @@ async function main() {
     matte,
     loop,
     playback: loop ? "loop" : "once",
+    compact,
   };
   const problem =
     gifSettingsProblem({ frameCount: sourcePaths.length, frameSize, delayMs }) ??
@@ -209,6 +213,9 @@ async function main() {
     const repeat = gif.getByLabel(GIF_LABELS.loop, { exact: true });
     if (loop) await repeat.check();
     else await repeat.uncheck();
+    const compactControl = gif.getByLabel(GIF_LABELS.compact, { exact: true });
+    if (compact) await compactControl.check();
+    else await compactControl.uncheck();
     await gif.getByRole("button", { name: gifMakeLabel(inputs.length), exact: true }).click();
     const completion = gif.getByRole("status").filter({ hasText: /^GIF ready: / });
     await completion.waitFor();
