@@ -13,6 +13,26 @@ async function fixture() {
   return { env, project, owner, call };
 }
 
+test('a signed-out reader is refused with the Compare login page', async () => {
+  const { call } = await fixture();
+  const response = await call('/compare', null);
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const html = await response.text();
+  assert.match(html, /name="next" value="\/compare"/);
+  assert.match(html, /Owner passphrase/);
+});
+
+test('the compare path keeps answering methods other than GET', async () => {
+  const { env, project, owner } = await fixture();
+  const response = await worker.fetch(new Request(`https://studio.test/compare?project=${encodeURIComponent(project.id)}`, {
+    method: 'POST',
+    headers: { origin: 'https://studio.test', cookie: owner },
+  }), env);
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), new RegExp(`project=${project.id}&amp;job=|project=${project.id}&job=`));
+});
+
 test('compare keeps the project the owner is working in', async () => {
   const { project, call } = await fixture();
   const response = await call(`/compare?project=${encodeURIComponent(project.id)}`);
