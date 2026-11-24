@@ -279,7 +279,8 @@
 
 /* The clipboard action sits beside its own download, never in place of it:
    a denied write or a missing ClipboardItem leaves the download untouched. */
-.title-compare-export button[data-title-compare-copy-png] {
+.title-compare-export button[data-title-compare-copy-png],
+.title-compare-export button[data-title-compare-copy-manifest] {
   margin-left: 0.5rem;
 }
 

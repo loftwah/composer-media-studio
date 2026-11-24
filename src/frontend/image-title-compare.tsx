@@ -144,6 +144,10 @@ type ExportEntry = {
    * upload runs, and the download link stays available whatever the clipboard
    * decides. */
   pngBlob?: Blob;
+  /** Set on a manifest entry: the exact serialized text behind its download
+   * blob, captured once during the export. Copy writes this same string, so no
+   * second manifest build, encode, fetch or upload runs. */
+  manifestText?: string;
 };
 
 const emptyPair = (): Pair => ({ title: "", alt: "", hypothesis: "", note: "", image: null, error: null, busy: false });
@@ -211,8 +215,9 @@ export function TitleCompare({
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
-  /** PNG copy feedback belongs to one exact prepared download: its key is that
-   * export's object URL, so a replacement can never inherit an older message. */
+  /** Prepared-export copy feedback belongs to one exact download: its key is
+   * that export's object URL, so a replacement can never inherit an older
+   * message. Both the prepared PNG and manifest-text copies use this path. */
   const [pngCopy, setPngCopy] = useState<{ key: string; message: string; ok: boolean } | null>(null);
   /** The separate packaging check. Both files are browser-local, its result is
    * display state only, and it never edits a pair, note, crop, preference or
@@ -242,8 +247,9 @@ export function TitleCompare({
   /** One run per title copy, so a slow write cannot report a title the user has
    * already left or edited. */
   const copyRun = useRef(0);
-  /** One run per PNG copy. Replacing or clearing the exports retires a write
-   * that started against a PNG that is no longer prepared. */
+  /** One run per prepared-export copy (PNG or manifest text). Replacing or
+   * clearing the exports retires a write that started against a download that
+   * is no longer prepared. */
   const pngCopyRun = useRef(0);
   /** One run per packaging check, so changing either selection or unmounting
    * retires a slow response before it can report on other files. */
@@ -364,9 +370,11 @@ export function TitleCompare({
   }
 
   function updateTitle(index: number, title: string): void {
+    if (pairs[index]?.title === title) return;
     if (index === PAIR_IDS.indexOf(selectedId)) clearCopyFeedback();
     setPair(index, { title });
     clearPreferenceFor(index);
+    retirePreparedOutput();
   }
 
   /** Alt text describes the thumbnail, not the crop or the encoded pixels. An
@@ -698,6 +706,7 @@ export function TitleCompare({
           height: size.height,
           bytes: manifestBlob.size,
           sha256,
+          manifestText,
         },
       ];
       if (bundle.ok) {
@@ -859,10 +868,13 @@ export function TitleCompare({
     typeof window.ClipboardItem === "function" &&
     typeof navigator !== "undefined" &&
     typeof navigator.clipboard?.write === "function";
+  const canCopyManifest =
+    typeof navigator !== "undefined" &&
+    typeof navigator.clipboard?.writeText === "function";
 
-  /** One copy result belongs to one exact prepared PNG. The run retires when
-   * the export list changes, and the URL key keeps a stale write from posting
-   * its message onto a different prepared download. */
+  /** One copy result belongs to one exact prepared download, PNG or manifest
+   * text. The run retires when the export list changes, and the URL key keeps a
+   * stale write from posting its message onto a different prepared download. */
   function copyAttemptFor(key: string) {
     const attempt = ++pngCopyRun.current;
     const stillCurrent = () =>
@@ -888,6 +900,22 @@ export function TitleCompare({
       report("PNG copied.", true);
     } catch {
       report("Could not copy the PNG. Download it instead.", false);
+    }
+  }
+
+  /** The exact JSON text behind this manifest download goes to the clipboard.
+   * The string was captured once for the download blob, so no second manifest
+   * build, encode, fetch or upload runs. The same stale guard used by the PNG
+   * copy retires a write once its prepared download is replaced or cleared; a
+   * denied permission changes only the status, leaving the download intact. */
+  async function copyEntryManifest(entry: ExportEntry): Promise<void> {
+    if (entry.kind !== "manifest" || !entry.manifestText || !canCopyManifest) return;
+    const { report } = copyAttemptFor(entry.url);
+    try {
+      await navigator.clipboard.writeText(entry.manifestText);
+      report(`Manifest JSON copied for Pair ${entry.pairLabel}.`, true);
+    } catch {
+      report(`Could not copy the manifest JSON for Pair ${entry.pairLabel}. Download it instead.`, false);
     }
   }
 
@@ -1482,6 +1510,19 @@ export function TitleCompare({
               {` · SHA-256 ${entry.sha256.slice(0, 16)}…`}
               <span className="title-compare-export-hash-note"> (full digest inside the manifest)</span>
             </>
+          )}
+          {entry.kind === "manifest" && entry.manifestText && canCopyManifest && (
+            <button
+              type="button"
+              className="quiet"
+              data-title-compare-copy-manifest={entry.url}
+              data-title-compare-copy-pair={entry.pairLabel}
+              data-title-compare-copy-size={entry.label}
+              aria-label={`Copy the ${entry.label} JSON v${MANIFEST_VERSION} for Pair ${entry.pairLabel}: ${entry.name} to the clipboard`}
+              onClick={() => void copyEntryManifest(entry)}
+            >
+              {`Copy Pair ${entry.pairLabel} manifest JSON`}
+            </button>
           )}
           {entry.kind === "png" && entry.pngBlob && canCopyPng && (
             <button

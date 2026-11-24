@@ -606,7 +606,7 @@ test("a refused clipboard leaves the exact title selectable in the same panel", 
   assert.match(section, /event\.currentTarget\.select\(\)/);
 });
 
-test("copy feedback is retired when the selected pair or its title changes", () => {
+test("selection and title changes retire the applicable copy feedback and prepared exports", () => {
   assert.match(
     section,
     /function clearCopyFeedback\(\): void \{\s*copyRun\.current \+= 1;\s*setCopyMessage\(""\);\s*setTitleFallback\(null\);/,
@@ -617,7 +617,7 @@ test("copy feedback is retired when the selected pair or its title changes", () 
   );
   assert.match(
     section,
-    /function updateTitle\(index: number, title: string\): void \{\s*if \(index === PAIR_IDS\.indexOf\(selectedId\)\) clearCopyFeedback\(\);\s*setPair\(index, \{ title \}\);/,
+    /function updateTitle\(index: number, title: string\): void \{\s*if \(pairs\[index\]\?\.title === title\) return;\s*if \(index === PAIR_IDS\.indexOf\(selectedId\)\) clearCopyFeedback\(\);\s*setPair\(index, \{ title \}\);\s*clearPreferenceFor\(index\);\s*retirePreparedOutput\(\);/,
   );
   assert.match(section, /copyRun\.current === run/);
 });
@@ -633,6 +633,32 @@ test("a prepared PNG is copied from the exact download blob, with no re-encode",
   const copy = section.slice(start, end);
   assert.match(copy, /copyEntryPng\(entry: ExportEntry\)/);
   assert.doesNotMatch(copy, /encodeCropPng|createObjectURL|trackUrl|fetch\(/);
+});
+
+test("a prepared manifest is copied from its one captured JSON text under the existing stale guard", () => {
+  assert.match(section, /manifestText\?: string;/);
+  // The exact text built for the download blob is captured once and reused.
+  assert.match(section, /const manifestText = `\$\{JSON\.stringify\(manifest, null, 2\)\}\\n`/);
+  assert.equal(section.match(/manifestText,/g)?.length, 1);
+  const start = section.indexOf("async function copyEntryManifest");
+  const end = section.indexOf("\n  }", start);
+  const copy = section.slice(start, end);
+  assert.match(copy, /copyEntryManifest\(entry: ExportEntry\)/);
+  assert.match(copy, /copyAttemptFor\(entry\.url\)/);
+  assert.match(copy, /navigator\.clipboard\.writeText\(entry\.manifestText\)/);
+  assert.doesNotMatch(copy, /encodeCropPng|createObjectURL|trackUrl|fetch\(/);
+  // Only a prepared manifest with text support offers the action; the
+  // download link stays alongside it in the same export row.
+  assert.match(
+    section,
+    /const canCopyManifest =\s*typeof navigator !== "undefined" &&\s*typeof navigator\.clipboard\?\.writeText === "function"/,
+  );
+  assert.match(section, /entry\.kind === "manifest" && entry\.manifestText && canCopyManifest/);
+  assert.match(section, /data-title-compare-copy-manifest=\{entry\.url\}/);
+  assert.match(section, /data-title-compare-copy-pair=\{entry\.pairLabel\}/);
+  assert.match(section, /Copy Pair \$\{entry\.pairLabel\} manifest JSON/);
+  assert.match(section, /Could not copy the manifest JSON for Pair \$\{entry\.pairLabel\}\. Download it instead\./);
+  assert.match(stylesheet, /button\[data-title-compare-copy-manifest\]/);
 });
 
 test("the copy control names its pair, size and exact prepared PNG beside the download", () => {
