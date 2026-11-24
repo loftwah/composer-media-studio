@@ -3728,11 +3728,23 @@ function Images() {
                   step="1"
                   value={settings.adjust[key]}
                   disabled={running}
-                  aria-describedby={key === "tint" ? "image-tint-note" : undefined}
+                  aria-describedby={
+                    key === "tint"
+                      ? "image-tint-note"
+                      : key === "shadows"
+                        ? "image-shadows-note"
+                        : undefined
+                  }
                   onChange={(event) => setAdjustment(key, Number(event.target.value))}
                 />
               </label>
             ))}
+            <p className="trim-note" id="image-shadows-note">
+              Shadows affects only the darker tones: positive lifts them,
+              negative darkens them, and the effect fades smoothly to zero by
+              mid grey so brighter pixels are left alone. It runs before
+              Contrast and Saturation.
+            </p>
             <p className="trim-note" id="image-tint-note">
               Tint moves the green–magenta axis independently of Temperature: negative
               adds green, positive adds magenta.
