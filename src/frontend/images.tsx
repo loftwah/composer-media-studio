@@ -36,6 +36,14 @@ import {
   type Adjustments,
 } from "./image-adjust.ts";
 import {
+  SHARPEN_AMOUNT_MAX,
+  SHARPEN_AMOUNT_STEP,
+  SHARPEN_RADIUS,
+  normaliseSharpen,
+  sharpenPixels,
+  type SharpenSettings,
+} from "./image-sharpen.ts";
+import {
   MAX_BASE64_INPUT_CHARACTERS,
   MAX_SNIPPET_BYTES,
   SNIPPET_KINDS,
@@ -185,6 +193,7 @@ type Settings = {
   flipV: boolean;
   straighten: number;
   resample: ResampleMode;
+  sharpen?: SharpenSettings;
   adjust: Adjustments;
   format: ExportFormat;
   quality: number;
@@ -209,6 +218,7 @@ type RenderedImage = {
   sourceHeight: number;
   trimmed: boolean;
   adjustChanged: number;
+  sharpenChanged: number;
   target: { requestedBytes: number; met: boolean } | null;
 };
 
@@ -639,6 +649,9 @@ async function renderImage(
   const requestedTarget = targetBytesFor(settings);
   const targetProblem = targetSizeProblem(settings.format, requestedTarget);
   if (targetProblem) throw new Error(targetProblem);
+  const sharpen = normaliseSharpen(settings.sharpen);
+  if (settings.sharpen !== undefined && !sharpen)
+    throw new Error("Sharpen edges must use a 1 px radius and an amount from 0 to 100%.");
   let bitmap: ImageBitmap | null = null;
   let oriented: HTMLCanvasElement | null = null;
   let transformed: HTMLCanvasElement | null = null;
@@ -741,7 +754,9 @@ async function renderImage(
     output.height = plan.outputHeight;
     const adjustments = normaliseAdjustments(settings.adjust);
     const needsAdjust = !adjustmentsAreNeutral(adjustments);
-    const context = output.getContext("2d", { willReadFrequently: needsAdjust });
+    const needsSharpen = sharpen !== null && sharpen.amount > 0;
+    const needsPixels = needsAdjust || needsSharpen;
+    const context = output.getContext("2d", { willReadFrequently: needsPixels });
     if (!context) throw new Error("This browser could not create a drawing surface.");
     const smoothing = imageSmoothingFor(settings.resample);
     context.imageSmoothingEnabled = smoothing.enabled;
@@ -759,20 +774,32 @@ async function renderImage(
     );
     if (signal.aborted) throw abortError();
     let adjustChanged = 0;
-    if (needsAdjust) {
+    let sharpenChanged = 0;
+    if (needsPixels) {
       const pixels = context.getImageData(0, 0, output.width, output.height);
-      const adjusted = adjustPixels(pixels.data, {
-        width: output.width,
-        height: output.height,
-        adjustments,
-      });
-      if (!adjusted.ok) throw new Error(adjusted.error);
+      if (needsSharpen && sharpen) {
+        const sharpened = sharpenPixels(pixels.data, {
+          width: output.width,
+          height: output.height,
+          sharpen,
+        });
+        if (!sharpened.ok) throw new Error(sharpened.error);
+        sharpenChanged = sharpened.changed;
+      }
+      if (needsAdjust) {
+        const adjusted = adjustPixels(pixels.data, {
+          width: output.width,
+          height: output.height,
+          adjustments,
+        });
+        if (!adjusted.ok) throw new Error(adjusted.error);
+        adjustChanged = adjusted.changed;
+      }
       context.putImageData(pixels, 0, 0);
-      adjustChanged = adjusted.changed;
       if (signal.aborted) throw abortError();
     }
-    // The matte is composited after the adjustments so a chosen JPEG background
-    // keeps its exact colour instead of being exposed or saturated with the photo.
+    // The matte is composited after the pixel adjustments so a chosen JPEG
+    // background keeps its exact colour instead of being sharpened with the photo.
     let encodeSource = output;
     if (settings.format === "jpeg") {
       flattened = document.createElement("canvas");
@@ -831,6 +858,8 @@ async function renderImage(
       throw new Error("The browser wrote a file that did not verify as the chosen image format.");
     const digest = await sha256Hex(bytes);
     const actualSettings = { ...settings, quality: qualityUsed };
+    if (sharpen && sharpen.amount === 0) delete actualSettings.sharpen;
+    else if (sharpen) actualSettings.sharpen = sharpen;
     return {
       blob,
       url: "",
@@ -846,6 +875,7 @@ async function renderImage(
       sourceHeight: oriented.height,
       trimmed: Boolean(cropRect),
       adjustChanged,
+      sharpenChanged,
       target,
     };
   } finally {
@@ -1140,6 +1170,7 @@ function Images() {
   const alphaRevision = useRef(0);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
+  const sharpenAmount = normaliseSharpen(settings.sharpen)?.amount ?? 0;
   const socialReady = socialSourceEligible(
     selected?.source.mime,
     selected?.publicSource?.kind === "poster",
@@ -1347,6 +1378,7 @@ function Images() {
             trimmed: selected.result.trimmed,
             resize: resizeFor(selected.result.settings),
             resample: selected.result.settings.resample,
+            sharpen: selected.result.settings.sharpen,
             adjustments: describeAdjustments(selected.result.settings.adjust),
             format: selected.result.settings.format,
             quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
@@ -2925,6 +2957,17 @@ function Images() {
     }
   }
 
+  function changeSharpen(value: number): void {
+    const sharpen = normaliseSharpen({ radius: SHARPEN_RADIUS, amount: value });
+    if (!sharpen) return;
+    setSettings((previous) => {
+      const next = { ...previous };
+      if (sharpen.amount === 0) delete next.sharpen;
+      else next.sharpen = sharpen;
+      return next;
+    });
+  }
+
   function setAdjustment(key: AdjustmentKey, value: number): void {
     setSettings((previous) => ({
       ...previous,
@@ -3727,6 +3770,23 @@ function Images() {
                 <option value="nearest">Nearest-neighbour · pixel art</option>
               </select>
             </label>
+            <label>
+              Sharpen edges {sharpenAmount === 0 ? "· off" : `· ${Math.round(sharpenAmount * 100)}%`}
+              <input
+                type="range"
+                min="0"
+                max={SHARPEN_AMOUNT_MAX}
+                step={SHARPEN_AMOUNT_STEP}
+                value={sharpenAmount}
+                disabled={running}
+                aria-describedby="image-sharpen-note"
+                onChange={(event) => changeSharpen(Number(event.target.value))}
+              />
+            </label>
+            <p className="trim-note" id="image-sharpen-note">
+              Strengthens edge contrast after resampling. Applied only when you make the image.
+              Transparency stays intact.
+            </p>
             <div className="image-control-actions">
               <button type="button" className="secondary" disabled={running || !selected} onClick={() => setSettings((previous) => ({ ...previous, resizeMode: "exact", exactWidth: selected.source.orientedWidth, exactHeight: selected.source.orientedHeight }))}>Use displayed size</button>
               <button type="button" className="secondary" disabled={running} onClick={() => setSettings((previous) => ({ ...previous, resizeMode: "long-edge", longEdge: defaultLongEdge(selected.source.orientedWidth, selected.source.orientedHeight) }))}>Use 2048 max</button>
@@ -4038,6 +4098,7 @@ function Images() {
                   trimmed: selected.result.trimmed,
                   resize: resizeFor(selected.result.settings),
                   resample: selected.result.settings.resample,
+                  sharpen: selected.result.settings.sharpen,
                   adjustments: describeAdjustments(selected.result.settings.adjust),
                   format: selected.result.settings.format,
                   quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
@@ -4049,6 +4110,12 @@ function Images() {
                   Adjustments changed {selected.result.adjustChanged.toLocaleString()} pixel
                   {selected.result.adjustChanged === 1 ? "" : "s"} in the exported result.
                   Fully transparent pixels kept their colour and every alpha value is unchanged.
+                </p>
+              )}
+              {selected.result.sharpenChanged > 0 && (
+                <p className="trim-note">
+                  Sharpen edges changed {selected.result.sharpenChanged.toLocaleString()} pixel
+                  {selected.result.sharpenChanged === 1 ? "" : "s"} in the exported result.
                 </p>
               )}
               {selected.result.target && (

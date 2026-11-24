@@ -6,6 +6,7 @@ import {
   MAX_IMAGE_OUTPUT_BYTES,
   MAX_IMAGE_OUTPUT_DIMENSION,
 } from "./image-limits.ts";
+import { describeSharpen, type SharpenSettings } from "./image-sharpen.ts";
 
 export type CropAspectKey =
   | "original"
@@ -124,6 +125,7 @@ type DescribeInput = {
   trimmed?: boolean;
   resize?: ResizePlan | null;
   resample?: "smooth" | "nearest";
+  sharpen?: Partial<SharpenSettings> | null;
   adjustments?: string;
   format?: string;
   quality?: number | null;
@@ -729,6 +731,7 @@ export function describeTransform({
   trimmed = false,
   resize = null,
   resample = "smooth",
+  sharpen = null,
   adjustments = "",
   format = "png",
   quality = null,
@@ -752,6 +755,8 @@ export function describeTransform({
     );
   if (trimmed) parts.push("trim transparent edges");
   if (resample === "nearest") parts.push("nearest-neighbour");
+  const sharpenDescription = describeSharpen(sharpen);
+  if (sharpenDescription) parts.push(sharpenDescription);
   if (adjustments) parts.push(adjustments);
   if (resize?.mode === "long-edge") parts.push(`${resize.shrinkOnly ? "maximum long edge" : "long edge"} ${resize.longEdge}px`);
   if (resize?.mode === "exact") parts.push(`exact ${resize.width}×${resize.height}px`);

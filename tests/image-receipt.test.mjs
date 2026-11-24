@@ -115,6 +115,24 @@ test("neutral shadows is omitted from v1 settings and an applied value remains r
   );
 });
 
+test("neutral sharpen keeps exact v1 receipt bytes and a chosen strength is recorded", () => {
+  const result = makeResult();
+  const render = () => buildImageReceipt({ sourceHash: SOURCE_HASH, result });
+  const previous = JSON.stringify(render());
+
+  result.settings.sharpen = { radius: 1, amount: 0 };
+  assert.equal(JSON.stringify(render()), previous, "an explicit neutral value keeps the older receipt");
+
+  result.settings.sharpen = { radius: 1, amount: 0.55 };
+  const sharpened = render();
+  assert.deepEqual(sharpened.transform.settings.sharpen, { radius: 1, amount: 0.55 });
+  assert.equal(Object.keys(sharpened.transform.settings).at(-1), "sharpen");
+  assert.equal(sharpened.version, 1);
+
+  delete result.settings.sharpen;
+  assert.equal(JSON.stringify(render()), previous, "removing the opt-in restores the exact older receipt");
+});
+
 test("receipt carries no raw bytes, filename, EXIF, private data or status guesses", () => {
   const result = makeResult();
   result.blob = new Uint8Array([1]);
