@@ -262,6 +262,11 @@ dialog h2 { margin: 0; }
 .public-page .media-video { width: 100%; max-width: 100%; margin-inline: auto; }
 .public-page .media video { display: block; width: 100%; height: auto; max-height: 82vh; object-fit: contain; }
 .public-page .caption { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding-top: 0.7rem; font-size: 0.85rem; color: var(--muted); }
+.public-page .public-transcript { margin: 0 0 1.2rem; font-size: 0.95rem; }
+.public-page .public-transcript summary { cursor: pointer; width: fit-content; min-height: 44px; padding-block: 0.6rem; box-sizing: border-box; color: var(--teal); font-weight: 700; }
+.public-page .public-transcript summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.public-page .public-transcript-lines { margin-top: 0.6rem; max-width: 62ch; line-height: 1.55; color: var(--ink-soft); }
+.public-page .public-transcript-lines p { margin: 0 0 0.45rem; overflow-wrap: anywhere; }
 .public-page .lede { font-family: var(--display); font-size: clamp(1.1rem, 2vw, 1.35rem); color: var(--ink-soft); max-width: 62ch; overflow-wrap: anywhere; }
 .public-next { margin-top: 2rem; padding: 1.2rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .public-next h2 { margin-bottom: 0.35rem; }

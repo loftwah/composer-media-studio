@@ -11,7 +11,7 @@
 // members touched here; no Cloudflare types are imported and every annotation
 // is erased at runtime.
 
-import { FILM_EMBED_URL, PUBLIC_CAPTION_ROUTE, reviewedCaptionFor } from "./public-captions.ts";
+import { FILM_EMBED_URL, PUBLIC_CAPTION_ROUTE, reviewedCaptionFor, reviewedTranscriptLines } from "./public-captions.ts";
 import { relatedWorks } from "./public-catalogue.ts";
 import { servePosterPreview, servePublicationThumb } from "./public-derivative-responses.ts";
 import { servePublished } from "./public-media.ts";
@@ -255,6 +255,7 @@ export async function handlePublicPublication(
     media: `/p/${publication.slug}/media`,
     download: `/p/${publication.slug}/download`,
     captionSrc: caption ? `/p/${publicSlug}${PUBLIC_CAPTION_ROUTE}` : null,
+    transcriptLines: caption ? reviewedTranscriptLines : null,
     embedUrl: caption ? FILM_EMBED_URL : null,
     poster,
     videoPoster,

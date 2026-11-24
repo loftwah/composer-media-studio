@@ -32,6 +32,7 @@ interface PublicPageOptions {
   media: string;
   download: string;
   captionSrc?: string | null;
+  transcriptLines?: readonly string[] | null;
   embedUrl?: string | null;
   poster?: string | null;
   videoPoster?: string | null;
@@ -89,6 +90,7 @@ export function publicPage({
   media,
   download,
   captionSrc = null,
+  transcriptLines = null,
   embedUrl = null,
   poster,
   videoPoster,
@@ -190,6 +192,14 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
   </section>\n  `
     : "";
   const structuredData = videoObjectJsonLd({ kind, listed, title, description, poster, media, mime, publishedAt, pageUrl: url });
+  // Native, collapsed transcript for the exact reviewed film. It is plain
+  // disclosure content from the same cues as the VTT: no script, no media.
+  const transcript = isVideo && Array.isArray(transcriptLines) && transcriptLines.length
+    ? `<details class="public-transcript">
+      <summary>Read the transcript</summary>
+      <div class="public-transcript-lines">${transcriptLines.map(line => `<p>${escapeHtml(line)}</p>`).join("")}</div>
+    </details>`
+    : "";
   return `${head({
     title,
     description: description || "Published from an independent Media Studio.",
@@ -246,6 +256,7 @@ SOFTWARE.`)}</pre><p><a href="https://github.com/tabler/tabler-icons/blob/main/L
       </span>
     </figcaption>
   </figure>
+  ${transcript}
   <span class="small" role="status" data-copy-status></span>
   <input class="copy-link-field" type="text" readonly aria-label="Link to this page" value="${escapeHtml(url)}" data-copy-field hidden>
   <textarea class="copy-link-field" readonly rows="4" aria-label="Post text to copy manually" data-post-field hidden>${escapeHtml(postText)}</textarea>

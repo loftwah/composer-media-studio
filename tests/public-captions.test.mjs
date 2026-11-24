@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import worker from "../src/worker.mjs";
-import { PUBLIC_CAPTION_ROUTE, clippedCaptionFor, reviewedCaptionFor } from "../src/lib/public-captions.ts";
+import { PUBLIC_CAPTION_ROUTE, clippedCaptionFor, reviewedCaptionFor, reviewedTranscriptLines } from "../src/lib/public-captions.ts";
 import { addAsset, setup } from "./harness.mjs";
 
 const base = "https://studio.test";
@@ -33,6 +33,13 @@ Take it with you.
 `;
 
 const TRACK = `<track kind="captions" srclang="en" label="English" src="/p/${SLUG}${PUBLIC_CAPTION_ROUTE}">`;
+
+// Independent witness: the native disclosure keeps cue order, every line and
+// both sound descriptions from the same reviewed source as the VTT.
+const TRANSCRIPT = `<details class="public-transcript">
+      <summary>Read the transcript</summary>
+      <div class="public-transcript-lines"><p>[A sharp click]</p><p>Bring your AI agent.</p><p>Build an app.</p><p>[Power-up chime]</p><p>Take it with you.</p></div>
+    </details>`;
 
 // Independent witness: the embed link belongs only to the exact reviewed film.
 const EMBED_LINK = `<a href="https://composer.loftwah.com/widgets#take-it-with-you-film">Embed this film</a>`;
@@ -67,6 +74,16 @@ test("reviewed captions resolve only for the exact slug and media hash", () => {
   assert.equal(reviewedCaptionFor(SLUG, SHA.toUpperCase()), null, "hash is case-sensitive");
 });
 
+test("the reviewed transcript keeps cue order, every line and both sound descriptions", () => {
+  assert.deepEqual(reviewedTranscriptLines, [
+    "[A sharp click]",
+    "Bring your AI agent.",
+    "Build an app.",
+    "[Power-up chime]",
+    "Take it with you.",
+  ]);
+});
+
 test("the exact published film renders a native caption track, captions off by default", async () => {
   const { env, project } = await setup();
   await publish(env, project, { slug: SLUG, sha: SHA });
@@ -80,6 +97,12 @@ test("the exact published film renders a native caption track, captions off by d
     html.includes(`<source src="/p/${SLUG}/media" type="video/mp4">${TRACK}`),
     "the track sits inside the existing video, immediately after its source",
   );
+  assert.ok(
+    html.includes(`</figure>\n  ${TRANSCRIPT}`),
+    "the collapsed transcript sits directly below the watch figure",
+  );
+  assert.ok(html.includes("<summary>Read the transcript</summary>"), "the disclosure is native and labelled");
+  assert.doesNotMatch(html, /<details[^>]*\bopen\b/i, "the transcript starts collapsed");
   assert.match(html, /<video controls playsinline preload="metadata"/, "existing watch UI is preserved");
 });
 
@@ -101,6 +124,7 @@ test("a wrong media hash yields no track and no caption route", async () => {
   const html = await (await get(env, `/p/${SLUG}`)).text();
   assert.doesNotMatch(html, /<track\b/i, "no track on a hash mismatch");
   assert.doesNotMatch(html, /Download English captions/);
+  assert.doesNotMatch(html, /Read the transcript/, "no transcript on a hash mismatch");
   assert.doesNotMatch(html, /Embed this film/, "no embed link on a hash mismatch");
   assert.equal((await get(env, `/p/${SLUG}${PUBLIC_CAPTION_ROUTE}`)).status, 404);
 });
@@ -111,6 +135,7 @@ test("the same hash under a different slug is not captioned", async () => {
 
   const html = await (await get(env, "/p/another-public-slug")).text();
   assert.doesNotMatch(html, /<track\b/i);
+  assert.doesNotMatch(html, /Read the transcript/, "no transcript under a different slug");
   assert.doesNotMatch(html, /Embed this film/, "no embed link under a different slug");
   assert.equal((await get(env, `/p/another-public-slug${PUBLIC_CAPTION_ROUTE}`)).status, 404);
 });
@@ -119,7 +144,9 @@ test("the withdrawal gate stops the caption route as it stops the page", async (
   const { env, project } = await setup();
   await publish(env, project, { slug: SLUG, sha: SHA, revokedAt: Date.now() });
 
-  assert.equal((await get(env, `/p/${SLUG}`)).status, 404);
+  const withdrawn = await get(env, `/p/${SLUG}`);
+  assert.equal(withdrawn.status, 404);
+  assert.doesNotMatch(await withdrawn.text(), /Read the transcript/, "no transcript once withdrawn");
   assert.equal((await get(env, `/p/${SLUG}${PUBLIC_CAPTION_ROUTE}`)).status, 404);
 });
 
@@ -129,6 +156,7 @@ test("no other asset kind gets an indiscriminate track", async () => {
 
   const html = await (await get(env, "/p/still-image")).text();
   assert.doesNotMatch(html, /<track\b/i);
+  assert.doesNotMatch(html, /Read the transcript/, "no transcript on a still");
   assert.equal((await get(env, `/p/still-image${PUBLIC_CAPTION_ROUTE}`)).status, 404);
 });
 
