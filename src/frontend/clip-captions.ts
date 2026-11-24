@@ -37,6 +37,29 @@ export function clipTimeStamp(ms: number) {
   return `${minutes}:${seconds}.${millis}`;
 }
 
+/**
+ * A readable transcript derived only from an exact bounded caption VTT.
+ * durationMs is that VTT's timeline bound, so a trimmed track keeps its exact
+ * trim-relative times. The voice-aware parser preserves supplied speakers;
+ * each cue occupies one LF-terminated line of literal Unicode text. Null
+ * withholds a missing, unreadable, empty or out-of-bounds track.
+ */
+export function captionTranscript(vtt: string | null, durationMs: number): string | null {
+  if (!vtt || !Number.isSafeInteger(durationMs) || durationMs <= 0
+    || vtt.length > MAX_CAPTION_BYTES || new TextEncoder().encode(vtt).byteLength > MAX_CAPTION_BYTES) return null;
+  let cues: ImportedCue[];
+  try {
+    cues = parseCaptionFile(vtt, 0, durationMs, { voices: true });
+  } catch {
+    return null;
+  }
+  if (!cues.length) return null;
+  return cues.map(cue => {
+    const speaker = cue.speaker ? `${cue.speaker}: ` : "";
+    return `[${clipTimeStamp(cue.startMs)} --> ${clipTimeStamp(cue.endMs)}] ${speaker}${cue.text}`;
+  }).join("\n") + "\n";
+}
+
 type ClippedCaptionCue = Readonly<{ from: number; to: number; sourceStartMs: number; text: string; speaker: string; sourceIndex: number }>;
 
 // The shared projection for every trimmed-caption surface: serialization, the
