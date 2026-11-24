@@ -441,11 +441,13 @@ export function TitleCompare({
     if (preferredId === id) {
       draftChoices.current += 1;
       setPreferredId(null);
+      retirePreparedOutput();
       return;
     }
     if (!completePair(pairs[PAIR_IDS.indexOf(id)])) return;
     draftChoices.current += 1;
     setPreferredId(id);
+    retirePreparedOutput();
   }
 
   /** The snapshot a set export may bundle: a real title and a local thumbnail
@@ -479,6 +481,12 @@ export function TitleCompare({
     if (index === PAIR_IDS.indexOf(selectedId)) clearCopyFeedback();
     setPair(index, { title });
     clearPreferenceFor(index);
+    retirePreparedOutput();
+  }
+
+  function updateNote(index: number, note: string): void {
+    if (pairs[index]?.note === note) return;
+    setPair(index, { note });
     retirePreparedOutput();
   }
 
@@ -1702,7 +1710,7 @@ export function TitleCompare({
                     maxLength={NOTE_MAX_LENGTH}
                     rows={2}
                     spellCheck={false}
-                    onChange={(event) => setPair(index, { note: event.target.value })}
+                    onChange={(event) => updateNote(index, event.target.value)}
                   />
                 </label>
                 <button

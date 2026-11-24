@@ -207,6 +207,25 @@ test("a crop edit clears only the edited pair's preference and retires prepared 
   assert.doesNotMatch(update, /setPreferredId|setSelectedId|discardExports/);
 });
 
+test("actual preference changes and clears retire prepared output", () => {
+  const start = section.indexOf("function togglePreference");
+  const end = section.indexOf("\n  }", start);
+  assert.ok(start >= 0 && end > start);
+  const toggle = section.slice(start, end);
+  assert.match(toggle, /setPreferredId\(null\);\s*retirePreparedOutput\(\);/);
+  assert.match(toggle, /if \(!completePair[^\n]+\) return;/);
+  assert.match(toggle, /setPreferredId\(id\);\s*retirePreparedOutput\(\);/);
+});
+
+test("a creator note edit retires prepared files and keeps the preference", () => {
+  const start = section.indexOf("function updateNote");
+  const end = section.indexOf("\n  }", start);
+  assert.ok(start >= 0 && end > start);
+  const update = section.slice(start, end);
+  assert.match(update, /setPair\(index, \{ note \}\);\s*retirePreparedOutput\(\);/);
+  assert.doesNotMatch(update, /setPreferredId|clearPreferenceFor/);
+});
+
 test("each export captures its pair's anchor before the first await", () => {
   // Single-pair PNG and manifest capture the selected pair's own anchor.
   assert.equal(
@@ -426,7 +445,7 @@ test("the note-bearing manifest bytes are the exact bytes carried in the package
 test("each pair editor writes a local note that only reaches its manifest", () => {
   assert.match(section, /Creator note \{PAIR_LABELS\[id\]\} \(optional\)/);
   assert.match(section, /<textarea\s+value=\{pair\.note\}\s+maxLength=\{NOTE_MAX_LENGTH\}/);
-  assert.match(section, /onChange=\{\(event\) => setPair\(index, \{ note: event\.target\.value \}\)\}/);
+  assert.match(section, /onChange=\{\(event\) => updateNote\(index, event\.target\.value\)\}/);
   // Both note and title are captured before either export's first await.
   assert.match(section, /const title = pair\.title;\s*const note = pair\.note;/);
   assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt, hypothesis: pair\.hypothesis \}\];/);
