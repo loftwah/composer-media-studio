@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   PROMO_DESK_READ_ONLY_STATUS,
+  parseReviewRoomsResponse,
   promoDesk,
   promoDeskHandoffKey,
   promoDeskHandoffText,
@@ -12,16 +13,6 @@ import {
   type PromoReviewRoomLite,
 } from "./promo-desk";
 import type { CompositionV1, ComposeGenerationV1, MediaAssetV1 } from "./contracts";
-
-const roomLite = (room: Record<string, unknown>): PromoReviewRoomLite => ({
-  id: String(room.id ?? ""),
-  assetId: String(room.assetId ?? ""),
-  versionLabel: String(room.versionLabel ?? room.assetTitle ?? ""),
-  status: String(room.status ?? ""),
-  decision: typeof room.decision === "string" ? room.decision : null,
-  unresolvedCount: Number(room.unresolvedCount ?? 0) || 0,
-  feedbackCount: Number(room.feedbackCount ?? 0) || 0,
-});
 
 const sceneList = (indexes: number[]) => {
   if (indexes.length === 0) return "";
@@ -73,10 +64,10 @@ export function PromoDesk({
         credentials: "same-origin",
         signal: controller.signal,
       });
-      const data = await response.json().catch(() => ({}));
+      const data = await response.json();
       if (!response.ok) throw new Error("failed");
       if (controller.signal.aborted) return;
-      setRooms((Array.isArray(data.rooms) ? data.rooms : []).map(roomLite));
+      setRooms(parseReviewRoomsResponse(data));
     } catch {
       if (controller.signal.aborted) return;
       setRooms(null);
