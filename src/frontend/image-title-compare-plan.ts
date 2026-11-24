@@ -351,3 +351,38 @@ export function preferredPairForExport(
 export function preparedPairsBundleFileName(size: FeedSize, count: number): string {
   return `prepared-pairs-${count}-feed-${size.width}x${size.height}-package.zip`;
 }
+
+/** A neutral, stable name for the separate reviewer feedback sheet. It never
+ * borrows a creator's title or a local thumbnail's file path. */
+export const PREPARED_REVIEW_NOTES_FILE_NAME = "prepared-pairs-review-notes.txt";
+
+const REVIEW_DECISION_LINE = "_".repeat(60);
+
+/** Plain-text feedback for the exact finalized set manifests. Titles stay
+ * byte-for-byte as captured; optional alt text and hypotheses are the same
+ * bounded text the manifests already hold. Crop and size facts come from those
+ * manifests, not a later edit. No timestamp, digest, file name, image, markup,
+ * score or guessed decision is added, so the same prepared set yields the same
+ * text and can be reviewed independently beside its ZIP. */
+export function buildPreparedReviewNotes(manifests: readonly TitlePairManifest[]): string {
+  const preferred = manifests.find(
+    (manifest) => manifest.preferredPairId === manifest.pair.id,
+  );
+  const heading = ["Title + thumbnail compare — review notes"];
+  if (manifests.length > 0) {
+    heading.push(`Current preference: ${preferred ? `Pair ${preferred.pair.label}` : "none marked"}`);
+  }
+  const pairs = manifests.map((manifest) => {
+    const { sourceRect } = manifest.crop;
+    const lines = [
+      `Pair ${manifest.pair.label}`,
+      `Title: ${manifest.title.text}`,
+      `Crop / size: ${manifest.crop.mode} · ${CROP_ANCHOR_LABELS[manifest.crop.anchor]} · source ${manifest.source.width} × ${manifest.source.height} px · crop ${sourceRect.width} × ${sourceRect.height} px · ${manifest.render.sizeKey} ${manifest.render.width} × ${manifest.render.height} px`,
+    ];
+    if (manifest.alt) lines.push(`Thumbnail alt text: ${manifest.alt}`);
+    if (manifest.hypothesis) lines.push(`Creator hypothesis: ${manifest.hypothesis}`);
+    lines.push("Decision:", REVIEW_DECISION_LINE, REVIEW_DECISION_LINE);
+    return lines.join("\n");
+  });
+  return `${heading.join("\n")}${pairs.length > 0 ? `\n\n${pairs.join("\n\n")}` : ""}\n`;
+}

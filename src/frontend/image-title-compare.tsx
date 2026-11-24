@@ -22,6 +22,7 @@ import {
   PAIR_IDS,
   PAIR_LABELS,
   TITLE_MAX_LENGTH,
+  buildPreparedReviewNotes,
   buildTitlePairManifest,
   bundleFileName,
   coverCropRect,
@@ -35,11 +36,13 @@ import {
   pairArchiveFileNames,
   preferredPairForExport,
   preparedPairsBundleFileName,
+  PREPARED_REVIEW_NOTES_FILE_NAME,
   type CoverRect,
   type FeedSize,
   type FeedSizeKey,
   type PairId,
   type PairOccupancy,
+  type TitlePairManifest,
 } from "./image-title-compare-plan.ts";
 import {
   MAX_PACKAGING_MANIFEST_BYTES,
@@ -126,7 +129,7 @@ export type PreparedTitleImage = {
 type PackagingVerifyPhase = "idle" | "checking" | "matched" | "different" | "invalid";
 
 type ExportEntry = {
-  kind: "png" | "manifest" | "bundle" | "set";
+  kind: "png" | "manifest" | "bundle" | "set" | "notes";
   url: string;
   name: string;
   label: string;
@@ -761,6 +764,7 @@ export function TitleCompare({
     setExportMessage("");
     try {
       const zipEntries: ZipEntryInput[] = [];
+      const manifests: TitlePairManifest[] = [];
       const pairLabels: string[] = [];
       for (const prepared of captured) {
         const image = prepared.image;
@@ -792,6 +796,7 @@ export function TitleCompare({
           alt: prepared.alt,
           hypothesis: prepared.hypothesis,
         });
+        manifests.push(manifest);
         zipEntries.push(
           { name: names.png, data: pngBytes },
           { name: names.manifest, data: `${JSON.stringify(manifest, null, 2)}\n` },
@@ -812,6 +817,10 @@ export function TitleCompare({
       if (!current()) return;
       const bundleBlob = new Blob([bundle.bytes.buffer as ArrayBuffer], { type: ZIP_MIME });
       const name = preparedPairsBundleFileName(size, captured.length);
+      // The feedback sheet reads the exact manifests finalized above, so it
+      // stays beside the ZIP without a second encode, fetch or mutable read.
+      const notesText = buildPreparedReviewNotes(manifests);
+      const notesBlob = new Blob([notesText], { type: "text/plain;charset=utf-8" });
       replaceExports([
         {
           kind: "set",
@@ -825,10 +834,19 @@ export function TitleCompare({
           bytes: bundleBlob.size,
           ...(preferredForExport ? { preferredPairLabel: PAIR_LABELS[preferredForExport] } : {}),
         },
+        {
+          kind: "notes",
+          url: trackUrl(notesBlob),
+          name: PREPARED_REVIEW_NOTES_FILE_NAME,
+          label: "review notes",
+          pairLabel: pairLabels.join(", "),
+          anchorLabel: setAnchorLabel,
+          width: size.width,
+          height: size.height,
+          bytes: notesBlob.size,
+        },
       ]);
-      setExportMessage(
-        `ZIP ready for pairs ${pairLabels.join(", ")}. It contains ${captured.length} thumbnails and their manifests, each using its pair's own crop position.${preferredForExport ? ` Pair ${PAIR_LABELS[preferredForExport]} is marked preferred in each manifest.` : ""}`,
-      );
+      setExportMessage(`ZIP and review notes ready for pairs ${pairLabels.join(", ")}.`);
     } catch (error) {
       if (current())
         setExportMessage(
@@ -1455,7 +1473,7 @@ export function TitleCompare({
       <p className="trim-note" id="image-title-compare-set-note">
         {preparedCount < 2
           ? `Add a title and thumbnail to at least two pairs. ${preparedCount} of ${PAIR_IDS.length} ready.`
-          : `${preparedCount} pairs ready.${preferredForSet ? ` Pair ${PAIR_LABELS[preferredForSet]} will be marked preferred in the manifests.` : ""} The ZIP includes each 640 × 360 PNG and its manifest.`}
+          : `${preparedCount} pairs ready.${preferredForSet ? ` Pair ${PAIR_LABELS[preferredForSet]} will be marked preferred in the manifests.` : ""} The ZIP includes each 640 × 360 PNG and its manifest; review notes download beside it.`}
       </p>
       <p className="trim-note" role="status" aria-live="polite">{copyMessage}</p>
       {titleFallback !== null && (
@@ -1481,30 +1499,36 @@ export function TitleCompare({
             href={entry.url}
             download={entry.name}
             aria-label={
-              entry.kind === "bundle"
-                ? `Download the Pair ${entry.pairLabel} PNG and manifest package (ZIP)`
-                : entry.kind === "set"
-                  ? `Download the prepared pairs package (ZIP) with ${entry.label}`
-                  : undefined
+              entry.kind === "notes"
+                ? `Download review notes (.txt) for prepared pairs ${entry.pairLabel}`
+                : entry.kind === "bundle"
+                  ? `Download the Pair ${entry.pairLabel} PNG and manifest package (ZIP)`
+                  : entry.kind === "set"
+                    ? `Download the prepared pairs package (ZIP) with ${entry.label}`
+                    : undefined
             }
           >
-            {entry.kind === "manifest"
-              ? `Download ${entry.label} (JSON v${MANIFEST_VERSION})`
-              : entry.kind === "bundle"
-                ? "Download pair package (ZIP)"
-                : entry.kind === "set"
-                  ? "Download prepared pairs package (ZIP)"
-                  : `Download ${entry.label} PNG`}
+            {entry.kind === "notes"
+              ? "Download review notes (.txt)"
+              : entry.kind === "manifest"
+                ? `Download ${entry.label} (JSON v${MANIFEST_VERSION})`
+                : entry.kind === "bundle"
+                  ? "Download pair package (ZIP)"
+                  : entry.kind === "set"
+                    ? "Download prepared pairs package (ZIP)"
+                    : `Download ${entry.label} PNG`}
           </a>
-          {entry.kind === "set"
-            ? ` · Pairs ${entry.pairLabel}${entry.preferredPairLabel ? ` · Pair ${entry.preferredPairLabel} preferred` : ""} · ${entry.anchorLabel} crop · ${entry.width} × ${entry.height} px PNGs with per-pair manifests · ${formatBytes(entry.bytes)} · ${entry.name}`
-            : ` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${
-                entry.kind === "manifest"
-                  ? `names a ${entry.width} × ${entry.height} px PNG`
-                  : entry.kind === "bundle"
-                    ? `exact PNG + JSON v${MANIFEST_VERSION}, unchanged`
-                    : `${entry.width} × ${entry.height} px`
-              } · ${formatBytes(entry.bytes)} · ${entry.name}`}
+          {entry.kind === "notes"
+            ? ` · Pairs ${entry.pairLabel} · plain text for independent review · ${formatBytes(entry.bytes)} · ${entry.name}`
+            : entry.kind === "set"
+              ? ` · Pairs ${entry.pairLabel}${entry.preferredPairLabel ? ` · Pair ${entry.preferredPairLabel} preferred` : ""} · ${entry.anchorLabel} crop · ${entry.width} × ${entry.height} px PNGs with per-pair manifests · ${formatBytes(entry.bytes)} · ${entry.name}`
+              : ` · Pair ${entry.pairLabel} · ${entry.anchorLabel} crop · ${
+                  entry.kind === "manifest"
+                    ? `names a ${entry.width} × ${entry.height} px PNG`
+                    : entry.kind === "bundle"
+                      ? `exact PNG + JSON v${MANIFEST_VERSION}, unchanged`
+                      : `${entry.width} × ${entry.height} px`
+                } · ${formatBytes(entry.bytes)} · ${entry.name}`}
           {entry.sha256 && (
             <>
               {` · SHA-256 ${entry.sha256.slice(0, 16)}…`}
