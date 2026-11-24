@@ -49,6 +49,7 @@ export function PromoDesk({
   const copyFallback = useRef<HTMLTextAreaElement | null>(null);
   const copyStatusId = useId();
   const copyFallbackId = useId();
+  const reviewLabelRef = useRef<HTMLElement>(null);
 
   // One rooms store, scoped to this project. A new project or an unmount aborts
   // the old read so a late response can never land under the wrong brief.
@@ -163,10 +164,11 @@ export function PromoDesk({
 
   const stage = (key: string, name: string, detail: ReactNode, link?: { href: string; label: string }) => {
     const [tone, label] = pill[key] ?? ["", key];
+    const isReview = key.startsWith("review-");
     return (
       <li>
-        <span className={`status ${tone}`}>{label}</span>
-        <strong>{name}</strong>
+        <span className={`status ${tone}`} role={isReview ? "status" : undefined}>{label}</span>
+        <strong ref={isReview ? reviewLabelRef : undefined} tabIndex={isReview ? -1 : undefined}>{name}</strong>
         <span className="promo-desk-detail">{detail}</span>
         {link && <a href={link.href}>{link.label}</a>}
       </li>
@@ -263,7 +265,20 @@ export function PromoDesk({
       : "";
     rows.push(stage("review-missing", "Review (cut review)", <>No active review room pins this cut yet{revoked}</>, reviewTab));
   } else if (desk.review.state === "unavailable") {
-    rows.push(stage("review-unavailable", "Review (cut review)", <>Could not load review rooms <button type="button" className="quiet promo-desk-retry" onClick={() => void loadRooms()} disabled={roomsBusy}>Retry</button></>));
+    rows.push(stage(
+      "review-unavailable",
+      "Review (cut review)",
+      <>Could not load review rooms <button
+        type="button"
+        className="quiet promo-desk-retry"
+        disabled={roomsBusy}
+        onClick={(event) => {
+          // Keep keyboard position before loading removes the Retry button.
+          if (document.activeElement === event.currentTarget) reviewLabelRef.current?.focus();
+          void loadRooms();
+        }}
+      >Retry</button></>,
+    ));
   } else {
     rows.push(stage("review-blocked", "Review", <>Waiting on a current saved cut</>));
   }
