@@ -36,6 +36,29 @@ export interface PromoReviewRoomLite {
   feedbackCount: number;
 }
 
+/** Parse the owner review-room envelope without turning malformed data into absence. */
+export function parseReviewRoomsResponse(value: unknown): PromoReviewRoomLite[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid review rooms response");
+  const rooms = (value as { rooms?: unknown }).rooms;
+  if (!Array.isArray(rooms)) throw new Error("Invalid review rooms response");
+  return rooms.map((value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid review room");
+    const room = value as Record<string, unknown>;
+    const { id, assetId, status, decision, unresolvedCount, feedbackCount } = room;
+    const versionLabel = room.versionLabel ?? room.assetTitle;
+    if (
+      typeof id !== "string" || !id.trim() ||
+      typeof assetId !== "string" || !assetId.trim() ||
+      (status !== "open" && status !== "expired" && status !== "revoked") ||
+      typeof versionLabel !== "string" ||
+      (decision !== null && typeof decision !== "string") ||
+      typeof unresolvedCount !== "number" || !Number.isSafeInteger(unresolvedCount) || unresolvedCount < 0 ||
+      typeof feedbackCount !== "number" || !Number.isSafeInteger(feedbackCount) || feedbackCount < 0
+    ) throw new Error("Invalid review room");
+    return { id, assetId, versionLabel, status, decision, unresolvedCount, feedbackCount };
+  });
+}
+
 /** A saved narration or render job the desk can name. */
 export interface DeskJob {
   id: string;
