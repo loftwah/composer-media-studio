@@ -80,6 +80,16 @@ import {
   type Rgb,
 } from "./image-colour.ts";
 import {
+  freeformCropCompatibilityProblem,
+  freeformCropSourceProblem,
+  freeformCropStateForSource,
+  fullImageCropFields,
+  parseFreeformCrop,
+  sameFreeformCrop,
+  updateFreeformCropField,
+  type FreeformCropState,
+} from "./image-freeform-crop.ts";
+import {
   MAX_BATCH_IMAGES,
   MAX_IMAGE_INPUT_BYTES,
   MAX_IMAGE_OUTPUT_BYTES,
@@ -203,6 +213,13 @@ type Settings = {
 
 type TransformResult = Extract<TransformPlan, { ok: true }>;
 
+type AppliedCrop = {
+  kind: "alpha-trim" | "manual";
+  sourceWidth: number;
+  sourceHeight: number;
+  rect: ImageBounds;
+};
+
 type RenderedImage = {
   blob: Blob;
   url: string;
@@ -217,6 +234,7 @@ type RenderedImage = {
   sourceWidth: number;
   sourceHeight: number;
   trimmed: boolean;
+  crop: AppliedCrop | null;
   adjustChanged: number;
   sharpenChanged: number;
   target: { requestedBytes: number; met: boolean } | null;
@@ -309,6 +327,8 @@ type WorkItem = {
   cropAspectOverride?: CropAspectKey;
   /** A reversible one-image crop position. Undefined follows the batch. */
   cropAnchorOverride?: CropAnchorKey;
+  /** Draft and applied whole-pixel rectangle, bound to this source's upright pixels. */
+  manualCrop?: FreeformCropState;
   /**
    * A reversible exact GIF delay for this row, in 100–2000 ms steps of 10.
    * Keyed by the row's stable id through reorder; undefined follows the batch
@@ -433,8 +453,16 @@ function renderedFileName(
   return `${safeStem(name)}-${result.width}x${result.height}.${extensionForImageMime(result.mime)}`;
 }
 
-function settingsKey(settings: Settings, cropRect: ImageBounds | null = null): string {
-  return JSON.stringify({ settings, cropRect });
+function settingsKey(
+  settings: Settings,
+  cropRect: ImageBounds | null = null,
+  cropKind: AppliedCrop["kind"] | null = null,
+): string {
+  return JSON.stringify({
+    settings,
+    cropRect,
+    ...(cropRect && cropKind ? { cropKind } : {}),
+  });
 }
 
 function targetBytesFor(settings: Settings): number | null {
@@ -644,8 +672,18 @@ async function renderImage(
   settings: Settings,
   signal: AbortSignal,
   cropRect: ImageBounds | null = null,
+  cropKind: AppliedCrop["kind"] = "alpha-trim",
 ): Promise<RenderedImage> {
   if (signal.aborted) throw abortError();
+  if (cropKind === "manual" && (
+    !cropRect ||
+    settings.rotate !== 0 ||
+    settings.flipH ||
+    settings.flipV ||
+    settings.straighten !== 0 ||
+    CROP_ASPECTS[settings.cropAspect] !== null
+  ))
+    throw new Error("Exact crop needs Original aspect with rotation, flips and straighten neutral. Clear exact crop to continue with other settings.");
   const requestedTarget = targetBytesFor(settings);
   const targetProblem = targetSizeProblem(settings.format, requestedTarget);
   if (targetProblem) throw new Error(targetProblem);
@@ -730,6 +768,12 @@ async function renderImage(
     }
     if (stage.width !== plan.rotatedWidth || stage.height !== plan.rotatedHeight)
       throw new Error("The transform plan did not match the decoded image.");
+    if (cropRect && cropKind === "manual") {
+      if (stage.width !== oriented.width || stage.height !== oriented.height)
+        throw new Error("The exact crop did not use the upright decoded source pixels.");
+      if (!sameFreeformCrop(plan.crop, cropRect))
+        throw new Error("The exact crop changed during planning. Nothing was rendered.");
+    }
     if (plan.straighten) {
       straightened = drawStraightened(stage, plan.straighten);
       stage.width = 0;
@@ -856,6 +900,16 @@ async function renderImage(
     const sniffed = sniffLocalImage(bytes);
     if (!sniffed.supported || sniffed.mime !== mime)
       throw new Error("The browser wrote a file that did not verify as the chosen image format.");
+    if (cropKind === "manual") {
+      // The receipt reports the finished file, not just the source canvas. Verify
+      // the encoder preserved the planned pixel dimensions before publishing it.
+      bitmap = await createImageBitmap(blob);
+      if (bitmap.width !== output.width || bitmap.height !== output.height)
+        throw new Error("The encoded exact-crop result did not match its planned pixel dimensions.");
+      bitmap.close();
+      bitmap = null;
+    }
+    if (signal.aborted) throw abortError();
     const digest = await sha256Hex(bytes);
     const actualSettings = { ...settings, quality: qualityUsed };
     if (sharpen && sharpen.amount === 0) delete actualSettings.sharpen;
@@ -869,11 +923,14 @@ async function renderImage(
       mime,
       sha256: digest,
       plan,
-      settingsKey: settingsKey(settings, cropRect),
+      settingsKey: settingsKey(settings, cropRect, cropRect ? cropKind : null),
       settings: actualSettings,
       sourceWidth: oriented.width,
       sourceHeight: oriented.height,
-      trimmed: Boolean(cropRect),
+      trimmed: Boolean(cropRect) && cropKind === "alpha-trim",
+      crop: cropRect
+        ? { kind: cropKind, sourceWidth: oriented.width, sourceHeight: oriented.height, rect: cropRect }
+        : null,
       adjustChanged,
       sharpenChanged,
       target,
@@ -1194,16 +1251,6 @@ function Images() {
   );
   const animatedWebp = selected?.source.mime === "image/webp" && Boolean(selected?.source.webpAnimated);
   const publicImageLoaded = Boolean(publicImageSource && items.some((item) => item.publicSource === publicImageSource));
-  const activeTrim =
-    selected &&
-    trim &&
-    trim.itemId === selected.id &&
-    settings.straighten === 0 &&
-    trim.rotate === settings.rotate &&
-    trim.flipH === settings.flipH &&
-    trim.flipV === settings.flipV
-      ? trim.rect
-      : null;
   // The batch controls stay shared; these per-item choices change only the
   // selected image's effective settings. Everything downstream reads that snapshot.
   const selectedSettings = selected
@@ -1218,9 +1265,73 @@ function Images() {
         selected.formatOverride,
       )
     : settings;
-  const plan = selected ? makePlan(selected.source, selectedSettings, activeTrim) : null;
-  const currentSettingsKey = settingsKey(selectedSettings, activeTrim);
+  const cropSource = selected
+    ? {
+        sourceHash: selected.sourceHash,
+        width: selected.source.orientedWidth,
+        height: selected.source.orientedHeight,
+      }
+    : null;
+  const selectedCrop = selected && cropSource
+    ? freeformCropStateForSource(selected.manualCrop, cropSource)
+    : null;
+  const cropSourceProblem = selected && cropSource
+    ? freeformCropSourceProblem(selected.manualCrop, cropSource)
+    : null;
+  const rawActiveTrim =
+    selected &&
+    trim &&
+    trim.itemId === selected.id &&
+    settings.straighten === 0 &&
+    trim.rotate === settings.rotate &&
+    trim.flipH === settings.flipH &&
+    trim.flipV === settings.flipV
+      ? trim.rect
+      : null;
+  const cropCompatibilityProblem = selectedCrop && cropSource
+    ? freeformCropCompatibilityProblem(cropSource, selectedSettings, Boolean(rawActiveTrim))
+    : null;
+  const activeManualCrop = selectedCrop?.applied &&
+    !cropSourceProblem && !cropCompatibilityProblem
+    ? selectedCrop.applied
+    : null;
+  const activeTrim = rawActiveTrim && !selectedCrop?.applied ? rawActiveTrim : null;
+  // An applied rectangle is never silently dropped or replaced by the full
+  // image, an aspect crop or alpha trim. Block output until it is cleared or the
+  // creator restores the supported neutral settings.
+  const cropPlanProblem = selected?.manualCrop?.applied
+    ? cropSourceProblem ?? (selectedCrop ? cropCompatibilityProblem : null)
+    : null;
+  const plan = selected
+    ? cropPlanProblem
+      ? { ok: false as const, error: cropPlanProblem }
+      : makePlan(selected.source, selectedSettings, activeManualCrop ?? activeTrim)
+    : null;
+  const keyedCrop = selectedCrop?.applied ?? activeTrim;
+  const keyedCropKind: AppliedCrop["kind"] | null = selectedCrop?.applied
+    ? "manual"
+    : activeTrim
+      ? "alpha-trim"
+      : null;
+  const currentSettingsKey = settingsKey(selectedSettings, keyedCrop, keyedCropKind);
   const freshResult = selected?.result?.settingsKey === currentSettingsKey;
+  const manualCropApplied = Boolean(
+    selectedCrop?.applied || (cropSourceProblem && selected?.manualCrop?.applied),
+  );
+  const itemsWithAppliedCrop = items.filter((item) => item.manualCrop?.applied);
+  const cropFields = selectedCrop?.fields ?? (cropSource ? fullImageCropFields(cropSource) : {
+    left: "", top: "", width: "", height: "",
+  });
+  const draftCrop = cropSource && !cropSourceProblem
+    ? parseFreeformCrop(cropFields, cropSource)
+    : null;
+  const cropDraftChanged = Boolean(
+    selectedCrop && (
+      !selectedCrop.applied ||
+      draftCrop?.ok !== true ||
+      !sameFreeformCrop(draftCrop.rect, selectedCrop.applied)
+    ),
+  );
   const outputHash = selected?.result?.sha256;
   // Copy status belongs to one exact finished result, so selecting another row
   // or regenerating never shows an earlier result's message.
@@ -1301,7 +1412,8 @@ function Images() {
     item.qualityOverride !== undefined && !imageQualityIsValid(item.qualityOverride);
   const invalidQualityItem = items.find(hasInvalidQuality);
   const controlsAreOriginal =
-    settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim && !hasItemOverride;
+    settingsKey(settings) === settingsKey(DEFAULT_SETTINGS) && !trim &&
+    !hasItemOverride && !items.some((item) => item.manualCrop !== undefined);
   const requestedTargetBytes = targetBytesFor(selectedSettings);
   const targetProblem =
     requestedTargetBytes === null
@@ -1376,6 +1488,7 @@ function Images() {
             cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
             cropAnchor: selected.result.settings.cropAnchor,
             trimmed: selected.result.trimmed,
+            manualCrop: selected.result.crop?.kind === "manual" ? selected.result.crop.rect : null,
             resize: resizeFor(selected.result.settings),
             resample: selected.result.settings.resample,
             sharpen: selected.result.settings.sharpen,
@@ -1923,6 +2036,10 @@ function Images() {
 
   async function runItems(list: WorkItem[], report: (message: string) => void = setMessage): Promise<void> {
     if (!list.length || runningRef.current || socialController.current || sheetBusy || importing) return;
+    if (list.length !== 1 && list.some((item) => item.manualCrop?.applied)) {
+      report("Clear every applied exact crop before Process all. Batch rendering never applies a one-image rectangle to other files.");
+      return;
+    }
     const invalidQuality = list.find(hasInvalidQuality);
     if (invalidQuality) {
       report(
@@ -1955,15 +2072,6 @@ function Images() {
         ),
       );
       try {
-        const cropRect =
-          trimSnapshot &&
-          snapshot.straighten === 0 &&
-          trimSnapshot.itemId === item.id &&
-          trimSnapshot.rotate === snapshot.rotate &&
-          trimSnapshot.flipH === snapshot.flipH &&
-          trimSnapshot.flipV === snapshot.flipV
-            ? trimSnapshot.rect
-            : null;
         const itemSettings = settingsForImage(
           snapshot,
           item.source.mime,
@@ -1974,7 +2082,38 @@ function Images() {
           item.qualityOverride,
           item.formatOverride,
         );
-        const rendered = await renderImage(item, itemSettings, controller.signal, cropRect);
+        let cropRect: ImageBounds | null = null;
+        let cropKind: AppliedCrop["kind"] = "alpha-trim";
+        if (list.length === 1) {
+          const source = {
+            sourceHash: item.sourceHash,
+            width: item.source.orientedWidth,
+            height: item.source.orientedHeight,
+          };
+          const manual = freeformCropStateForSource(item.manualCrop, source);
+          if (manual?.applied) {
+            const problem = freeformCropSourceProblem(item.manualCrop, source) ??
+              freeformCropCompatibilityProblem(source, itemSettings, trimSnapshot?.itemId === item.id);
+            if (problem) throw new Error(problem);
+            cropRect = manual.applied;
+            cropKind = "manual";
+          } else if (item.manualCrop?.applied) {
+            throw new Error(freeformCropSourceProblem(item.manualCrop, source) ??
+              "This exact crop belongs to different source pixels and was not applied.");
+          }
+        }
+        if (!cropRect &&
+          trimSnapshot &&
+          snapshot.straighten === 0 &&
+          trimSnapshot.itemId === item.id &&
+          trimSnapshot.rotate === snapshot.rotate &&
+          trimSnapshot.flipH === snapshot.flipH &&
+          trimSnapshot.flipV === snapshot.flipV
+        ) {
+          cropRect = trimSnapshot.rect;
+          cropKind = "alpha-trim";
+        }
+        const rendered = await renderImage(item, itemSettings, controller.signal, cropRect, cropKind);
         if (controller.signal.aborted) {
           cancelled = true;
           setItems((previous) =>
@@ -2562,6 +2701,10 @@ function Images() {
     const updateText = operation === "text";
     const previousZip = updateText && socialTextChanged ? socialZip : null;
     if (!socialReady || (updateText && !previousZip)) return;
+    if (!updateText && manualCropApplied) {
+      setMessage("Clear the applied exact crop before making new social sizes. Social sizes do not use the one-image rectangle; existing downloads remain available.");
+      return;
+    }
     const item = selected;
     const snapshot = { ...settings };
     const sizeAnchors = item.socialCropAnchors;
@@ -2760,7 +2903,8 @@ function Images() {
         item.longEdgeOverride !== undefined ||
         item.qualityOverride !== undefined ||
         item.cropAspectOverride !== undefined ||
-        item.cropAnchorOverride !== undefined
+        item.cropAnchorOverride !== undefined ||
+        item.manualCrop !== undefined
           ? {
               ...item,
               formatOverride: undefined,
@@ -2768,6 +2912,7 @@ function Images() {
               qualityOverride: undefined,
               cropAspectOverride: undefined,
               cropAnchorOverride: undefined,
+              manualCrop: undefined,
             }
           : item,
       ),
@@ -2782,6 +2927,40 @@ function Images() {
   function clearTrim(): void {
     setTrim(null);
     setTrimMessage("Trim cleared. The full image is used again.");
+  }
+
+  function setFreeformCropField(field: keyof typeof cropFields, value: string): void {
+    if (!selected || !cropSource || running || socialBusy || cropSourceProblem) return;
+    setItems((previous) =>
+      previous.map((item) =>
+        item.id === selected.id
+          ? { ...item, manualCrop: updateFreeformCropField(item.manualCrop, cropSource, field, value) }
+          : item,
+      ),
+    );
+  }
+
+  function applyFreeformCrop(): void {
+    if (!selected || !cropSource || running || socialBusy || cropSourceProblem ||
+      cropCompatibilityProblem || !draftCrop?.ok) return;
+    setItems((previous) =>
+      previous.map((item) =>
+        item.id === selected.id
+          ? { ...item, manualCrop: { ...cropSource, fields: cropFields, applied: draftCrop.rect } }
+          : item,
+      ),
+    );
+    setMessage("Exact crop applied to the plan. Make this image to render it; the source File is unchanged.");
+  }
+
+  function clearFreeformCrop(): void {
+    if (!selected || running || socialBusy) return;
+    setItems((previous) =>
+      previous.map((item) =>
+        item.id === selected.id ? { ...item, manualCrop: undefined } : item,
+      ),
+    );
+    setMessage("Exact crop cleared. The current full-image or aspect-crop plan is used again; completed downloads are unchanged.");
   }
 
   async function copyValue(
@@ -3074,6 +3253,10 @@ function Images() {
 
   async function checkTrim(): Promise<void> {
     if (!selected || trimBusy || running) return;
+    if (manualCropApplied) {
+      setTrimMessage("Clear the applied exact crop before trimming transparent edges. Exact crop and automatic alpha trim cannot be combined.");
+      return;
+    }
     if (settings.straighten !== 0) {
       setTrimMessage(
         "Set straighten to 0° before trimming. Trim measures upright alpha bounds; straighten then keeps the largest fully-covered area.",
@@ -3652,7 +3835,7 @@ function Images() {
               <button
                 type="button"
                 className="secondary"
-                disabled={running || socialBusy || Boolean(batchExport) || adding || !socialReady}
+                disabled={running || socialBusy || Boolean(batchExport) || adding || !socialReady || manualCropApplied}
                 aria-describedby="image-social-kit-note"
                 ref={makeSocialKitRef}
                 onClick={() => void makeSocialKit()}
@@ -3666,6 +3849,7 @@ function Images() {
               )}
             </div>
             <p className="trim-note" id="image-social-kit-note">
+              {manualCropApplied && "Clear the applied exact crop to make new social sizes. The one-image rectangle is not used here; existing downloads stay available. "}
               The selected PNG, JPEG, still WebP or public poster becomes {formatLabelForMime(mimeForExport(socialFormat))} at 1080 × 1080 (1:1), 1080 × 1350 (4:5),
               1080 × 1920 (9:16) and 1920 × 1080 (16:9)
               {socialFormat === "webp" ? ` with ${Math.round(WEB_READY_QUALITY * 100)}% quality` : " at lossless quality"}.
@@ -3790,7 +3974,7 @@ function Images() {
             <div className="image-control-actions">
               <button type="button" className="secondary" disabled={running || !selected} onClick={() => setSettings((previous) => ({ ...previous, resizeMode: "exact", exactWidth: selected.source.orientedWidth, exactHeight: selected.source.orientedHeight }))}>Use displayed size</button>
               <button type="button" className="secondary" disabled={running} onClick={() => setSettings((previous) => ({ ...previous, resizeMode: "long-edge", longEdge: defaultLongEdge(selected.source.orientedWidth, selected.source.orientedHeight) }))}>Use 2048 max</button>
-              <button type="button" className="secondary" disabled={running || trimBusy || !selected} onClick={() => void checkTrim()}>
+              <button type="button" className="secondary" disabled={running || trimBusy || manualCropApplied || !selected} onClick={() => void checkTrim()}>
                 {trimBusy ? "Reading alpha…" : "Trim transparent edges"}
               </button>
               {activeTrim && (
@@ -3800,12 +3984,117 @@ function Images() {
               )}
             </div>
             <p className="trim-note" role="status" aria-live="polite">
-              {trimMessage || (selected.source.alpha ? "Trim removes fully transparent padding; near-transparent edge pixels are kept." : "This image declares no alpha channel, so transparent padding is unlikely. Trim will check the decoded pixels before changing the plan.")}
+              {trimMessage || (manualCropApplied
+                ? "Clear the applied exact crop before trimming transparent edges; the two crop methods cannot be combined."
+                : selected.source.alpha
+                  ? "Trim removes fully transparent padding; near-transparent edge pixels are kept."
+                  : "This image declares no alpha channel, so transparent padding is unlikely. Trim will check the decoded pixels before changing the plan.")}
             </p>
             <p className="trim-note">
               Crop position applies when the aspect is not Original, including an
               aspect chosen for one row. It decides which part of the picture is kept
               instead of always cutting from the centre.
+            </p>
+          </fieldset>
+
+          <fieldset className="image-controls" aria-describedby="image-freeform-crop-note">
+            <legend>Exact crop (px)</legend>
+            <p className="trim-note" id="image-freeform-crop-note">
+              Enter whole pixels from the upright image’s top-left corner. Use Original aspect with
+              rotation, flips and straighten neutral.
+            </p>
+            {cropSourceProblem && <p className="notice warn" role="alert">{cropSourceProblem}</p>}
+            {cropCompatibilityProblem && <p className="notice warn" role="alert">{cropCompatibilityProblem}</p>}
+            <label>Left (px)
+              <input
+                type="number"
+                min="0"
+                max={cropSource?.width ?? 0}
+                step="1"
+                inputMode="numeric"
+                value={cropFields.left}
+                disabled={running || socialBusy || Boolean(cropSourceProblem)}
+                aria-invalid={draftCrop?.ok === false && draftCrop.invalid.left ? true : undefined}
+                aria-describedby={draftCrop?.ok === false ? "image-freeform-crop-note image-freeform-crop-error" : "image-freeform-crop-note"}
+                onChange={(event) => setFreeformCropField("left", event.target.value)}
+              />
+            </label>
+            <label>Top (px)
+              <input
+                type="number"
+                min="0"
+                max={cropSource?.height ?? 0}
+                step="1"
+                inputMode="numeric"
+                value={cropFields.top}
+                disabled={running || socialBusy || Boolean(cropSourceProblem)}
+                aria-invalid={draftCrop?.ok === false && draftCrop.invalid.top ? true : undefined}
+                aria-describedby={draftCrop?.ok === false ? "image-freeform-crop-note image-freeform-crop-error" : "image-freeform-crop-note"}
+                onChange={(event) => setFreeformCropField("top", event.target.value)}
+              />
+            </label>
+            <label>Width (px)
+              <input
+                type="number"
+                min="1"
+                max={cropSource?.width ?? 1}
+                step="1"
+                inputMode="numeric"
+                value={cropFields.width}
+                disabled={running || socialBusy || Boolean(cropSourceProblem)}
+                aria-invalid={draftCrop?.ok === false && draftCrop.invalid.width ? true : undefined}
+                aria-describedby={draftCrop?.ok === false ? "image-freeform-crop-note image-freeform-crop-error" : "image-freeform-crop-note"}
+                onChange={(event) => setFreeformCropField("width", event.target.value)}
+              />
+            </label>
+            <label>Height (px)
+              <input
+                type="number"
+                min="1"
+                max={cropSource?.height ?? 1}
+                step="1"
+                inputMode="numeric"
+                value={cropFields.height}
+                disabled={running || socialBusy || Boolean(cropSourceProblem)}
+                aria-invalid={draftCrop?.ok === false && draftCrop.invalid.height ? true : undefined}
+                aria-describedby={draftCrop?.ok === false ? "image-freeform-crop-note image-freeform-crop-error" : "image-freeform-crop-note"}
+                onChange={(event) => setFreeformCropField("height", event.target.value)}
+              />
+            </label>
+            {draftCrop?.ok === false && (
+              <p className="image-plan is-error" id="image-freeform-crop-error" role="alert">
+                {draftCrop.error}
+              </p>
+            )}
+            <div className="image-control-actions">
+              <button
+                type="button"
+                className="secondary"
+                disabled={running || socialBusy || Boolean(cropSourceProblem) || Boolean(cropCompatibilityProblem) || !draftCrop?.ok || (Boolean(selectedCrop?.applied) && !cropDraftChanged)}
+                onClick={applyFreeformCrop}
+              >
+                Apply exact crop
+              </button>
+              <button
+                type="button"
+                className="quiet"
+                disabled={running || socialBusy || !selected?.manualCrop}
+                onClick={clearFreeformCrop}
+              >
+                Clear exact crop
+              </button>
+            </div>
+            <p className="trim-note" role="status" aria-live="polite">
+              {selectedCrop?.applied
+                ? cropDraftChanged
+                  ? "Draft changed but not applied. The earlier exact crop remains in the plan."
+                  : `Applied: left ${selectedCrop.applied.x}, top ${selectedCrop.applied.y}, width ${selectedCrop.applied.width}, height ${selectedCrop.applied.height} px. Make this image to render it.`
+                : selectedCrop
+                  ? "Draft only. No exact crop is applied yet."
+                  : "No exact crop applied. The fields start at the full upright image."}
+            </p>
+            <p className="trim-note">
+              Clear the rectangle to use automatic trim, batch processing or social sizes.
             </p>
           </fieldset>
 
@@ -3971,7 +4260,7 @@ function Images() {
 
           <p id="image-output-plan" tabIndex={-1} className={`image-plan${plan && !plan.ok ? " is-error" : ""}`}>
             {plan?.ok
-              ? `Planned result: ${plan.outputWidth} × ${plan.outputHeight} px${activeTrim ? ` · trimmed from ${plan.rotatedWidth} × ${plan.rotatedHeight} px` : ""}${plan.aspectDistorted ? " · exact dimensions change the aspect" : ""}${plan.upscaled ? " · enlarged by resampling; no detail is invented" : ""}.`
+              ? `Planned result: ${plan.outputWidth} × ${plan.outputHeight} px${activeManualCrop ? ` · manual crop ${activeManualCrop.width} × ${activeManualCrop.height} px from left ${activeManualCrop.x}, top ${activeManualCrop.y}` : activeTrim ? ` · trimmed from ${plan.rotatedWidth} × ${plan.rotatedHeight} px` : ""}${plan.aspectDistorted ? " · exact dimensions change the aspect" : ""}${plan.upscaled ? " · enlarged by resampling; no detail is invented" : ""}.`
               : plan?.error ?? "Choose a usable size."}
           </p>
           {targetProblem && <p className="image-plan is-error" role="alert">{targetProblem}</p>}
@@ -4104,6 +4393,7 @@ function Images() {
                   cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
                   cropAnchor: selected.result.settings.cropAnchor,
                   trimmed: selected.result.trimmed,
+                  manualCrop: selected.result.crop?.kind === "manual" ? selected.result.crop.rect : null,
                   resize: resizeFor(selected.result.settings),
                   resample: selected.result.settings.resample,
                   sharpen: selected.result.settings.sharpen,
@@ -4816,7 +5106,7 @@ function Images() {
           <button
             type="button"
             ref={processAllRef}
-            disabled={socialBusy || adding || sheetBusy || importing || !items.length || !plan?.ok || Boolean(batchTargetProblem) || Boolean(invalidLongEdgeItem) || Boolean(invalidQualityItem)}
+            disabled={socialBusy || adding || sheetBusy || importing || !items.length || !plan?.ok || Boolean(batchTargetProblem) || Boolean(invalidLongEdgeItem) || Boolean(invalidQualityItem) || itemsWithAppliedCrop.length > 0}
             aria-disabled={running}
             onClick={() => {
               if (running) return;
@@ -4916,6 +5206,11 @@ function Images() {
           <p className="image-status" role="status" aria-live="polite">{sheetCopy.message}</p>
         )}
         <p className="image-status" role="status" aria-live="polite">{batchMessage}</p>
+        {itemsWithAppliedCrop.length > 0 && (
+          <p className="notice calm">
+            Clear every applied exact crop before Process all. Batch rendering never applies a one-image rectangle to other files.
+          </p>
+        )}
         {contactSheet && (
           <>
             <img

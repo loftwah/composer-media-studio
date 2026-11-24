@@ -65,6 +65,10 @@ async function main() {
   ]);
   assert.equal(expected?.schema, IMAGE_RECEIPT_SCHEMA, "Select an Image Tools receipt.");
   assert.equal(expected?.version, IMAGE_RECEIPT_VERSION, "Select a supported Image Tools receipt version.");
+  assert(
+    expected?.transform?.crop?.mode !== "manual",
+    "This receipt contains a manual exact crop. Local replay reproduces shipped presets and social settings only; re-enter the receipt's upright-source rectangle in Image Tools.",
+  );
   assert.equal(digest(source), expected.source?.sha256, "The source bytes do not match the receipt.");
   if (size) assertSocialSourceEligible(source);
   const format = size ? socialFormatForReceipt(expected, size) : null;

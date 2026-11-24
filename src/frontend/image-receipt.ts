@@ -18,6 +18,14 @@ const SETTINGS = [
 
 type ReceiptSettings = Record<(typeof SETTINGS)[number], unknown> & { sharpen?: unknown };
 
+export type ManualCropReceipt = {
+  mode: "manual";
+  coordinateSpace: "upright-source-pixels";
+  sourceWidth: number;
+  sourceHeight: number;
+  rect: { x: number; y: number; width: number; height: number };
+};
+
 export type ImageReceiptInput = {
   sourceHash: string;
   result: {
@@ -28,6 +36,12 @@ export type ImageReceiptInput = {
     mime: string;
     bytes: number;
     sha256: string;
+    crop?: {
+      kind: "alpha-trim" | "manual";
+      sourceWidth: number;
+      sourceHeight: number;
+      rect: { x: number; y: number; width: number; height: number };
+    } | null;
   };
 };
 
@@ -36,7 +50,7 @@ export type ImageReceipt = {
   version: number;
   note: string;
   source: { sha256: string };
-  transform: { plan: object; settings: object };
+  transform: { plan: object; settings: object; crop?: ManualCropReceipt };
   output: { width: number; height: number; mime: string; bytes: number; sha256: string };
 };
 
@@ -66,15 +80,24 @@ export function buildImageReceipt({ sourceHash, result }: ImageReceiptInput): Im
   // v1 receipt byte-for-byte stable; an applied pass records its real strength.
   const sharpen = normaliseSharpen(result.settings.sharpen);
   if (sharpen && sharpen.amount > 0) settings.sharpen = sharpen;
+  const transform: ImageReceipt["transform"] = { plan: result.plan, settings };
+  // Only a deliberate freeform rectangle adds a field. Neutral renders and the
+  // existing automatic alpha-trim receipts keep their exact v1 shape.
+  if (result.crop?.kind === "manual") {
+    transform.crop = {
+      mode: "manual",
+      coordinateSpace: "upright-source-pixels",
+      sourceWidth: result.crop.sourceWidth,
+      sourceHeight: result.crop.sourceHeight,
+      rect: result.crop.rect,
+    };
+  }
   return {
     schema: IMAGE_RECEIPT_SCHEMA,
     version: IMAGE_RECEIPT_VERSION,
     note: "Hashes and settings for the completed local render.",
     source: { sha256: sourceHash },
-    transform: {
-      plan: result.plan,
-      settings,
-    },
+    transform,
     output: {
       width: result.width,
       height: result.height,

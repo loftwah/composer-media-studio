@@ -360,3 +360,21 @@ test("the workbench straightens by a real angle and shows the kept area", () => 
   assert.match(workbench, /straighten: selected\.result\.settings\.straighten/);
   assert.match(workbench, /Set straighten to 0° before trimming/);
 });
+
+test("freeform crop is a per-source draft with deliberate apply and selected-only render", () => {
+  assert.match(workbench, /manualCrop\?: FreeformCropState/);
+  assert.match(workbench, /freeformCropStateForSource\(selected\.manualCrop, cropSource\)/);
+  assert.match(workbench, /<legend>Exact crop \(px\)<\/legend>/);
+  assert.match(workbench, /<label>Left \(px\)/);
+  assert.match(workbench, /<label>Top \(px\)/);
+  assert.match(workbench, /<label>Width \(px\)/);
+  assert.match(workbench, /<label>Height \(px\)/);
+  assert.match(workbench, /Apply exact crop/);
+  assert.match(workbench, /Clear exact crop/);
+  assert.match(workbench, /onClick=\{applyFreeformCrop\}\s*>\s*Apply exact crop/);
+  assert.match(workbench, /if \(list\.length === 1\)[\s\S]*freeformCropStateForSource\(item\.manualCrop, source\)[\s\S]*cropKind = "manual"/);
+  assert.match(workbench, /Batch rendering never applies a one-image rectangle to other files/);
+  assert.match(workbench, /Clear the applied exact crop before making new social sizes/);
+  assert.match(workbench, /manualCrop: selected\.result\.crop\?\.kind === "manual"/);
+  assert.match(workbench, /createImageBitmap\(blob\)[\s\S]*encoded exact-crop result did not match its planned pixel dimensions/);
+});
