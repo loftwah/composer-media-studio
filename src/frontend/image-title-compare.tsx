@@ -305,6 +305,7 @@ export function TitleCompare({
    * it never touches the crop anchor, the preference or any export. */
   const [fullViewSizeKey, setFullViewSizeKey] = useState<FeedSizeKey>("card");
   const sectionRef = useRef<HTMLElement | null>(null);
+  const previewsRef = useRef<HTMLDivElement | null>(null);
   const urls = useRef(new Set<string>());
   const exportsRef = useRef<ExportEntry[]>([]);
   const mounted = useRef(true);
@@ -1403,6 +1404,19 @@ export function TitleCompare({
           >
             Try sample pairs
           </button>
+          {pairs.some(pair => pair.image !== null) && (
+            <button
+              type="button"
+              className="secondary title-compare-preview-jump"
+              onClick={() => {
+                const previews = previewsRef.current;
+                previews?.focus({ preventScroll: true });
+                previews?.scrollIntoView({ block: "start", behavior: "instant" });
+              }}
+            >
+              View previews
+            </button>
+          )}
         </div>
         <p
           className="trim-note title-compare-sample-status"
@@ -1669,7 +1683,7 @@ export function TitleCompare({
             </p>
           </div>
         </fieldset>
-        <div className="title-compare-previews" aria-label="Feed previews">
+        <div ref={previewsRef} className="title-compare-previews" role="region" aria-label="Feed previews" tabIndex={-1}>
           {PAIR_IDS.map((id) => {
             const pair = pairs[PAIR_IDS.indexOf(id)];
             const isSelected = id === selectedId;
