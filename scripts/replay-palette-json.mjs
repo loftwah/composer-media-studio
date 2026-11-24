@@ -15,9 +15,12 @@ async function main() {
   assert.equal(expected?.version, contract.version, "Select a supported palette JSON version.");
   assert(Array.isArray(expected.colors) &&
     expected.colors.length > 0 &&
-    expected.colors.length <= MAX_PALETTE_COLOURS, "Select a palette JSON with a valid swatch count.");
+    expected.colors.length <= MAX_PALETTE_COLOURS,
+  `Select a palette JSON with a swatch count from 1 to ${MAX_PALETTE_COLOURS}.`);
 
   const report = await runLocalImages(source, async page => {
+    await page.getByRole("combobox", { name: "Maximum colours", exact: true })
+      .selectOption(String(expected.colors.length));
     await page.getByRole("button", { name: "Extract palette", exact: true }).click();
     const { bytes } = await downloadLink(page, page.getByRole("link", { name: "Download palette (.json)", exact: true }));
     const actual = JSON.parse(bytes.toString("utf8"));
