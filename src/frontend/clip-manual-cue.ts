@@ -85,13 +85,14 @@ export function manualCaptionSourceName(current: Readonly<{ name: string; local:
 
 /**
  * The exact full-source caption track for a local source digest. It is the same
- * serializer used by preview and export, with no trim or offset applied.
+ * serializer used by preview and export, with no trim or offset applied. Voice
+ * annotation output is on for Video Clip so a named cue keeps its speaker.
  */
 export function manualCaptionTrackVtt(cues: readonly ImportedCue[]): string | null {
   if (!cues.length) return null;
   const endMs = Math.max(...cues.map(cue => cue.endMs));
   if (!Number.isSafeInteger(endMs) || endMs <= 0) return null;
-  return serializeClipCaptions(cues, 0, endMs / 1000, 0);
+  return serializeClipCaptions(cues, 0, endMs / 1000, 0, "default", { voices: true });
 }
 
 // Splitting is an editable starting point, not word alignment to the audio.
@@ -164,7 +165,7 @@ function validatedClipDraftTrack(
   // whole draft without rejecting those untouched cues.
   const segmentEndMs = Math.max(durationMs, ...next.map(cue => cue.endMs));
   try {
-    return { cues: parseCaptionFile(source, 0, segmentEndMs) };
+    return { cues: parseCaptionFile(source, 0, segmentEndMs, { voices: true }) };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (/overlaps another/.test(message))
@@ -206,7 +207,10 @@ function validatedManualCue(
   if (cues.some((cue, index) => index !== replaceIndex && startMs < cue.endMs && cue.startMs < endMs))
     return { problem: "This cue overlaps another cue. Choose a free start and end." };
 
-  const edited = { startMs, endMs, text: input.text, speaker: "" };
+  // A replacement keeps the cue's existing speaker. Text, timing and split
+  // edits can never silently rename or drop a supplied voice annotation.
+  const speaker = replaceIndex === null ? "" : cues[replaceIndex]?.speaker ?? "";
+  const edited = { startMs, endMs, text: input.text, speaker };
   const next = (replaceIndex === null
     ? [...cues, edited]
     : cues.map((cue, index) => index === replaceIndex ? edited : cue))

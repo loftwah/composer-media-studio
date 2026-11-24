@@ -29,6 +29,7 @@
 .trim-cue-hidden-merge { grid-column:1/-1; margin:0; }
 .trim-cue-time { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .trim-cue-text { overflow-wrap:anywhere; }
+.trim-cue-speaker { font-weight:600; }
 @media (max-width:600px) {
   .trim-cue-row { grid-template-columns:minmax(0,1fr); padding-bottom:.4rem; }
   .trim-cue-actions { display:flex; flex-wrap:wrap; }

@@ -1,4 +1,4 @@
-import { parseCaptionFile, type ImportedCue } from "./caption-import.ts";
+import { parseCaptionFile, type CaptionImportOptions, type ImportedCue } from "./caption-import.ts";
 
 export const MAX_CAPTION_BYTES = 64 * 1024;
 // A timing offset may move imported cues at most a minute earlier or later.
@@ -36,7 +36,7 @@ export function clipTimeStamp(ms: number) {
   return `${minutes}:${seconds}.${millis}`;
 }
 
-type ClippedCaptionCue = Readonly<{ from: number; to: number; sourceStartMs: number; text: string; sourceIndex: number }>;
+type ClippedCaptionCue = Readonly<{ from: number; to: number; sourceStartMs: number; text: string; speaker: string; sourceIndex: number }>;
 
 // The shared projection for every trimmed-caption surface: serialization, the
 // preflight count and the review list. Times are trim-relative milliseconds.
@@ -55,7 +55,7 @@ export function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: numb
   for (const [sourceIndex, cue] of cues.entries()) {
     const from = Math.max(cue.startMs + offsetMs, start), to = Math.min(cue.endMs + offsetMs, end);
     if (from >= to) continue;
-    kept.push({ from: from - start, to: to - start, sourceStartMs: from, text: cue.text, sourceIndex });
+    kept.push({ from: from - start, to: to - start, sourceStartMs: from, text: cue.text, speaker: cue.speaker, sourceIndex });
   }
   return kept;
 }
@@ -65,22 +65,26 @@ export function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: numb
 // trim, clamp, rebase or timing offset, so a row can name and change a cue the
 // current trim does not intersect. sourceIndex is the same identity the trimmed
 // projection and the existing Edit and Remove actions use.
-export type SourceCaptionCue = Readonly<{ startMs: number; endMs: number; text: string; sourceIndex: number }>;
+export type SourceCaptionCue = Readonly<{ startMs: number; endMs: number; text: string; speaker: string; sourceIndex: number }>;
 
 export function sourceCaptionCues(cues: readonly ImportedCue[]): SourceCaptionCue[] {
-  return cues.map((cue, sourceIndex) => ({ startMs: cue.startMs, endMs: cue.endMs, text: cue.text, sourceIndex }));
+  return cues.map((cue, sourceIndex) => ({ startMs: cue.startMs, endMs: cue.endMs, text: cue.text, speaker: cue.speaker, sourceIndex }));
 }
 
-export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0, placement: CaptionPreviewPlacement = "default") {
+const escapeVtt = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0, placement: CaptionPreviewPlacement = "default", options: CaptionImportOptions = {}) {
   const kept = clipCaptionCues(cues, startSeconds, endSeconds, offsetMs);
   if (!kept) return null;
   // Only the original-video preview passes a placement; every other caller
   // takes the default and keeps byte-identical output. Text escaping stays in
-  // this one serializer so placement cannot change cue content.
+  // this one serializer so placement cannot change cue content. Voice
+  // annotations are opt-in for Video Clip; unnamed cues keep their prior bytes.
   const setting = placement === "top" ? TOP_PREVIEW_CUE_SETTING : "";
-  const blocks = kept.map(({ from, to, text }) => {
-    const plain = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-    return `${clipTimeStamp(from)} --> ${clipTimeStamp(to)}${setting}\n${plain}`;
+  const blocks = kept.map(({ from, to, text, speaker }) => {
+    const plain = escapeVtt(text);
+    const body = options.voices === true && speaker ? `<v ${escapeVtt(speaker)}>${plain}</v>` : plain;
+    return `${clipTimeStamp(from)} --> ${clipTimeStamp(to)}${setting}\n${body}`;
   });
   return blocks.length ? `WEBVTT\n\n${blocks.join("\n\n")}\n` : null;
 }
@@ -99,9 +103,9 @@ export function survivingClipCaptionCount(cues: readonly ImportedCue[], startSec
  * missing offset yields no track rather than a preview the export would reject.
  * Placement changes cue settings only; times, text and escaping are shared.
  */
-export function sourcePreviewVtt(cues: readonly ImportedCue[], durationSeconds: number, offsetMs: number | null, placement: CaptionPreviewPlacement = "default"): string | null {
+export function sourcePreviewVtt(cues: readonly ImportedCue[], durationSeconds: number, offsetMs: number | null, placement: CaptionPreviewPlacement = "default", options: CaptionImportOptions = {}): string | null {
   if (offsetMs === null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return null;
-  return serializeClipCaptions(cues, 0, durationSeconds, offsetMs, placement);
+  return serializeClipCaptions(cues, 0, durationSeconds, offsetMs, placement, options);
 }
 
 // SRT stamps carry hours and use a comma before milliseconds; WebVTT omits
@@ -132,13 +136,15 @@ function serializeSrt(cues: readonly ImportedCue[]) {
  * exposed only when that parser yields exact relative millisecond times and
  * plain text, and agrees with an SRT round-trip. Any parser failure or text
  * mismatch hides the download rather than falling back to divergent logic.
+ * SRT has no voice annotation, so a named cue also withholds the download
+ * instead of silently dropping its speaker.
  */
 export function srtForClipVtt(vtt: string | null, durationMs: number): string | null {
   if (!vtt || !Number.isSafeInteger(durationMs) || durationMs <= 0) return null;
   let cues: ImportedCue[], srt: string, check: ImportedCue[];
   try {
-    cues = parseCaptionFile(vtt, 0, durationMs);
-    if (!cues.length) return null;
+    cues = parseCaptionFile(vtt, 0, durationMs, { voices: true });
+    if (!cues.length || cues.some(cue => cue.speaker)) return null;
     srt = serializeSrt(cues);
     check = parseCaptionFile(srt, 0, durationMs);
   } catch {

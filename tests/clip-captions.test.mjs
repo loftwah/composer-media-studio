@@ -95,8 +95,8 @@ test('cue review rows expose trim-relative times and add trim start for original
   ];
   const trimmed = clipCaptionCues(cues, 2, 10, 1500);
   assert.deepEqual(trimmed, [
-    { from: 500, to: 6500, sourceStartMs: 2500, text: 'A & B', sourceIndex: 0 },
-    { from: 7500, to: 8000, sourceStartMs: 9500, text: '<Next>', sourceIndex: 1 },
+    { from: 500, to: 6500, sourceStartMs: 2500, text: 'A & B', speaker: '', sourceIndex: 0 },
+    { from: 7500, to: 8000, sourceStartMs: 9500, text: '<Next>', speaker: '', sourceIndex: 1 },
   ]);
   assert.deepEqual(trimmed.map(cue => clipTimeStamp(cue.from)), ['00:00.500', '00:07.500']);
   // The same projection still backs the VTT and count.
@@ -105,11 +105,11 @@ test('cue review rows expose trim-relative times and add trim start for original
   // A cue already running before the trim is clamped to the trim start, so its
   // source seek includes the trim start rather than the earlier source time.
   const clipped = clipCaptionCues(cues, 2.0006, 10);
-  assert.deepEqual(clipped?.[0], { from: 0, to: 4999, sourceStartMs: 2001, text: 'A & B', sourceIndex: 0 });
+  assert.deepEqual(clipped?.[0], { from: 0, to: 4999, sourceStartMs: 2001, text: 'A & B', speaker: '', sourceIndex: 0 });
   const earlier = clipCaptionCues(cues, 2, 10, -1500);
   assert.deepEqual(earlier, [
-    { from: 0, to: 3500, sourceStartMs: 2000, text: 'A & B', sourceIndex: 0 },
-    { from: 4500, to: 8000, sourceStartMs: 6500, text: '<Next>', sourceIndex: 1 },
+    { from: 0, to: 3500, sourceStartMs: 2000, text: 'A & B', speaker: '', sourceIndex: 0 },
+    { from: 4500, to: 8000, sourceStartMs: 6500, text: '<Next>', speaker: '', sourceIndex: 1 },
   ]);
   // Invalid values stay indistinguishable from the serializer's null result.
   assert.deepEqual(clipCaptionCues(cues, 12.5, 14), []);
@@ -122,9 +122,9 @@ test('All source cues lists every stored cue at its unshifted original time and 
   const cues = parseCaptionFile('WEBVTT\n\n00:00:00.500 --> 00:00:02.000\nBefore trim\n\n00:00:05.000 --> 00:00:08.000\nOutside the trim\n\n00:00:11.000 --> 00:00:12.500\nAfter\n', 0, 180_000);
   const rows = sourceCaptionCues(cues);
   assert.deepEqual(rows, [
-    { startMs: 500, endMs: 2000, text: 'Before trim', sourceIndex: 0 },
-    { startMs: 5000, endMs: 8000, text: 'Outside the trim', sourceIndex: 1 },
-    { startMs: 11000, endMs: 12500, text: 'After', sourceIndex: 2 },
+    { startMs: 500, endMs: 2000, text: 'Before trim', speaker: '', sourceIndex: 0 },
+    { startMs: 5000, endMs: 8000, text: 'Outside the trim', speaker: '', sourceIndex: 1 },
+    { startMs: 11000, endMs: 12500, text: 'After', speaker: '', sourceIndex: 2 },
   ]);
   // A trim, clamp or offset can hide a cue from the in-trim list, but it can
   // never change or drop the matching source row.

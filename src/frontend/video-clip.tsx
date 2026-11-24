@@ -59,6 +59,12 @@ async function editedCaptionDraft(previous: CaptionDraft | null, cues: ImportedC
   };
 }
 
+// The review row's visible and accessible line. A supplied WebVTT voice
+// annotation stays separate from the cue words; unnamed cues keep plain text.
+function cueLine(cue: Readonly<{ speaker: string; text: string }>) {
+  return cue.speaker ? `${cue.speaker}: ${cue.text}` : cue.text;
+}
+
 // Accept a decimal-seconds offset only when it is a whole number of
 // milliseconds within the advertised +/- bound. Returns null when invalid so
 // the field can be flagged and export stopped without mutating the draft.
@@ -301,6 +307,7 @@ function VideoClip() {
   // preview track, the offset, the receipt or either export.
   const allSourceCues = captionDraft ? sourceCaptionCues(captionDraft.cues) : [];
   const visibleSourceCues = captionDraft ? filterCuesByText(allSourceCues, cueSearchText) : [];
+  const namedCaptionCount = captionDraft ? captionDraft.cues.filter(cue => cue.speaker).length : 0;
   // A running audition belongs to one exact source, draft, trim and offset. If
   // any of those change it is no longer the same cue window, so stop and say so
   // rather than leave the old seconds playing over newer work.
@@ -339,7 +346,7 @@ function VideoClip() {
   // all. An invalid trim or offset, or no surviving cue, yields no download.
   const draftCaptionVtt = captionDraft && validTrim && captionOffsetMs !== null
     && survivingCaptionCount !== null && survivingCaptionCount > 0
-    ? serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs)
+    ? serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs, "default", { voices: true })
     : null;
   const draftCaptionSrt = draftCaptionVtt
     ? srtForClipVtt(draftCaptionVtt, Math.round(end * 1000) - Math.round(start * 1000))
@@ -406,7 +413,7 @@ function VideoClip() {
   const fullSourceCaptionUrl = currentFullSourceCaptionFile?.url ?? null;
   const fullSourceCaptionSrtUrl = currentFullSourceCaptionFile?.srtUrl ?? null;
   const sourceVtt = showSourceCaptions && captionDraft
-    ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs, sourceCaptionPlacement)
+    ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs, sourceCaptionPlacement, { voices: true })
     : null;
   useEffect(() => {
     if (!sourceVtt) {
@@ -554,7 +561,7 @@ function VideoClip() {
       // digest ties any later offset restore to these exact original bytes.
       const bytes = new Uint8Array(await selected.arrayBuffer());
       const sourceSha256 = await sha256Hex(bytes);
-      const cues = parseCaptionFile(new TextDecoder().decode(bytes), 0, MAX_SOURCE_SECONDS * 1000);
+      const cues = parseCaptionFile(new TextDecoder().decode(bytes), 0, MAX_SOURCE_SECONDS * 1000, { voices: true });
       if (request !== captionRequest.current) return;
       setCaptionDraft({ name: selected.name, sourceSha256, cues, local: false });
       setCaptionHistory(EMPTY_CUE_HISTORY);
@@ -1102,7 +1109,7 @@ function VideoClip() {
       const captions = captionDraft ? {
         name: captionDraft.name,
         sourceSha256: captionDraft.sourceSha256,
-        vtt: serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs),
+        vtt: serializeClipCaptions(captionDraft.cues, start, end, captionOffsetMs, "default", { voices: true }),
         ...(captionOffsetMs ? { offsetMs: captionOffsetMs } : {}),
         ...(captionDraft.local ? { local: true as const } : {}),
       } : undefined;
@@ -1237,7 +1244,7 @@ function VideoClip() {
           void chooseCaptions(input.files?.[0]);
           input.value = "";
         }}/></label>
-        <p id="caption-paste-help" className="trim-note">Plain SRT or WebVTT up to 64 KB. Caption text stays in this tab.</p>
+        <p id="caption-paste-help" className="trim-note">Plain SRT or WebVTT up to 64 KB. A WebVTT voice annotation like &lt;v Alex&gt;words&lt;/v&gt; keeps the speaker; other markup and styling are refused. Caption text stays in this tab.</p>
         <label className="trim-file">Paste captions<textarea rows={6} spellCheck={false}
           aria-describedby="caption-paste-help"
           placeholder={"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nYour first caption"}
@@ -1424,17 +1431,17 @@ function VideoClip() {
                     return (
                       <li key={cue.sourceIndex} className="trim-cue-row" data-source-index={cue.sourceIndex}>
                         <button type="button" className="secondary trim-cue-jump"
-                          aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                          aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cueLine(cue)}`}
                           disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                           onClick={() => jumpToOriginalCue(cue.sourceStartMs)}>
                           <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
-                          <span className="trim-cue-text">{cue.text}</span>
+                          <span className="trim-cue-text">{cue.speaker && <span className="trim-cue-speaker">{cue.speaker}: </span>}{cue.text}</span>
                         </button>
                         <div className="trim-cue-actions">
                           <button type="button" className="secondary trim-cue-play"
                             aria-label={thisCuePlaying
-                              ? `Pause cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`
-                              : `Play cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)} from the original video. ${cue.text}`}
+                              ? `Pause cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cueLine(cue)}`
+                              : `Play cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)} from the original video. ${cueLine(cue)}`}
                             aria-pressed={thisCuePlaying}
                             disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                             onClick={() => {
@@ -1442,21 +1449,21 @@ function VideoClip() {
                               else void playOriginalCue(cue);
                             }}>{thisCuePlaying ? "Pause cue" : "Play cue"}</button>
                           <button type="button" className="secondary trim-cue-edit"
-                            aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                            aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cueLine(cue)}`}
                             disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                             onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
                           {mergeWith && <button type="button" className="secondary trim-cue-merge"
-                            aria-label={`Merge cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text} with the next cue ${clipTimeStamp(mergeWith.from)}–${clipTimeStamp(mergeWith.to)}. ${mergeWith.text}`}
+                            aria-label={`Merge cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cueLine(cue)} with the next cue ${clipTimeStamp(mergeWith.from)}–${clipTimeStamp(mergeWith.to)}. ${cueLine(mergeWith)}`}
                             disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                             onClick={() => void mergeCaptionCues(cue.sourceIndex, mergeWith.sourceIndex)}>Merge with next</button>}
                           <button type="button" className="secondary trim-cue-remove"
-                            aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                            aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cueLine(cue)}`}
                             disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                             onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
                         </div>
                         {hiddenMergeWith && (
                           <p className="trim-note trim-cue-hidden-merge">
-                            Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.from)}–{clipTimeStamp(hiddenMergeWith.to)} (“{hiddenMergeWith.text}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
+                            Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.from)}–{clipTimeStamp(hiddenMergeWith.to)} (“{cueLine(hiddenMergeWith)}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
                           </p>
                         )}
                       </li>
@@ -1471,29 +1478,29 @@ function VideoClip() {
                     return (
                       <li key={cue.sourceIndex} className="trim-cue-row trim-cue-source-row" data-source-index={cue.sourceIndex}>
                         <button type="button" className="secondary trim-cue-jump"
-                          aria-label={`Jump to source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} in the original video. ${cue.text}`}
+                          aria-label={`Jump to source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} in the original video. ${cueLine(cue)}`}
                           disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                           onClick={() => jumpToOriginalCue(cue.startMs)}>
                           <span className="trim-cue-time trim-cue-source-time">Original {clipTimeStamp(cue.startMs)}–{clipTimeStamp(cue.endMs)}</span>
-                          <span className="trim-cue-text">{cue.text}</span>
+                          <span className="trim-cue-text">{cue.speaker && <span className="trim-cue-speaker">{cue.speaker}: </span>}{cue.text}</span>
                         </button>
                         <div className="trim-cue-actions">
                           <button type="button" className="secondary trim-cue-edit"
-                            aria-label={`Edit source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cue.text}`}
+                            aria-label={`Edit source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cueLine(cue)}`}
                             disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                             onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
                           {mergeWith && <button type="button" className="secondary trim-cue-merge"
-                            aria-label={`Merge source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cue.text} with the next cue ${clipTimeStamp(mergeWith.startMs)}–${clipTimeStamp(mergeWith.endMs)}. ${mergeWith.text}`}
+                            aria-label={`Merge source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cueLine(cue)} with the next cue ${clipTimeStamp(mergeWith.startMs)}–${clipTimeStamp(mergeWith.endMs)}. ${cueLine(mergeWith)}`}
                             disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                             onClick={() => void mergeCaptionCues(cue.sourceIndex, mergeWith.sourceIndex)}>Merge with next</button>}
                           <button type="button" className="secondary trim-cue-remove"
-                            aria-label={`Remove source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cue.text}`}
+                            aria-label={`Remove source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cueLine(cue)}`}
                             disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                             onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
                         </div>
                         {hiddenMergeWith && (
                           <p className="trim-note trim-cue-hidden-merge">
-                            Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.startMs)}–{clipTimeStamp(hiddenMergeWith.endMs)} (“{hiddenMergeWith.text}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
+                            Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.startMs)}–{clipTimeStamp(hiddenMergeWith.endMs)} (“{cueLine(hiddenMergeWith)}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
                           </p>
                         )}
                       </li>
@@ -1512,6 +1519,7 @@ function VideoClip() {
             </div>
           )}
           {fullSourceCaptionProblem && <p className="trim-note" role="status">{fullSourceCaptionProblem}</p>}
+          {namedCaptionCount > 0 && <p className="trim-note">Choose WebVTT to keep speaker names. SRT is available when every cue in the export is unnamed.</p>}
           {draftCaptionUrl && <div>
             <p><a className="button secondary" href={draftCaptionUrl} download={`${clipFilename}-draft-captions.vtt`} aria-describedby="draft-captions-note">Save draft trim captions (VTT)</a></p>
             {draftSrtUrl && <p><a className="button secondary" href={draftSrtUrl} download={`${clipFilename}-draft-captions.srt`} aria-describedby="draft-captions-note">Save draft trim captions (SRT)</a></p>}
