@@ -615,7 +615,7 @@ test("selection and title changes retire the applicable copy feedback and prepar
   );
   assert.match(
     section,
-    /function selectPair\(id: PairId\): void \{\s*if \(id === selectedId\) return;\s*clearCopyFeedback\(\);\s*setSelectedId\(id\);/,
+    /function selectPair\(id: PairId\): void \{\s*if \(id === selectedId\) return;\s*draftChoices\.current \+= 1;\s*clearCopyFeedback\(\);\s*setSelectedId\(id\);/,
   );
   assert.match(
     section,

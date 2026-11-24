@@ -489,3 +489,7 @@
     animation-duration: 0.01ms !important;
   }
 }
+
+.title-compare-draft button {
+  min-height: 44px;
+}

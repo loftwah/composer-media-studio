@@ -411,10 +411,14 @@ test("normal image intake can guard an empty-only claim until its last await", (
   assert.match(intake, /if \(!accepted\(\)\) \{\s*setPair\(index, \{ busy: false \}\);\s*return false;/);
   assert.match(intake, /\.\.\.\(options\.title !== undefined \? \{ title: options\.title \} : \{\}\),/);
   assert.ok(intake.indexOf("if (!accepted())") < intake.indexOf("options.title !== undefined"));
-  assert.match(intake, /new Uint8Array\(await file\.arrayBuffer\(\)\)/);
-  assert.match(intake, /inspectImage\(bytes\)/);
-  assert.match(intake, /imagePixelProblem\(source\.orientedWidth, source\.orientedHeight\)/);
-  assert.match(intake, /await createImageBitmap\(file\)/);
+  assert.match(intake, /await validateTitleThumbnail\(file\)/);
+  assert.ok(intake.indexOf("await validateTitleThumbnail(file)") < intake.indexOf("if (!accepted())"));
+  const validationStart = section.indexOf("async function validateTitleThumbnail");
+  const validation = section.slice(validationStart, section.indexOf("export function TitleCompare", validationStart));
+  assert.match(validation, /new Uint8Array\(await file\.arrayBuffer\(\)\)/);
+  assert.match(validation, /inspectImage\(bytes\)/);
+  assert.match(validation, /imagePixelProblem\(source\.orientedWidth, source\.orientedHeight\)/);
+  assert.match(validation, /await createImageBitmap\(file\)/);
   assert.match(intake, /return true;/);
   // Every pair field change advances the occupancy revision, including the
   // direct note control, crop changes and the existing duplicate path.

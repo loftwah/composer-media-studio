@@ -51,6 +51,7 @@ import {
   verifyPackagingFiles,
   type PackagingVerifyOutcome,
 } from "./image-title-compare-verify.ts";
+import { readTitleDraft, saveTitleDraft, titleCompareDraftName } from "./image-title-compare-draft.ts";
 import { createZip, ZIP_MIME, type ZipEntryInput } from "./image-zip.ts";
 import "./image-title-compare.css";
 
@@ -195,6 +196,44 @@ function sameTitleClips(current: TitleClipState, next: TitleClipState): boolean 
   );
 }
 
+async function validateTitleThumbnail(file: File): Promise<Omit<PairImage, "url">> {
+  const declared = imageInputProblem({ name: file.name, type: file.type, size: file.size });
+  if (declared) throw new Error(declared);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const sniffed = sniffLocalImage(bytes);
+  if (!sniffed.supported) throw new Error(sniffed.reason ?? "This is not a JPEG, PNG or WebP image.");
+  let source: ImageMetadataSummary;
+  try {
+    source = inspectImage(bytes);
+  } catch (error) {
+    throw new Error(
+      error instanceof Error
+        ? `This file did not read as a valid ${sniffed.format?.toUpperCase()}: ${error.message}`
+        : "This file did not read as a valid image.",
+    );
+  }
+  const pixelProblem = imagePixelProblem(source.orientedWidth, source.orientedHeight);
+  if (pixelProblem) throw new Error(pixelProblem);
+  // A valid header still proves nothing about pixels: probe the same
+  // decoder the export path uses, then close the bitmap immediately.
+  try {
+    const probe = await createImageBitmap(file);
+    probe.close();
+  } catch {
+    throw new Error(
+      `This ${sniffed.format?.toUpperCase() ?? "image"} has a valid header but no decodable pixels: the decoder refused the file.`,
+    );
+  }
+  return {
+    file,
+    fileName: file.name,
+    mime: sniffed.mime ?? file.type,
+    bytes: file.size,
+    width: source.orientedWidth,
+    height: source.orientedHeight,
+  };
+}
+
 export function TitleCompare({
   preparedImage = null,
   onEditVerifiedPng,
@@ -223,6 +262,11 @@ export function TitleCompare({
   const [exports, setExports] = useState<ExportEntry[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
+  const [draftMessage, setDraftMessage] = useState("");
+  const [draftReading, setDraftReading] = useState(false);
+  const draftFile = useRef<HTMLInputElement | null>(null);
+  const draftRun = useRef(0);
+  const draftChoices = useRef(0);
   const [copyMessage, setCopyMessage] = useState("");
   /** Prepared-export copy feedback belongs to one exact download: its key is
    * that export's object URL, so a replacement can never inherit an older
@@ -298,6 +342,7 @@ export function TitleCompare({
       copyRun.current += 1;
       pngCopyRun.current += 1;
       verifyRun.current += 1;
+      draftRun.current += 1;
       verifiedPngRef.current = null;
       verifiedManifestRef.current = null;
       for (const url of held) URL.revokeObjectURL(url);
@@ -360,10 +405,12 @@ export function TitleCompare({
 
   function togglePreference(id: PairId): void {
     if (preferredId === id) {
+      draftChoices.current += 1;
       setPreferredId(null);
       return;
     }
     if (!completePair(pairs[PAIR_IDS.indexOf(id)])) return;
+    draftChoices.current += 1;
     setPreferredId(id);
   }
 
@@ -388,6 +435,7 @@ export function TitleCompare({
 
   function selectPair(id: PairId): void {
     if (id === selectedId) return;
+    draftChoices.current += 1;
     clearCopyFeedback();
     setSelectedId(id);
   }
@@ -485,37 +533,8 @@ export function TitleCompare({
       // Preserve any edit made while this empty-only intake was validating.
       setPair(index, unchanged() ? { error: reason, busy: false } : { busy: false });
     };
-    const declared = imageInputProblem({ name: file.name, type: file.type, size: file.size });
-    if (declared) {
-      fail(declared);
-      return false;
-    }
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const sniffed = sniffLocalImage(bytes);
-      if (!sniffed.supported) throw new Error(sniffed.reason ?? "This is not a JPEG, PNG or WebP image.");
-      let source: ImageMetadataSummary;
-      try {
-        source = inspectImage(bytes);
-      } catch (error) {
-        throw new Error(
-          error instanceof Error
-            ? `This file did not read as a valid ${sniffed.format?.toUpperCase()}: ${error.message}`
-            : "This file did not read as a valid image.",
-        );
-      }
-      const pixelProblem = imagePixelProblem(source.orientedWidth, source.orientedHeight);
-      if (pixelProblem) throw new Error(pixelProblem);
-      // A valid header still proves nothing about pixels: probe the same
-      // decoder the export path uses, then close the bitmap immediately.
-      try {
-        const probe = await createImageBitmap(file);
-        probe.close();
-      } catch {
-        throw new Error(
-          `This ${sniffed.format?.toUpperCase() ?? "image"} has a valid header but no decodable pixels: the decoder refused the file.`,
-        );
-      }
+      const image = await validateTitleThumbnail(file);
       if (!current()) return false;
       // Reuse is an empty-only claim, and its verification must still name this
       // exact File. Neither a pair edit nor a new source event may be overwritten.
@@ -537,15 +556,7 @@ export function TitleCompare({
         // they were written for. Replacing that media clears both, while the
         // pair's title, creator note and crop stay as the creator left them.
         ...(previous ? { alt: "", hypothesis: "" } : {}),
-        image: {
-          file,
-          url,
-          fileName: file.name,
-          mime: sniffed.mime ?? file.type,
-          bytes: file.size,
-          width: source.orientedWidth,
-          height: source.orientedHeight,
-        },
+        image: { ...image, url },
         error: null,
         busy: false,
       });
@@ -553,6 +564,94 @@ export function TitleCompare({
     } catch (error) {
       fail(error instanceof Error ? error.message : "Could not read this image.");
       return false;
+    }
+  }
+
+  function downloadEditableDraft(): void {
+    if (draftReading || pairs.some(pair => pair.busy)) return;
+    const file = saveTitleDraft({
+      selectedId,
+      preferredId,
+      pairs: pairs.map(({ title, alt, hypothesis, note, image }, index) => ({
+        title, alt, hypothesis, note, anchor: anchors[PAIR_IDS[index]], file: image?.file ?? null,
+      })),
+    });
+    const url = trackUrl(file);
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = titleCompareDraftName;
+      link.click();
+      setDraftMessage("Draft download started. Keep the file to reopen your pairs.");
+    } finally {
+      setTimeout(() => releaseUrl(url), 1000);
+    }
+  }
+
+  async function openEditableDraft(file: File): Promise<void> {
+    if (pairs.some(pair => pair.busy)) return;
+    const run = ++draftRun.current;
+    const revisions = [...pairEdits.current];
+    const choices = draftChoices.current;
+    const current = () => mounted.current && draftRun.current === run;
+    const edited = () => draftChoices.current !== choices
+      || revisions.some((revision, index) => pairEdits.current[index] !== revision);
+    const stillApplicable = () => {
+      if (!current()) return false;
+      if (!edited()) return true;
+      setDraftMessage("Your newer edits were kept. Open the draft again if you want to replace them.");
+      return false;
+    };
+    setDraftReading(true);
+    setDraftMessage("Reading the draft on this device…");
+    try {
+      const draft = await readTitleDraft(file);
+      if (!stillApplicable()) return;
+      if (!draft) throw new Error("This file is not a supported Studio editable draft.");
+      const images: (Omit<PairImage, "url"> | null)[] = [];
+      for (const pair of draft.pairs) {
+        images.push(pair.file ? await validateTitleThumbnail(pair.file) : null);
+        if (!stillApplicable()) return;
+      }
+      const occupied = pairs.some((pair, index) => pair.image || pair.title || pair.alt
+        || pair.hypothesis || pair.note || anchors[PAIR_IDS[index]] !== "centre");
+      if (occupied && !window.confirm("Replace the current three pairs with this draft?")) {
+        setDraftMessage("Draft opening canceled. Your current pairs are still here.");
+        return;
+      }
+
+      const next: Pair[] = [];
+      const nextAnchors = { ...anchors };
+      try {
+        for (const [index, pair] of draft.pairs.entries()) {
+          const { title, alt, hypothesis, note, anchor } = pair;
+          const image = images[index];
+          nextAnchors[PAIR_IDS[index]] = anchor;
+          next.push({
+            title, alt, hypothesis, note,
+            image: image ? { ...image, url: trackUrl(image.file) } : null,
+            error: null, busy: false,
+          });
+        }
+      } catch (error) {
+        for (const pair of next) releaseUrl(pair.image?.url);
+        throw error;
+      }
+
+      for (const index of PAIR_IDS.keys()) pairEdits.current[index] += 1;
+      clearCopyFeedback();
+      retirePreparedOutput();
+      for (const pair of pairs) releaseUrl(pair.image?.url);
+      setPairs(next);
+      setAnchors(nextAnchors);
+      setSelectedId(draft.selectedId);
+      setPreferredId(draft.preferredId);
+      setDuplicateMessage("");
+      setDraftMessage("Editable draft opened. All three pairs are available.");
+    } catch (error) {
+      if (stillApplicable()) setDraftMessage(error instanceof Error ? error.message : "Could not read the draft.");
+    } finally {
+      if (current()) setDraftReading(false);
     }
   }
 
@@ -1641,6 +1740,20 @@ export function TitleCompare({
           Copy selected title
         </button>
       </div>
+      <div className="image-control-actions title-compare-draft" role="group" aria-label="Editable packaging draft">
+        <button type="button" className="secondary" disabled={draftReading || pairs.some(pair => pair.busy)}
+          onClick={downloadEditableDraft}>Save editable draft</button>
+        <button type="button" className="secondary" disabled={draftReading || pairs.some(pair => pair.busy)}
+          onClick={() => draftFile.current?.click()}>Open editable draft</button>
+        <input ref={draftFile} hidden type="file" accept=".studio-draft" aria-label="Open editable draft file"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void openEditableDraft(file);
+          }} />
+      </div>
+      <p className="trim-note">The draft file contains all three pairs and their original thumbnails. It stays on your device.</p>
+      <p className="trim-note" role="status">{draftMessage}</p>
       <div className="image-control-actions" role="group" aria-label="Prepared pairs">
         <button
           type="button"
