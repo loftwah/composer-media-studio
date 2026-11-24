@@ -136,7 +136,7 @@ import {
   gifFramePlacement,
   gifSettingsProblem,
 } from "./image-gif.ts";
-import { createZip, ZIP_MIME } from "./image-zip.ts";
+import { createZip, truncateUtf8, ZIP_MIME } from "./image-zip.ts";
 import {
   IMAGE_QUALITY_MAX_PERCENT,
   IMAGE_QUALITY_MIN_PERCENT,
@@ -1129,6 +1129,7 @@ function Images() {
   const [batch, setBatch] = useState({ total: 0, completed: 0, current: "" });
   const [zipUrl, setZipUrl] = useState("");
   const [zipBytes, setZipBytes] = useState(0);
+  const [includeZipReceipts, setIncludeZipReceipts] = useState(false);
   const [contactSheet, setContactSheet] = useState<ContactSheet | null>(null);
   const [sheetColumns, setSheetColumns] = useState<ContactSheetColumns>("auto");
   const [sheetTile, setSheetTile] = useState<ContactSheetTileSize>(CONTACT_SHEET_TILE);
@@ -1546,6 +1547,15 @@ function Images() {
     releaseUrl(item.url);
     releaseUrl(item.result?.url);
     releaseUrl(item.stripped?.url);
+  }
+
+  function changeZipReceipts(includeReceipts: boolean): void {
+    batchExportRevision.current += 1;
+    setIncludeZipReceipts(includeReceipts);
+    if (zipUrl && batchMessage.startsWith("ZIP ready:")) setBatchMessage("");
+    releaseUrl(zipUrl);
+    setZipUrl("");
+    setZipBytes(0);
   }
 
   function clearBatchExports(): void {
@@ -2241,31 +2251,49 @@ function Images() {
   async function makeZip(): Promise<void> {
     if (!doneItems.length || batchExport || addingRef.current || runningRef.current || socialController.current) return;
     const zipAttempt = batchExportRevision.current;
+    const includeReceipts = includeZipReceipts;
     setBatchExport("zip");
     setBatchMessage("Preparing the ZIP on this device…");
     try {
       const entries: Array<{ name: string; data: Uint8Array }> = [];
       let total = 0;
-      for (const item of doneItems) {
+      let imageCount = 0;
+      for (const [index, item] of doneItems.entries()) {
         if (!item.result) continue;
         const bytes = new Uint8Array(await item.result.blob.arrayBuffer());
         if (zipAttempt !== batchExportRevision.current) return;
         total += bytes.length;
         if (total > MAX_ZIP_BYTES)
           throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download images separately instead.`);
+        const prefix = includeReceipts ? `${String(index + 1).padStart(2, "0")}-` : "";
+        const inputStem = safeStem(item.file.name);
+        // Leave room for dimensions and .receipt inside the ZIP writer's stem limit.
+        const pairedStem = includeReceipts ? truncateUtf8(inputStem, 70) : inputStem;
+        const stem = `${prefix}${pairedStem}-${item.result.width}x${item.result.height}`;
         entries.push({
-          name: `${safeStem(item.file.name)}-${item.result.width}x${item.result.height}.${extensionForImageMime(item.result.mime)}`,
+          name: `${stem}.${extensionForImageMime(item.result.mime)}`,
           data: bytes,
         });
+        if (includeReceipts) {
+          const receipt = buildImageReceipt({ sourceHash: item.sourceHash, result: item.result });
+          const receiptBytes = new TextEncoder().encode(JSON.stringify(receipt));
+          total += receiptBytes.length;
+          if (total > MAX_ZIP_BYTES)
+            throw new Error(`ZIP export stays under ${MAX_ZIP_BYTES / 1024 / 1024} MiB. Download images separately instead.`);
+          entries.push({ name: `${stem}.receipt.json`, data: receiptBytes });
+        }
+        imageCount += 1;
       }
-      const zip = createZip(entries, { date: new Date() });
+      const zip = createZip(entries, includeReceipts
+        ? { date: new Date(), maxEntries: 2 * MAX_BATCH_IMAGES }
+        : { date: new Date() });
       if (!zip.ok) throw new Error(zip.error);
       const blob = blobFromBytes(zip.bytes, ZIP_MIME);
       const url = trackUrl(blob);
       if (zipUrl) releaseUrl(zipUrl);
       setZipUrl(url);
       setZipBytes(blob.size);
-      setBatchMessage(`ZIP ready: ${entries.length} image${entries.length === 1 ? "" : "s"}, ${formatBytes(blob.size)}.`);
+      setBatchMessage(`ZIP ready: ${imageCount} image${imageCount === 1 ? "" : "s"}${includeReceipts ? ` and ${imageCount} receipt${imageCount === 1 ? "" : "s"}` : ""}, ${formatBytes(blob.size)}.`);
     } catch (error) {
       if (zipAttempt === batchExportRevision.current) {
         setBatchMessage(error instanceof Error ? error.message : "Could not build the ZIP.");
@@ -5159,6 +5187,15 @@ function Images() {
           >
             {zipBusy ? "Preparing ZIP…" : `Prepare ZIP${doneItems.length ? ` (${doneItems.length})` : ""}`}
           </button>
+          <label className="image-check">
+            <input
+              type="checkbox"
+              checked={includeZipReceipts}
+              disabled={Boolean(batchExport) || running || socialBusy || adding || importing}
+              onChange={(event) => changeZipReceipts(event.target.checked)}
+            />
+            Include image receipts in ZIP
+          </label>
           {zipUrl && (
             <a className="button secondary" href={zipUrl} download={`media-studio-images-${doneItems.length}.zip`}>
               Download ZIP · {formatBytes(zipBytes)}
