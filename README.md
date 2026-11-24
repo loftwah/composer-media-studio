@@ -124,6 +124,23 @@ It refuses an existing output path and reports the source and output hashes,
 removed metadata labels and verification results. No browser, Studio account,
 network or upload is involved.
 
+## Make a GIF from explicit local files
+
+Build the frontend with `pnpm build:frontend`. Supply two to eight JPEG, PNG or
+WebP paths in frame order and a new output path ending in `.gif`.
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  node scripts/local-gif.mjs --source ./first.png --source ./next.png \
+  --frame-size 160 --delay 350 --output ./animation.gif
+```
+
+Choose a square size of 96, 128, 160, 240 or 320 px and a delay of 100–2000 ms in
+10 ms steps. The optional `--matte '#ffffff'` sets the opaque background. Repeat
+is the default. Use `--once` to stop after one play. The isolated Chrome workbench
+writes the same GIF as Image Tools and reports ordered source hashes, settings,
+the output SHA-256 and the network pass-through count.
+
 ## Make a contact sheet from explicit local files
 
 Build the frontend with `pnpm build:frontend`. Repeat `--source` for two to
