@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { captionReceiptFields, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { captionReceiptFields, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, survivingClipCaptionCount, srtForClipVtt } from '../src/frontend/clip-captions.ts';
+import { filterCuesByText } from '../src/frontend/clip-cue-search.ts';
 
 test('imported caption cues are trimmed, rebased and escaped as plain WebVTT', () => {
   const cues = parseCaptionFile('1\n00:00:00,500 --> 00:00:02,000\nA & B\n\n2\n00:00:02,100 --> 00:00:05,200\n&lt;Next&gt;\n', 0, 180_000);
@@ -90,6 +91,26 @@ test('cue review rows expose trim-relative times and add trim start for original
   assert.equal(clipCaptionCues(cues, Number.NaN, 1), null);
   assert.equal(clipCaptionCues(cues, 2, 2), null);
   assert.equal(clipCaptionCues(cues, 2, 10, 61_000), null);
+});
+
+test('All source cues lists every stored cue at its unshifted original time and source index', () => {
+  const cues = parseCaptionFile('WEBVTT\n\n00:00:00.500 --> 00:00:02.000\nBefore trim\n\n00:00:05.000 --> 00:00:08.000\nOutside the trim\n\n00:00:11.000 --> 00:00:12.500\nAfter\n', 0, 180_000);
+  const rows = sourceCaptionCues(cues);
+  assert.deepEqual(rows, [
+    { startMs: 500, endMs: 2000, text: 'Before trim', sourceIndex: 0 },
+    { startMs: 5000, endMs: 8000, text: 'Outside the trim', sourceIndex: 1 },
+    { startMs: 11000, endMs: 12500, text: 'After', sourceIndex: 2 },
+  ]);
+  // A trim, clamp or offset can hide a cue from the in-trim list, but it can
+  // never change or drop the matching source row.
+  assert.deepEqual(clipCaptionCues(cues, 4, 9, 1000)?.map(cue => cue.sourceIndex), [1]);
+  assert.deepEqual(clipCaptionCues(cues, 3.5, 4.5), []);
+  assert.deepEqual(sourceCaptionCues(cues), rows);
+  // The shared bounded search filters the source rows without rewriting them.
+  const snapshot = structuredClone(rows);
+  assert.deepEqual(filterCuesByText(rows, 'OUTSIDE').map(row => row.sourceIndex), [1]);
+  assert.deepEqual(rows, snapshot);
+  assert.deepEqual(sourceCaptionCues([]), []);
 });
 
 test('a caption receipt carries the source digest and offset but never cue text', () => {

@@ -9,6 +9,11 @@
 .trim-cue-review { border-top:1px solid var(--line); padding-top:.75rem; }
 .trim-cue-review > summary { cursor:pointer; font-weight:700; min-height:44px; align-content:center; }
 .trim-cue-review[open] > summary { margin-bottom:.4rem; }
+.trim-cue-views { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .6rem; }
+.trim-cue-views > button { flex:1 1 auto; }
+.trim-cue-views > button[aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); color:var(--ink); font-weight:700; }
+.trim-cue-view-unknown { margin:.2rem 0 .6rem; }
+.trim-cue-source-time { white-space:normal; overflow-wrap:anywhere; }
 .trim-cue-search { display:grid; gap:.35rem; }
 .trim-cue-search > label { font-weight:600; }
 .trim-cue-search-controls { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
