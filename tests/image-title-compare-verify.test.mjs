@@ -181,6 +181,20 @@ test("an alt-bearing manifest still verifies and never echoes its free text", as
   assert.doesNotMatch(JSON.stringify(outcome), /red tram|wet street/);
 });
 
+test("a hypothesis-bearing manifest still verifies and never echoes its text", async () => {
+  const bytes = png(640, 360);
+  const withHypothesis = manifest(bytes, { hypothesis: "Expect the quieter cut to hold" });
+  const without = manifest(bytes);
+  // The additive V1 field is compatible: the verifier reads the same facts.
+  assert.deepEqual(
+    parsePackagingManifest(JSON.stringify(withHypothesis)),
+    parsePackagingManifest(JSON.stringify(without)),
+  );
+  const outcome = await verify(withHypothesis, bytes);
+  assert.equal(outcome.status, "matched");
+  assert.doesNotMatch(JSON.stringify(outcome), /quieter cut|hypothesis/);
+});
+
 test("exact byte size, dimensions and SHA-256 differences stay distinguishable", async () => {
   const bytes = png(640, 360, 7);
 

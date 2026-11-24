@@ -19,15 +19,17 @@ export type PairOccupancy = {
   title: string;
   /** Optional thumbnail alt text counts as work, like the creator note. */
   alt?: string;
+  /** Optional creator-written testing hypothesis counts as work too. */
+  hypothesis?: string;
   note: string;
   hasImage: boolean;
   busy: boolean;
   anchor: CropAnchorKey;
 };
 
-/** An empty pair has no title, alt text, note, thumbnail, pending decode or
- * crop edit. Older occupancy snapshots without the optional alt field still
- * read as empty. */
+/** An empty pair has no title, alt text, hypothesis, note, thumbnail, pending
+ * decode or crop edit. Older occupancy snapshots without the optional fields
+ * still read as empty. */
 export function pairIsEmpty(pair: PairOccupancy): boolean {
   return (
     !pair.busy &&
@@ -35,6 +37,7 @@ export function pairIsEmpty(pair: PairOccupancy): boolean {
     pair.anchor === "centre" &&
     pair.title.trim() === "" &&
     (pair.alt ?? "").trim() === "" &&
+    (pair.hypothesis ?? "").trim() === "" &&
     pair.note.trim() === ""
   );
 }
@@ -81,6 +84,11 @@ export const NOTE_MAX_LENGTH = 240;
  * it gets a smaller cap than the creator note; the editor states it visibly. */
 export const ALT_MAX_LENGTH = 160;
 
+/** A creator's written expectation for one title + thumbnail pair. It is a
+ * private note to oneself, not a score, measurement or experiment result, so it
+ * reuses the creator-note bound and normaliser exactly. */
+export const HYPOTHESIS_MAX_LENGTH = NOTE_MAX_LENGTH;
+
 /**
  * Normalise a raw note to bounded plain text: CRLF becomes LF, C0/C1 controls
  * and DEL are dropped, the text is trimmed and finally capped. Empty or
@@ -110,6 +118,18 @@ export function normalizeCreatorNote(
 export function normalizeThumbnailAlt(
   raw: string,
   maxLength: number = ALT_MAX_LENGTH,
+): string | undefined {
+  return normalizeCreatorNote(raw, maxLength);
+}
+
+/**
+ * Normalise the optional testing hypothesis with the same bounded-plain-text
+ * rule a creator note uses. Blank input yields `undefined`, so a pair without
+ * a hypothesis adds no field and keeps the older manifest shape and bytes.
+ */
+export function normalizeTestingHypothesis(
+  raw: string,
+  maxLength: number = HYPOTHESIS_MAX_LENGTH,
 ): string | undefined {
   return normalizeCreatorNote(raw, maxLength);
 }
@@ -221,6 +241,10 @@ export type TitlePairManifest = {
   /** Additive V1 metadata, like note: present only when the captured pair
    * carried nonblank thumbnail alt text. Bounded plain text, browser-local. */
   alt?: string;
+  /** Additive V1 metadata, like note: present only when the captured pair
+   * carried a nonblank testing hypothesis. A creator's bounded plain-text
+   * expectation, never a measured score or an experiment result. */
+  hypothesis?: string;
   title: { text: string; maxLength: number };
   source: ManifestSourceFacts;
   crop: { mode: "cover"; anchor: CropAnchorKey; sourceRect: CoverRect };
@@ -254,9 +278,13 @@ export function buildTitlePairManifest(input: {
   /** Omit it when the pair has no thumbnail alt text, so a no-alt manifest
    * keeps the exact shape and bytes it had before this optional field. */
   alt?: string;
+  /** Omit it when the pair has no hypothesis, so a pair without one keeps the
+   * exact manifest bytes it had before this optional field existed. */
+  hypothesis?: string;
 }): TitlePairManifest {
   const note = normalizeCreatorNote(input.note ?? "");
   const alt = normalizeThumbnailAlt(input.alt ?? "");
+  const hypothesis = normalizeTestingHypothesis(input.hypothesis ?? "");
   return {
     schema: MANIFEST_SCHEMA,
     version: MANIFEST_VERSION,
@@ -266,6 +294,7 @@ export function buildTitlePairManifest(input: {
     ...(input.preferredPairId ? { preferredPairId: input.preferredPairId } : {}),
     ...(note ? { note } : {}),
     ...(alt ? { alt } : {}),
+    ...(hypothesis ? { hypothesis } : {}),
     title: { text: input.title, maxLength: TITLE_MAX_LENGTH },
     source: input.source,
     crop: { mode: "cover", anchor: input.anchor, sourceRect: input.sourceRect },

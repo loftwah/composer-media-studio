@@ -21,20 +21,21 @@
   max-width: 18rem;
 }
 
-/* The optional thumbnail alt text is a compact field for the selected pair.
-   The hint carries the visible character bound and the blank fallback, and the
-   input fills the control column without overflowing it. */
-.title-compare-alt {
+/* Optional fields for the selected pair fit the control column. */
+.title-compare-alt,
+.title-compare-hypothesis {
   display: grid;
   gap: 0.35rem;
   max-width: 26rem;
 }
 
-.title-compare-alt input {
+.title-compare-alt input,
+.title-compare-hypothesis input {
   width: 100%;
 }
 
-.title-compare-alt-note {
+.title-compare-alt-note,
+.title-compare-hypothesis-note {
   margin: -0.6rem 0 0;
 }
 
