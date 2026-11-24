@@ -47,6 +47,7 @@ import {
 } from "./image-title-compare-plan.ts";
 import {
   MAX_PACKAGING_MANIFEST_BYTES,
+  readPackagingTitle,
   verifyPackagingFiles,
   type PackagingVerifyOutcome,
 } from "./image-title-compare-verify.ts";
@@ -264,9 +265,11 @@ export function TitleCompare({
   /** One run per packaging check, so changing either selection or unmounting
    * retires a slow response before it can report on other files. */
   const verifyRun = useRef(0);
-  /** The exact File behind a current match. A ref makes selection changes and
-   * stale click events refuse reuse synchronously, before React rerenders. */
+  /** The exact Files behind a current match. Refs make selection changes and
+   * stale click events refuse either recovery action synchronously, before
+   * React rerenders. */
   const verifiedPngRef = useRef<File | null>(null);
+  const verifiedManifestRef = useRef<File | null>(null);
 
   // A hash link into this section lands on a page whose heading only exists
   // after React mounts, so the browser's native fragment scroll misses it
@@ -292,6 +295,7 @@ export function TitleCompare({
       pngCopyRun.current += 1;
       verifyRun.current += 1;
       verifiedPngRef.current = null;
+      verifiedManifestRef.current = null;
       for (const url of held) URL.revokeObjectURL(url);
       held.clear();
       exportsRef.current = [];
@@ -457,7 +461,7 @@ export function TitleCompare({
   async function chooseImage(
     index: number,
     file: File | undefined,
-    options: { emptyRevision?: number; canCommit?: () => boolean } = {},
+    options: { emptyRevision?: number; canCommit?: () => boolean; title?: string } = {},
   ): Promise<boolean> {
     if (!file) return false;
     // A stale empty-pair click must not even mark a now-occupied pair busy.
@@ -522,6 +526,9 @@ export function TitleCompare({
       releaseUrl(previous?.url);
       const url = trackUrl(file);
       setPair(index, {
+        // Only an explicit verified restore supplies a title, committed in the
+        // same accepted patch as the processed image. React renders it as text.
+        ...(options.title !== undefined ? { title: options.title } : {}),
         // An alt description and a hypothesis belong to the exact thumbnail
         // they were written for. Replacing that media clears both, while the
         // pair's title, creator note and crop stay as the creator left them.
@@ -977,6 +984,7 @@ export function TitleCompare({
   function clearVerify(): void {
     verifyRun.current += 1;
     verifiedPngRef.current = null;
+    verifiedManifestRef.current = null;
     setVerifyPhase("idle");
     setVerifyMessage("");
     setVerifyOutcome(null);
@@ -999,6 +1007,7 @@ export function TitleCompare({
     const current = () => mounted.current && verifyRun.current === attempt;
     // A new check retires reuse immediately, even before its first await.
     verifiedPngRef.current = null;
+    verifiedManifestRef.current = null;
     setVerifyReuseMessage("");
     setVerifyPhase("checking");
     setVerifyMessage("Checking the selected manifest and PNG on this device…");
@@ -1009,6 +1018,7 @@ export function TitleCompare({
       setVerifyOutcome(outcome);
       if (outcome.status === "matched") {
         verifiedPngRef.current = pngFile;
+        verifiedManifestRef.current = manifestFile;
         setVerifyPhase("matched");
         setVerifyMessage("Matched. The PNG's type, byte size, dimensions and SHA-256 agree with the manifest.");
       } else if (outcome.status === "invalid") {
@@ -1021,6 +1031,7 @@ export function TitleCompare({
     } catch {
       if (!current()) return;
       verifiedPngRef.current = null;
+      verifiedManifestRef.current = null;
       setVerifyOutcome(null);
       setVerifyPhase("invalid");
       setVerifyMessage("The selected files could not be checked.");
@@ -1050,6 +1061,58 @@ export function TitleCompare({
     if (!mounted.current || verifyRun.current !== attempt || verifiedPngRef.current !== file) return;
     setVerifyReuseMessage(used
       ? `Added the verified PNG to Pair ${PAIR_LABELS[target]}.`
+      : `Pair ${PAIR_LABELS[target]} changed. Choose an empty pair and try again.`);
+  }
+
+  /** The distinct recovery action reads the same currently matched, bounded
+   * manifest only after its exact PNG matched and an empty pair was identified.
+   * The validated title reaches the pair in chooseImage's one accepted patch;
+   * no old crop, creator note, alt text, hypothesis or preference is imported. */
+  async function restoreVerifiedTitleAndPng(target: PairId, emptyRevision: number): Promise<void> {
+    const file = verifiedPngRef.current;
+    const manifestFile = verifiedManifestRef.current;
+    const attempt = verifyRun.current;
+    if (
+      verifyPhase !== "matched" ||
+      verifyOutcome?.status !== "matched" ||
+      !file ||
+      file !== verifyPngFile ||
+      !manifestFile ||
+      manifestFile !== verifyManifestFile
+    )
+      return;
+    const targetIndex = PAIR_IDS.indexOf(target);
+    if (
+      pairEdits.current[targetIndex] !== emptyRevision ||
+      !pairIsEmpty(pairOccupancy(pairs[targetIndex], anchors[target]))
+    )
+      return;
+    const current = () =>
+      mounted.current &&
+      verifyRun.current === attempt &&
+      verifiedPngRef.current === file &&
+      verifiedManifestRef.current === manifestFile;
+    setVerifyReuseMessage(`Restoring the verified title and PNG to Pair ${PAIR_LABELS[target]}…`);
+    let title: string;
+    try {
+      title = await readPackagingTitle(manifestFile);
+    } catch (error) {
+      if (!current()) return;
+      setVerifyReuseMessage(
+        error instanceof Error ? error.message : "Choose a readable packaging manifest.",
+      );
+      return;
+    }
+    if (!current()) return;
+    if (pairEdits.current[targetIndex] === emptyRevision) selectPair(target);
+    const used = await chooseImage(targetIndex, file, {
+      emptyRevision,
+      title,
+      canCommit: current,
+    });
+    if (!current()) return;
+    setVerifyReuseMessage(used
+      ? `Restored the title and verified PNG to Pair ${PAIR_LABELS[target]}. You can edit the title.`
       : `Pair ${PAIR_LABELS[target]} changed. Choose an empty pair and try again.`);
   }
 
@@ -1727,28 +1790,59 @@ export function TitleCompare({
         )}
         {hasCurrentVerifiedPng && (
           <div className="title-compare-verify-reuse" data-title-compare-verify-reuse>
-            <button
-              type="button"
-              className="secondary"
-              data-title-compare-verify-reuse-use
-              data-title-compare-verify-reuse-target={verifiedReuseTarget ?? undefined}
-              data-title-compare-verify-reuse-state={verifiedReuseTarget ? "ready" : "no-empty"}
-              disabled={!verifiedReuseTarget}
-              aria-disabled={!verifiedReuseTarget}
-              aria-describedby="image-title-compare-verify-reuse-note"
-              onClick={() => {
-                if (verifiedReuseTarget && verifiedReuseRevision !== null)
-                  void reuseVerifiedPng(verifiedReuseTarget, verifiedReuseRevision);
-              }}
+            <div
+              className="image-control-actions title-compare-verify-reuse-actions"
+              role="group"
+              aria-label="Verified packaging recovery"
             >
-              Use verified PNG in an empty pair
-            </button>
+              <button
+                type="button"
+                className="secondary"
+                data-title-compare-verify-reuse-use
+                data-title-compare-verify-reuse-target={verifiedReuseTarget ?? undefined}
+                data-title-compare-verify-reuse-state={verifiedReuseTarget ? "ready" : "no-empty"}
+                disabled={!verifiedReuseTarget}
+                aria-disabled={!verifiedReuseTarget}
+                aria-describedby="image-title-compare-verify-reuse-note"
+                onClick={() => {
+                  if (verifiedReuseTarget && verifiedReuseRevision !== null)
+                    void reuseVerifiedPng(verifiedReuseTarget, verifiedReuseRevision);
+                }}
+              >
+                Use verified PNG in an empty pair
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                data-title-compare-verify-restore-use
+                data-title-compare-verify-restore-target={verifiedReuseTarget ?? undefined}
+                data-title-compare-verify-restore-state={verifiedReuseTarget ? "ready" : "no-empty"}
+                disabled={!verifiedReuseTarget}
+                aria-disabled={!verifiedReuseTarget}
+                aria-describedby="image-title-compare-verify-reuse-note image-title-compare-verify-restore-note"
+                onClick={() => {
+                  if (verifiedReuseTarget && verifiedReuseRevision !== null)
+                    void restoreVerifiedTitleAndPng(verifiedReuseTarget, verifiedReuseRevision);
+                }}
+              >
+                Restore title and PNG in an empty pair
+              </button>
+            </div>
             <p
               className="trim-note"
               id="image-title-compare-verify-reuse-note"
               data-title-compare-verify-reuse-note
             >
               {verifiedReuseNote}
+            </p>
+            <p
+              className="trim-note"
+              id="image-title-compare-verify-restore-note"
+              data-title-compare-verify-restore-note
+            >
+              {verifiedReuseTarget
+                ? "Restore the editable title from the manifest. The PNG uses its original exported crop."
+                : "Both recovery actions need the same completely empty pair."}
             </p>
             <p className="trim-note" role="status" aria-live="polite" data-title-compare-verify-reuse-status>
               {verifyReuseMessage}
