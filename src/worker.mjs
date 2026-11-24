@@ -1,7 +1,6 @@
 // MIT. Media Studio Worker: owner studio, public pages and the job engine.
 
 import { readLoftwahFmTrack } from "./lib/loftwahfm-import.mjs";
-import { COMPOSER_ARTWORK_DOWNLOAD_API } from "./frontend/composer-artwork.ts";
 import { darkroomOriginalKey, isDarkroomGeneration } from "./lib/darkroom.mjs";
 import {
   allowedActions,
@@ -76,7 +75,7 @@ import { models, publicModels, publicRetiredModels, retiredModels, getModel, val
 import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.ts";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
-import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.ts";
+import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi } from "./lib/woodhouse-share.ts";
 import { shell, loginPage, notFoundPage, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
@@ -85,6 +84,7 @@ import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } fr
 import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.mjs";
 import { publicOrigin, publicDiscoveryResponse } from "./lib/sitemap.ts";
 import { checkPublicImage } from "./lib/public-image-privacy.ts";
+import { securityHeaders, studioResponseHeaders } from "./lib/response-headers.ts";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
 import { handleGallery, homeShowcase } from "./lib/gallery-showcase.ts";
 import { publicHelpResponse, publicHomeResponse } from "./lib/public-home.ts";
@@ -138,19 +138,6 @@ const BUILD = {
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
-
-function securityHeaders(response, woodhouse = false, { noReferrer = false, composerArtwork = false } = {}) {
-  const headers = new Headers(response.headers);
-  headers.set("x-content-type-options", "nosniff");
-  headers.set("referrer-policy", noReferrer ? "no-referrer" : "strict-origin-when-cross-origin");
-  headers.set("x-frame-options", "DENY");
-  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
-  headers.set(
-    "content-security-policy",
-    `default-src 'self'; img-src 'self' data: blob:${woodhouse ? " " + shareOrigin : ""}; media-src 'self' blob:; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; connect-src 'self'${composerArtwork ? " " + COMPOSER_ARTWORK_DOWNLOAD_API : ""}; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
-  );
-  return new Response(response.body, { status: response.status, headers });
-}
 
 function assertSameOrigin(request, env) {
   const origin = request.headers.get("origin");
@@ -2521,15 +2508,7 @@ export default {
       const response = url.pathname.startsWith("/api/")
         ? await handleApi(request, env, url, ctx)
         : await handlePublic(request, env, url);
-      const reviewPath = /^\/r\/[A-Za-z0-9_-]{1,128}(?:\/(?:media|compare))?\/?$/.test(url.pathname) || url.pathname.startsWith("/api/review/");
-      const pagePath = url.pathname.replace(/\/+$/, "") || "/";
-      const studioShell = (pagePath === "/" || pagePath === "/studio") &&
-        response.headers.get("cache-control") === "private, no-store";
-      const shareImages = env.WOODHOUSE_SHARE === "true" && studioShell;
-      return securityHeaders(response, shareImages, {
-        noReferrer: reviewPath,
-        composerArtwork: pagePath === "/tools/images",
-      });
+      return studioResponseHeaders(response, url.pathname, env);
     } catch (error) {
       if (error instanceof PortableError)
         return securityHeaders(json({ error: { code: error.code, message: error.message }, report: error.report }, error.status));
