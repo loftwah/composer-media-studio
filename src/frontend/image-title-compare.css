@@ -15,6 +15,45 @@
   gap: 1rem;
 }
 
+/* First use stays beside the short introduction. The sample action is a normal
+   secondary control, with a calm local-only status directly underneath. */
+.title-compare-intro {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.title-compare-intro-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+}
+
+.title-compare-intro-row .trim-note {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.title-compare-sample {
+  flex: none;
+  min-height: 44px;
+}
+
+.title-compare-sample[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.title-compare-sample[aria-disabled="true"]:hover {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.title-compare-sample-status {
+  margin: 0;
+}
+
 /* The selected pair's crop and optional metadata stay beside the primary pair
    controls without pushing their first-run title and picker down the page. */
 .title-compare-details {
@@ -492,4 +531,8 @@
 
 .title-compare-draft button {
   min-height: 44px;
+}
+
+.title-compare-sample-status:empty {
+  margin: 0;
 }
