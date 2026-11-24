@@ -105,6 +105,37 @@ export type DeskNextAction = {
   link?: { href: string; label: string };
 };
 
+export const PROMO_DESK_READ_ONLY_STATUS = "Read-only · inferred from saved records, not linked by this brief revision";
+
+/** One identity for the visible instruction and the exact saved brief it describes. */
+export function promoDeskHandoffKey(
+  brief: Pick<PromoBriefLite, "id" | "title" | "revision">,
+  next: DeskNextAction,
+): string {
+  return JSON.stringify([brief.id, brief.title, brief.revision, next.text, next.link?.href ?? null, next.link?.label ?? null]);
+}
+
+/** Only the desk's existing in-app hash destination can become a handoff link. */
+const safeHandoffDestination = (link: { href: string; label: string }, origin?: string): string | null => {
+  if (!/^#\/[^?#\u0000-\u0020\u007f<>]*$/u.test(link.href)) return null;
+  if (!/^[^\[\]\u0000-\u001f\u007f]+$/u.test(link.label)) return null;
+  const href = origin ? new URL(link.href, origin).href : link.href;
+  return `[${link.label}](<${href}>)`;
+};
+
+/** Plain text for the visible next action, never the script, raw records or media. */
+export function promoDeskHandoffText(
+  brief: Pick<PromoBriefLite, "title" | "revision">,
+  next: DeskNextAction,
+  origin?: string,
+): string {
+  const lines = [`Next: ${next.text}`, `Brief: ${brief.title} · v${brief.revision}`];
+  const destination = next.link ? safeHandoffDestination(next.link, origin) : null;
+  if (destination) lines.push(`Destination: ${destination}`);
+  lines.push(`Status: ${PROMO_DESK_READ_ONLY_STATUS}`);
+  return lines.join("\n");
+}
+
 const wordsIn = (value: string) => (value.trim() ? value.trim().split(/\s+/u).length : 0);
 
 /** The combined spoken script, built exactly like the promo workbench does. */

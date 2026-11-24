@@ -2,9 +2,12 @@
 // existing promo workbench section; it owns one small fetch of the project's
 // review rooms and derives every other fact from props the Assemble surface
 // already holds. It starts no job, spends nothing and publishes nothing.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
+  PROMO_DESK_READ_ONLY_STATUS,
   promoDesk,
+  promoDeskHandoffKey,
+  promoDeskHandoffText,
   type PromoBriefLite,
   type PromoReviewRoomLite,
 } from "./promo-desk";
@@ -29,6 +32,8 @@ const sceneList = (indexes: number[]) => {
 
 const truncate = (value: string, max = 140) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
+type DeskCopyFeedback = { key: string; message: string; fallback: string | null; busy: boolean };
+
 export function PromoDesk({
   projectId,
   brief,
@@ -46,6 +51,13 @@ export function PromoDesk({
   const [roomsFailed, setRoomsFailed] = useState(false);
   const [roomsBusy, setRoomsBusy] = useState(false);
   const abortRooms = useRef<AbortController | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<DeskCopyFeedback | null>(null);
+  const copyRun = useRef(0);
+  const handoffKeyRef = useRef("");
+  const copyTrigger = useRef<HTMLButtonElement | null>(null);
+  const copyFallback = useRef<HTMLTextAreaElement | null>(null);
+  const copyStatusId = useId();
+  const copyFallbackId = useId();
 
   // One rooms store, scoped to this project. A new project or an unmount aborts
   // the old read so a late response can never land under the wrong brief.
@@ -79,9 +91,55 @@ export function PromoDesk({
     return () => abortRooms.current?.abort();
   }, [loadRooms]);
 
-  if (!brief) return null;
-  const desk = promoDesk(brief, assets, compositions, generations, rooms, roomsFailed, projectId);
+  const desk = brief ? promoDesk(brief, assets, compositions, generations, rooms, roomsFailed, projectId) : null;
+  const handoffText = brief && desk ? promoDeskHandoffText(brief, desk.next, window.location.origin) : "";
+  const handoffKey = brief && desk ? promoDeskHandoffKey(brief, desk.next) : "";
+  handoffKeyRef.current = handoffKey;
+  const currentCopy = copyFeedback?.key === handoffKey ? copyFeedback : null;
+
+  // A new saved brief, revision or derived action retires both an in-flight
+  // native write and its manual-copy field. The same cleanup handles unmount.
+  useEffect(() => {
+    copyRun.current += 1;
+    setCopyFeedback(null);
+    return () => { copyRun.current += 1; };
+  }, [handoffKey]);
+
+  useEffect(() => {
+    if (!currentCopy?.fallback) return;
+    const field = copyFallback.current;
+    if (field && document.activeElement === copyTrigger.current) {
+      field.focus();
+      field.select();
+    }
+  }, [currentCopy?.fallback, handoffKey]);
+
+  if (!brief || !desk) return null;
   const assetHref = (assetId: string) => `#/a/${encodeURIComponent(projectId)}/${encodeURIComponent(assetId)}`;
+
+  async function copyNextAction(): Promise<void> {
+    if (currentCopy?.busy) return;
+    const key = handoffKey;
+    const text = handoffText;
+    const run = ++copyRun.current;
+    const current = () => copyRun.current === run && handoffKeyRef.current === key;
+    setCopyFeedback({ key, message: "Copying next action…", fallback: null, busy: true });
+    try {
+      if (typeof navigator === "undefined" || typeof navigator.clipboard?.writeText !== "function") throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(text);
+      if (!current()) return;
+      setCopyFeedback({ key, message: "Next action copied to the clipboard.", fallback: null, busy: false });
+    } catch {
+      if (!current()) return;
+      setCopyFeedback({
+        key,
+        message: "Copy the handoff text from the field below.",
+        fallback: text,
+        busy: false,
+      });
+    }
+  }
+
   const pill: Record<string, [string, string]> = {
     "script-ready": ["ok", "Ready"],
     "script-missing": ["", "Missing input"],
@@ -234,13 +292,39 @@ export function PromoDesk({
     <section className="promo-desk" aria-label={`Promo desk for ${brief.title}`}>
       <div className="promo-desk-head">
         <h3 id="promo-desk-title">Where this promo stands</h3>
-        <span className="small">Read-only · inferred from saved records, not linked by this brief revision</span>
+        <span className="small">{PROMO_DESK_READ_ONLY_STATUS}</span>
       </div>
       <ol className="promo-desk-stages">{rows}</ol>
       <p className="promo-desk-next">
         <strong>Next:</strong> {desk.next.text}
         {desk.next.link && <a href={desk.next.link.href}>{desk.next.link.label}</a>}
+        <button
+          ref={copyTrigger}
+          type="button"
+          className="quiet promo-desk-copy"
+          aria-disabled={currentCopy?.busy === true}
+          aria-describedby={currentCopy?.message ? copyStatusId : undefined}
+          onClick={() => void copyNextAction()}
+        >
+          Copy next action
+        </button>
       </p>
+      {currentCopy && <p id={copyStatusId} className="small promo-desk-copy-status" role="status" aria-live="polite" aria-atomic="true">{currentCopy.message}</p>}
+      {currentCopy && currentCopy.fallback !== null && (
+        <label className="promo-desk-copy-fallback" htmlFor={copyFallbackId}>
+          Next action handoff text — select and copy
+          <textarea
+            id={copyFallbackId}
+            ref={copyFallback}
+            readOnly
+            rows={6}
+            value={currentCopy.fallback}
+            spellCheck={false}
+            onFocus={(event) => event.currentTarget.select()}
+            onClick={(event) => event.currentTarget.select()}
+          />
+        </label>
+      )}
       <p className="small promo-desk-note">
         Narration and storyboard rows are inferred matches, not links saved with this brief revision. A Studio Voice job matches only when
         its saved request prompt exactly equals this script (newest saved take if several match), and a storyboard matches when it uses that

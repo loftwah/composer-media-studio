@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import {
   narrationStage,
   nextAction,
+  PROMO_DESK_READ_ONLY_STATUS,
+  promoDeskHandoffKey,
+  promoDeskHandoffText,
   promoScript,
   promoDesk,
   reviewStage,
@@ -187,6 +190,94 @@ test('the next action is the first actionable stage, with exact deep links', () 
   assert.match(fallback.text, /History/);
   assert.doesNotMatch(fallback.text, /ready to share/);
   assert.equal(fallback.link.href, '#/p/proj_1/history');
+});
+
+test('the handoff is exact plain text for the visible action and saved brief label', () => {
+  const selected = brief({ title: 'Fictional “desk” — launch', revision: 7 });
+  const narrationReady = { state: 'ready', job: { id: 'g', status: 'saved', assetId: 'asset_voice', error: null }, asset: audio() };
+  const readyStoryboard = { state: 'ready', composition: composition(), job: { id: 'g', status: 'saved', assetId: 'asset_cut', error: null }, cut: audio({ id: 'asset_cut' }), stale: false, extraCompositions: 0, ambiguous: false };
+  const action = nextAction(scriptStage(selected), narrationReady, readyStoryboard, { state: 'approved', roomCount: 1 }, 'proj_1');
+  assert.equal(promoDeskHandoffText(selected, action), [
+    `Next: ${action.text}`,
+    'Brief: Fictional “desk” — launch · v7',
+    'Destination: [Open Publish](<#/p/proj_1/publish>)',
+    `Status: ${PROMO_DESK_READ_ONLY_STATUS}`,
+  ].join('\n'));
+  assert.match(action.text, /feedback only, not permission to publish/);
+});
+
+test('the handoff omits the script, raw brief fields and media records', () => {
+  const selected = brief({
+    title: 'Fictional promo', audience: 'private-audience', brief: 'private-raw-brief', cta: 'private-cta',
+    scenes: [{ spoken: 'private-script-sentence', visual: 'private-visual' }],
+  });
+  const privateAsset = audio({ title: 'private-asset-title', file: '/private/media-file', download: 'https://media.invalid/private' });
+  const desk = promoDesk(selected, [privateAsset], [], [], null, false, 'proj_1');
+  const text = promoDeskHandoffText(selected, desk.next);
+  assert.equal(text, [
+    `Next: ${desk.next.text}`,
+    'Brief: Fictional promo · v2',
+    `Status: ${PROMO_DESK_READ_ONLY_STATUS}`,
+  ].join('\n'));
+  assert.doesNotMatch(text, /Destination:|private-|media\.invalid|authorization|bearer|token|session|workspace|account/i);
+});
+
+test('only an existing safe in-app action destination becomes a handoff link', () => {
+  const selected = brief();
+  const safe = { text: 'Open Review.', link: { href: '#/p/proj%2Fone/review', label: 'Open Review' } };
+  assert.match(promoDeskHandoffText(selected, safe), /Destination: \[Open Review\]\(<#\/p\/proj%2Fone\/review>\)/);
+  assert.match(promoDeskHandoffText(selected, safe, 'https://media.loftwah.com'), /https:\/\/media\.loftwah\.com\/#\/p\/proj%2Fone\/review/);
+  for (const href of [
+    'javascript:alert(1)',
+    'https://outside.invalid/handoff',
+    '//outside.invalid/handoff',
+    '/outside/handoff',
+    '#/p/proj_1/review?token=private',
+    '#/p/proj_1/review\nprivate-extra',
+  ]) {
+    const text = promoDeskHandoffText(selected, { text: 'Inspect Review.', link: { href, label: 'Open Review' } });
+    assert.doesNotMatch(text, /Destination:|outside\.invalid|javascript:|token|private-extra/, href);
+  }
+});
+
+test('the handoff identity changes only with the saved brief or derived action', () => {
+  const action = { text: 'Check History.', link: { href: '#/p/proj_1/history', label: 'Open History' } };
+  const key = promoDeskHandoffKey(brief(), action);
+  assert.equal(promoDeskHandoffKey(brief(), action), key);
+  assert.notEqual(promoDeskHandoffKey(brief({ id: 'promo_2' }), action), key);
+  assert.notEqual(promoDeskHandoffKey(brief({ title: 'Renamed promo' }), action), key);
+  assert.notEqual(promoDeskHandoffKey(brief({ revision: 3 }), action), key);
+  assert.notEqual(promoDeskHandoffKey(brief(), { ...action, text: 'Check Review.' }), key);
+  assert.notEqual(promoDeskHandoffKey(brief(), { ...action, link: { ...action.link, href: '#/p/proj_1/review' } }), key);
+  assert.notEqual(promoDeskHandoffKey(brief(), { ...action, link: { ...action.link, label: 'Open project history' } }), key);
+});
+
+test('the desk uses one native clipboard write with selectable denial text and stale-write cleanup', () => {
+  const view = readFileSync(new URL('../src/frontend/promo-desk.tsx', import.meta.url), 'utf8');
+  const rules = readFileSync(new URL('../src/frontend/promo-desk.ts', import.meta.url), 'utf8');
+  const stylesheet = readFileSync(new URL('../src/frontend/song-plans.css', import.meta.url), 'utf8');
+  const copyStart = view.indexOf('  async function copyNextAction');
+  const copyEnd = view.indexOf('\n  const pill:', copyStart);
+  assert.ok(copyStart >= 0 && copyEnd > copyStart);
+  const copy = view.slice(copyStart, copyEnd);
+  assert.equal((view.match(/Copy next action/g) ?? []).length, 1);
+  assert.equal((copy.match(/navigator\.clipboard\.writeText/g) ?? []).length, 1);
+  assert.match(copy, /await navigator\.clipboard\.writeText\(text\)/);
+  assert.doesNotMatch(copy, /execCommand|navigator\.permissions|fetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|indexedDB|document\.cookie/);
+  assert.match(view, /promoDeskHandoffText\(brief, desk\.next, window\.location\.origin\)/);
+  assert.match(view, /promoDeskHandoffKey\(brief, desk\.next\)/);
+  assert.match(view, /\{PROMO_DESK_READ_ONLY_STATUS\}/);
+  assert.match(view, /copyRun\.current === run && handoffKeyRef\.current === key/);
+  assert.match(view, /useEffect\(\(\) => \{\s*copyRun\.current \+= 1;\s*setCopyFeedback\(null\);\s*return \(\) => \{ copyRun\.current \+= 1; \};\s*\}, \[handoffKey\]\);/);
+  assert.match(copy, /fallback: text/);
+  assert.match(view, /className="small promo-desk-copy-status" role="status" aria-live="polite"/);
+  assert.match(view, /readOnly[\s\S]*value=\{currentCopy\.fallback\}/);
+  assert.match(view, /document\.activeElement === copyTrigger\.current[\s\S]*?field\.focus\(\);\s*field\.select\(\);/);
+  assert.match(view, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);
+  assert.match(view, /className="quiet promo-desk-copy"/);
+  assert.match(stylesheet, /\.promo-desk-copy \{[^}]*min-height: 42px/);
+  const handoff = rules.slice(rules.indexOf('export const PROMO_DESK_READ_ONLY_STATUS'), rules.indexOf('const wordsIn'));
+  assert.doesNotMatch(handoff, /fetch\(|localStorage|sessionStorage|indexedDB|assets|compositions|generations|rooms|download|assetId/);
 });
 
 test('the composed desk keeps missing input, waiting, failed, loading and ready distinct', () => {
