@@ -9,6 +9,7 @@ import {
   FEED_SIZES,
   MANIFEST_SCHEMA,
   MANIFEST_VERSION,
+  pairIsEmpty,
 } from "../src/frontend/image-title-compare-plan.ts";
 import {
   MAX_PACKAGING_MANIFEST_BYTES,
@@ -255,13 +256,17 @@ test("empty, oversized and missing files are refused before reading", async () =
 
 test("either selection retires an in-flight check and its old result", () => {
   const start = section.indexOf("function clearVerify");
-  const end = section.indexOf("const selectedIndex", start);
+  const end = section.indexOf("\n  async function reuseVerifiedPng", start);
   assert.ok(start >= 0 && end > start);
   const block = section.slice(start, end);
   assert.match(block, /verifyRun\.current \+= 1/);
+  assert.match(block, /verifiedPngRef\.current = null/);
+  assert.match(block, /const manifestFile = verifyManifestFile;\s*const pngFile = verifyPngFile;/);
   assert.match(block, /const attempt = \+\+verifyRun\.current/);
+  assert.match(block, /verifyPackagingFiles\(manifestFile, pngFile\)/);
   assert.match(block, /mounted\.current && verifyRun\.current === attempt/);
   assert.match(block, /if \(!current\(\)\) return/);
+  assert.match(block, /verifiedPngRef\.current = pngFile/);
   assert.match(block, /setVerifyPhase\("idle"\)/);
   assert.match(block, /setVerifyOutcome\(null\)/);
   // The check never edits the source, selection, note, crops, preference or
@@ -307,4 +312,87 @@ test("the disclosure is wired to both separate file inputs and a distinct status
     "URL.createObjectURL",
   ])
     assert.ok(!verifier.includes(forbidden), `the verifier must not use ${forbidden}`);
+});
+
+test("changing either verification source synchronously retires the exact reusable File", () => {
+  for (const field of ["manifest", "png"]) {
+    const setter = field === "manifest" ? "setVerifyManifestFile" : "setVerifyPngFile";
+    assert.match(
+      section,
+      new RegExp(`${setter}\\(event\\.currentTarget\\.files\\?\\.\\[0\\] \\?\\? null\\);\\s*clearVerify\\(\\);`),
+    );
+  }
+  const clearStart = section.indexOf("function clearVerify");
+  const clear = section.slice(clearStart, section.indexOf("\n  }", clearStart));
+  assert.match(clear, /verifyRun\.current \+= 1;\s*verifiedPngRef\.current = null;/);
+  assert.match(clear, /setVerifyReuseMessage\(""\)/);
+});
+
+test("normal image intake can guard an empty-only claim until its last await", () => {
+  const start = section.indexOf("async function chooseImage");
+  const end = section.indexOf("\n  /** Use the finished Image Tools result", start);
+  assert.ok(start >= 0 && end > start);
+  const intake = section.slice(start, end);
+  assert.match(intake, /options: \{ emptyRevision\?: number; canCommit\?: \(\) => boolean \}/);
+  assert.match(intake, /pairEdits\.current\[index\] !== options\.emptyRevision\)\s*return false;/);
+  assert.match(intake, /const run = \+\+loadRuns\.current\[index\];/);
+  assert.match(intake, /const revision = pairEdits\.current\[index\];/);
+  assert.match(intake, /const accepted = \(\) => unchanged\(\) && \(options\.canCommit\?\.\(\) \?\? true\);/);
+  assert.match(intake, /if \(!accepted\(\)\) \{\s*setPair\(index, \{ busy: false \}\);\s*return false;/);
+  assert.match(intake, /new Uint8Array\(await file\.arrayBuffer\(\)\)/);
+  assert.match(intake, /inspectImage\(bytes\)/);
+  assert.match(intake, /imagePixelProblem\(source\.orientedWidth, source\.orientedHeight\)/);
+  assert.match(intake, /await createImageBitmap\(file\)/);
+  assert.match(intake, /return true;/);
+  // Every pair field change advances the occupancy revision, including the
+  // direct note control, crop changes and the existing duplicate path.
+  assert.match(section, /function setPair\(index: number, patch: Partial<Pair>\): void \{\s*pairEdits\.current\[index\] \+= 1;/);
+  assert.match(section, /onChange=\{\(event\) => setPair\(index, \{ note: event\.target\.value \}\)\}/);
+  assert.match(section, /pairEdits\.current\[index\] \+= 1;\s*setAnchors/);
+  assert.match(section, /pairEdits\.current\[targetIndex\] \+= 1;/);
+});
+
+test("the reuse action claims only an empty pair and passes the exact verified File through chooseImage", () => {
+  const start = section.indexOf("async function reuseVerifiedPng");
+  const end = section.indexOf("\n  const selectedIndex", start);
+  assert.ok(start >= 0 && end > start);
+  const reuse = section.slice(start, end);
+  assert.match(reuse, /const file = verifiedPngRef\.current;/);
+  assert.match(reuse, /verifyPhase !== "matched" \|\| verifyOutcome\?\.status !== "matched" \|\| !file \|\| file !== verifyPngFile/);
+  assert.match(reuse, /pairEdits\.current\[targetIndex\] !== emptyRevision/);
+  assert.match(reuse, /pairIsEmpty\(pairOccupancy\(pairs\[targetIndex\], anchors\[target\]\)\)/);
+  assert.match(reuse, /selectPair\(target\);/);
+  assert.match(reuse, /await chooseImage\(targetIndex, file, \{/);
+  assert.match(reuse, /canCommit: \(\) => verifyRun\.current === attempt && verifiedPngRef\.current === file,/);
+  assert.doesNotMatch(reuse, /verifyManifestFile|facts\.|title:|note:|alt:|hypothesis:|setAnchors|setPreferredId|setPairs/);
+
+  // The existing emptiness rule refuses each kind of occupied or pending pair.
+  const empty = { title: "", alt: "", hypothesis: "", note: "", hasImage: false, busy: false, anchor: "centre" };
+  assert.equal(pairIsEmpty(empty), true);
+  for (const occupied of [
+    { ...empty, title: "Existing" },
+    { ...empty, alt: "Existing description" },
+    { ...empty, hypothesis: "Existing expectation" },
+    { ...empty, note: "Existing note" },
+    { ...empty, hasImage: true },
+    { ...empty, busy: true },
+    { ...empty, anchor: "left" },
+  ])
+    assert.equal(pairIsEmpty(occupied), false);
+});
+
+test("one matched-only reuse option names the first empty pair or explains that all are occupied", () => {
+  assert.match(section, /const verifiedReuseTarget = hasCurrentVerifiedPng\s*\? PAIR_IDS\.find\(\(id, index\) => pairIsEmpty\(pairOccupancy\(pairs\[index\], anchors\[id\]\)\)\) \?\? null/);
+  assert.match(section, /verifiedPngRef\.current === verifyPngFile/);
+  assert.match(section, /Use verified PNG in an empty pair/);
+  assert.match(section, /data-title-compare-verify-reuse-use/);
+  assert.match(section, /data-title-compare-verify-reuse-target=\{verifiedReuseTarget \?\? undefined\}/);
+  assert.match(section, /data-title-compare-verify-reuse-state=\{verifiedReuseTarget \? "ready" : "no-empty"\}/);
+  assert.match(section, /disabled=\{!verifiedReuseTarget\}/);
+  assert.match(section, /aria-describedby="image-title-compare-verify-reuse-note"/);
+  assert.match(section, /All pairs are occupied\. Clear one pair completely to make room\./);
+  assert.match(section, /Adds the verified PNG as the thumbnail for Pair/);
+  assert.match(section, /data-title-compare-verify-reuse-status/);
+  const stylesheet = readFileSync(new URL("../src/frontend/image-title-compare.css", import.meta.url), "utf8");
+  assert.match(stylesheet, /\.title-compare-verify-reuse \{/);
 });

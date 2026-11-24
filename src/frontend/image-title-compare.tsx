@@ -34,6 +34,7 @@ import {
   normalizeThumbnailAlt,
   objectPositionFor,
   pairArchiveFileNames,
+  pairIsEmpty,
   preferredPairForExport,
   preparedPairsBundleFileName,
   PREPARED_REVIEW_NOTES_FILE_NAME,
@@ -230,6 +231,8 @@ export function TitleCompare({
   const [verifyPhase, setVerifyPhase] = useState<PackagingVerifyPhase>("idle");
   const [verifyMessage, setVerifyMessage] = useState("");
   const [verifyOutcome, setVerifyOutcome] = useState<PackagingVerifyOutcome | null>(null);
+  /** Feedback for the one deliberate reuse action, never pair or manifest data. */
+  const [verifyReuseMessage, setVerifyReuseMessage] = useState("");
   /** The last duplicate confirmation. A status message, not pair state: the
    * copied title, note, crop and URL live in the pairs themselves. */
   const [duplicateMessage, setDuplicateMessage] = useState("");
@@ -245,6 +248,10 @@ export function TitleCompare({
   const mounted = useRef(true);
   /** One run per pair, so a slow decode cannot replace a later pick. */
   const loadRuns = useRef<number[]>(PAIR_IDS.map(() => 0));
+  /** One occupancy revision per pair. The empty-only reuse path captures this
+   * after marking its target busy; any later title, text, crop or image edit
+   * retires that claim before the async intake can commit. */
+  const pairEdits = useRef<number[]>(PAIR_IDS.map(() => 0));
   /** One run per export, so unmount or a newer encode cannot mint a stale URL. */
   const exportRun = useRef(0);
   /** One run per title copy, so a slow write cannot report a title the user has
@@ -257,6 +264,9 @@ export function TitleCompare({
   /** One run per packaging check, so changing either selection or unmounting
    * retires a slow response before it can report on other files. */
   const verifyRun = useRef(0);
+  /** The exact File behind a current match. A ref makes selection changes and
+   * stale click events refuse reuse synchronously, before React rerenders. */
+  const verifiedPngRef = useRef<File | null>(null);
 
   // A hash link into this section lands on a page whose heading only exists
   // after React mounts, so the browser's native fragment scroll misses it
@@ -281,6 +291,7 @@ export function TitleCompare({
       copyRun.current += 1;
       pngCopyRun.current += 1;
       verifyRun.current += 1;
+      verifiedPngRef.current = null;
       for (const url of held) URL.revokeObjectURL(url);
       held.clear();
       exportsRef.current = [];
@@ -321,6 +332,7 @@ export function TitleCompare({
   }
 
   function setPair(index: number, patch: Partial<Pair>): void {
+    pairEdits.current[index] += 1;
     setPairs((current) => current.map((pair, at) => (at === index ? { ...pair, ...patch } : pair)));
   }
 
@@ -407,6 +419,7 @@ export function TitleCompare({
   function updateAnchor(index: number, next: CropAnchorKey): void {
     const id = PAIR_IDS[index];
     if (anchors[id] === next) return;
+    pairEdits.current[index] += 1;
     setAnchors((current) => ({ ...current, [id]: next }));
     clearPreferenceFor(index);
   }
@@ -441,20 +454,33 @@ export function TitleCompare({
 
   /** Intake follows the workbench's addFiles sequence: declared facts, byte
    * sniff, header inspect, pixel limits, then a real decoder probe. */
-  async function chooseImage(index: number, file: File | undefined): Promise<void> {
-    if (!file) return;
+  async function chooseImage(
+    index: number,
+    file: File | undefined,
+    options: { emptyRevision?: number; canCommit?: () => boolean } = {},
+  ): Promise<boolean> {
+    if (!file) return false;
+    // A stale empty-pair click must not even mark a now-occupied pair busy.
+    if (options.emptyRevision !== undefined && pairEdits.current[index] !== options.emptyRevision)
+      return false;
     // A second pick, a drop or Remove for this pair makes this run stale: a
     // slower decode must never overwrite the image the user chose last.
     const run = ++loadRuns.current[index];
     const current = () => mounted.current && loadRuns.current[index] === run;
     setPair(index, { error: null, busy: true });
+    const revision = pairEdits.current[index];
+    const unchanged = () =>
+      options.emptyRevision === undefined || pairEdits.current[index] === revision;
+    const accepted = () => unchanged() && (options.canCommit?.() ?? true);
     const fail = (reason: string) => {
-      if (current()) setPair(index, { error: reason, busy: false });
+      if (!current()) return;
+      // Preserve any edit made while this empty-only intake was validating.
+      setPair(index, unchanged() ? { error: reason, busy: false } : { busy: false });
     };
     const declared = imageInputProblem({ name: file.name, type: file.type, size: file.size });
     if (declared) {
       fail(declared);
-      return;
+      return false;
     }
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
@@ -482,7 +508,13 @@ export function TitleCompare({
           `This ${sniffed.format?.toUpperCase() ?? "image"} has a valid header but no decodable pixels: the decoder refused the file.`,
         );
       }
-      if (!current()) return;
+      if (!current()) return false;
+      // Reuse is an empty-only claim, and its verification must still name this
+      // exact File. Neither a pair edit nor a new source event may be overwritten.
+      if (!accepted()) {
+        setPair(index, { busy: false });
+        return false;
+      }
       // A new thumbnail needs its own preference decision.
       clearPreferenceFor(index);
       retirePreparedOutput();
@@ -506,8 +538,10 @@ export function TitleCompare({
         error: null,
         busy: false,
       });
+      return true;
     } catch (error) {
       fail(error instanceof Error ? error.message : "Could not read this image.");
+      return false;
     }
   }
 
@@ -569,6 +603,7 @@ export function TitleCompare({
           : pair,
       ),
     );
+    pairEdits.current[targetIndex] += 1;
     setAnchors((current) => ({ ...current, [target]: sourceAnchor }));
     clearCopyFeedback();
     setSelectedId(target);
@@ -941,16 +976,20 @@ export function TitleCompare({
    * described the files selected before it. */
   function clearVerify(): void {
     verifyRun.current += 1;
+    verifiedPngRef.current = null;
     setVerifyPhase("idle");
     setVerifyMessage("");
     setVerifyOutcome(null);
+    setVerifyReuseMessage("");
   }
 
   /** The explicit check reads only the two selected files. A response is
    * published only when it still belongs to both current selections and this
    * tab; it never reaches into pair, crop, note, preference or export state. */
   async function checkPackagingPair(): Promise<void> {
-    if (!verifyManifestFile || !verifyPngFile) {
+    const manifestFile = verifyManifestFile;
+    const pngFile = verifyPngFile;
+    if (!manifestFile || !pngFile) {
       clearVerify();
       setVerifyPhase("invalid");
       setVerifyMessage("Choose the packaging manifest JSON and the exported PNG before verifying.");
@@ -958,14 +997,18 @@ export function TitleCompare({
     }
     const attempt = ++verifyRun.current;
     const current = () => mounted.current && verifyRun.current === attempt;
+    // A new check retires reuse immediately, even before its first await.
+    verifiedPngRef.current = null;
+    setVerifyReuseMessage("");
     setVerifyPhase("checking");
     setVerifyMessage("Checking the selected manifest and PNG on this device…");
     setVerifyOutcome(null);
     try {
-      const outcome = await verifyPackagingFiles(verifyManifestFile, verifyPngFile);
+      const outcome = await verifyPackagingFiles(manifestFile, pngFile);
       if (!current()) return;
       setVerifyOutcome(outcome);
       if (outcome.status === "matched") {
+        verifiedPngRef.current = pngFile;
         setVerifyPhase("matched");
         setVerifyMessage("Matched. The PNG's type, byte size, dimensions and SHA-256 agree with the manifest.");
       } else if (outcome.status === "invalid") {
@@ -977,10 +1020,37 @@ export function TitleCompare({
       }
     } catch {
       if (!current()) return;
+      verifiedPngRef.current = null;
       setVerifyOutcome(null);
       setVerifyPhase("invalid");
       setVerifyMessage("The selected files could not be checked.");
     }
+  }
+
+  /** The one reuse action passes the exact currently verified File through the
+   * normal local intake. It claims only a completely empty, nonbusy pair, then
+   * selects that pair. No manifest text, description, crop or preference moves. */
+  async function reuseVerifiedPng(target: PairId, emptyRevision: number): Promise<void> {
+    const file = verifiedPngRef.current;
+    const attempt = verifyRun.current;
+    if (verifyPhase !== "matched" || verifyOutcome?.status !== "matched" || !file || file !== verifyPngFile)
+      return;
+    const targetIndex = PAIR_IDS.indexOf(target);
+    if (
+      pairEdits.current[targetIndex] !== emptyRevision ||
+      !pairIsEmpty(pairOccupancy(pairs[targetIndex], anchors[target]))
+    )
+      return;
+    selectPair(target);
+    setVerifyReuseMessage(`Adding the verified PNG to Pair ${PAIR_LABELS[target]}…`);
+    const used = await chooseImage(targetIndex, file, {
+      emptyRevision,
+      canCommit: () => verifyRun.current === attempt && verifiedPngRef.current === file,
+    });
+    if (!mounted.current || verifyRun.current !== attempt || verifiedPngRef.current !== file) return;
+    setVerifyReuseMessage(used
+      ? `Added the verified PNG to Pair ${PAIR_LABELS[target]}.`
+      : `Pair ${PAIR_LABELS[target]} changed. Choose an empty pair and try again.`);
   }
 
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
@@ -1002,6 +1072,23 @@ export function TitleCompare({
     : duplicateTarget
       ? "Copies the title, thumbnail, alt text, testing hypothesis and crop. The new pair starts with an empty note."
       : "To free a pair, clear its title, alt text, hypothesis, note and thumbnail and set its crop to Centre.";
+  /** Reuse is offered only for the exact File behind the current match, and
+   * only the first pair satisfying the same complete emptiness rule as copy. */
+  const hasCurrentVerifiedPng =
+    verifyPhase === "matched" &&
+    verifyOutcome?.status === "matched" &&
+    verifyPngFile !== null &&
+    verifiedPngRef.current === verifyPngFile;
+  const verifiedReuseTarget = hasCurrentVerifiedPng
+    ? PAIR_IDS.find((id, index) => pairIsEmpty(pairOccupancy(pairs[index], anchors[id]))) ?? null
+    : null;
+  const verifiedReuseTargetIndex = verifiedReuseTarget ? PAIR_IDS.indexOf(verifiedReuseTarget) : -1;
+  // Capture the rendered revision in the click closure too, so even a stale
+  // source event cannot claim a pair edited after this option appeared.
+  const verifiedReuseRevision = verifiedReuseTarget ? pairEdits.current[verifiedReuseTargetIndex] : null;
+  const verifiedReuseNote = verifiedReuseTarget
+    ? `Adds the verified PNG as the thumbnail for Pair ${PAIR_LABELS[verifiedReuseTarget]}.`
+    : "All pairs are occupied. Clear one pair completely to make room.";
   const prepared = readyPairs();
   const preparedCount = prepared.length;
   const preparedImageTooLarge =
@@ -1637,6 +1724,36 @@ export function TitleCompare({
           <p className="trim-note title-compare-verify-facts" data-title-compare-verify-facts>
             {`${verifyOutcome.facts.width} × ${verifyOutcome.facts.height} px · ${formatBytes(verifyOutcome.facts.pngBytes)} · SHA-256 ${verifyOutcome.facts.sha256.slice(0, 16)}…`}
           </p>
+        )}
+        {hasCurrentVerifiedPng && (
+          <div className="title-compare-verify-reuse" data-title-compare-verify-reuse>
+            <button
+              type="button"
+              className="secondary"
+              data-title-compare-verify-reuse-use
+              data-title-compare-verify-reuse-target={verifiedReuseTarget ?? undefined}
+              data-title-compare-verify-reuse-state={verifiedReuseTarget ? "ready" : "no-empty"}
+              disabled={!verifiedReuseTarget}
+              aria-disabled={!verifiedReuseTarget}
+              aria-describedby="image-title-compare-verify-reuse-note"
+              onClick={() => {
+                if (verifiedReuseTarget && verifiedReuseRevision !== null)
+                  void reuseVerifiedPng(verifiedReuseTarget, verifiedReuseRevision);
+              }}
+            >
+              Use verified PNG in an empty pair
+            </button>
+            <p
+              className="trim-note"
+              id="image-title-compare-verify-reuse-note"
+              data-title-compare-verify-reuse-note
+            >
+              {verifiedReuseNote}
+            </p>
+            <p className="trim-note" role="status" aria-live="polite" data-title-compare-verify-reuse-status>
+              {verifyReuseMessage}
+            </p>
+          </div>
         )}
       </details>
     </section>

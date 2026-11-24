@@ -420,6 +420,21 @@
   margin: 0.5rem 0 0;
 }
 
+/* One deliberate handoff from a current match. It stays inside the disclosure,
+   names the empty target and never borrows the manifest's text or crop. */
+.title-compare-verify-reuse {
+  display: grid;
+  gap: 0.4rem;
+  justify-items: start;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.title-compare-verify-reuse .trim-note {
+  margin: 0;
+}
+
 /* Phone: the pair controls and the previews stack, and the row preview keeps
    its real pixel size while the card preview fills the column. */
 
