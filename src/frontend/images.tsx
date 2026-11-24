@@ -49,6 +49,7 @@ import {
   alphaBounds,
   alphaMapPlan,
   alphaProfile,
+  buildAlphaReport,
   writeAlphaMapBand,
   extractPalette,
   formatHsl,
@@ -63,6 +64,7 @@ import {
   rgbToHsl,
   type AlphaMap,
   type AlphaProfileResult,
+  type AlphaReport,
   type ImageBounds,
   type PaletteResult,
   type Rgb,
@@ -256,6 +258,7 @@ type AlphaInspectState = {
   key: string;
   result: Extract<AlphaProfileResult, { ok: true }>;
   map: AlphaMap;
+  report: AlphaReport;
 };
 
 type StrippedImage = {
@@ -1195,6 +1198,13 @@ function Images() {
     alphaInspect?.key === outputResultKey ? alphaInspect.result : null;
   const visibleAlphaMap =
     alphaInspect?.key === outputResultKey ? alphaInspect.map : null;
+  // The report is the same inspection snapshot, so a different row or a new
+  // result retires the link with the counts instead of offering stale counts.
+  const visibleAlphaReport =
+    alphaInspect?.key === outputResultKey ? alphaInspect.report : null;
+  const alphaReportHref = visibleAlphaReport
+    ? `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(visibleAlphaReport))}`
+    : "";
   const canCopyPng =
     typeof window !== "undefined" &&
     typeof window.ClipboardItem === "function" &&
@@ -3124,7 +3134,12 @@ function Images() {
         }
       }
       if (!isCurrent()) return;
-      setAlphaInspect({ key, result: profile, map: mapPlan.map });
+      setAlphaInspect({
+        key,
+        result: profile,
+        map: mapPlan.map,
+        report: buildAlphaReport({ result, profile }),
+      });
       setAlphaMessage(
         `Read ${profile.totalPixels.toLocaleString()} exact pixels from this completed result. Nothing was uploaded.`,
       );
@@ -4198,6 +4213,15 @@ function Images() {
                     <dd>{visibleAlpha.opaque.toLocaleString()} px · {percentOf(visibleAlpha.opaque, visibleAlpha.totalPixels)}%</dd>
                   </div>
                 </dl>
+                <div className="image-control-actions">
+                  <a
+                    className="button secondary"
+                    href={alphaReportHref}
+                    download="studio-alpha-report.json"
+                  >
+                    Download alpha report (JSON)
+                  </a>
+                </div>
                 {visibleAlphaMap && (
                   <figure className="image-alpha-map-figure">
                     <AlphaMapCanvas

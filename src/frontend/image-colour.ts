@@ -524,6 +524,47 @@ export function alphaProfile(
   };
 }
 
+// A portable v1 account of one exact alpha inspection. It is built from the
+// profile already counted here and the finished result snapshot only: no
+// sampled map, source filename/path, title or live editor state. The digest
+// ties the counts to the same finished image the normal image receipt covers.
+export const ALPHA_REPORT_SCHEMA = "media-studio/image-alpha-report";
+export const ALPHA_REPORT_VERSION = 1;
+
+export type AlphaReportInput = {
+  result: { mime: string; width: number; height: number; bytes: number; sha256: string };
+  profile: Extract<AlphaProfileResult, { ok: true }>;
+};
+
+export type AlphaReport = {
+  schema: string;
+  version: number;
+  note: string;
+  output: { mime: string; width: number; height: number; bytes: number; sha256: string };
+  alpha: { transparent: number; partial: number; opaque: number; total: number };
+};
+
+export function buildAlphaReport({ result, profile }: AlphaReportInput): AlphaReport {
+  return {
+    schema: ALPHA_REPORT_SCHEMA,
+    version: ALPHA_REPORT_VERSION,
+    note: "Exact alpha counts for one finished local image. Transparent is alpha 0, partial is 1-254, opaque is 255. Counted on this device; nothing uploaded.",
+    output: {
+      mime: result.mime,
+      width: result.width,
+      height: result.height,
+      bytes: result.bytes,
+      sha256: result.sha256.toLowerCase(),
+    },
+    alpha: {
+      transparent: profile.transparent,
+      partial: profile.partial,
+      opaque: profile.opaque,
+      total: profile.totalPixels,
+    },
+  };
+}
+
 const ALPHA_MAP_MAX_EDGE = 512;
 
 export type AlphaMap = {
