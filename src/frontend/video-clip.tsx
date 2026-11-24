@@ -1,6 +1,6 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
 import { captionFileFromText } from "./caption-paste";
-import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
+import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, srtForClipVtt, type ClipCaptionTrack } from "./clip-captions";
 import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByText } from "./clip-cue-search";
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
@@ -134,6 +134,12 @@ function VideoClip() {
   // offset, the preview track, the export or any download. A new caption source
   // clears it; an edit or removal leaves it so the owner sees the updated list.
   const [cueSearchText, setCueSearchText] = useState("");
+  // Which list the caption reviewer shows. The default in-trim rows stay the
+  // primary view; All source cues exists so a stored cue outside the trim (or
+  // any cue when the trim or offset is invalid) can still be reviewed, edited
+  // and removed without changing the trim, offset or export. It is display
+  // state only and a new caption source starts back on the in-trim view.
+  const [cueView, setCueView] = useState<"trim" | "source">("trim");
   const cueSearchInput = useRef<HTMLInputElement>(null);
   const manualCueTextInput = useRef<HTMLInputElement>(null);
   const manualCueDetails = useRef<HTMLDetailsElement>(null);
@@ -286,6 +292,12 @@ function VideoClip() {
   // the single source for the count, previews, MP4 captions and both sidecars.
   const cueQuery = cueSearchQuery(cueSearchText);
   const visibleCues = trimmedCaptionCues ? filterCuesByText(trimmedCaptionCues, cueSearchText) : [];
+  // Every stored cue at its unshifted original-video time, keyed by the same
+  // source index the trimmed projection carries. The same bounded text filter
+  // applies to whichever list is shown. These rows never feed the count, the
+  // preview track, the offset, the receipt or either export.
+  const allSourceCues = captionDraft ? sourceCaptionCues(captionDraft.cues) : [];
+  const visibleSourceCues = captionDraft ? filterCuesByText(allSourceCues, cueSearchText) : [];
   // A running audition belongs to one exact source, draft, trim and offset. If
   // any of those change it is no longer the same cue window, so stop and say so
   // rather than leave the old seconds playing over newer work.
@@ -461,6 +473,7 @@ function VideoClip() {
       captionRequest.current++; receiptRequest.current++;
       setCaptionDraft(null); setCaptionHistory(EMPTY_CUE_HISTORY); setCaptionOffsetRaw("0"); setCaptionText(""); setCaptionMessage(""); setCaptionLoading(false);
       setCueSearchText("");
+      setCueView("trim");
       resetCueEditor(); setManualCueMessage("");
       setShowSourceCaptions(false);
       setCropAnchor("center");
@@ -522,6 +535,7 @@ function VideoClip() {
       setCaptionHistory(EMPTY_CUE_HISTORY);
       setCaptionOffsetRaw("0");
       setCueSearchText("");
+      setCueView("trim");
       resetCueEditor();
       setManualCueMessage("");
       setCaptionMessage(`Loaded ${cues.length} ${cues.length === 1 ? "cue" : "cues"}.`);
@@ -588,6 +602,7 @@ function VideoClip() {
       setCaptionOffsetRaw(String(restored.offsetMs / 1000));
       setCaptionText("");
       setCueSearchText("");
+      setCueView("trim");
       resetCueEditor();
       setManualCueMessage("");
       setShowSourceCaptions(false);
@@ -629,6 +644,14 @@ function VideoClip() {
   function clearCueSearch() {
     setCueSearchText("");
     cueSearchInput.current?.focus();
+  }
+  // Switching which cue rows are shown never edits the draft, trim or offset.
+  // A cue audition belongs to an in-trim row that may no longer be listed, so
+  // stop it and say why rather than leave audio over a hidden row.
+  function showCueView(view: "trim" | "source") {
+    if (view === cueView) return;
+    if (view === "source") stopCueAudition("Cue audition stopped because the cue view changed.");
+    setCueView(view);
   }
   // One plain-text cue at original-video seconds. Validation and overlap checks
   // run before any state change, then the accepted cue joins the current draft
@@ -1287,6 +1310,7 @@ function VideoClip() {
           setCaptionOffsetRaw("0");
           setCaptionText("");
           setCueSearchText("");
+          setCueView("trim");
           resetCueEditor();
           setManualCueMessage("");
           setCaptionLoading(false);
@@ -1309,14 +1333,33 @@ function VideoClip() {
           {survivingCaptionCount !== null && (
             <p className="trim-note">
               {survivingCaptionCount === 0
-                ? "No caption cues will fit this trim. Adjust the timing offset or trim to include them."
+                ? "No caption cues will fit this trim. Adjust the timing offset or trim to include them, or review and edit every stored cue in All source cues."
                 : `${survivingCaptionCount} caption ${survivingCaptionCount === 1 ? "cue" : "cues"} inside this trim.`}
             </p>
           )}
-          {trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
+          {captionDraft && (
             <details className="trim-cue-review">
-              <summary>Review cues in this trim ({trimmedCaptionCues.length})</summary>
-              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position, or select Play cue to run that section within the current trim and timing offset. Edit writes the cue's original-video text and times into the form above; Merge with next joins it with the next adjacent cue, only when both are shown; Remove deletes just that cue. Turn on Preview draft captions on original video to see the original caption there.</p>
+              <summary>{trimmedCaptionCues
+                ? `Review cues in this trim (${trimmedCaptionCues.length})`
+                : `Review caption cues (${captionDraft.cues.length} stored)`}</summary>
+              <p className="trim-note">{cueView === "source"
+                ? "Times below are original video times, before the trim start and timing offset. Every stored cue is listed, including cues outside this trim. Choose a cue to pause the original video at its source time. Edit writes that cue’s original-video text and times into the form above; Remove deletes just that cue. The trim, timing offset, preview and exports stay as they are."
+                : "Times are relative to the trim start. Choose a cue to pause the original video at that source position, or select Play cue to run that section within the current trim and timing offset. Edit writes the cue's original-video text and times into the form above; Merge with next joins it with the next adjacent cue, only when both are shown; Remove deletes just that cue. Turn on Preview draft captions on original video to see the original caption there."}</p>
+              <div className="trim-cue-views" role="group" aria-label="Which caption cues to review">
+                <button type="button" className="secondary trim-cue-view-trim"
+                  aria-pressed={cueView === "trim"}
+                  onClick={() => showCueView("trim")}>
+                  In this trim{trimmedCaptionCues ? ` (${trimmedCaptionCues.length})` : ""}
+                </button>
+                <button type="button" className="secondary trim-cue-view-source"
+                  aria-pressed={cueView === "source"}
+                  onClick={() => showCueView("source")}>
+                  All source cues ({captionDraft.cues.length})
+                </button>
+              </div>
+              {cueView === "trim" && !trimmedCaptionCues && (
+                <p className="notice trim-cue-view-unknown">The trim or timing offset is not valid, so there is no in-trim cue list. All source cues still lists every stored cue at its original video time.</p>
+              )}
               <div className="trim-cue-search">
                 <label htmlFor="trim-cue-search">Find a caption by its text</label>
                 <div className="trim-cue-search-controls">
@@ -1331,60 +1374,96 @@ function VideoClip() {
                 </div>
                 <p id="trim-cue-search-help" className="trim-note">This search only filters the rows below. The saved draft, preview, offset and downloads keep every cue.</p>
                 <p id="trim-cue-search-count" className="trim-note" role="status" aria-live="polite">
-                  {cueQuery
-                    ? `${visibleCues.length} of ${trimmedCaptionCues.length} ${trimmedCaptionCues.length === 1 ? "cue" : "cues"} match “${cueQuery}”.`
-                    : `Showing all ${trimmedCaptionCues.length} ${trimmedCaptionCues.length === 1 ? "cue" : "cues"}.`}
+                  {cueView === "trim"
+                    ? cueQuery
+                      ? `${visibleCues.length} of ${trimmedCaptionCues?.length ?? 0} ${(trimmedCaptionCues?.length ?? 0) === 1 ? "cue" : "cues"} match “${cueQuery}”.`
+                      : trimmedCaptionCues
+                        ? `Showing all ${trimmedCaptionCues.length} ${trimmedCaptionCues.length === 1 ? "cue" : "cues"}.`
+                        : "No in-trim cue list while the trim or timing offset is invalid."
+                    : cueQuery
+                      ? `${visibleSourceCues.length} of ${allSourceCues.length} source ${allSourceCues.length === 1 ? "cue" : "cues"} match “${cueQuery}”.`
+                      : `Showing all ${allSourceCues.length} source ${allSourceCues.length === 1 ? "cue" : "cues"}.`}
                 </p>
-                {cueQuery && visibleCues.length === 0 && (
+                {cueView === "trim" && trimmedCaptionCues && trimmedCaptionCues.length > 0 && cueQuery && visibleCues.length === 0 && (
                   <p className="notice trim-cue-search-empty">No cues in this trim match “{cueQuery}”. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show all {trimmedCaptionCues.length}.</p>
                 )}
+                {cueView === "source" && cueQuery && visibleSourceCues.length === 0 && (
+                  <p className="notice trim-cue-search-empty">No source cues match “{cueQuery}”. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show all {allSourceCues.length}.</p>
+                )}
               </div>
-              <ol className="trim-cue-list" aria-label="Caption cues in this trim">
-                {visibleCues.map(cue => {
-                  const { mergeWith, hiddenMergeWith } = cueMergeVisibility(trimmedCaptionCues, cue, visibleCues, captionDraft.cues);
-                  const thisCuePlaying = cueAudition?.sourceIndex === cue.sourceIndex;
-                  return (
-                    <li key={cue.sourceIndex} className="trim-cue-row" data-source-index={cue.sourceIndex}>
+              {cueView === "trim" && trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
+                <ol className="trim-cue-list" aria-label="Caption cues in this trim">
+                  {visibleCues.map(cue => {
+                    const { mergeWith, hiddenMergeWith } = cueMergeVisibility(trimmedCaptionCues, cue, visibleCues, captionDraft.cues);
+                    const thisCuePlaying = cueAudition?.sourceIndex === cue.sourceIndex;
+                    return (
+                      <li key={cue.sourceIndex} className="trim-cue-row" data-source-index={cue.sourceIndex}>
+                        <button type="button" className="secondary trim-cue-jump"
+                          aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                          onClick={() => jumpToOriginalCue(cue.sourceStartMs)}>
+                          <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
+                          <span className="trim-cue-text">{cue.text}</span>
+                        </button>
+                        <div className="trim-cue-actions">
+                          <button type="button" className="secondary trim-cue-play"
+                            aria-label={thisCuePlaying
+                              ? `Pause cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`
+                              : `Play cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)} from the original video. ${cue.text}`}
+                            aria-pressed={thisCuePlaying}
+                            disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                            onClick={() => {
+                              if (thisCuePlaying) stopCueAudition("Cue audition paused.");
+                              else void playOriginalCue(cue);
+                            }}>{thisCuePlaying ? "Pause cue" : "Play cue"}</button>
+                          <button type="button" className="secondary trim-cue-edit"
+                            aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                            disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                            onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
+                          {mergeWith && <button type="button" className="secondary trim-cue-merge"
+                            aria-label={`Merge cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text} with the next cue ${clipTimeStamp(mergeWith.from)}–${clipTimeStamp(mergeWith.to)}. ${mergeWith.text}`}
+                            disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                            onClick={() => void mergeTrimmedCues(cue.sourceIndex, mergeWith.sourceIndex)}>Merge with next</button>}
+                          <button type="button" className="secondary trim-cue-remove"
+                            aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                            disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                            onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
+                        </div>
+                        {hiddenMergeWith && (
+                          <p className="trim-note trim-cue-hidden-merge">
+                            Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.from)}–{clipTimeStamp(hiddenMergeWith.to)} (“{hiddenMergeWith.text}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+              {cueView === "source" && (
+                <ol className="trim-cue-list" aria-label="All caption source cues at their original video times">
+                  {visibleSourceCues.map(cue => (
+                    <li key={cue.sourceIndex} className="trim-cue-row trim-cue-source-row" data-source-index={cue.sourceIndex}>
                       <button type="button" className="secondary trim-cue-jump"
-                        aria-label={`Jump to cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                        aria-label={`Jump to source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} in the original video. ${cue.text}`}
                         disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
-                        onClick={() => jumpToOriginalCue(cue.sourceStartMs)}>
-                        <span className="trim-cue-time">{clipTimeStamp(cue.from)}–{clipTimeStamp(cue.to)}</span>
+                        onClick={() => jumpToOriginalCue(cue.startMs)}>
+                        <span className="trim-cue-time trim-cue-source-time">Original {clipTimeStamp(cue.startMs)}–{clipTimeStamp(cue.endMs)}</span>
                         <span className="trim-cue-text">{cue.text}</span>
                       </button>
                       <div className="trim-cue-actions">
-                        <button type="button" className="secondary trim-cue-play"
-                          aria-label={thisCuePlaying
-                            ? `Pause cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`
-                            : `Play cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)} from the original video. ${cue.text}`}
-                          aria-pressed={thisCuePlaying}
-                          disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
-                          onClick={() => {
-                            if (thisCuePlaying) stopCueAudition("Cue audition paused.");
-                            else void playOriginalCue(cue);
-                          }}>{thisCuePlaying ? "Pause cue" : "Play cue"}</button>
                         <button type="button" className="secondary trim-cue-edit"
-                          aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                          aria-label={`Edit source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cue.text}`}
                           disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                           onClick={() => beginCueEdit(cue.sourceIndex)}>Edit</button>
-                        {mergeWith && <button type="button" className="secondary trim-cue-merge"
-                          aria-label={`Merge cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text} with the next cue ${clipTimeStamp(mergeWith.from)}–${clipTimeStamp(mergeWith.to)}. ${mergeWith.text}`}
-                          disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
-                          onClick={() => void mergeTrimmedCues(cue.sourceIndex, mergeWith.sourceIndex)}>Merge with next</button>}
                         <button type="button" className="secondary trim-cue-remove"
-                          aria-label={`Remove cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
+                          aria-label={`Remove source cue ${clipTimeStamp(cue.startMs)}–${clipTimeStamp(cue.endMs)} at its original video time. ${cue.text}`}
                           disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                           onClick={() => void removeTrimmedCue(cue.sourceIndex)}>Remove</button>
                       </div>
-                      {hiddenMergeWith && (
-                        <p className="trim-note trim-cue-hidden-merge">
-                          Merge is hidden by this search: cue {clipTimeStamp(hiddenMergeWith.from)}–{clipTimeStamp(hiddenMergeWith.to)} (“{hiddenMergeWith.text}”) is the next adjacent cue in the draft. <button type="button" className="quiet trim-cue-search-reveal" onClick={clearCueSearch}>Clear search</button> to show it here.
-                        </p>
-                      )}
                     </li>
-                  );
-                })}
-              </ol>
+                  ))}
+                </ol>
+              )}
               <p className="trim-note trim-cue-audition-status" role="status" aria-live="polite">{cueAuditionStatus}</p>
             </details>
           )}

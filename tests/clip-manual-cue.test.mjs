@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCaptionFile } from '../src/frontend/caption-import.ts';
-import { clipCaptionCues, serializeClipCaptions, sourcePreviewVtt } from '../src/frontend/clip-captions.ts';
+import { clipCaptionCues, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt } from '../src/frontend/clip-captions.ts';
 import {
   MAX_MANUAL_CAPTION_CUES,
   appendManualClipCue,
@@ -138,6 +138,38 @@ test('editing one cue replaces only its sourceIndex and preserves every other cu
   // Atomic: the caller's draft and the excluded cues are never mutated.
   assert.deepEqual(cues, [before, selected, after]);
   assert.equal(selected.text, 'Wrong line');
+});
+
+test('All source cues corrects a cue outside the trim without changing either export', () => {
+  const outside = cue(1000, 2000, 'Out of trim');
+  const inside = cue(5000, 6000, 'In trim');
+  const cues = [outside, inside];
+  const trimmedBefore = serializeClipCaptions(cues, 5, 7);
+  // The current in-trim list cannot reach the cue that starts before the trim.
+  assert.deepEqual(clipCaptionCues(cues, 5, 7)?.map(row => row.sourceIndex), [1]);
+  const rows = sourceCaptionCues(cues);
+  assert.deepEqual(rows, [
+    { startMs: 1000, endMs: 2000, text: 'Out of trim', sourceIndex: 0 },
+    { startMs: 5000, endMs: 6000, text: 'In trim', sourceIndex: 1 },
+  ]);
+  // Edit the exact source row. Only that cue's text and original times change;
+  // the selected speaker, the other cue, the trim and the offset are untouched.
+  const corrected = accepted(replace(cues, rows[0].sourceIndex, 'Corrected outside', '1.25', '2.25'));
+  assert.deepEqual(corrected, [cue(1250, 2250, 'Corrected outside'), inside]);
+  // The trimmed VTT the MP4, receipt and SRT sidecar read stays byte-identical
+  // because the corrected cue still does not intersect this trim.
+  assert.equal(serializeClipCaptions(corrected, 5, 7), trimmedBefore);
+  // The full-source VTT carries the corrected text at the same original time.
+  assert.equal(manualCaptionTrackVtt(corrected),
+    'WEBVTT\n\n00:01.250 --> 00:02.250\nCorrected outside\n\n00:05.000 --> 00:06.000\nIn trim\n');
+  // Removing that same source row is equally trim-neutral.
+  assert.equal(serializeClipCaptions(removeClipDraftCue(cues, rows[0].sourceIndex), 5, 7), trimmedBefore);
+  // Once the cue moves into the trim it appears in the trimmed export as usual.
+  const movedInside = accepted(replace(cues, rows[0].sourceIndex, 'Moved inside', '6', '6.5'));
+  assert.equal(serializeClipCaptions(movedInside, 5, 7),
+    'WEBVTT\n\n00:00.000 --> 00:01.000\nIn trim\n\n00:01.000 --> 00:01.500\nMoved inside\n');
+  // No step mutated the source draft.
+  assert.deepEqual(cues, [outside, inside]);
 });
 
 test('a clamped or shifted review row edits its exact draft cue and preserves excluded cues', () => {

@@ -50,6 +50,17 @@ export function clipCaptionCues(cues: readonly ImportedCue[], startSeconds: numb
   return kept;
 }
 
+// The All source cues projection: every stored cue at its unshifted
+// original-video time, keyed by its stable position in the draft. It applies no
+// trim, clamp, rebase or timing offset, so a row can name and change a cue the
+// current trim does not intersect. sourceIndex is the same identity the trimmed
+// projection and the existing Edit and Remove actions use.
+export type SourceCaptionCue = Readonly<{ startMs: number; endMs: number; text: string; sourceIndex: number }>;
+
+export function sourceCaptionCues(cues: readonly ImportedCue[]): SourceCaptionCue[] {
+  return cues.map((cue, sourceIndex) => ({ startMs: cue.startMs, endMs: cue.endMs, text: cue.text, sourceIndex }));
+}
+
 export function serializeClipCaptions(cues: readonly ImportedCue[], startSeconds: number, endSeconds: number, offsetMs = 0) {
   const kept = clipCaptionCues(cues, startSeconds, endSeconds, offsetMs);
   if (!kept) return null;
