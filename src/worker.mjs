@@ -76,8 +76,8 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.ts";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi } from "./lib/woodhouse-share.ts";
-import { shell, loginPage, notFoundPage, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
-import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
+import { shell, loginPage, notFoundPage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
+import { compareRouteResponse } from "./lib/compare-route.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } from "./lib/publication-policy.mjs";
@@ -2174,115 +2174,17 @@ async function handlePublic(request, env, url) {
   // TypeScript; the renderer, body and one-hour public cache are unchanged.
   if (path === "/help") return publicHelpResponse(env);
   if (path === "/compare") {
-    const session = await readSession(env, request);
-    if (!session) {
-      return new Response(
-        loginPage({
-          next: "/compare",
-          revision: BUILD.revision,
-          bridged: Boolean(env.BRIDGE_SECRET),
-          composerOrigin: env.COMPOSER_ORIGIN,
-          storyUrl: env.PUBLIC_STORY_URL,
-          woodhouseShare: env.WOODHOUSE_SHARE === "true",
-        }),
-        { status: 401, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
-      );
-    }
-    // A project-scoped link keeps the comparison on the studio the owner was
-    // working in. Without it, a bridged session has no project claim and would
-    // show an empty page even though the project holds saved takes.
-    const requestedProject = url.searchParams.get("project");
-    let project = null;
-    if (requestedProject) {
-      const candidate = await loadProject(env, requestedProject, { required: false });
-      if (candidate && projectAccessible(session, candidate)) project = candidate;
-    } else {
-      project = await currentProject(env, session);
-    }
-    if (!project) {
-      const { results: candidates } = await env.DB.prepare(
-        "SELECT id,name,workspace_id,updated_at FROM projects ORDER BY updated_at DESC LIMIT 60",
-      ).all();
-      const projects = candidates
-        .filter((candidate) => projectAccessible(session, candidate))
-        .map((candidate) => ({ id: candidate.id, name: candidate.name, updatedAt: candidate.updated_at }));
-      return new Response(
-        comparePage({
-          revision: BUILD.revision,
-          jobs: [],
-          job: null,
-          entries: [],
-          project: null,
-          projects,
-          verdict: {
-            headline: "No project yet",
-            detail: "A comparison belongs to a project. Open one in the studio, keep a take, then use Compare models from that project.",
-          },
-          session,
-          composerOrigin: env.COMPOSER_ORIGIN,
-          storyUrl: env.PUBLIC_STORY_URL,
-          woodhouseShare: env.WOODHOUSE_SHARE === "true",
-          models,
-        }),
-        { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
-      );
-    }
-    const jobs = jobCatalogue(models);
-    // One read of the project's saved takes answers every job. The page used to
-    // land on the first comparable job even when this project had no takes for
-    // it, which read as "nothing to compare" while another job held real
-    // evidence. The landing job is now the first one that can show a take.
-    const saved = await env.DB.prepare(
-      `SELECT g.id, g.model, g.kind, g.request_json, g.cost_estimate_micro, g.cost_allocated_micro, g.provider_charged_micro,
-              g.created_at, g.completed_at, a.id AS asset_id, a.mime, a.bytes, a.width, a.height, a.duration_ms, a.sha256
-       FROM generations g JOIN assets a ON a.id = g.output_asset_id
-       WHERE g.project_id = ?1 AND g.status = 'saved' AND g.deleted_at IS NULL AND a.deleted_at IS NULL
-       ORDER BY COALESCE(g.completed_at, g.created_at) DESC LIMIT 240`,
-    )
-      .bind(project.id)
-      .all();
-    const byJob = new Map();
-    for (const entry of jobs) {
-      const allowed = new Set(entry.models.map((model) => model.id));
-      const rows = saved.results.filter((row) => allowed.has(row.model));
-      const all = latestPerModel(rows, entry.id).map((take) => ({
-        ...take,
-        previewUrl: take.assetId ? `/api/assets/${encodeURIComponent(take.assetId)}/file` : null,
-      }));
-      byJob.set(entry.id, likeForLike(all));
-    }
-    const requested = url.searchParams.get("job") ?? "";
-    const job =
-      jobs.find((entry) => entry.id === requested) ??
-      jobs.find((entry) => (byJob.get(entry.id)?.chosen.length ?? 0) > 1) ??
-      jobs.find((entry) => (byJob.get(entry.id)?.chosen.length ?? 0) > 0) ??
-      jobs.find((entry) => entry.comparable) ??
-      jobs[0] ??
-      null;
-    const split = job ? byJob.get(job.id) : null;
-    const entries = split?.chosen ?? [];
-    const excluded = split?.excluded ?? [];
-    const briefNote = split?.reason ?? null;
-    const review = { job, entries };
-    return new Response(
-      comparePage({
-        revision: BUILD.revision,
-        jobs,
-        job,
-        project,
-        entries,
-        verdict: compareVerdict({ ...review, models }),
-        weakness: compareWeakness(review),
-        excluded,
-        briefNote,
-        session,
-        composerOrigin: env.COMPOSER_ORIGIN,
-        storyUrl: env.PUBLIC_STORY_URL,
-        woodhouseShare: env.WOODHOUSE_SHARE === "true",
-        models,
-      }),
-      { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
-    );
+    // The private Compare response assembly, including the signed-out login
+    // refusal and the read-only project, job and saved-take selection, lives in
+    // compare-route.ts under strict TypeScript, at this exact place in the
+    // branch order. The Worker supplies the build revision, the one served model
+    // catalogue and its existing project helpers.
+    return compareRouteResponse(request, env, url, {
+      revision: BUILD.revision,
+      models,
+      currentProject,
+      loadProject,
+    });
   }
   if (path === "/" || path === "/studio") {
     const session = await readSession(env, request);
