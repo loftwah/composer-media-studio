@@ -1,5 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import.ts";
-import { MAX_CAPTION_BYTES, clipCaptionSrtVariants, type ClipCaptionSrtVariants } from "./clip-captions.ts";
+import { MAX_CAPTION_BYTES, clipCaptionSrtVariants, clipTimeStamp, type ClipCaptionSrtVariants } from "./clip-captions.ts";
 import { manualCaptionTrackVtt } from "./clip-manual-cue.ts";
 import { MAX_PUBLIC_VIDEO_SOURCE_SECONDS } from "./video-clip-source.ts";
 
@@ -57,4 +57,26 @@ export function fullSourceCaptionSrtVariants(vtt: string | null): ClipCaptionSrt
  */
 export function fullSourceCaptionSrt(vtt: string | null): string | null {
   return fullSourceCaptionSrtVariants(vtt)?.plain ?? null;
+}
+
+/**
+ * A readable archival transcript derived only from the exact full-source VTT.
+ * The same bounded, voice-aware parser supplies ordered cues at their original
+ * video times; no trim, timing offset, source fingerprint or media is involved.
+ * Each cue occupies one LF-terminated line with an optional supplied speaker.
+ * Literal Unicode text is left unescaped, and null withholds an unusable draft.
+ */
+export function fullSourceCaptionTranscript(vtt: string | null): string | null {
+  if (!vtt || vtt.length > MAX_CAPTION_BYTES || new TextEncoder().encode(vtt).byteLength > MAX_CAPTION_BYTES) return null;
+  let cues: ImportedCue[];
+  try {
+    cues = parseCaptionFile(vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000, { voices: true });
+  } catch {
+    return null;
+  }
+  if (!cues.length) return null;
+  return cues.map(cue => {
+    const speaker = cue.speaker ? `${cue.speaker}: ` : "";
+    return `[${clipTimeStamp(cue.startMs)} --> ${clipTimeStamp(cue.endMs)}] ${speaker}${cue.text}`;
+  }).join("\n") + "\n";
 }

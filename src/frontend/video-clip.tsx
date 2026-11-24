@@ -3,7 +3,7 @@ import { MAX_SPEAKER_CHARS } from "./caption-speaker.ts";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, clipCaptionCues, clipCaptionSrtVariants, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
 import { ALL_CUE_SPEAKERS, MAX_CUE_SEARCH_CHARS, UNNAMED_CUE_SPEAKER, cueMergeVisibility, cueSearchQuery, cueSpeakerFilterForDraft, cueSpeakerName, cueSpeakerOptions, filterCuesByTextAndSpeaker } from "./clip-cue-search";
-import { fullSourceCaptionDownload, fullSourceCaptionSrtVariants } from "./clip-full-source-captions";
+import { fullSourceCaptionDownload, fullSourceCaptionSrtVariants, fullSourceCaptionTranscript } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
 import { EMPTY_CUE_HISTORY, cueEditHistory, redoLastCueChange, undoLastCueChange, type CueHistory } from "./clip-cue-history";
 import { cueAuditionWindow } from "./clip-cue-audition";
@@ -452,7 +452,13 @@ function VideoClip() {
   const fullSourceCaptionSrtText = fullSourceCaptionSrt?.plain ?? null;
   const fullSourceCaptionSpeakerSrtText = fullSourceCaptionSrt?.speakerText ?? null;
   const fullSourceCaptionHasSpeakers = fullSourceCaptionSrt?.named === true;
-  const [fullSourceCaptionFile, setFullSourceCaptionFile] = useState<{ vtt: string; srt: string | null; url: string; srtUrl: string | null; speakerSrt: string | null; speakerSrtUrl: string | null } | null>(null);
+  // TXT is another view of the exact same bounded full-source VTT. It never
+  // reads the video source, trim, timing offset or display-only cue filters.
+  const fullSourceCaptionTranscriptText = useMemo(
+    () => fullSourceCaptionTranscript(fullSourceCaptionVtt),
+    [fullSourceCaptionVtt],
+  );
+  const [fullSourceCaptionFile, setFullSourceCaptionFile] = useState<{ vtt: string; srt: string | null; url: string; srtUrl: string | null; speakerSrt: string | null; speakerSrtUrl: string | null; transcript: string | null; transcriptUrl: string | null } | null>(null);
   useEffect(() => {
     if (!fullSourceCaptionVtt) {
       setFullSourceCaptionFile(null);
@@ -465,20 +471,26 @@ function VideoClip() {
     const speakerSrtUrl = fullSourceCaptionSpeakerSrtText
       ? URL.createObjectURL(new Blob([fullSourceCaptionSpeakerSrtText], { type: "application/x-subrip; charset=utf-8" }))
       : null;
-    setFullSourceCaptionFile({ vtt: fullSourceCaptionVtt, srt: fullSourceCaptionSrtText, url, srtUrl, speakerSrt: fullSourceCaptionSpeakerSrtText, speakerSrtUrl });
+    const transcriptUrl = fullSourceCaptionTranscriptText
+      ? URL.createObjectURL(new Blob([fullSourceCaptionTranscriptText], { type: "text/plain;charset=utf-8" }))
+      : null;
+    setFullSourceCaptionFile({ vtt: fullSourceCaptionVtt, srt: fullSourceCaptionSrtText, url, srtUrl, speakerSrt: fullSourceCaptionSpeakerSrtText, speakerSrtUrl, transcript: fullSourceCaptionTranscriptText, transcriptUrl });
     return () => {
       URL.revokeObjectURL(url);
       if (srtUrl) URL.revokeObjectURL(srtUrl);
       if (speakerSrtUrl) URL.revokeObjectURL(speakerSrtUrl);
+      if (transcriptUrl) URL.revokeObjectURL(transcriptUrl);
     };
-  }, [fullSourceCaptionVtt, fullSourceCaptionSrtText, fullSourceCaptionSpeakerSrtText]);
+  }, [fullSourceCaptionVtt, fullSourceCaptionSrtText, fullSourceCaptionSpeakerSrtText, fullSourceCaptionTranscriptText]);
   const currentFullSourceCaptionFile = fullSourceCaptionFile?.vtt === fullSourceCaptionVtt
     && fullSourceCaptionFile.srt === fullSourceCaptionSrtText
     && fullSourceCaptionFile.speakerSrt === fullSourceCaptionSpeakerSrtText
+    && fullSourceCaptionFile.transcript === fullSourceCaptionTranscriptText
     ? fullSourceCaptionFile : null;
   const fullSourceCaptionUrl = currentFullSourceCaptionFile?.url ?? null;
   const fullSourceCaptionSrtUrl = currentFullSourceCaptionFile?.srtUrl ?? null;
   const fullSourceCaptionSpeakerSrtUrl = currentFullSourceCaptionFile?.speakerSrtUrl ?? null;
+  const fullSourceCaptionTranscriptUrl = currentFullSourceCaptionFile?.transcriptUrl ?? null;
   const sourceVtt = showSourceCaptions && captionDraft
     ? sourcePreviewVtt(captionDraft.cues, duration, captionOffsetMs, sourceCaptionPlacement, { voices: true })
     : null;
@@ -1620,7 +1632,8 @@ function VideoClip() {
               <p><a className="button secondary" href={fullSourceCaptionUrl} download={`${clipFilename}-full-source-captions.vtt`} aria-describedby="full-source-captions-note">Save full-source caption draft (VTT)</a></p>
               {fullSourceCaptionSrtUrl && <p><a className="button secondary" href={fullSourceCaptionSrtUrl} download={`${clipFilename}-full-source-captions.srt`} aria-describedby="full-source-captions-note">Save full-source caption draft (SRT)</a></p>}
               {fullSourceCaptionSpeakerSrtUrl && <p><a className="button secondary" href={fullSourceCaptionSpeakerSrtUrl} download={`${clipFilename}-full-source-captions-speakers.srt`} aria-describedby="full-source-captions-note">Save full-source caption draft (SRT, speaker names as text)</a></p>}
-              <p id="full-source-captions-note" className="trim-note">Keeps every cue at its original video time, including cues outside this trim. To edit them again, open a saved caption file with Choose captions.</p>
+              {fullSourceCaptionTranscriptUrl && <p><a className="button secondary" href={fullSourceCaptionTranscriptUrl} download={`${clipFilename}-full-source-transcript.txt`} aria-describedby="full-source-captions-note">Save full-source transcript (TXT)</a></p>}
+              <p id="full-source-captions-note" className="trim-note">Includes every current source cue at its original video time, even while filtering or trimming. TXT is plain Unicode text with each supplied speaker name; it does not apply the timing offset. To edit cues again, open a saved VTT or SRT with Choose captions.</p>
             </div>
           )}
           {fullSourceCaptionProblem && <p className="trim-note" role="status">{fullSourceCaptionProblem}</p>}
