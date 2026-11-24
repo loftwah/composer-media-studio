@@ -78,7 +78,7 @@ import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./l
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.ts";
 import { composerShare } from "./lib/composer-share.ts";
-import { shell, loginPage, notFoundPage, helpPage, audioTrimPage, videoClipPage, addMusicPage, imagesPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
+import { shell, loginPage, notFoundPage, helpPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
@@ -91,6 +91,8 @@ import { publicCatalogue } from "./lib/public-catalogue.ts";
 import { handleGallery, homeShowcase, shareShowcaseFilms } from "./lib/gallery-showcase.ts";
 import { parseRange, rangeHeaders, servePublished } from "./lib/public-media.ts";
 import { handlePublicPublication } from "./lib/public-publication.ts";
+import { publicDiagnosticsResponse } from "./lib/public-diagnostics.ts";
+import { publicToolPageResponse } from "./lib/public-tool-pages.ts";
 import { deleteAssetPreviews, readAssetPreview, storeAssetPreview, storeAssetPreviewUpload } from "./lib/asset-previews.ts";
 import { createStudioMcpHandler } from "./mcp/tools.mjs";
 import { assetUsageReport, findDuplicateOriginal, projectStorageReport } from "./lib/storage-doctor.ts";
@@ -2124,20 +2126,10 @@ async function handlePublic(request, env, url) {
     return servePublished(request, env, publication.asset_id, false);
   }
 
-  if (path === "/healthz") {
-    return json({
-      ok: true,
-      revision: BUILD.revision,
-      bridge: Boolean(env.BRIDGE_SECRET),
-      builtAt: BUILD.builtAt,
-      time: new Date().toISOString(),
-    });
-  }
-  if (path === "/build.json") return json({ revision: BUILD.revision, builtAt: BUILD.builtAt });
-  if (path === "/capabilities.json") {
-    const manifest = await readCapabilityManifest(env);
-    return json(manifest, 200, { "cache-control": "public, max-age=300, s-maxage=3600" });
-  }
+  // The public build/status JSON assembly lives in public-diagnostics.ts under
+  // strict TypeScript, at this exact place in the branch order.
+  const diagnosticsResponse = publicDiagnosticsResponse(path, env, BUILD);
+  if (diagnosticsResponse) return diagnosticsResponse;
 
   if (path === "/bridge") {
     const token = url.searchParams.get("token");
@@ -2194,18 +2186,10 @@ async function handlePublic(request, env, url) {
     }
     return Response.redirect(target, 308);
   }
-  if (path === "/tools/add-music") {
-    return new Response(addMusicPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
-  }
-  if (path === "/tools/video-clip") {
-    return new Response(videoClipPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
-  }
-  if (path === "/tools/audio-trim") {
-    return new Response(audioTrimPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
-  }
-  if (path === "/tools/images") {
-    return new Response(imagesPage({ revision: BUILD.revision }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } });
-  }
+  // The four signed-out tool shells keep their original place in the route
+  // order; their response assembly lives in public-tool-pages.ts.
+  const toolPageResponse = publicToolPageResponse(path, BUILD.revision);
+  if (toolPageResponse) return toolPageResponse;
   // Public discovery files are rebuilt from D1 and enumerate only the public
   // state. They share the 60-second public cache boundary with the pages they
   // name, so a withdrawal disappears within that window. Above the single-file
