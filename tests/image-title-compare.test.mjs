@@ -197,12 +197,13 @@ test("every pair keeps its own crop anchor with centre defaults", () => {
   assert.match(section, /setAnchors\(\(current\) => \(\{ \.\.\.current, \[id\]: next \}\)\)/);
 });
 
-test("a crop edit clears only the edited pair's preference", () => {
+test("a crop edit clears only the edited pair's preference and retires prepared output", () => {
   const start = section.indexOf("function updateAnchor");
   const end = section.indexOf("\n  }", start);
   assert.ok(start >= 0 && end > start);
   const update = section.slice(start, end);
   assert.match(update, /clearPreferenceFor\(index\)/);
+  assert.match(update, /retirePreparedOutput\(\)/);
   assert.doesNotMatch(update, /setPreferredId|setSelectedId|discardExports/);
 });
 

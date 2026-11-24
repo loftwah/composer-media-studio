@@ -504,14 +504,16 @@ export function TitleCompare({
   }
 
   /** A crop change is a material edit for that pair only. It writes that
-   * pair's anchor and retires that pair's packaging preference through the
-   * same rule a title or thumbnail edit uses; other pairs are untouched. */
+   * pair's anchor, retires that pair's packaging preference through the
+   * same rule a title or thumbnail edit uses, and retires prepared output
+   * made from the old crop; other pairs are untouched. */
   function updateAnchor(index: number, next: CropAnchorKey): void {
     const id = PAIR_IDS[index];
     if (anchors[id] === next) return;
     pairEdits.current[index] += 1;
     setAnchors((current) => ({ ...current, [id]: next }));
     clearPreferenceFor(index);
+    retirePreparedOutput();
   }
 
   /** Replace the export list outside the state updater: revoking URLs inside
