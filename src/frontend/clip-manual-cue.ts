@@ -151,6 +151,29 @@ export function defaultClipCueSplit(
 }
 
 /**
+ * Stage the original video's playhead as a split time, sampled to the same
+ * whole-millisecond precision as the cue editor. The saved cue owns the valid
+ * range; a missing clock or a time at either edge is refused without a value.
+ */
+export function clipCueSplitFromPlayhead(
+  cue: Readonly<{ startMs: number; endMs: number }> | null | undefined,
+  currentTime: number | null | undefined,
+): Readonly<{ atSeconds: string }> | Readonly<{ problem: string }> {
+  if (!cue) return { problem: "The saved cue is no longer available. Choose Edit again." };
+  const atMs = typeof currentTime === "number" && Number.isFinite(currentTime)
+    ? Math.round(currentTime * 1000)
+    : NaN;
+  if (!Number.isSafeInteger(atMs))
+    return { problem: "The original video playhead is unavailable. Enter the split time manually." };
+  if (atMs <= cue.startMs || atMs >= cue.endMs) {
+    return {
+      problem: `The playhead must be after ${clipTimeStamp(cue.startMs)} and before ${clipTimeStamp(cue.endMs)} to split this saved cue. Enter a split time manually.`,
+    };
+  }
+  return { atSeconds: (atMs / 1000).toFixed(3) };
+}
+
+/**
  * Re-read the exact full-source track a change would leave through the same
  * bounded importer used for file import. This keeps plain text, cue count,
  * ordering, overlap and the 64 KiB sidecar bound identical for add, update,
