@@ -42,6 +42,7 @@ import {
   type CoverRect,
   type FeedSize,
   type FeedSizeKey,
+  type ManifestSourceFacts,
   type PairId,
   type PairOccupancy,
   type TitlePairManifest,
@@ -894,18 +895,15 @@ export function TitleCompare({
       if (!current()) return;
       const name = exportFileName(title || image.fileName, image.fileName, size);
       const sha256 = await sha256Hex(pngBytes);
+      if (!current()) return;
+      const sourceFacts = await manifestSourceFacts(image);
+      if (!current()) return;
       const manifest = buildTitlePairManifest({
         generatedAt: new Date().toISOString(),
         pairId: forPair,
         title,
         note,
-        source: {
-          fileName: image.fileName,
-          mime: image.mime,
-          bytes: image.bytes,
-          width: image.width,
-          height: image.height,
-        },
+        source: sourceFacts,
         anchor: forAnchor,
         size,
         sourceRect: rect,
@@ -1016,19 +1014,15 @@ export function TitleCompare({
         if (!current()) return;
         const sha256 = await sha256Hex(pngBytes);
         if (!current()) return;
+        const sourceFacts = await manifestSourceFacts(image);
+        if (!current()) return;
         const names = pairArchiveFileNames(prepared.id, size);
         const manifest = buildTitlePairManifest({
           generatedAt,
           pairId: prepared.id,
           title: prepared.title,
           note: prepared.note,
-          source: {
-            fileName: image.fileName,
-            mime: image.mime,
-            bytes: image.bytes,
-            width: image.width,
-            height: image.height,
-          },
+          source: sourceFacts,
           anchor: forAnchor,
           size,
           sourceRect: rect,
@@ -2243,10 +2237,25 @@ async function encodeCropPng(
   return { rect, blob, pngBytes };
 }
 
-/** SHA-256 over the exact PNG bytes, through the browser's own Web Crypto. */
+/** SHA-256 over exact bytes, through the browser's own Web Crypto. */
 async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) throw new Error("This browser cannot hash the export: Web Crypto is unavailable in this context.");
   const digest = await subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Source facts shared by the two explicit manifest/package paths. Hash the
+ * already selected File itself, never the crop, so ordinary intake, preview,
+ * PNG-only export and draft save do no source digest work. */
+async function manifestSourceFacts(image: PairImage): Promise<ManifestSourceFacts> {
+  const bytes = new Uint8Array(await image.file.arrayBuffer());
+  return {
+    fileName: image.fileName,
+    mime: image.mime,
+    bytes: image.bytes,
+    width: image.width,
+    height: image.height,
+    sha256: await sha256Hex(bytes),
+  };
 }
