@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MAX_SPEAKER_CHARS, renameSpeakerCues } from '../src/frontend/caption-speaker.ts';
+import { MAX_SPEAKER_CHARS, removeSpeakerNameCues, renameSpeakerCues } from '../src/frontend/caption-speaker.ts';
 
 const cue = (startMs, endMs, text, speaker) => ({ startMs, endMs, text, speaker });
 
@@ -55,6 +55,38 @@ test('speaker rename is exact and full-source, refuses merges, and preserves eve
   assert.match(collision.problem, /already belongs to another speaker/);
 
   const missing = renameSpeakerCues(cues, 'Missing', 'Ana');
+  assert.ok('problem' in missing);
+  assert.match(missing.problem, /no longer in this draft.*Choose another speaker/);
+});
+
+test('speaker name removal clears only the exact full-source name to the unnamed value', () => {
+  const cues = [
+    cue(500, 1800, 'Before the trim', 'Ann'),
+    cue(2500, 4200, 'Another speaker', 'Bob'),
+    cue(6100, 7800, 'After the trim', 'Ann'),
+    cue(9000, 10_000, 'Different case', 'ann'),
+    cue(11_000, 12_000, 'Already unnamed', ''),
+  ];
+  const before = structuredClone(cues);
+  const removed = removeSpeakerNameCues(cues, 'Ann');
+
+  assert.ok(!('problem' in removed));
+  assert.equal(removed.speaker, '');
+  assert.equal(removed.changed, 2);
+  assert.deepEqual(removed.cues, [
+    { ...cues[0], speaker: '' },
+    cues[1],
+    { ...cues[2], speaker: '' },
+    cues[3],
+    cues[4],
+  ]);
+  assert.equal(removed.cues[1], cues[1]);
+  assert.equal(removed.cues[3], cues[3]);
+  assert.equal(removed.cues[4], cues[4]);
+  assert.deepEqual(removed.cues.map(item => [item.startMs, item.endMs, item.text]), cues.map(item => [item.startMs, item.endMs, item.text]));
+  assert.deepEqual(cues, before);
+
+  const missing = removeSpeakerNameCues(cues, 'Missing');
   assert.ok('problem' in missing);
   assert.match(missing.problem, /no longer in this draft.*Choose another speaker/);
 });
