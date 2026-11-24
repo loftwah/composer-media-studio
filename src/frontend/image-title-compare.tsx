@@ -1740,7 +1740,7 @@ export function TitleCompare({
           Copy selected title
         </button>
       </div>
-      <div className="image-control-actions" role="group" aria-label="Editable packaging draft">
+      <div className="image-control-actions title-compare-draft" role="group" aria-label="Editable packaging draft">
         <button type="button" className="secondary" disabled={draftReading || pairs.some(pair => pair.busy)}
           onClick={downloadEditableDraft}>Save editable draft</button>
         <button type="button" className="secondary" disabled={draftReading || pairs.some(pair => pair.busy)}
