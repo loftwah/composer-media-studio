@@ -1392,7 +1392,17 @@ export function TitleCompare({
                     type="button"
                     className="quiet"
                     aria-label={`Remove thumbnail ${PAIR_LABELS[id]}`}
-                    onClick={() => removeImage(index)}
+                    onClick={(event) => {
+                      // Removing unmounts this trigger; keep keyboard replacement
+                      // in the same pair instead of dropping focus to BODY.
+                      if (document.activeElement === event.currentTarget) {
+                        const pair = event.currentTarget.closest<HTMLElement>("[data-title-compare-pair]");
+                        const fileInput = pair?.querySelector<HTMLInputElement>('input[type="file"]');
+                        const titleInput = pair?.querySelector<HTMLInputElement>('input[type="text"]');
+                        (fileInput && !fileInput.disabled ? fileInput : titleInput)?.focus();
+                      }
+                      removeImage(index);
+                    }}
                   >
                     Remove thumbnail
                   </button>
