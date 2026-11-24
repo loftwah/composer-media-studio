@@ -308,6 +308,13 @@ export function PromoDesk({
         >
           Copy next action
         </button>
+        <a
+          className="button quiet promo-desk-download"
+          href={`data:text/plain;charset=utf-8,${encodeURIComponent(handoffText)}`}
+          download="studio-promo-next-action.txt"
+        >
+          Download next action
+        </a>
       </p>
       {currentCopy && <p id={copyStatusId} className="small promo-desk-copy-status" role="status" aria-live="polite" aria-atomic="true">{currentCopy.message}</p>}
       {currentCopy && currentCopy.fallback !== null && (
