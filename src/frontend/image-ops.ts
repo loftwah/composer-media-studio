@@ -123,6 +123,7 @@ type DescribeInput = {
   cropAspect?: CropAspectKey | number | null;
   cropAnchor?: CropAnchorKey;
   trimmed?: boolean;
+  manualCrop?: ImageCrop | null;
   resize?: ResizePlan | null;
   resample?: "smooth" | "nearest";
   sharpen?: Partial<SharpenSettings> | null;
@@ -729,6 +730,7 @@ export function describeTransform({
   cropAspect = null,
   cropAnchor = "centre",
   trimmed = false,
+  manualCrop = null,
   resize = null,
   resample = "smooth",
   sharpen = null,
@@ -754,6 +756,10 @@ export function describeTransform({
       `${CROP_ANCHOR_WORDS[cropAnchor] ?? "centre"} crop ${cropAspectLabel(cropAspect)}`,
     );
   if (trimmed) parts.push("trim transparent edges");
+  if (manualCrop)
+    parts.push(
+      `manual crop left ${manualCrop.x}px, top ${manualCrop.y}px, width ${manualCrop.width}px, height ${manualCrop.height}px in upright source pixels`,
+    );
   if (resample === "nearest") parts.push("nearest-neighbour");
   const sharpenDescription = describeSharpen(sharpen);
   if (sharpenDescription) parts.push(sharpenDescription);
