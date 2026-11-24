@@ -50,6 +50,49 @@ export function gifSettingsProblem({
   return null;
 }
 
+/**
+ * The optional per-frame vector must name every admitted frame in order.
+ * A blank row is resolved by the caller before this check, so the vector it
+ * passes is always concrete and can be validated as strictly as the batch delay.
+ */
+export function gifFrameDelaysProblem({
+  frameCount,
+  frameDelaysMs,
+}: {
+  frameCount: number;
+  frameDelaysMs: readonly number[];
+}): string | null {
+  if (!Array.isArray(frameDelaysMs) || frameDelaysMs.length !== frameCount)
+    return `Supply exactly ${frameCount} per-frame delays in frame order.`;
+  for (let index = 0; index < frameDelaysMs.length; index += 1) {
+    const delayMs = frameDelaysMs[index];
+    if (!Number.isFinite(delayMs) || delayMs < GIF_MIN_DELAY_MS || delayMs > GIF_MAX_DELAY_MS ||
+        Math.round(delayMs) !== delayMs || delayMs % GIF_DELAY_STEP_MS !== 0)
+      return `Frame ${index + 1} delay must be from ${GIF_MIN_DELAY_MS} to ${GIF_MAX_DELAY_MS} ms in ${GIF_DELAY_STEP_MS} ms steps.`;
+  }
+  return null;
+}
+
+/** One caption and filename token for the exact ordered delay vector. */
+export type GifDelaySummary = {
+  uniform: boolean;
+  list: string;
+  token: string;
+  phrase: string;
+};
+
+export function gifDelaySummary(delaysMs: readonly number[]): GifDelaySummary {
+  const first = delaysMs[0];
+  const uniform = delaysMs.length > 0 && delaysMs.every((delayMs) => delayMs === first);
+  const list = delaysMs.join(", ");
+  return {
+    uniform,
+    list,
+    token: uniform ? `${first}ms` : `delays-${delaysMs.join("-")}ms`,
+    phrase: uniform ? `${first} ms per frame` : `per-frame delays ${list} ms`,
+  };
+}
+
 /** Fit a still inside the square frame at whole pixels and centre it. */
 export function gifFramePlacement(
   frameSize: number,
@@ -232,7 +275,10 @@ export type GifEncodeOptions = {
   frames: Uint8Array[];
   width: number;
   height: number;
+  /** The single delay used by every frame when frameDelaysMs is omitted. */
   delayMs: number;
+  /** Optional exact delay vector in frame order; its length must equal frames.length. */
+  frameDelaysMs?: readonly number[];
   loop?: boolean;
 };
 
@@ -240,8 +286,16 @@ export type GifEncodeOptions = {
  * Write a complete GIF89a file: one shared 256-colour global table, one Graphic
  * Control Extension per frame, optional Netscape looping extension and a single
  * trailer. Frames are in the array order, which is the workbench's list order.
+ * Omit frameDelaysMs to keep the original uniform-delay bytes exactly.
  */
-export function encodeGif({ frames, width, height, delayMs, loop = true }: GifEncodeOptions): Uint8Array {
+export function encodeGif({
+  frames,
+  width,
+  height,
+  delayMs,
+  frameDelaysMs,
+  loop = true,
+}: GifEncodeOptions): Uint8Array {
   if (!Number.isSafeInteger(width) || width < 1 || width > GIF_MAX_FRAME_SIZE ||
       !Number.isSafeInteger(height) || height < 1 || height > GIF_MAX_FRAME_SIZE)
     throw new RangeError(`GIF dimensions must be whole pixels from 1 to ${GIF_MAX_FRAME_SIZE}.`);
@@ -252,6 +306,12 @@ export function encodeGif({ frames, width, height, delayMs, loop = true }: GifEn
       Math.round(delayMs) !== delayMs || units * GIF_DELAY_STEP_MS !== delayMs ||
       units > 0xffff)
     throw new RangeError("A GIF delay must be whole 10 ms units.");
+  let frameUnits: number[] | undefined;
+  if (frameDelaysMs !== undefined) {
+    const problem = gifFrameDelaysProblem({ frameCount: frames.length, frameDelaysMs });
+    if (problem) throw new RangeError(problem);
+    frameUnits = frameDelaysMs.map(gifDelayUnits);
+  }
   const expected = width * height * 4;
   for (const frame of frames) {
     if (frame.byteLength !== expected)
@@ -280,13 +340,14 @@ export function encodeGif({ frames, width, height, delayMs, loop = true }: GifEn
     output.byte(0);
   }
 
-  for (const frame of frames) {
+  for (let index = 0; index < frames.length; index += 1) {
+    const frame = frames[index];
     output.byte(0x21);
     output.byte(0xf9);
     output.byte(0x04);
     // Disposal 1 (leave in place), no transparency and no user input.
     output.byte(0x04);
-    output.u16(units);
+    output.u16(frameUnits?.[index] ?? units);
     output.byte(0);
     output.byte(0x00);
 

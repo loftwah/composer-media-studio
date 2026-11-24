@@ -8,6 +8,8 @@ import {
   GIF_MAX_FRAMES,
   GIF_MIN_FRAMES,
   GIF_MIN_FRAME_SIZE,
+  gifDelaySummary,
+  gifFrameDelaysProblem,
   gifSettingsProblem,
 } from "../src/frontend/image-gif.ts";
 import {
@@ -33,8 +35,8 @@ function gifMakeLabel(frameCount) {
   return `Make GIF (${frameCount} frames)`;
 }
 
-function gifDownloadName({ frameCount, frameSize, delayMs }) {
-  return `media-studio-gif-${frameCount}-frames-${frameSize}px-${delayMs}ms.gif`;
+function gifDownloadName({ frameCount, frameSize, delayToken }) {
+  return `media-studio-gif-${frameCount}-frames-${frameSize}px-${delayToken}.gif`;
 }
 
 /** The select offers fixed square sizes; a bare number that is not an option cannot be driven. */
@@ -62,6 +64,26 @@ function parseGifMatte(raw) {
   assert(typeof raw === "string" && /^#[0-9a-f]{6}$/i.test(raw),
     "Supply --matte as a six-digit hex colour such as #ffffff.");
   return raw.toLowerCase();
+}
+
+/** Optional full ordered vector; every frame must be named once in frame order. */
+function parseGifFrameDelays(raw, frameCount) {
+  if (raw === undefined) return undefined;
+  const countInstruction =
+    `Supply --frame-delays-ms as exactly ${frameCount} comma-separated whole milliseconds in frame order.`;
+  assert(typeof raw === "string" && raw.length > 0, countInstruction);
+  const parts = raw.split(",");
+  assert.equal(parts.length, frameCount, countInstruction);
+  const valuesInstruction = "Supply --frame-delays-ms as whole milliseconds separated by commas.";
+  const frameDelaysMs = parts.map((part) => {
+    assert(/^(?:0|[1-9]\d*)$/.test(part), valuesInstruction);
+    const delayMs = Number(part);
+    assert(Number.isSafeInteger(delayMs), valuesInstruction);
+    return delayMs;
+  });
+  const problem = gifFrameDelaysProblem({ frameCount, frameDelaysMs });
+  assert.equal(problem, null, problem ?? undefined);
+  return frameDelaysMs;
 }
 
 /** The workbench loops by default; --once opts out. The two flags cannot be combined. */
@@ -94,13 +116,40 @@ function assertNetworkIsolation(report) {
   return report.networkRequestsPassedThrough;
 }
 
-function inspectGif(bytes, frameSize) {
+function inspectGif(bytes, frameSize, expectedDelaysMs) {
   assert(bytes.length >= 14 && bytes.toString("ascii", 0, 6) === "GIF89a" && bytes.at(-1) === 0x3b,
     "The workbench did not download a complete GIF89a file.");
   const width = bytes.readUInt16LE(6);
   const height = bytes.readUInt16LE(8);
   assert(width === frameSize && height === frameSize, "The downloaded GIF dimensions differ from the requested size.");
-  return { width, height };
+
+  // Read every Graphic Control Extension back from the actual downloaded bytes
+  // and compare the ordered hundredth-of-a-second units with the requested vector.
+  const frameDelaysMs = [];
+  let offset = 13 + 256 * 3;
+  while (offset < bytes.length) {
+    const marker = bytes[offset];
+    if (marker === 0x3b) break;
+    if (marker === 0x21 && bytes[offset + 1] === 0xff) {
+      offset += 19;
+      continue;
+    }
+    if (marker === 0x21 && bytes[offset + 1] === 0xf9) {
+      frameDelaysMs.push(bytes.readUInt16LE(offset + 4) * 10);
+      offset += 8;
+      continue;
+    }
+    assert.equal(marker, 0x2c, "The downloaded GIF has an unexpected block.");
+    offset += 10;
+    assert.equal(bytes[offset], 8, "The downloaded GIF does not use the expected LZW code size.");
+    offset += 1;
+    while (offset < bytes.length && bytes[offset] !== 0) offset += 1 + bytes[offset];
+    assert.equal(bytes[offset], 0, "The downloaded GIF has truncated image data.");
+    offset += 1;
+  }
+  assert.deepEqual(frameDelaysMs, expectedDelaysMs,
+    "The GIF control blocks differ from the requested frame delays.");
+  return { width, height, frameDelaysMs };
 }
 
 async function main() {
@@ -110,6 +159,7 @@ async function main() {
       output: { type: "string" },
       "frame-size": { type: "string" },
       delay: { type: "string" },
+      "frame-delays-ms": { type: "string" },
       matte: { type: "string" },
       loop: { type: "boolean" },
       once: { type: "boolean" },
@@ -121,10 +171,22 @@ async function main() {
   assertGifOutputPath(values.output);
   const frameSize = parseGifFrameSize(values["frame-size"]);
   const delayMs = parseGifDelay(values.delay);
+  const frameDelaysMs = parseGifFrameDelays(values["frame-delays-ms"], sourcePaths.length);
   const matte = parseGifMatte(values.matte);
   const loop = resolveGifPlayback(values);
-  const settings = { frameSize, delayMs, matte, loop, playback: loop ? "loop" : "once" };
-  const problem = gifSettingsProblem({ frameCount: sourcePaths.length, frameSize, delayMs });
+  const effectiveDelaysMs = frameDelaysMs ?? sourcePaths.map(() => delayMs);
+  const delaySummary = gifDelaySummary(effectiveDelaysMs);
+  const settings = {
+    frameSize,
+    delayMs,
+    ...(frameDelaysMs ? { frameDelaysMs } : {}),
+    matte,
+    loop,
+    playback: loop ? "loop" : "once",
+  };
+  const problem =
+    gifSettingsProblem({ frameCount: sourcePaths.length, frameSize, delayMs }) ??
+    gifFrameDelaysProblem({ frameCount: sourcePaths.length, frameDelaysMs: effectiveDelaysMs });
   assert.equal(problem, null, problem ?? undefined);
   await assertNewOutput(values.output);
 
@@ -136,6 +198,13 @@ async function main() {
     const gif = page.getByRole("group", { name: GIF_LABELS.fieldset, exact: true });
     await gif.getByRole("combobox", { name: GIF_LABELS.frameSize, exact: true }).selectOption(String(frameSize));
     await gif.getByLabel(GIF_LABELS.delay, { exact: true }).fill(String(delayMs));
+    if (frameDelaysMs) {
+      const disclosure = gif.locator("details.image-gif-delays");
+      if (!(await disclosure.evaluate((details) => details.open)))
+        await disclosure.locator("summary").click();
+      for (const [index, frameDelayMs] of frameDelaysMs.entries())
+        await gif.getByLabel(`Frame ${index + 1} delay (ms)`, { exact: true }).fill(String(frameDelayMs));
+    }
     await gif.getByLabel(GIF_LABELS.matte, { exact: true }).fill(matte);
     const repeat = gif.getByLabel(GIF_LABELS.loop, { exact: true });
     if (loop) await repeat.check();
@@ -145,17 +214,20 @@ async function main() {
     await completion.waitFor();
     const status = await completion.textContent();
     assert(status?.startsWith(
-      `GIF ready: ${inputs.length} frames · ${frameSize} × ${frameSize} px · ${delayMs} ms per frame`),
+      `GIF ready: ${inputs.length} frames · ${frameSize} × ${frameSize} px · ${delaySummary.phrase}`),
     "The workbench reported different GIF settings.");
     assert(status?.endsWith(loop ? "loops forever." : "plays once."),
       "The workbench reported different GIF playback.");
     const downloaded = await downloadLink(page, gif.getByRole("link", { name: GIF_DOWNLOAD_LABEL }));
-    assert.equal(downloaded.name, gifDownloadName({ frameCount: inputs.length, frameSize, delayMs }),
-      "The workbench named a different GIF download.");
+    assert.equal(downloaded.name, gifDownloadName({
+      frameCount: inputs.length,
+      frameSize,
+      delayToken: delaySummary.token,
+    }), "The workbench named a different GIF download.");
     return { bytes: downloaded.bytes };
   });
 
-  const dimensions = inspectGif(bytes, frameSize);
+  const dimensions = inspectGif(bytes, frameSize, effectiveDelaysMs);
   assertNetworkIsolation(report);
   const receipt = {
     schema: "media-studio/local-gif",
@@ -163,7 +235,14 @@ async function main() {
     browser: report.browser,
     sources: inputs.map((input, index) => ({ index, sha256: digest(input), bytes: input.length })),
     settings: { frameCount: inputs.length, ...settings },
-    output: { mime: "image/gif", ...dimensions, sha256: digest(bytes), bytes: bytes.length },
+    output: {
+      mime: "image/gif",
+      width: dimensions.width,
+      height: dimensions.height,
+      ...(frameDelaysMs ? { frameDelaysMs: dimensions.frameDelaysMs } : {}),
+      sha256: digest(bytes),
+      bytes: bytes.length,
+    },
     networkRequestsPassedThrough: report.networkRequestsPassedThrough,
   };
   await saveNewImage(values.output, bytes);

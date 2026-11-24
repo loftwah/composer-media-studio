@@ -249,9 +249,29 @@ test("batch writes a bounded GIF from the ordered source stills", () => {
   assert.match(workbench, /GIF delay \(ms per frame\)/);
   assert.match(workbench, /GIF matte/);
   assert.match(workbench, /Repeat after the last frame/);
+  assert.match(workbench, /<summary>Per-frame delays \(optional\)<\/summary>/);
+  assert.match(workbench, /Frame \{index \+ 1\} delay \(ms\)/);
   assert.match(workbench, /const gifSourceKey = items\.map/);
-  assert.match(workbench, /encodeGif\(\{ frames, width: size, height: size, delayMs, loop \}\)/);
+  assert.match(workbench, /item\.gifDelayMsOverride \?\? gifDelayMs/);
+  assert.match(
+    workbench,
+    /const frameDelaysMs = snapshot\.map\(\(item\) => item\.gifDelayMsOverride \?\? delayMs\)/,
+  );
+  assert.match(
+    workbench,
+    /gifFrameDelaysProblem\(\{ frameCount: snapshot\.length, frameDelaysMs \}\)/,
+  );
+  assert.match(
+    workbench,
+    /candidate\.id === item\.id \? \{ \.\.\.candidate, gifDelayMsOverride: value \} : candidate/,
+  );
+  assert.match(
+    workbench,
+    /encodeGif\(\{\s*frames,\s*width: size,\s*height: size,\s*delayMs,\s*\.\.\.\(hasOverrides \? \{ frameDelaysMs \} : \{\}\),\s*loop,\s*\}\)/,
+  );
   assert.match(workbench, /if \(attempt !== gifRevision\.current\) return;/);
+  assert.match(workbench, /gifOutputDelaySummary\?\.token/);
+  assert.match(workbench, /gifOutputDelaySummary\?\.phrase/);
   assert.match(workbench, /alt=\{`Encoded GIF:/);
   assert.match(workbench, /src=\{gifOutput\.url\}/);
   assert.match(workbench, /disabled=\{\s*gifBusy \|\| Boolean\(batchExport\)/);
@@ -260,6 +280,7 @@ test("batch writes a bounded GIF from the ordered source stills", () => {
   assert.doesNotMatch(gif, /from "|fetch\(|XMLHttpRequest|https?:\/\//);
   assert.match(gif, /GIF89a/);
   assert.match(gif, /NETSCAPE2\.0/);
+  assert.match(gif, /frameDelaysMs/);
 });
 
 test("the adjustment and snippet modules stay local and dependency-free", () => {

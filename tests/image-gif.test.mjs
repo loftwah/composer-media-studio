@@ -15,7 +15,9 @@ import {
   GIF_PALETTE,
   GIF_PALETTE_SIZE,
   encodeGif,
+  gifDelaySummary,
   gifDelayUnits,
+  gifFrameDelaysProblem,
   gifFramePlacement,
   gifSettingsProblem,
 } from "../src/frontend/image-gif.ts";
@@ -216,6 +218,79 @@ test("a non-looping GIF omits the Netscape extension and reports one delay for e
   assert.equal(parsed.loopExtension, false);
   assert.equal(parsed.frames.length, 3);
   for (const block of parsed.frames) assert.equal(block.delayUnits, 10);
+});
+
+test("different exact per-frame delays emit one matching control block per image", () => {
+  const frames = [
+    frame([255, 0, 0], 3, 3),
+    frame([0, 255, 0], 3, 3),
+    frame([0, 0, 255], 3, 3),
+  ];
+  const frameDelaysMs = [100, 500, 2000];
+  const bytes = encodeGif({ frames, width: 3, height: 3, delayMs: 500, frameDelaysMs, loop: false });
+  const parsed = parseGif(bytes);
+  assert.equal(parsed.frames.length, 3);
+  assert.deepEqual(parsed.frames.map((block) => block.delayUnits), [10, 50, 200]);
+  assert.deepEqual(parsed.frames.map((block) => block.descriptor), [
+    { left: 0, top: 0, width: 3, height: 3 },
+    { left: 0, top: 0, width: 3, height: 3 },
+    { left: 0, top: 0, width: 3, height: 3 },
+  ]);
+
+  const summary = gifDelaySummary(frameDelaysMs);
+  assert.equal(summary.uniform, false);
+  assert.equal(summary.token, "delays-100-500-2000ms");
+  assert.equal(summary.phrase, "per-frame delays 100, 500, 2000 ms");
+
+  const uniform = gifDelaySummary([500, 500, 500]);
+  assert.equal(uniform.uniform, true);
+  assert.equal(uniform.token, "500ms");
+  assert.equal(uniform.phrase, "500 ms per frame");
+
+  // An explicit uniform vector keeps the original uniform-delay bytes exactly.
+  const defaultBytes = encodeGif({ frames, width: 3, height: 3, delayMs: 500, loop: false });
+  const uniformBytes = encodeGif({
+    frames,
+    width: 3,
+    height: 3,
+    delayMs: 500,
+    frameDelaysMs: [500, 500, 500],
+    loop: false,
+  });
+  assert.deepEqual([...uniformBytes], [...defaultBytes]);
+});
+
+test("per-frame delays must name every frame inside 100–2000 ms in 10 ms steps", () => {
+  const frames = [frame([1, 2, 3], 2, 2), frame([4, 5, 6], 2, 2)];
+  assert.throws(
+    () => encodeGif({ frames, width: 2, height: 2, delayMs: 500, frameDelaysMs: [500] }),
+    /exactly 2/,
+  );
+  assert.throws(
+    () => encodeGif({ frames, width: 2, height: 2, delayMs: 500, frameDelaysMs: [90, 500] }),
+    /100 to 2000/,
+  );
+  assert.throws(
+    () => encodeGif({ frames, width: 2, height: 2, delayMs: 500, frameDelaysMs: [500, 505] }),
+    /10 ms steps/,
+  );
+  assert.throws(
+    () => encodeGif({ frames, width: 2, height: 2, delayMs: 500, frameDelaysMs: Array(2) }),
+    /Frame 1 delay/,
+  );
+  assert.equal(gifFrameDelaysProblem({ frameCount: 2, frameDelaysMs: [100, 2000] }), null);
+  assert.match(
+    gifFrameDelaysProblem({ frameCount: 2, frameDelaysMs: [100] }),
+    /exactly 2/,
+  );
+  assert.match(
+    gifFrameDelaysProblem({ frameCount: 2, frameDelaysMs: [100, 2010] }),
+    /Frame 2 delay must be from 100 to 2000/,
+  );
+  assert.match(
+    gifFrameDelaysProblem({ frameCount: 2, frameDelaysMs: [100, 505] }),
+    /10 ms steps/,
+  );
 });
 
 test("a frame whose byte length does not match the declared square is refused", () => {

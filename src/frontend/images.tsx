@@ -111,6 +111,8 @@ import {
   GIF_MIN_DELAY_MS,
   GIF_MIN_FRAMES,
   encodeGif,
+  gifDelaySummary,
+  gifFrameDelaysProblem,
   gifFramePlacement,
   gifSettingsProblem,
 } from "./image-gif.ts";
@@ -296,6 +298,12 @@ type WorkItem = {
   /** A reversible one-image crop position. Undefined follows the batch. */
   cropAnchorOverride?: CropAnchorKey;
   /**
+   * A reversible exact GIF delay for this row, in 100–2000 ms steps of 10.
+   * Keyed by the row's stable id through reorder; undefined follows the batch
+   * delay, and removing the row removes the override with it.
+   */
+  gifDelayMsOverride?: number;
+  /**
    * Reversible crop positions for the four social kit sizes, held only in this
    * in-memory item. A missing key is blank and follows the editor's crop
    * position. Editing a choice never rewrites an existing result or download.
@@ -323,7 +331,8 @@ type GifOutput = {
   width: number;
   height: number;
   count: number;
-  delayMs: number;
+  /** The exact ordered vector captured when this blob was encoded. */
+  delaysMs: number[];
   bytes: number;
 };
 
@@ -1280,11 +1289,18 @@ function Images() {
   // results or per-row overrides. Only an add, remove or reorder invalidates an
   // existing GIF; finishing a batch render leaves the same stills in place.
   const gifSourceKey = items.map((item) => `${item.id}:${item.sourceHash}`).join("|");
-  const gifProblem = gifSettingsProblem({
-    frameCount: items.length,
-    frameSize: gifFrameSize,
-    delayMs: gifDelayMs,
-  });
+  // A blank per-row override inherits the batch delay. The vector is derived
+  // from the current list order and the rows' stable ids, never from an index
+  // saved earlier, so reordering moves each override with its row.
+  const gifFrameDelays = items.map((item) => item.gifDelayMsOverride ?? gifDelayMs);
+  const gifProblem =
+    gifSettingsProblem({
+      frameCount: items.length,
+      frameSize: gifFrameSize,
+      delayMs: gifDelayMs,
+    }) ??
+    gifFrameDelaysProblem({ frameCount: items.length, frameDelaysMs: gifFrameDelays });
+  const gifOutputDelaySummary = gifOutput ? gifDelaySummary(gifOutput.delaysMs) : null;
   const isAtlasMode = sheetMode === "sprite-atlas";
   const atlasEntries = isAtlasMode ? doneItems.flatMap((item) =>
     item.result?.mime === "image/png" ? [{ item, result: item.result }] : [],
@@ -2168,20 +2184,23 @@ function Images() {
 
   async function makeGif(): Promise<void> {
     if (gifBusy || batchExport || addingRef.current || runningRef.current || socialController.current || importing) return;
-    const problem = gifSettingsProblem({
-      frameCount: items.length,
-      frameSize: gifFrameSize,
-      delayMs: gifDelayMs,
-    });
-    if (problem) {
-      setGifMessage(problem);
-      return;
-    }
     const snapshot = items.slice();
     const size = gifFrameSize;
     const delayMs = gifDelayMs;
     const matte = gifMatte;
     const loop = gifLoop;
+    // Capture the exact ordered vector once. A blank row inherits the batch
+    // delay here, and later row edits cannot change this run's settings.
+    const hasOverrides = snapshot.some((item) => item.gifDelayMsOverride !== undefined);
+    const frameDelaysMs = snapshot.map((item) => item.gifDelayMsOverride ?? delayMs);
+    const problem =
+      gifSettingsProblem({ frameCount: snapshot.length, frameSize: size, delayMs }) ??
+      gifFrameDelaysProblem({ frameCount: snapshot.length, frameDelaysMs });
+    if (problem) {
+      setGifMessage(problem);
+      return;
+    }
+    const delaySummary = gifDelaySummary(frameDelaysMs);
     const attempt = gifRevision.current;
     setGifBusy(true);
     setGifMessage(`Rendering ${snapshot.length} frames on this device…`);
@@ -2238,7 +2257,14 @@ function Images() {
           }
         }
       }
-      const bytes = encodeGif({ frames, width: size, height: size, delayMs, loop });
+      const bytes = encodeGif({
+        frames,
+        width: size,
+        height: size,
+        delayMs,
+        ...(hasOverrides ? { frameDelaysMs } : {}),
+        loop,
+      });
       if (attempt !== gifRevision.current) return;
       const blob = blobFromBytes(bytes, "image/gif");
       const url = trackUrl(blob);
@@ -2248,11 +2274,11 @@ function Images() {
         width: size,
         height: size,
         count: frames.length,
-        delayMs,
+        delaysMs: frameDelaysMs,
         bytes: blob.size,
       });
       setGifMessage(
-        `GIF ready: ${frames.length} frames · ${size} × ${size} px · ${delayMs} ms per frame · ` +
+        `GIF ready: ${frames.length} frames · ${size} × ${size} px · ${delaySummary.phrase} · ` +
         `${formatBytes(blob.size)} · ${loop ? "loops forever" : "plays once"}.`,
       );
     } catch (error) {
@@ -2283,6 +2309,22 @@ function Images() {
         candidate.id === item.id ? { ...candidate, formatOverride: value } : candidate,
       ),
     );
+  }
+
+  // The override belongs to the row's stable id, so reordering carries it with
+  // that row and removing the row drops it. An edit retires any existing GIF.
+  function setGifDelayOverride(item: WorkItem, value: number | undefined): void {
+    setItems((previous) =>
+      previous.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, gifDelayMsOverride: value } : candidate,
+      ),
+    );
+    if (gifOutput) invalidateGif("GIF frame delays changed. Make the GIF again.");
+  }
+
+  function gifDelayOverrideIsValid(value: number | undefined): boolean {
+    return value === undefined ||
+      gifFrameDelaysProblem({ frameCount: 1, frameDelaysMs: [value] }) === null;
   }
 
   // A blank control means "follow the batch". The native number input keeps
@@ -4732,7 +4774,8 @@ function Images() {
           <legend>Make an animated GIF</legend>
           <p className="trim-note" id="image-gif-note">
             Use {GIF_MIN_FRAMES}–{GIF_MAX_FRAMES} source stills in batch order.
-            Every frame uses the same square size, matte and delay. The fixed
+            Every frame uses the same square size and matte. The batch delay
+            applies to every frame unless a row below sets its own. The fixed
             256-colour palette can cause banding in gradients.
           </p>
           <div className="image-gif-settings">
@@ -4794,6 +4837,48 @@ function Images() {
               Repeat after the last frame
             </label>
           </div>
+          {items.length > 0 && (
+            <details className="image-gif-delays">
+              <summary>Per-frame delays (optional)</summary>
+              <p className="trim-note" id="image-gif-delays-note">
+                Leave a frame blank to use the batch delay. Each value is
+                {" "}{GIF_MIN_DELAY_MS}–{GIF_MAX_DELAY_MS} ms in {GIF_DELAY_STEP_MS} ms
+                steps and stays with its row when the batch is reordered.
+              </p>
+              <div className="image-gif-delay-grid">
+                {items.map((item, index) => (
+                  <label className="image-sheet-columns" key={item.id}>
+                    Frame {index + 1} delay (ms)
+                    <input
+                      type="number"
+                      min={GIF_MIN_DELAY_MS}
+                      max={GIF_MAX_DELAY_MS}
+                      step={GIF_DELAY_STEP_MS}
+                      inputMode="numeric"
+                      placeholder={Number.isFinite(gifDelayMs) ? String(gifDelayMs) : "Batch"}
+                      value={
+                        item.gifDelayMsOverride === undefined ||
+                        !Number.isFinite(item.gifDelayMsOverride)
+                          ? ""
+                          : item.gifDelayMsOverride
+                      }
+                      disabled={gifBusy}
+                      aria-describedby="image-gif-delays-note"
+                      aria-invalid={
+                        item.gifDelayMsOverride !== undefined &&
+                        !gifDelayOverrideIsValid(item.gifDelayMsOverride)
+                          ? true
+                          : undefined
+                      }
+                      onChange={(event) =>
+                        setGifDelayOverride(item, longEdgeFromControl(event.currentTarget))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            </details>
+          )}
           <div className="image-control-actions">
             <button
               type="button"
@@ -4813,7 +4898,7 @@ function Images() {
               <a
                 className="button secondary"
                 href={gifOutput.url}
-                download={`media-studio-gif-${gifOutput.count}-frames-${gifOutput.width}px-${gifOutput.delayMs}ms.gif`}
+                download={`media-studio-gif-${gifOutput.count}-frames-${gifOutput.width}px-${gifOutputDelaySummary?.token}.gif`}
               >
                 Download GIF · {formatBytes(gifOutput.bytes)}
               </a>
@@ -4830,7 +4915,7 @@ function Images() {
                 src={gifOutput.url}
                 width={gifOutput.width}
                 height={gifOutput.height}
-                alt={`Encoded GIF: ${gifOutput.count} frames at ${gifOutput.width} × ${gifOutput.height} px, ${gifOutput.delayMs} ms per frame`}
+                alt={`Encoded GIF: ${gifOutput.count} frames at ${gifOutput.width} × ${gifOutput.height} px, ${gifOutputDelaySummary?.phrase}`}
               />
             </>
           )}
