@@ -232,6 +232,25 @@ test("the metadata strip button keeps keyboard focus while the bytes load", () =
   assert.match(workbench, /Download verified copy/);
 });
 
+test("batch writes a bounded GIF from the ordered source stills", () => {
+  assert.match(workbench, /<legend>Make an animated GIF<\/legend>/);
+  assert.match(workbench, /GIF frame size/);
+  assert.match(workbench, /GIF delay \(ms per frame\)/);
+  assert.match(workbench, /GIF matte/);
+  assert.match(workbench, /Repeat after the last frame/);
+  assert.match(workbench, /const gifSourceKey = items\.map/);
+  assert.match(workbench, /encodeGif\(\{ frames, width: size, height: size, delayMs, loop \}\)/);
+  assert.match(workbench, /if \(attempt !== gifRevision\.current\) return;/);
+  assert.match(workbench, /alt=\{`Encoded GIF:/);
+  assert.match(workbench, /src=\{gifOutput\.url\}/);
+  assert.match(workbench, /disabled=\{\s*gifBusy \|\| Boolean\(batchExport\)/);
+
+  const gif = readFileSync(new URL("../src/frontend/image-gif.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(gif, /from "|fetch\(|XMLHttpRequest|https?:\/\//);
+  assert.match(gif, /GIF89a/);
+  assert.match(gif, /NETSCAPE2\.0/);
+});
+
 test("the adjustment and snippet modules stay local and dependency-free", () => {
   for (const file of ["image-adjust.ts", "image-snippets.ts"]) {
     const source = readFileSync(new URL(`../src/frontend/${file}`, import.meta.url), "utf8");
