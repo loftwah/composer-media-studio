@@ -174,7 +174,7 @@ test("the section keeps the workbench's local-only and keyboard promises", () =>
   assert.match(section, /URL\.createObjectURL/);
   assert.match(section, /URL\.revokeObjectURL/);
   // The workbench mounts the section.
-  assert.match(workbench, /<TitleCompare preparedImage=\{preparedTitleImage\} \/>/);
+  assert.match(workbench, /<TitleCompare\s+preparedImage=\{preparedTitleImage\}/);
 });
 
 test("every pair keeps its own crop anchor with centre defaults", () => {
@@ -853,7 +853,7 @@ test("the workbench offers its exact finished result to the packaging compare", 
   assert.match(workbench, /blob: selected\.result\.blob/);
   assert.match(workbench, /filename: renderedFileName\(selected\.file\.name, selected\.result\)/);
   assert.match(workbench, /mime: selected\.result\.mime/);
-  assert.match(workbench, /<TitleCompare preparedImage=\{preparedTitleImage\} \/>/);
+  assert.match(workbench, /<TitleCompare\s+preparedImage=\{preparedTitleImage\}/);
   // The offer does not add an input file, upload or save path of its own.
   assert.doesNotMatch(workbench, /<TitleCompare[^>]*(?:onUpload|autoApply|save)/);
 });

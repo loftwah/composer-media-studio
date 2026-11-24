@@ -197,8 +197,12 @@ function sameTitleClips(current: TitleClipState, next: TitleClipState): boolean 
 
 export function TitleCompare({
   preparedImage = null,
+  onEditVerifiedPng,
+  verifiedPngEditUnavailable = "",
 }: {
   preparedImage?: PreparedTitleImage | null;
+  onEditVerifiedPng?: (file: File, trigger: HTMLButtonElement) => void;
+  verifiedPngEditUnavailable?: string;
 }) {
   const [pairs, setPairs] = useState<Pair[]>(() => PAIR_IDS.map(emptyPair));
   const [selectedId, setSelectedId] = useState<PairId>("a");
@@ -1116,6 +1120,23 @@ export function TitleCompare({
       : `Pair ${PAIR_LABELS[target]} changed. Choose an empty pair and try again.`);
   }
 
+  /** The explicit handoff re-checks the current match at dispatch and passes
+   * that exact File unchanged. Once the creator clicks, the chosen file is
+   * allowed to finish opening like a native file picker; a later verification
+   * change neither swaps nor implicitly adds a file. */
+  function editVerifiedPngInImageTools(trigger: HTMLButtonElement): void {
+    const file = verifiedPngRef.current;
+    if (
+      verifyPhase !== "matched" ||
+      verifyOutcome?.status !== "matched" ||
+      !file ||
+      file !== verifyPngFile ||
+      verifiedPngEditUnavailable
+    )
+      return;
+    onEditVerifiedPng?.(file, trigger);
+  }
+
   const selectedIndex = PAIR_IDS.indexOf(selectedId);
   const selected = pairs[selectedIndex];
   const selectedLabel = `Pair ${PAIR_LABELS[selectedId]}`;
@@ -1766,7 +1787,24 @@ export function TitleCompare({
           >
             {verifyPhase === "checking" ? "Verifying…" : "Verify PNG against manifest"}
           </button>
+          {hasCurrentVerifiedPng && onEditVerifiedPng && (
+            <button
+              type="button"
+              className="secondary"
+              data-title-compare-verify-edit
+              aria-describedby="image-title-compare-verify-edit-note"
+              disabled={Boolean(verifiedPngEditUnavailable)}
+              onClick={(event) => editVerifiedPngInImageTools(event.currentTarget)}
+            >
+              Edit verified PNG in Image Tools
+            </button>
+          )}
         </p>
+        {hasCurrentVerifiedPng && onEditVerifiedPng && (
+          <p className="trim-note" id="image-title-compare-verify-edit-note" role="status">
+            {verifiedPngEditUnavailable || "Adds this exact PNG to the batch as a local source for editing."}
+          </p>
+        )}
         <p
           className={`trim-note title-compare-verify-status${
             verifyPhase === "matched"

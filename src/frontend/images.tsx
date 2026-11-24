@@ -361,7 +361,8 @@ type PublicImageSource =
 type ListFocus =
   | { kind: "row"; id: string }
   | { kind: "row-action"; id: string; offset: -1 | 1 }
-  | { kind: "picker" };
+  | { kind: "picker" }
+  | { kind: "editor" };
 
 type ContactSheet = { url: string; blob: Blob; layoutUrl: string; layoutText: string; count: number; columns: number; tileSize: number; width: number; height: number; mode: SheetMode };
 type SheetMode = "contact-sheet" | "sprite-atlas";
@@ -1217,6 +1218,7 @@ function Images() {
   const runningRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const restorePickerFocus = useRef(false);
+  const editHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const processAllRef = useRef<HTMLButtonElement | null>(null);
   const focusAfterListChange = useRef<ListFocus | null>(null);
@@ -1682,6 +1684,10 @@ function Images() {
     focusAfterListChange.current = null;
     if (pending.kind === "picker") {
       fileInputRef.current?.focus();
+      return;
+    }
+    if (pending.kind === "editor") {
+      editHeadingRef.current?.focus();
       return;
     }
     const row = listRef.current?.querySelector<HTMLButtonElement>(`[data-image-row="${pending.id}"]`);
@@ -2927,6 +2933,15 @@ function Images() {
     });
   }
 
+  function openVerifiedPngInEditor(file: File, trigger: HTMLButtonElement): void {
+    void addFiles([file], false, undefined, (item) => {
+      const active = document.activeElement;
+      if (active === trigger || active === document.body || active === null)
+        focusAfterListChange.current = { kind: "editor" };
+      selectItem(item.id);
+    });
+  }
+
   function changeRotation(next: Settings["rotate"]): void {
     setTrim(null);
     setTrimMessage("");
@@ -3774,7 +3789,7 @@ function Images() {
       {selected && (
         <section className="trim-work" aria-labelledby="image-edit-heading">
           <div className="image-section-head">
-            <h2 id="image-edit-heading">Edit {selected.file.name}</h2>
+            <h2 id="image-edit-heading" ref={editHeadingRef} tabIndex={-1}>Edit {selected.file.name}</h2>
             <span>{selected.source.orientation === 1 ? "no EXIF rotation" : `EXIF ${ORIENTATION_LABELS[selected.source.orientation] ?? selected.source.orientation}`}</span>
           </div>
           {selected.publicSource?.kind === "poster" && (
@@ -5810,7 +5825,17 @@ function Images() {
         </p>
       </section>
 
-      <TitleCompare preparedImage={preparedTitleImage} />
+      <TitleCompare
+        preparedImage={preparedTitleImage}
+        onEditVerifiedPng={openVerifiedPngInEditor}
+        verifiedPngEditUnavailable={
+          items.length >= MAX_BATCH_IMAGES
+            ? `The batch already has ${MAX_BATCH_IMAGES} images. Remove one before opening this PNG.`
+            : adding || running || importing || socialBusy || batchExport
+              ? "Wait for the current image work to finish."
+              : ""
+        }
+      />
     </main>
   );
 }
