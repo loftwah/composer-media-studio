@@ -149,4 +149,8 @@
 .promo-desk-next p,
 .promo-desk-next strong { margin: 0; }
 .promo-desk-next a { font-weight: 700; }
+.promo-desk-copy { flex: none; min-height: 42px; padding: .4rem .7rem; font-size: .84rem; }
+.promo-desk-copy-status { margin: .45rem 0 0; }
+.promo-desk-copy-fallback { max-width: 75ch; margin: .6rem 0 0; }
+.promo-desk-copy-fallback textarea { min-height: 8rem; overflow-wrap: anywhere; }
 .promo-desk-note { margin: 0.6rem 0 0; color: var(--muted); max-width: 75ch; }
