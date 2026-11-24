@@ -259,6 +259,20 @@
   color: var(--muted);
 }
 
+/* The clipboard action sits beside its own download, never in place of it:
+   a denied write or a missing ClipboardItem leaves the download untouched. */
+.title-compare-export button[data-title-compare-copy-png] {
+  margin-left: 0.5rem;
+}
+
+.title-compare-export-copy-status {
+  color: var(--teal);
+}
+
+.title-compare-export-copy-status.is-error {
+  color: var(--danger);
+}
+
 /* Full-size framing inspection. A native disclosure keeps focus where it was,
    leaves every pair radio live and changes no export state. The source is shown
    at 1:1 in a bounded scroll box; the crop frame reads the same coverCropRect
