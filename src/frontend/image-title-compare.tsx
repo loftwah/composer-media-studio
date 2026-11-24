@@ -484,6 +484,12 @@ export function TitleCompare({
     retirePreparedOutput();
   }
 
+  function updateNote(index: number, note: string): void {
+    if (pairs[index]?.note === note) return;
+    setPair(index, { note });
+    retirePreparedOutput();
+  }
+
   /** Alt text describes the thumbnail, not the crop or the encoded pixels. An
    * edit therefore leaves this pair's image, anchor, title, note and human
    * preference alone. Prepared JSON/ZIP files and any in-flight encode were
@@ -1704,7 +1710,7 @@ export function TitleCompare({
                     maxLength={NOTE_MAX_LENGTH}
                     rows={2}
                     spellCheck={false}
-                    onChange={(event) => setPair(index, { note: event.target.value })}
+                    onChange={(event) => updateNote(index, event.target.value)}
                   />
                 </label>
                 <button
