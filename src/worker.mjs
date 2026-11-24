@@ -77,17 +77,17 @@ import { handleFalWebhook } from "./lib/fal-webhook.mjs";
 import { builtinRecipe, projectRecipes, renderPrompt, builtinRecipes } from "./lib/recipes.ts";
 import { reuseStillFor, sharingDestinations } from "./lib/sharing.ts";
 import { shareAsset, shareOriginal, sharePage, woodhouseUrl, shareApi, shareOrigin } from "./lib/woodhouse-share.ts";
-import { shell, loginPage, notFoundPage, helpPage, publicGallery, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
+import { shell, loginPage, notFoundPage, comparePage, reviewRoomPage, reviewComparePage, reviewRefusalPage } from "./lib/ui.mjs";
 import { costSummary, jobCatalogue, latestPerModel, likeForLike, verdict as compareVerdict, weakness as compareWeakness } from "./lib/comparisons.ts";
 import { verifyRenderLink } from "./lib/render-links.mjs";
 import { claimUploadLink, createUploadLink, loadUploadLink, readBoundedBody, verifyUploadLink } from "./lib/upload-links.mjs";
 import { inventory, policyFor, publishCandidate, setPolicy, boundedBackfill } from "./lib/publication-policy.mjs";
 import { bulkPublicationChange, publicationAudit } from "./lib/publication-bulk.mjs";
-import { PUBLIC_CACHE_SECONDS, publicOrigin, publicDiscoveryResponse } from "./lib/sitemap.ts";
+import { publicOrigin, publicDiscoveryResponse } from "./lib/sitemap.ts";
 import { checkPublicImage } from "./lib/public-image-privacy.ts";
 import { deletePublicationDerivatives, MAX_DERIVATIVE_BYTES, storeDerivative, storePosterDerivative, storePosterUpload } from "./lib/publication-derivatives.ts";
-import { publicCatalogue } from "./lib/public-catalogue.ts";
 import { handleGallery, homeShowcase } from "./lib/gallery-showcase.ts";
+import { publicHelpResponse, publicHomeResponse } from "./lib/public-home.ts";
 import { parseRange, rangeHeaders, servePublished } from "./lib/public-media.ts";
 import { handlePublicPublication } from "./lib/public-publication.ts";
 import { publicDiagnosticsResponse } from "./lib/public-diagnostics.ts";
@@ -2183,11 +2183,9 @@ async function handlePublic(request, env, url) {
   // The pure filter parsing, catalogue/featured reads and public response for
   // /gallery live in gallery-showcase.ts under strict TypeScript.
   if (path === "/gallery") return handleGallery(env, url.searchParams);
-  if (path === "/help") {
-    return new Response(helpPage({ composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL }), {
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" },
-    });
-  }
+  // The signed-out help response assembly lives in public-home.ts under strict
+  // TypeScript; the renderer, body and one-hour public cache are unchanged.
+  if (path === "/help") return publicHelpResponse(env);
   if (path === "/compare") {
     const session = await readSession(env, request);
     if (!session) {
@@ -2303,9 +2301,9 @@ async function handlePublic(request, env, url) {
     const session = await readSession(env, request);
     if (!session) {
       if (path === "/studio") return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
-      const catalogue = await publicCatalogue(env, 1, 6, { withFacets: false });
-      const featured = catalogue.items.length ? [] : await homeShowcase(env);
-      return new Response(publicGallery({ ...catalogue, ...sharingDestinations(env), featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` } });
+      // Only the signed-out catalogue response moved to public-home.ts; the
+      // session read, /studio login branch and authenticated shell stay here.
+      return publicHomeResponse(env);
     }
     return new Response(shell({
       revision: BUILD.revision,
