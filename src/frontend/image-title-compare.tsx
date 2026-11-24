@@ -441,11 +441,13 @@ export function TitleCompare({
     if (preferredId === id) {
       draftChoices.current += 1;
       setPreferredId(null);
+      retirePreparedOutput();
       return;
     }
     if (!completePair(pairs[PAIR_IDS.indexOf(id)])) return;
     draftChoices.current += 1;
     setPreferredId(id);
+    retirePreparedOutput();
   }
 
   /** The snapshot a set export may bundle: a real title and a local thumbnail

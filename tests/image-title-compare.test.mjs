@@ -207,6 +207,16 @@ test("a crop edit clears only the edited pair's preference and retires prepared 
   assert.doesNotMatch(update, /setPreferredId|setSelectedId|discardExports/);
 });
 
+test("actual preference changes and clears retire prepared output", () => {
+  const start = section.indexOf("function togglePreference");
+  const end = section.indexOf("\n  }", start);
+  assert.ok(start >= 0 && end > start);
+  const toggle = section.slice(start, end);
+  assert.match(toggle, /setPreferredId\(null\);\s*retirePreparedOutput\(\);/);
+  assert.match(toggle, /if \(!completePair[^\n]+\) return;/);
+  assert.match(toggle, /setPreferredId\(id\);\s*retirePreparedOutput\(\);/);
+});
+
 test("each export captures its pair's anchor before the first await", () => {
   // Single-pair PNG and manifest capture the selected pair's own anchor.
   assert.equal(
