@@ -1159,6 +1159,7 @@ function Images() {
   const [trimBusy, setTrimBusy] = useState(false);
   const [trimMessage, setTrimMessage] = useState("");
   const [palette, setPalette] = useState<PaletteState | null>(null);
+  const [paletteMaxColors, setPaletteMaxColors] = useState(MAX_PALETTE_COLOURS);
   const [readingPaletteId, setReadingPaletteId] = useState("");
   const [paletteMessage, setPaletteMessage] = useState<{ itemId: string; text: string } | null>(null);
   const [picked, setPicked] = useState<PickedColour | null>(null);
@@ -1427,6 +1428,15 @@ function Images() {
     : null;
   // The palette reads the original file, independently of any processed output.
   const visiblePalette = palette && selected && palette.itemId === selected.id ? palette : null;
+  // Keep the full deterministic sample. A smaller maximum only selects its
+  // leading swatches, preserving their source coverage without decoding again.
+  const visiblePaletteColors = visiblePalette?.result.colors.slice(0, paletteMaxColors) ?? [];
+  const paletteCoveredPercent = visiblePalette && visiblePalette.result.sampledVisiblePixels > 0
+    ? Math.round(
+        (visiblePaletteColors.reduce((sum, colour) => sum + colour.count, 0) /
+          visiblePalette.result.sampledVisiblePixels) * 1000,
+      ) / 10
+    : 0;
   const visiblePaletteMessage = paletteMessage?.itemId === selected?.id ? paletteMessage?.text : "";
   const paletteBusy = Boolean(readingPaletteId);
   const visibleSnippets =
@@ -2016,6 +2026,7 @@ function Images() {
     setTrimMessage("");
     clearPaletteCopyFallback();
     setPalette(null);
+    setPaletteMaxColors(MAX_PALETTE_COLOURS);
     setPaletteMessage(null);
     setPicked(null);
     setPickMessage("");
@@ -2989,6 +3000,14 @@ function Images() {
   function clearPaletteCopyFallback(): void {
     latestPaletteCopy.current += 1;
     setPaletteCopyFallback(null);
+  }
+
+  function changePaletteMaxColors(value: number): void {
+    if (!Number.isInteger(value) || value < 1 || value > MAX_PALETTE_COLOURS) return;
+    // A denied-copy field belongs to the list that was copied, not a new slice.
+    clearPaletteCopyFallback();
+    setCopyMessage("");
+    setPaletteMaxColors(value);
   }
 
   async function copyPaletteValue(
@@ -4541,6 +4560,18 @@ function Images() {
               coverage is the share of sampled pixels with any alpha.
             </p>
             <div className="image-control-actions">
+              <label>
+                Maximum colours
+                <select
+                  value={paletteMaxColors}
+                  disabled={running || paletteBusy}
+                  onChange={(event) => changePaletteMaxColors(Number(event.currentTarget.value))}
+                >
+                  {Array.from({ length: MAX_PALETTE_COLOURS }, (_, index) => index + 1).map((count) => (
+                    <option value={count} key={count}>{count}</option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="button"
                 className="secondary"
@@ -4549,7 +4580,7 @@ function Images() {
               >
                 {readingPaletteId === selected.id ? "Reading colours…" : "Extract palette"}
               </button>
-              {!running && !paletteBusy && visiblePalette && visiblePalette.result.colors.length > 0 && (
+              {!running && !paletteBusy && visiblePalette && visiblePaletteColors.length > 0 && (
                 <>
                   <button
                     type="button"
@@ -4557,35 +4588,35 @@ function Images() {
                     onClick={(event) => void copyPaletteValue(
                       event.currentTarget,
                       "palette CSS",
-                      paletteToCss(visiblePalette.result.colors),
+                      paletteToCss(visiblePaletteColors),
                     )}
                   >
                     Copy palette CSS
                   </button>
                   <a
                     className="button secondary"
-                    href={`data:text/plain;charset=utf-8,${encodeURIComponent(paletteToGpl(visiblePalette.result.colors))}`}
+                    href={`data:text/plain;charset=utf-8,${encodeURIComponent(paletteToGpl(visiblePaletteColors))}`}
                     download="studio-palette.gpl"
                   >
                     Download palette (.gpl)
                   </a>
                   <a
                     className="button secondary"
-                    href={`data:text/css;charset=utf-8,${encodeURIComponent(paletteToCss(visiblePalette.result.colors))}`}
+                    href={`data:text/css;charset=utf-8,${encodeURIComponent(paletteToCss(visiblePaletteColors))}`}
                     download="studio-palette.css"
                   >
                     Download palette (.css)
                   </a>
                   <a
                     className="button secondary"
-                    href={bytesToDataUri(paletteToAse(visiblePalette.result.colors), "application/octet-stream")}
+                    href={bytesToDataUri(paletteToAse(visiblePaletteColors), "application/octet-stream")}
                     download="studio-palette.ase"
                   >
                     Download palette (.ase)
                   </a>
                   <a
                     className="button secondary"
-                    href={`data:application/json;charset=utf-8,${encodeURIComponent(paletteToJson(visiblePalette.result.colors))}`}
+                    href={`data:application/json;charset=utf-8,${encodeURIComponent(paletteToJson(visiblePaletteColors))}`}
                     download="studio-palette.json"
                   >
                     Download palette (.json)
@@ -4601,7 +4632,7 @@ function Images() {
                 </>
               )}
             </div>
-            {!running && !paletteBusy && visiblePalette && visiblePalette.result.colors.length > 0 && (
+            {!running && !paletteBusy && visiblePalette && visiblePaletteColors.length > 0 && (
               <p className="trim-note">
                 Download the palette JSON, then select it under “Import a Media Studio palette” in Launch Kit. The file stays on your device.
               </p>
@@ -4610,17 +4641,17 @@ function Images() {
               {visiblePaletteMessage ||
                 "No palette yet. Extraction runs on this device and does not change the original File."}
             </p>
-            {visiblePalette && visiblePalette.result.colors.length > 0 && (
+            {visiblePalette && visiblePaletteColors.length > 0 && (
               <>
                 <p className="trim-note">
-                  {visiblePalette.result.colors.length} colour
-                  {visiblePalette.result.colors.length === 1 ? "" : "s"} ·{" "}
-                  {visiblePalette.result.coveredPercent}% of visible sampled pixels ·{" "}
+                  {visiblePaletteColors.length} colour
+                  {visiblePaletteColors.length === 1 ? "" : "s"} ·{" "}
+                  {paletteCoveredPercent}% of visible sampled pixels ·{" "}
                   {visiblePalette.workingWidth} × {visiblePalette.workingHeight} working copy
                   {visiblePalette.result.complete ? "" : " (sampled)"}.
                 </p>
                 <ul className="image-palette">
-                  {visiblePalette.result.colors.map((colour) => (
+                  {visiblePaletteColors.map((colour) => (
                     <li key={`${colour.hex}:${colour.rgb.g}:${colour.rgb.b}`} className="image-palette-row">
                       <button
                         type="button"
