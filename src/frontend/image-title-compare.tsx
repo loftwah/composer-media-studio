@@ -51,6 +51,7 @@ import {
   MAX_PACKAGING_MANIFEST_BYTES,
   readPackagingTitle,
   verifyPackagingFiles,
+  type PackagingOriginalOutcome,
   type PackagingVerifyOutcome,
 } from "./image-title-compare-verify.ts";
 import { readTitleDraft, saveTitleDraft, titleCompareDraftName } from "./image-title-compare-draft.ts";
@@ -76,6 +77,15 @@ function packagingDifferenceMessage(
   if (outcome.reason === "dimensions")
     return `Different. The PNG is ${outcome.actualWidth} × ${outcome.actualHeight} px; the manifest names ${outcome.facts.width} × ${outcome.facts.height} px.`;
   return "Different. The PNG's SHA-256 does not match the manifest, so these are not the bytes it describes.";
+}
+
+/** The optional original has its own concise result. Neither a match nor a
+ * failure changes the verified PNG's independent recovery actions. */
+function packagingOriginalMessage(outcome: PackagingOriginalOutcome): string {
+  if (outcome.status === "matched") return "Original thumbnail matches the source checksum.";
+  if (outcome.status === "different") return "Original thumbnail has different bytes from the file in the manifest.";
+  if (outcome.status === "legacy") return "This older manifest has no original thumbnail checksum.";
+  return outcome.message;
 }
 
 type PairImage = {
@@ -290,11 +300,12 @@ export function TitleCompare({
    * that export's object URL, so a replacement can never inherit an older
    * message. Both the prepared PNG and manifest-text copies use this path. */
   const [pngCopy, setPngCopy] = useState<{ key: string; message: string; ok: boolean } | null>(null);
-  /** The separate packaging check. Both files are browser-local, its result is
-   * display state only, and it never edits a pair, note, crop, preference or
-   * prepared download. */
+  /** The separate packaging check. Its required PNG mode and optional original
+   * checksum are browser-local, display-only, and never edit a pair, note, crop,
+   * preference or prepared download. */
   const [verifyManifestFile, setVerifyManifestFile] = useState<File | null>(null);
   const [verifyPngFile, setVerifyPngFile] = useState<File | null>(null);
+  const [verifyOriginalFile, setVerifyOriginalFile] = useState<File | null>(null);
   const [verifyPhase, setVerifyPhase] = useState<PackagingVerifyPhase>("idle");
   const [verifyMessage, setVerifyMessage] = useState("");
   const [verifyOutcome, setVerifyOutcome] = useState<PackagingVerifyOutcome | null>(null);
@@ -329,8 +340,9 @@ export function TitleCompare({
    * clearing the exports retires a write that started against a download that
    * is no longer prepared. */
   const pngCopyRun = useRef(0);
-  /** One run per packaging check, so changing either selection or unmounting
-   * retires a slow response before it can report on other files. */
+  /** One run per packaging check, so changing any selection or unmounting
+   * retires a slow response, including a late original hash, before it can
+   * report on other files. */
   const verifyRun = useRef(0);
   /** The exact Files behind a current match. Refs make selection changes and
    * stale click events refuse either recovery action synchronously, before
@@ -1173,7 +1185,7 @@ export function TitleCompare({
     }
   }
 
-  /** Either new selection retires an in-flight check and any result that
+  /** Any new selection retires an in-flight check and any result that
    * described the files selected before it. */
   function clearVerify(): void {
     verifyRun.current += 1;
@@ -1185,12 +1197,15 @@ export function TitleCompare({
     setVerifyReuseMessage("");
   }
 
-  /** The explicit check reads only the two selected files. A response is
-   * published only when it still belongs to both current selections and this
-   * tab; it never reaches into pair, crop, note, preference or export state. */
+  /** The explicit check reads the required files and, only after a PNG match,
+   * the optional original. A response is published only when it still belongs
+   * to all current selections and this tab; the verifyRun guard also retires a
+   * late original hash before it can replace a newer check. Nothing reaches
+   * pair, crop, note, preference or export state. */
   async function checkPackagingPair(): Promise<void> {
     const manifestFile = verifyManifestFile;
     const pngFile = verifyPngFile;
+    const originalFile = verifyOriginalFile;
     if (!manifestFile || !pngFile) {
       clearVerify();
       setVerifyPhase("invalid");
@@ -1207,7 +1222,9 @@ export function TitleCompare({
     setVerifyMessage("Checking the selected manifest and PNG on this device…");
     setVerifyOutcome(null);
     try {
-      const outcome = await verifyPackagingFiles(manifestFile, pngFile);
+      const outcome = await (originalFile
+        ? verifyPackagingFiles(manifestFile, pngFile, originalFile)
+        : verifyPackagingFiles(manifestFile, pngFile));
       if (!current()) return;
       setVerifyOutcome(outcome);
       if (outcome.status === "matched") {
@@ -2042,7 +2059,8 @@ export function TitleCompare({
         <summary>Verify a packaging PNG</summary>
         <p className="trim-note" id="image-title-compare-verify-note">
           Compare the exported PNG’s dimensions, byte size and SHA-256 with its manifest.
-          Both files stay on this device.
+          Optionally compare an original thumbnail with the manifest’s source SHA-256.
+          Selected files stay on this device.
         </p>
         <div className="trim-fields title-compare-verify-fields">
           <label className="trim-file">
@@ -2065,6 +2083,18 @@ export function TitleCompare({
               data-title-compare-verify-png
               onChange={(event) => {
                 setVerifyPngFile(event.currentTarget.files?.[0] ?? null);
+                clearVerify();
+              }}
+            />
+          </label>
+          <label className="trim-file">
+            {`Original thumbnail (optional, up to ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MiB)`}
+            <input
+              type="file"
+              accept={IMAGE_ACCEPT_ATTRIBUTE}
+              data-title-compare-verify-original
+              onChange={(event) => {
+                setVerifyOriginalFile(event.currentTarget.files?.[0] ?? null);
                 clearVerify();
               }}
             />
@@ -2119,6 +2149,22 @@ export function TitleCompare({
         {verifyPhase === "matched" && verifyOutcome?.status === "matched" && (
           <p className="trim-note title-compare-verify-facts" data-title-compare-verify-facts>
             {`${verifyOutcome.facts.width} × ${verifyOutcome.facts.height} px · ${formatBytes(verifyOutcome.facts.pngBytes)} · SHA-256 ${verifyOutcome.facts.sha256.slice(0, 16)}…`}
+          </p>
+        )}
+        {verifyPhase === "matched" && verifyOutcome?.status === "matched" && verifyOutcome.original && (
+          <p
+            className={`trim-note title-compare-verify-status title-compare-verify-original${
+              verifyOutcome.original.status === "matched"
+                ? " is-matched"
+                : verifyOutcome.original.status === "different" || verifyOutcome.original.status === "invalid"
+                  ? " is-invalid"
+                  : ""
+            }`}
+            role="status"
+            aria-live="polite"
+            data-title-compare-verify-original-status={verifyOutcome.original.status}
+          >
+            {packagingOriginalMessage(verifyOutcome.original)}
           </p>
         )}
         {hasCurrentVerifiedPng && (
