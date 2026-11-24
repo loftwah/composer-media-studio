@@ -1403,14 +1403,13 @@ function Images() {
           (selected.source.orientedWidth * selected.source.orientedHeight) <
         0.001
       : false;
-  const hasItemOverride = items.some(
-    (item) =>
-      item.formatOverride !== undefined ||
-      item.longEdgeOverride !== undefined ||
-      item.qualityOverride !== undefined ||
-      item.cropAspectOverride !== undefined ||
-      item.cropAnchorOverride !== undefined,
-  );
+  const hasExportOverrides = (item: WorkItem) =>
+    item.formatOverride !== undefined ||
+    item.longEdgeOverride !== undefined ||
+    item.qualityOverride !== undefined ||
+    item.cropAspectOverride !== undefined ||
+    item.cropAnchorOverride !== undefined;
+  const hasItemOverride = items.some(hasExportOverrides);
   const invalidLongEdgeItem = items.find(
     (item) =>
       item.longEdgeOverride !== undefined && !itemLongEdgeIsValid(item.longEdgeOverride),
@@ -2645,6 +2644,29 @@ function Images() {
         candidate.id === item.id ? { ...candidate, cropAnchorOverride: value } : candidate,
       ),
     );
+  }
+
+  function clearExportOverrides(item: WorkItem, trigger: HTMLButtonElement): void {
+    if (runningRef.current || addingRef.current || !hasExportOverrides(item)) return;
+    // The clear action disappears with the last override. Keep keyboard focus
+    // on the same row instead of letting the removed button drop it to BODY.
+    if (document.activeElement === trigger)
+      focusAfterListChange.current = { kind: "row", id: item.id };
+    setItems((previous) =>
+      previous.map((candidate) =>
+        candidate.id === item.id
+          ? {
+              ...candidate,
+              formatOverride: undefined,
+              longEdgeOverride: undefined,
+              qualityOverride: undefined,
+              cropAspectOverride: undefined,
+              cropAnchorOverride: undefined,
+            }
+          : candidate,
+      ),
+    );
+    setMessage(`${item.file.name} will use the batch settings on its next render.`);
   }
 
   // One size's social crop position. "Use editor" removes that key, so a blank
@@ -5796,6 +5818,17 @@ function Images() {
                   )}
                   {(item.status === "error" || item.status === "cancelled") && (
                     <button type="button" className="secondary" disabled={running || sheetBusy || importing} onClick={() => void runItems([item])}>Retry</button>
+                  )}
+                  {hasExportOverrides(item) && (
+                    <button
+                      type="button"
+                      className="quiet"
+                      disabled={running || adding}
+                      aria-label={`Clear export overrides for ${item.file.name}`}
+                      onClick={(event) => clearExportOverrides(item, event.currentTarget)}
+                    >
+                      Clear overrides
+                    </button>
                   )}
                   <button type="button" className="quiet" disabled={running || adding || importing} onClick={() => removeItem(item)}>Remove</button>
                 </div>
