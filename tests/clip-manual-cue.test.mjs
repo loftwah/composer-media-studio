@@ -400,6 +400,26 @@ test('a manual or edited track is named as a local source, not the imported file
   assert.equal(manualCaptionSourceName({ name: 'Manual cues in Video Clip', local: true }), 'Manual cues in Video Clip');
 });
 
+test('a named cue keeps its speaker through text, time, split and merge edits', () => {
+  const named = { startMs: 1000, endMs: 2000, text: 'Hello world', speaker: 'Dean & Jane' };
+  const later = { startMs: 2000, endMs: 3000, text: 'Again', speaker: 'Dean & Jane' };
+  assert.deepEqual(accepted(replace([named], 0, 'Corrected', '1.25', '2.5')), [
+    { startMs: 1250, endMs: 2500, text: 'Corrected', speaker: 'Dean & Jane' },
+  ]);
+  assert.deepEqual(accepted(split([named], 0, '1.5', 1)), [
+    { startMs: 1000, endMs: 1500, text: 'Hello', speaker: 'Dean & Jane' },
+    { startMs: 1500, endMs: 2000, text: 'world', speaker: 'Dean & Jane' },
+  ]);
+  const merged = accepted(mergeClipDraftCues([named, later], 0, 1, 10_000));
+  assert.deepEqual(merged, [
+    { startMs: 1000, endMs: 3000, text: 'Hello world Again', speaker: 'Dean & Jane' },
+  ]);
+  // The canonical full-source output escapes the name and reads back exactly.
+  assert.equal(manualCaptionTrackVtt(merged),
+    'WEBVTT\n\n00:01.000 --> 00:03.000\n<v Dean &amp; Jane>Hello world Again</v>\n');
+  assert.deepEqual(parseCaptionFile(manualCaptionTrackVtt(merged), 0, 10_000, { voices: true }), merged);
+});
+
 test('a nudge moves both entered times by exactly 100 ms and keeps their duration', () => {
   const input = { startSeconds: '2.5', endSeconds: '4.25' };
   assert.deepEqual(nudgeManualCueTimes(input, 100, 10_000), { startSeconds: '2.600', endSeconds: '4.350' });
