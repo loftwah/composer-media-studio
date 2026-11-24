@@ -46,6 +46,31 @@ test('the original-video preview spans the full source timebase at the draft off
   assert.equal(sourcePreviewVtt(cues, Number.NaN, 0), null);
 });
 
+test('the original-video preview can place cues at Top without changing downloads or cue content', () => {
+  const cues = [
+    { startMs: 1000, endMs: 7000, text: 'A & B', speaker: '' },
+    { startMs: 8000, endMs: 12000, text: '<Next>', speaker: '' },
+  ];
+  const base = sourcePreviewVtt(cues, 15, 0);
+  assert.equal(base, 'WEBVTT\n\n00:01.000 --> 00:07.000\nA &amp; B\n\n00:08.000 --> 00:12.000\n&lt;Next&gt;\n');
+  assert.equal(sourcePreviewVtt(cues, 15, 0, 'default'), base);
+  const top = sourcePreviewVtt(cues, 15, 0, 'top');
+  assert.equal(top, 'WEBVTT\n\n00:01.000 --> 00:07.000 line:12%\nA &amp; B\n\n00:08.000 --> 00:12.000 line:12%\n&lt;Next&gt;\n');
+  // Only the cue setting differs: times, text and escaping come from the same
+  // projection and serializer, so the shared parser sees the same cue set.
+  assert.equal(top?.replaceAll(' line:12%', ''), base);
+  assert.deepEqual(parseCaptionFile(top, 0, 15_000), parseCaptionFile(base, 0, 15_000));
+  // Offset and source-duration clipping still apply in the top placement.
+  assert.equal(sourcePreviewVtt(cues, 15, 1500, 'top'), 'WEBVTT\n\n00:02.500 --> 00:08.500 line:12%\nA &amp; B\n\n00:09.500 --> 00:13.500 line:12%\n&lt;Next&gt;\n');
+  assert.equal(sourcePreviewVtt(cues, 9, 0, 'top'), 'WEBVTT\n\n00:01.000 --> 00:07.000 line:12%\nA &amp; B\n\n00:08.000 --> 00:09.000 line:12%\n&lt;Next&gt;\n');
+  assert.equal(sourcePreviewVtt(cues, 15, null, 'top'), null);
+  assert.equal(sourcePreviewVtt(cues, 15, 61_000, 'top'), null);
+  assert.equal(sourcePreviewVtt(cues, 0, 0, 'top'), null);
+  // Other callers take the default: no download, trim sidecar or export changes.
+  assert.equal(serializeClipCaptions(cues, 0, 15), base);
+  assert.equal(serializeClipCaptions(cues, 0, 15, 0, 'top'), top);
+});
+
 test('the preflight count uses the same clamp/offset/filter projection as serialization', () => {
   const cues = [
     { startMs: 1000, endMs: 7000, text: 'A', speaker: '' },
