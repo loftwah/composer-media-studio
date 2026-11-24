@@ -115,6 +115,26 @@ test("neutral shadows is omitted from v1 settings and an applied value remains r
   );
 });
 
+test("neutral highlights is omitted from v1 settings and an applied value remains recorded", () => {
+  const result = makeResult();
+  result.settings.adjust = { exposure: 4, contrast: 6 };
+  const render = () => buildImageReceipt({ sourceHash: SOURCE_HASH, result });
+  const previous = JSON.stringify(render());
+
+  result.settings.adjust = { exposure: 4, contrast: 6, highlights: 0 };
+  assert.equal(JSON.stringify(render()), previous, "a stored neutral highlight keeps the prior receipt");
+
+  result.settings.adjust = { exposure: 4, contrast: 6, highlights: 0, shadows: 0, tint: 0 };
+  assert.equal(JSON.stringify(render()), previous, "all neutral optional keys are omitted together");
+
+  result.settings.adjust = { exposure: 4, contrast: 6, highlights: -25, shadows: 0, tint: -20 };
+  assert.deepEqual(render().transform.settings.adjust, { exposure: 4, contrast: 6, highlights: -25, tint: -20 });
+
+  result.settings.adjust = { exposure: 4, contrast: 6, highlights: 30 };
+  assert.deepEqual(render().transform.settings.adjust, { exposure: 4, contrast: 6, highlights: 30 });
+  assert.equal(render().version, IMAGE_RECEIPT_VERSION);
+});
+
 test("neutral sharpen keeps exact v1 receipt bytes and a chosen strength is recorded", () => {
   const result = makeResult();
   const render = () => buildImageReceipt({ sourceHash: SOURCE_HASH, result });

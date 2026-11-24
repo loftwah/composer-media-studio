@@ -25,6 +25,7 @@ test("adjustments are whole numbers inside the documented range", () => {
   assert.deepEqual(normaliseAdjustments({ exposure: 12.4, contrast: -120, saturation: 7.6 }), {
     exposure: 12,
     shadows: 0,
+    highlights: 0,
     contrast: -100,
     saturation: 8,
     temperature: 0,
@@ -33,6 +34,7 @@ test("adjustments are whole numbers inside the documented range", () => {
   assert.deepEqual(normaliseAdjustments(null), {
     exposure: 0,
     shadows: 0,
+    highlights: 0,
     contrast: 0,
     saturation: 0,
     temperature: 0,
@@ -41,6 +43,7 @@ test("adjustments are whole numbers inside the documented range", () => {
   assert.deepEqual(normaliseAdjustments({ exposure: "abc" }), {
     exposure: 0,
     shadows: 0,
+    highlights: 0,
     contrast: 0,
     saturation: 0,
     temperature: 0,
@@ -215,6 +218,119 @@ test("tint keeps alpha and transparent pixels and preserves prior pixel compatib
   );
   for (const preset of ADJUSTMENT_PRESETS)
     assert.equal(preset.adjustments.tint, 0, `${preset.id} keeps its prior pixels`);
+});
+
+test("highlights lighten or darken only tones above mid grey", () => {
+  const tones = pixels(
+    0, 0, 0, 255,
+    64, 64, 64, 255,
+    128, 128, 128, 255,
+    192, 192, 192, 255,
+    255, 255, 255, 255,
+  );
+  const lighterPixels = new Uint8ClampedArray(tones);
+  const lighter = adjustPixels(lighterPixels, {
+    width: 5,
+    height: 1,
+    adjustments: { highlights: 100 },
+  });
+  assert.deepEqual(
+    [...lighterPixels],
+    [0, 0, 0, 255, 64, 64, 64, 255, 128, 128, 128, 255, 224, 224, 224, 255, 255, 255, 255, 255],
+    "the smooth weight starts above mid grey and leaves dark tones exact",
+  );
+  assert.equal(lighter.changed, 1, "clipped white has no retained detail to brighten");
+
+  const darkerPixels = new Uint8ClampedArray(tones);
+  const darker = adjustPixels(darkerPixels, {
+    width: 5,
+    height: 1,
+    adjustments: { highlights: -100 },
+  });
+  assert.deepEqual(
+    [...darkerPixels],
+    [0, 0, 0, 255, 64, 64, 64, 255, 128, 128, 128, 255, 160, 160, 160, 255, 191, 191, 191, 255],
+    "negative darkens bright values without moving dark or mid tones",
+  );
+  assert.equal(darker.changed, 2);
+
+  const gradual = adjustPixels(single(160, 160, 160), {
+    width: 1,
+    height: 1,
+    adjustments: { highlights: 100 },
+  });
+  assert.deepEqual([...gradual.pixels], [170, 170, 170, 255], "the lift ramps smoothly toward white");
+
+  const colouredDark = adjustPixels(single(64, 0, 0), {
+    width: 1,
+    height: 1,
+    adjustments: { highlights: -100 },
+  });
+  assert.deepEqual([...colouredDark.pixels], [64, 0, 0, 255], "a low-luma colour is not a highlight");
+  assert.equal(colouredDark.changed, 0);
+});
+
+test("highlights keeps alpha and transparent pixels and preserves prior pixel compatibility", () => {
+  const source = pixels(
+    10, 20, 30, 0,
+    192, 192, 192, 1,
+    224, 224, 224, 128,
+    240, 240, 240, 254,
+    255, 255, 255, 255,
+  );
+  const alphas = [...source.filter((_, index) => index % 4 === 3)];
+  const result = adjustPixels(source, {
+    width: 5,
+    height: 1,
+    adjustments: { highlights: 100 },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual([...source.slice(0, 4)], [10, 20, 30, 0], "transparent padding is untouched");
+  assert.deepEqual([...source.filter((_, index) => index % 4 === 3)], alphas, "every alpha byte is untouched");
+  assert.deepEqual([...source.slice(4, 8)], [224, 224, 224, 1], "partial alpha changes only visible RGB");
+  assert.equal(result.changed, 3);
+
+  const defaults = single(120, 40, 200);
+  const neutral = adjustPixels(defaults, { width: 1, height: 1, adjustments: { highlights: 0 } });
+  assert.equal(neutral.neutral, true);
+  assert.equal(neutral.changed, 0);
+  assert.equal(neutral.pixels, defaults);
+  assert.deepEqual([...defaults], [120, 40, 200, 255], "zero writes nothing");
+
+  const render = (adjustments) => [...adjustPixels(single(120, 40, 200), {
+    width: 1,
+    height: 1,
+    adjustments,
+  }).pixels];
+  assert.deepEqual(
+    render({ exposure: 8, contrast: 4 }),
+    render({ exposure: 8, contrast: 4, highlights: 0 }),
+    "saved partial settings without highlights render identically",
+  );
+  for (const preset of ADJUSTMENT_PRESETS)
+    assert.equal(preset.adjustments.highlights, 0, `${preset.id} keeps its prior pixels`);
+});
+
+test("highlights is clamped, neutralised, reset and described like the other adjustments", () => {
+  assert.equal(normaliseAdjustments({ highlights: 150 }).highlights, 100);
+  assert.equal(normaliseAdjustments({ highlights: -150 }).highlights, -100);
+  assert.equal(normaliseAdjustments({}).highlights, 0);
+  assert.equal(DEFAULT_ADJUSTMENTS.highlights, 0);
+  assert.deepEqual(presetAdjustments("none"), { ...DEFAULT_ADJUSTMENTS });
+  assert.equal(adjustmentsAreNeutral({ highlights: 0 }), true);
+  assert.equal(adjustmentsAreNeutral({ highlights: 1 }), false);
+  assert.equal(
+    presetIdFor({ exposure: 4, highlights: 0, contrast: 6, saturation: 10, temperature: 32 }),
+    "warm",
+    "a saved partial preset still matches",
+  );
+  assert.equal(describeAdjustments({ highlights: 25 }), "highlights +25");
+  assert.equal(describeAdjustments({ highlights: -25 }), "highlights -25");
+  assert.equal(describeAdjustments({ highlights: 0 }), "");
+  assert.equal(
+    describeAdjustments({ exposure: 4, shadows: 10, highlights: -25, contrast: 6 }),
+    "exposure +4, shadows +10, highlights -25, contrast +6",
+  );
 });
 
 test("shadows lift or deepen dark tones and taper to nothing by mid grey", () => {

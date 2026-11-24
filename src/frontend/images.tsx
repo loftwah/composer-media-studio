@@ -3866,7 +3866,9 @@ function Images() {
                       ? "image-tint-note"
                       : key === "shadows"
                         ? "image-shadows-note"
-                        : undefined
+                        : key === "highlights"
+                          ? "image-highlights-note"
+                          : undefined
                   }
                   onChange={(event) => setAdjustment(key, Number(event.target.value))}
                 />
@@ -3877,6 +3879,12 @@ function Images() {
               negative darkens them, and the effect fades smoothly to zero by
               mid grey so brighter pixels are left alone. It runs before
               Contrast and Saturation.
+            </p>
+            <p className="trim-note" id="image-highlights-note">
+              Highlights affects only the brighter tones: positive lightens them,
+              negative darkens them, and the effect fades smoothly to zero at
+              mid grey so darker pixels are left alone. It runs before Contrast
+              and Saturation. It cannot restore detail already lost to clipping.
             </p>
             <p className="trim-note" id="image-tint-note">
               Tint moves the green–magenta axis independently of Temperature: negative

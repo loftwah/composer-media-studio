@@ -5,6 +5,7 @@
 export type AdjustmentKey =
   | "exposure"
   | "shadows"
+  | "highlights"
   | "contrast"
   | "saturation"
   | "temperature"
@@ -30,6 +31,7 @@ export type AdjustResult =
 export const ADJUSTMENT_KEYS: ReadonlyArray<AdjustmentKey> = Object.freeze([
   "exposure",
   "shadows",
+  "highlights",
   "contrast",
   "saturation",
   "temperature",
@@ -41,6 +43,7 @@ export const ADJUSTMENT_RANGE = 100;
 export const ADJUSTMENT_LABELS: Readonly<Record<AdjustmentKey, string>> = Object.freeze({
   exposure: "Exposure",
   shadows: "Shadows",
+  highlights: "Highlights",
   contrast: "Contrast",
   saturation: "Saturation",
   temperature: "Temperature",
@@ -50,6 +53,7 @@ export const ADJUSTMENT_LABELS: Readonly<Record<AdjustmentKey, string>> = Object
 export const DEFAULT_ADJUSTMENTS: Readonly<Adjustments> = Object.freeze({
   exposure: 0,
   shadows: 0,
+  highlights: 0,
   contrast: 0,
   saturation: 0,
   temperature: 0,
@@ -64,32 +68,32 @@ export const ADJUSTMENT_PRESETS: ReadonlyArray<AdjustmentPreset> = Object.freeze
   {
     id: "none",
     label: "No preset",
-    adjustments: { exposure: 0, shadows: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0 },
+    adjustments: { exposure: 0, shadows: 0, highlights: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0 },
   },
   {
     id: "punch",
     label: "Punch",
-    adjustments: { exposure: 6, shadows: 0, contrast: 22, saturation: 24, temperature: 6, tint: 0 },
+    adjustments: { exposure: 6, shadows: 0, highlights: 0, contrast: 22, saturation: 24, temperature: 6, tint: 0 },
   },
   {
     id: "warm",
     label: "Warm",
-    adjustments: { exposure: 4, shadows: 0, contrast: 6, saturation: 10, temperature: 32, tint: 0 },
+    adjustments: { exposure: 4, shadows: 0, highlights: 0, contrast: 6, saturation: 10, temperature: 32, tint: 0 },
   },
   {
     id: "cool",
     label: "Cool",
-    adjustments: { exposure: 0, shadows: 0, contrast: 8, saturation: -6, temperature: -32, tint: 0 },
+    adjustments: { exposure: 0, shadows: 0, highlights: 0, contrast: 8, saturation: -6, temperature: -32, tint: 0 },
   },
   {
     id: "mono",
     label: "Mono",
-    adjustments: { exposure: 4, shadows: 0, contrast: 14, saturation: -100, temperature: 0, tint: 0 },
+    adjustments: { exposure: 4, shadows: 0, highlights: 0, contrast: 14, saturation: -100, temperature: 0, tint: 0 },
   },
   {
     id: "fade",
     label: "Fade",
-    adjustments: { exposure: 10, shadows: 0, contrast: -26, saturation: -18, temperature: 4, tint: 0 },
+    adjustments: { exposure: 10, shadows: 0, highlights: 0, contrast: -26, saturation: -18, temperature: 4, tint: 0 },
   },
 ]);
 
@@ -106,6 +110,11 @@ const TINT_SHIFT = 36;
 // them without touching anything at or above the shadow midpoint.
 const SHADOWS_SHIFT = 64;
 const SHADOWS_MIDPOINT = 128;
+// Highlights mirrors Shadows above mid grey: zero at and below the midpoint,
+// reaching the full offset at white. It adjusts retained bright values only;
+// detail already clipped out of the source cannot be recovered.
+const HIGHLIGHTS_SHIFT = 64;
+const HIGHLIGHTS_MIDPOINT = 128;
 const LUMA_RED = 0.2126;
 const LUMA_GREEN = 0.7152;
 const LUMA_BLUE = 0.0722;
@@ -135,6 +144,7 @@ export function normaliseAdjustments(input: Partial<Adjustments> | null = {}): A
   return {
     exposure: clampUnit(input?.exposure),
     shadows: clampUnit(input?.shadows),
+    highlights: clampUnit(input?.highlights),
     contrast: clampUnit(input?.contrast),
     saturation: clampUnit(input?.saturation),
     temperature: clampUnit(input?.temperature),
@@ -172,12 +182,14 @@ export function describeAdjustments(adjustments: Partial<Adjustments> | null = {
 }
 
 /**
- * Apply exposure, temperature and tint, then shadows, then contrast and
- * saturation to decoded RGBA bytes. Shadows adds a luminance-weighted RGB offset
- * that is strongest at black and tapers smoothly to zero at mid grey, so it only
- * moves dark tones before the contrast pivot. Temperature moves the red/blue
- * axis; tint independently moves the green/magenta axis. Fully transparent
- * pixels keep their RGB values, and the alpha byte is never written.
+ * Apply exposure, temperature and tint, then shadows and highlights, then
+ * contrast and saturation to decoded RGBA bytes. Shadows adds a
+ * luminance-weighted RGB offset that is strongest at black and tapers smoothly
+ * to zero at mid grey, so it only moves dark tones before the contrast pivot.
+ * Highlights is the independent mirror above mid grey, strongest at white.
+ * Temperature moves the red/blue axis; tint independently moves the
+ * green/magenta axis. Fully transparent pixels keep their RGB values, and the
+ * alpha byte is never written.
  *
  * `pixels` is mutated in place and returned, because a 40-megapixel copy would
  * double the memory a batch already holds. `changed` counts the pixels whose
@@ -212,6 +224,7 @@ export function adjustPixels(
   const temperature = (values.temperature / 100) * TEMPERATURE_SHIFT;
   const tint = (values.tint / 100) * TINT_SHIFT;
   const shadows = (values.shadows / 100) * SHADOWS_SHIFT;
+  const highlights = (values.highlights / 100) * HIGHLIGHTS_SHIFT;
   let changed = 0;
 
   for (let index = 0; index < pixels.length; index += 4) {
@@ -241,6 +254,21 @@ export function adjustPixels(
       red += shadowOffset;
       green += shadowOffset;
       blue += shadowOffset;
+    }
+
+    // Highlights uses the same smooth luminance weight above mid grey. Positive
+    // lightens retained bright values; negative darkens them. At or below the
+    // midpoint the offset is exactly zero, so this control cannot move shadows.
+    if (highlights !== 0) {
+      const highlightLuma = red * LUMA_RED + green * LUMA_GREEN + blue * LUMA_BLUE;
+      const brightness = Math.min(
+        1,
+        Math.max(0, (highlightLuma - HIGHLIGHTS_MIDPOINT) / (255 - HIGHLIGHTS_MIDPOINT)),
+      );
+      const highlightOffset = highlights * brightness * brightness * (3 - 2 * brightness);
+      red += highlightOffset;
+      green += highlightOffset;
+      blue += highlightOffset;
     }
 
     red = (red - 128) * contrast + 128;
