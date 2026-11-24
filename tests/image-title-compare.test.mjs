@@ -528,6 +528,46 @@ test("copy feedback is retired when the selected pair or its title changes", () 
   assert.match(section, /copyRun\.current === run/);
 });
 
+test("a prepared PNG is copied from the exact download blob, with no re-encode", () => {
+  assert.match(section, /pngBlob\?: Blob;/);
+  // Only the row/card PNG export and the manifest export's PNG carry the blob.
+  assert.equal(section.match(/pngBlob: blob,/g)?.length, 2);
+  assert.match(section, /new window\.ClipboardItem\(\{ "image\/png": entry\.pngBlob \}\)/);
+  assert.match(section, /await navigator\.clipboard\.write\(\[png\]\)/);
+  const start = section.indexOf("async function copyEntryPng");
+  const end = section.indexOf("\n  }", start);
+  const copy = section.slice(start, end);
+  assert.match(copy, /copyEntryPng\(entry: ExportEntry\)/);
+  assert.doesNotMatch(copy, /encodeCropPng|createObjectURL|trackUrl|fetch\(/);
+});
+
+test("the copy control names its pair, size and exact prepared PNG beside the download", () => {
+  assert.match(section, /data-title-compare-copy-png=\{entry\.url\}/);
+  assert.match(section, /data-title-compare-copy-pair=\{entry\.pairLabel\}/);
+  assert.match(section, /data-title-compare-copy-size=\{entry\.label\}/);
+  assert.match(section, /Copy the \$\{entry\.label\} PNG for Pair \$\{entry\.pairLabel\}/);
+  assert.match(section, /\$\{entry\.name\} \(\$\{entry\.width\} × \$\{entry\.height\} px\) to the clipboard/);
+  assert.match(section, /href=\{entry\.url\}/);
+  assert.match(section, /download=\{entry\.name\}/);
+  assert.match(section, /typeof window\.ClipboardItem === "function"/);
+  assert.match(section, /typeof navigator\.clipboard\?\.write === "function"/);
+  assert.match(stylesheet, /title-compare-export button\[data-title-compare-copy-png\]/);
+});
+
+test("PNG copy feedback cannot outlive the prepared PNG it describes", () => {
+  const start = section.indexOf("function replaceExports");
+  const end = section.indexOf("\n  }", start);
+  assert.match(section.slice(start, end), /pngCopyRun\.current \+= 1/);
+  assert.match(section.slice(start, end), /setPngCopy\(null\)/);
+  // Once when the export list is replaced or cleared, once on unmount.
+  assert.equal(section.match(/pngCopyRun\.current \+= 1/g)?.length, 2);
+  assert.match(section, /attempt === pngCopyRun\.current/);
+  assert.match(section, /exportsRef\.current\.some\(\(entry\) => entry\.url === key\)/);
+  assert.match(section, /pngCopy\?\.key === entry\.url/);
+  assert.match(section, /Could not copy the PNG\. Download it instead\./);
+  assert.match(stylesheet, /\.title-compare-export-copy-status\.is-error/);
+});
+
 test("the stylesheet renders real pixel boxes and real truncation", () => {
   assert.match(stylesheet, /aspect-ratio: 16 \/ 9/);
   assert.match(stylesheet, /max-width: 640px/);

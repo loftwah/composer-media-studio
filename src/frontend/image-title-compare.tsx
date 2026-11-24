@@ -107,6 +107,11 @@ type ExportEntry = {
   sha256?: string;
   /** Set on a prepared-set entry: the preference captured with that snapshot. */
   preferredPairLabel?: string;
+  /** Set on a PNG entry: the exact encoded blob behind its object URL. Copy
+   * writes this same blob to the clipboard, so no second encode, fetch or
+   * upload runs, and the download link stays available whatever the clipboard
+   * decides. */
+  pngBlob?: Blob;
 };
 
 const emptyPair = (): Pair => ({ title: "", note: "", image: null, error: null, busy: false });
@@ -172,6 +177,9 @@ export function TitleCompare({
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  /** PNG copy feedback belongs to one exact prepared download: its key is that
+   * export's object URL, so a replacement can never inherit an older message. */
+  const [pngCopy, setPngCopy] = useState<{ key: string; message: string; ok: boolean } | null>(null);
   /** The last duplicate confirmation. A status message, not pair state: the
    * copied title, note, crop and URL live in the pairs themselves. */
   const [duplicateMessage, setDuplicateMessage] = useState("");
@@ -192,6 +200,9 @@ export function TitleCompare({
   /** One run per title copy, so a slow write cannot report a title the user has
    * already left or edited. */
   const copyRun = useRef(0);
+  /** One run per PNG copy. Replacing or clearing the exports retires a write
+   * that started against a PNG that is no longer prepared. */
+  const pngCopyRun = useRef(0);
 
   // A hash link into this section lands on a page whose heading only exists
   // after React mounts, so the browser's native fragment scroll misses it
@@ -214,6 +225,7 @@ export function TitleCompare({
       mounted.current = false;
       exportRun.current += 1;
       copyRun.current += 1;
+      pngCopyRun.current += 1;
       for (const url of held) URL.revokeObjectURL(url);
       held.clear();
       exportsRef.current = [];
@@ -326,6 +338,10 @@ export function TitleCompare({
   function replaceExports(next: ExportEntry[]): void {
     const previous = exportsRef.current;
     exportsRef.current = next;
+    // A new or cleared export list retires feedback for an older PNG; a pending
+    // clipboard write checks this run before it reports anything at all.
+    pngCopyRun.current += 1;
+    setPngCopy(null);
     setExports(next);
     for (const entry of previous) releaseUrl(entry.url);
   }
@@ -497,6 +513,7 @@ export function TitleCompare({
           width: size.width,
           height: size.height,
           bytes: blob.size,
+          pngBlob: blob,
         },
       ]);
       setExportMessage(
@@ -578,6 +595,7 @@ export function TitleCompare({
           width: size.width,
           height: size.height,
           bytes: blob.size,
+          pngBlob: blob,
         },
         {
           kind: "manifest",
@@ -741,6 +759,43 @@ export function TitleCompare({
       setCopyMessage(
         `Could not copy the ${label} title automatically. Select the title in the field below and copy it.`,
       );
+    }
+  }
+
+  const canCopyPng =
+    typeof window !== "undefined" &&
+    typeof window.ClipboardItem === "function" &&
+    typeof navigator !== "undefined" &&
+    typeof navigator.clipboard?.write === "function";
+
+  /** One copy result belongs to one exact prepared PNG. The run retires when
+   * the export list changes, and the URL key keeps a stale write from posting
+   * its message onto a different prepared download. */
+  function copyAttemptFor(key: string) {
+    const attempt = ++pngCopyRun.current;
+    const stillCurrent = () =>
+      mounted.current &&
+      attempt === pngCopyRun.current &&
+      exportsRef.current.some((entry) => entry.url === key);
+    const report = (message: string, ok: boolean) => {
+      if (stillCurrent()) setPngCopy({ key, message, ok });
+    };
+    return { report };
+  }
+
+  /** The exact encoded PNG behind this download goes to the clipboard: the
+   * same blob the object URL was minted from, so no encode, fetch or upload
+   * runs here. A denied permission or missing ClipboardItem changes only the
+   * status — the download link beside it stays exactly as it was. */
+  async function copyEntryPng(entry: ExportEntry): Promise<void> {
+    if (entry.kind !== "png" || !entry.pngBlob || !canCopyPng) return;
+    const { report } = copyAttemptFor(entry.url);
+    try {
+      const png = new window.ClipboardItem({ "image/png": entry.pngBlob });
+      await navigator.clipboard.write([png]);
+      report("PNG copied.", true);
+    } catch {
+      report("Could not copy the PNG. Download it instead.", false);
     }
   }
 
@@ -1249,6 +1304,28 @@ export function TitleCompare({
               {` · SHA-256 ${entry.sha256.slice(0, 16)}…`}
               <span className="title-compare-export-hash-note"> (full digest inside the manifest)</span>
             </>
+          )}
+          {entry.kind === "png" && entry.pngBlob && canCopyPng && (
+            <button
+              type="button"
+              className="quiet"
+              data-title-compare-copy-png={entry.url}
+              data-title-compare-copy-pair={entry.pairLabel}
+              data-title-compare-copy-size={entry.label}
+              aria-label={`Copy the ${entry.label} PNG for Pair ${entry.pairLabel}: ${entry.name} (${entry.width} × ${entry.height} px) to the clipboard`}
+              onClick={() => void copyEntryPng(entry)}
+            >
+              {`Copy Pair ${entry.pairLabel} ${entry.label} PNG`}
+            </button>
+          )}
+          {pngCopy?.key === entry.url && (
+            <span
+              className={`title-compare-export-copy-status${pngCopy.ok ? "" : " is-error"}`}
+              role="status"
+              aria-live="polite"
+            >
+              {` ${pngCopy.message}`}
+            </span>
           )}
         </p>
       ))}
