@@ -1,5 +1,5 @@
 import { parseCaptionFile, type ImportedCue } from "./caption-import";
-import { MAX_SPEAKER_CHARS, renameSpeakerCues } from "./caption-speaker.ts";
+import { MAX_SPEAKER_CHARS, removeSpeakerNameCues, renameSpeakerCues } from "./caption-speaker.ts";
 import { captionFileFromText } from "./caption-paste";
 import { MAX_CAPTION_BYTES, MAX_CAPTION_OFFSET_SECONDS, captionTranscript, clipCaptionCues, clipCaptionSrtVariants, clipTimeStamp, serializeClipCaptions, sourceCaptionCues, sourcePreviewVtt, type CaptionPreviewPlacement, type ClipCaptionTrack } from "./clip-captions";
 import { ALL_CUE_SPEAKERS, MAX_CUE_SEARCH_CHARS, UNNAMED_CUE_SPEAKER, cueMergeVisibility, cueSearchQuery, cueSpeakerFilterForDraft, cueSpeakerName, cueSpeakerOptionValue, cueSpeakerOptions, filterCuesByTextAndSpeaker } from "./clip-cue-search";
@@ -117,11 +117,14 @@ function VideoClip() {
   const captionUndo = captionHistory.undo;
   const captionRedo = captionHistory.redo;
   const captionUndoButton = useRef<HTMLButtonElement>(null);
+  const captionUndoWithSpeakerFocus = useRef<CaptionDraft | null>(null);
   const captionRedoButton = useRef<HTMLButtonElement>(null);
   // When an edit removes the focused row (or Undo/Redo removes its own button),
   // focus falls to the body. Move it to the control that is now available.
   useEffect(() => {
-    if (document.activeElement !== document.body) return;
+    const returnsToSpeaker = captionUndo !== null && captionUndo === captionUndoWithSpeakerFocus.current;
+    captionUndoWithSpeakerFocus.current = null;
+    if (returnsToSpeaker || document.activeElement !== document.body) return;
     if (captionUndo) captionUndoButton.current?.focus();
     else if (captionRedo) captionRedoButton.current?.focus();
   }, [captionUndo, captionRedo]);
@@ -165,6 +168,8 @@ function VideoClip() {
   const cueReview = useRef<HTMLDetailsElement>(null);
   const cueSearchInput = useRef<HTMLInputElement>(null);
   const cueSpeakerRenameInput = useRef<HTMLInputElement>(null);
+  const cueSpeakerRemoveButton = useRef<HTMLButtonElement>(null);
+  const cueSpeakerSelect = useRef<HTMLSelectElement>(null);
   const manualCueTextInput = useRef<HTMLInputElement>(null);
   const manualCueDetails = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -1001,52 +1006,62 @@ function VideoClip() {
       if (request === captionRequest.current) setCaptionLoading(false);
     }
   }
-  // The selected speaker filter chooses one exact name, but the rename always
-  // reads the full source draft. Only that speaker field changes; the existing
-  // edited-track digest, request guard and one-step cue history stay authoritative.
-  async function renameSelectedCueSpeaker() {
+  // Both speaker edits work on the complete source draft and share its
+  // validation, digest, request guard and one-step history.
+  async function changeSelectedCueSpeaker(removeName = false) {
     if (!captionDraft || !namedCueSpeaker || cueEditing || captionActionsBusy) return;
     const previousDraft = captionDraft;
     const from = namedCueSpeaker;
-    const renamed = renameSpeakerCues(previousDraft.cues, from, cueSpeakerRenameText);
-    if ("problem" in renamed) {
-      setCueSpeakerRenameMessage(renamed.problem);
-      cueSpeakerRenameInput.current?.focus();
+    const change = removeName
+      ? removeSpeakerNameCues(previousDraft.cues, from)
+      : renameSpeakerCues(previousDraft.cues, from, cueSpeakerRenameText);
+    if ("problem" in change) {
+      setCueSpeakerRenameMessage(change.problem);
+      if (!removeName) cueSpeakerRenameInput.current?.focus();
       return;
     }
-    const track = manualCaptionTrackVtt(renamed.cues);
+    const track = manualCaptionTrackVtt(change.cues);
     if (!track) {
-      setCueSpeakerRenameMessage("This caption draft could not be renamed. Check its cue times and try again.");
+      setCueSpeakerRenameMessage("This caption draft could not be changed. Check its cue times and try again.");
       return;
     }
     if (new TextEncoder().encode(track).byteLength > MAX_CAPTION_BYTES) {
-      setCueSpeakerRenameMessage("That name would put the full-source caption track over 64 KB. Choose a shorter name.");
-      cueSpeakerRenameInput.current?.focus();
+      setCueSpeakerRenameMessage(removeName
+        ? "That change would put the full-source caption track over 64 KB."
+        : "That name would put the full-source caption track over 64 KB. Choose a shorter name.");
+      if (!removeName) cueSpeakerRenameInput.current?.focus();
       return;
     }
     const request = ++captionRequest.current;
     const focused = document.activeElement;
+    const returnToSpeaker = removeName && focused === cueSpeakerRemoveButton.current;
     setCaptionLoading(true);
-    setCueSpeakerRenameMessage(`Renaming “${from}” on every full-source cue…`);
+    setCueSpeakerRenameMessage(removeName
+      ? `Removing “${from}” from every full-source cue…`
+      : `Renaming “${from}” on every full-source cue…`);
     try {
-      const updated = await editedCaptionDraft(previousDraft, renamed.cues);
+      const updated = await editedCaptionDraft(previousDraft, change.cues);
       if (request !== captionRequest.current) return;
       setCaptionDraft(updated);
+      if (returnToSpeaker) captionUndoWithSpeakerFocus.current = previousDraft;
       setCaptionHistory(cueEditHistory(previousDraft));
-      setCueSpeakerSelection(cueSpeakerOptionValue(renamed.speaker));
+      setCueSpeakerSelection(removeName ? UNNAMED_CUE_SPEAKER : cueSpeakerOptionValue(change.speaker));
       setCueSpeakerRenameText("");
-      const count = renamed.renamed;
-      setCueSpeakerRenameMessage(`Renamed ${count} full-source ${count === 1 ? "cue" : "cues"} from “${from}” to “${renamed.speaker}”. Undo is available below.`);
+      const count = "changed" in change ? change.changed : change.renamed;
+      const cues = `${count} full-source ${count === 1 ? "cue" : "cues"}`;
+      setCueSpeakerRenameMessage(removeName
+        ? `Removed “${from}” from ${cues}. Undo is available below.`
+        : `Renamed ${cues} from “${from}” to “${change.speaker}”. Undo is available below.`);
     } catch (error) {
       if (request === captionRequest.current)
-        setCueSpeakerRenameMessage(error instanceof Error ? error.message : "Could not rename the speaker in this browser.");
+        setCueSpeakerRenameMessage(error instanceof Error ? error.message : "Could not change the speaker name in this browser.");
     } finally {
       if (request === captionRequest.current) {
         setCaptionLoading(false);
         requestAnimationFrame(() => {
-          if (request === captionRequest.current && focused instanceof HTMLElement &&
-            focused.isConnected && document.activeElement === document.body)
-            focused.focus({ preventScroll: true });
+          if (request !== captionRequest.current || document.activeElement !== document.body) return;
+          if (focused instanceof HTMLElement && focused.isConnected) focused.focus({ preventScroll: true });
+          else if (returnToSpeaker) cueSpeakerSelect.current?.focus({ preventScroll: true });
         });
       }
     }
@@ -1642,7 +1657,7 @@ function VideoClip() {
                       onChange={event => setCueSearchText(event.currentTarget.value)} />
                   </label>
                   <label className="trim-cue-speaker-filter" htmlFor="trim-cue-speaker">Speaker
-                    <select id="trim-cue-speaker" value={cueSpeaker}
+                    <select id="trim-cue-speaker" ref={cueSpeakerSelect} value={cueSpeaker}
                       aria-describedby="trim-cue-search-help trim-cue-search-count"
                       disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
                       onChange={event => {
@@ -1669,7 +1684,7 @@ function VideoClip() {
                     aria-busy={captionLoading || undefined}
                     onSubmit={event => {
                       event.preventDefault();
-                      void renameSelectedCueSpeaker();
+                      void changeSelectedCueSpeaker();
                     }}>
                     <label className="trim-cue-text-filter trim-cue-text" htmlFor="trim-cue-speaker-rename">New speaker name
                       <input id="trim-cue-speaker-rename" ref={cueSpeakerRenameInput} type="text"
@@ -1682,14 +1697,19 @@ function VideoClip() {
                     </label>
                     <button type="submit" className="secondary trim-cue-search-clear"
                       disabled={cueSpeakerRenameDisabled}>Rename speaker</button>
+                    <button type="button" ref={cueSpeakerRemoveButton}
+                      className="secondary trim-cue-search-clear"
+                      aria-describedby="trim-cue-speaker-rename-help trim-cue-speaker-rename-status"
+                      disabled={cueSpeakerRenameDisabled}
+                      onClick={() => { void changeSelectedCueSpeaker(true); }}>Remove speaker name</button>
                   </form>
                 )}
                 {namedCueSpeaker !== null && (
                   <p id="trim-cue-speaker-rename-help" className="trim-note trim-cue-text">{cueEditing
-                    ? `Finish or cancel the open cue edit before renaming “${namedCueSpeaker}”.`
+                    ? `Finish or cancel the open cue edit before changing or removing “${namedCueSpeaker}”.`
                     : `Applies to every cue named “${namedCueSpeaker}”, including cues outside the trim or search.`}</p>
                 )}
-                <p id="trim-cue-speaker-rename-status" className="trim-note" role="status">{namedCueSpeaker && cueSpeakerRenameMessage}</p>
+                <p id="trim-cue-speaker-rename-status" className="trim-note" role="status">{(namedCueSpeaker !== null || cueSpeaker === UNNAMED_CUE_SPEAKER) && cueSpeakerRenameMessage}</p>
                 <p id="trim-cue-search-help" className="trim-note">The filters change the rows shown below. The saved draft, preview, offset and downloads include every cue.</p>
                 <p id="trim-cue-search-count" className="trim-note" role="status" aria-live="polite"
                   data-empty={hasCueFilters && reviewVisibleCueCount === 0 ? "true" : undefined}>

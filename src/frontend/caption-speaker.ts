@@ -22,6 +22,29 @@ type SpeakerRenameResult =
   | Readonly<{ cues: ImportedCue[]; speaker: string; renamed: number }>
   | Readonly<{ problem: string }>;
 
+type SpeakerCueChange =
+  | Readonly<{ cues: ImportedCue[]; speaker: string; changed: number }>
+  | Readonly<{ problem: string }>;
+
+// The shared exact-name projection used by rename and name removal. Unmatched
+// cue objects stay untouched; only the selected speaker field is replaced.
+function replaceSpeakerCues(
+  cues: readonly ImportedCue[],
+  speaker: string,
+  name: string,
+): SpeakerCueChange {
+  if (!speaker || !cues.some(cue => cue.speaker === speaker)) {
+    return { problem: `The speaker “${speaker}” is no longer in this draft. Choose another speaker.` };
+  }
+  let changed = 0;
+  const nextCues = cues.map(cue => {
+    if (cue.speaker !== speaker) return cue;
+    changed++;
+    return { ...cue, speaker: name };
+  });
+  return { cues: nextCues, speaker: name, changed };
+}
+
 /**
  * Rename one exact speaker across the full cue list. The new name uses the same
  * bound and plain-line rule as import and manual cues. An exact existing name is
@@ -49,11 +72,18 @@ export function renameSpeakerCues(
   if (cues.some(cue => cue.speaker === name)) {
     return { problem: `“${name}” already belongs to another speaker. Choose a unique name, or rename that speaker first.` };
   }
-  let renamed = 0;
-  const nextCues = cues.map(cue => {
-    if (cue.speaker !== speaker) return cue;
-    renamed++;
-    return { ...cue, speaker: name };
-  });
-  return { cues: nextCues, speaker: name, renamed };
+  const changed = replaceSpeakerCues(cues, speaker, name);
+  if ("problem" in changed) return changed;
+  return { cues: changed.cues, speaker: changed.speaker, renamed: changed.changed };
+}
+
+/**
+ * Remove one exact speaker name across the full cue list. An empty string is
+ * the established unnamed value; text, times and every other cue stay exact.
+ */
+export function removeSpeakerNameCues(
+  cues: readonly ImportedCue[],
+  speaker: string,
+): SpeakerCueChange {
+  return replaceSpeakerCues(cues, speaker, "");
 }
