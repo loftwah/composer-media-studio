@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { MediaAssetV1 } from './contracts';
 import { TakeRangePreview } from './song-plans';
 import { FootageSceneExport } from './footage-scene-export';
+import { savedCutListText } from './footage-cut-list';
 import './song-plans.css';
 import './footage-plans.css';
 
 type Scene = { id: string; sourceStartMs: number; sourceEndMs: number; direction: string; referenceAssetId: string | null; selectedTakeId: string | null };
 type Plan = { id: string; sourceAssetId: string; sourceSha256: string; rightsConfirmed: boolean; revision: number; title: string; treatment: string; aspect: string; scenes: Scene[]; totalMs: number };
 type CachedDraft = { saved: Plan | null; draft: Plan | null };
+type CutListCopyFeedback = { key: string; message: string; fallback: string | null; busy: boolean };
 const cache = new Map<string, CachedDraft>();
 const copy = <T,>(value: T): T => structuredClone(value);
 const seconds = (ms: number) => String(ms / 1000);
@@ -39,6 +41,14 @@ export function FootagePlans({ projectId, assets, canEdit, onAssetSaved }: { pro
   const [draft, setDraft] = useState<Plan | null>(cached?.draft ?? null);
   const [sourceId, setSourceId] = useState(videos[0]?.id ?? '');
   const sourcePreview = useRef<HTMLVideoElement | null>(null);
+  const [cutListCopy, setCutListCopy] = useState<CutListCopyFeedback | null>(null);
+  const cutListCopyRun = useRef(0);
+  const cutListCopyKeyRef = useRef('');
+  const cutListCopyTrigger = useRef<HTMLButtonElement | null>(null);
+  const cutListCopyFallback = useRef<HTMLTextAreaElement | null>(null);
+  const cutListCopyStatusId = useId();
+  const cutListCopyFallbackId = useId();
+  const cutListCopyScopeId = useId();
   const [previewReady, setPreviewReady] = useState(false);
   const [markStatus, setMarkStatus] = useState('');
   const [title, setTitle] = useState('');
@@ -52,16 +62,53 @@ export function FootagePlans({ projectId, assets, canEdit, onAssetSaved }: { pro
   const [message, setMessage] = useState('');
   const [conflict, setConflict] = useState(false);
   const changed = Boolean(draft && saved && JSON.stringify(draft) !== JSON.stringify(saved));
+  const savedSource = saved && saved.rightsConfirmed === true && saved.scenes.length > 0 ? videos.find(video => {
+    const durationMs = video.durationMs ?? 0;
+    return video.id === saved.sourceAssetId && video.sha256 === saved.sourceSha256 && Number.isSafeInteger(durationMs) && saved.scenes.every(scene => Number.isSafeInteger(scene.sourceStartMs) && Number.isSafeInteger(scene.sourceEndMs) && scene.sourceStartMs >= 0 && scene.sourceEndMs > scene.sourceStartMs && scene.sourceEndMs <= durationMs);
+  }) ?? null : null;
+  const cutListCopyKey = saved && savedSource ? JSON.stringify([projectId, saved.id, saved.revision, saved.sourceAssetId, saved.sourceSha256, savedSource.title]) : '';
+  cutListCopyKeyRef.current = cutListCopyKey;
+  const currentCutListCopy = cutListCopy?.key === cutListCopyKey ? cutListCopy : null;
   const latest = useRef<CachedDraft>({ saved, draft });
   latest.current = { saved, draft };
   useEffect(() => () => { cache.set(projectId, copy(latest.current)); }, [projectId]);
   useEffect(() => { if (!changed) return; const warn = (event: BeforeUnloadEvent) => event.preventDefault(); window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [changed]);
   useEffect(() => { let alive = true; setLoading(true); request(base).then(data => { if (alive) setPlans(data.plans); }).catch(e => { if (alive) setError(e.message); }).finally(() => { if (alive) setLoading(false); }); return () => { alive = false; }; }, [base]);
+  useEffect(() => {
+    cutListCopyRun.current += 1;
+    setCutListCopy(null);
+    return () => { cutListCopyRun.current += 1; };
+  }, [cutListCopyKey]);
+  useEffect(() => {
+    if (!currentCutListCopy?.fallback) return;
+    const field = cutListCopyFallback.current;
+    if (field && document.activeElement === cutListCopyTrigger.current) {
+      field.focus();
+      field.select();
+    }
+  }, [currentCutListCopy?.fallback, cutListCopyKey]);
   const open = (plan: Plan) => { setSaved(copy(plan)); setDraft(copy(plan)); setConflict(false); };
   const run = async (operation: () => Promise<void>) => { setBusy(true); setError(''); setMessage(''); try { await operation(); } catch (e) { const err = e as Error & { status?: number }; setError(err.status === 409 ? 'This cut map changed elsewhere. Your edits are still here; reload the saved map to review the latest version.' : err.message); setConflict(err.status === 409); } finally { setBusy(false); } };
   const reload = async (id: string) => { const data = await request(base); setPlans(data.plans); const latest = (data.plans as Plan[]).find(p => p.id === id); if (!latest) throw new Error('This saved cut map is no longer available.'); open(latest); };
   const changeScene = (index: number, patch: Partial<Scene>) => setDraft(current => current && ({ ...current, scenes: current.scenes.map((scene, i) => i === index ? { ...scene, ...patch } : scene) }));
   const mayLeave = () => !changed || window.confirm('Discard unsaved changes to this cut map?');
+  const copySavedCutList = async () => {
+    if (!saved || !savedSource || currentCutListCopy?.busy) return;
+    const key = cutListCopyKey;
+    const text = savedCutListText(saved, savedSource);
+    const run = ++cutListCopyRun.current;
+    const current = () => cutListCopyRun.current === run && cutListCopyKeyRef.current === key;
+    setCutListCopy({ key, message: 'Copying saved cut list…', fallback: null, busy: true });
+    try {
+      if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(text);
+      if (!current()) return;
+      setCutListCopy({ key, message: 'Saved cut list copied to the clipboard.', fallback: null, busy: false });
+    } catch {
+      if (!current()) return;
+      setCutListCopy({ key, message: 'Automatic copy is unavailable. The saved cut list is selected below; copy it manually.', fallback: text, busy: false });
+    }
+  };
   const selectedSource = videos.find(video => video.id === sourceId);
   const planSource = draft && videos.find(video => video.id === draft.sourceAssetId);
   const markPlayhead = (edge: 'start' | 'end') => {
@@ -97,6 +144,10 @@ export function FootagePlans({ projectId, assets, canEdit, onAssetSaved }: { pro
         <div><h3>Saved cut maps</h3>{plans.length === 0 ? <p>No saved cut maps yet.</p> : <ul className="song-plan-list">{plans.map(plan => <li key={plan.id}><button type="button" className="secondary" aria-pressed={saved?.id === plan.id} onClick={() => { if (mayLeave()) { open(plan); setError(''); setMessage(''); } }}><strong>{plan.title}</strong><span>{plan.scenes.length} scenes · revision {plan.revision}</span></button></li>)}</ul>}</div></div>
       {draft && saved && <div className="song-editor"><div className="song-editor-heading"><div><h3>{saved.title}</h3><p className="small">Revision {saved.revision} · all times refer to the original source video.</p></div><span className="small">{changed ? 'Unsaved changes' : 'Saved'}</span></div>
         {planSource ? <p>Source: <strong>{planSource.title}</strong> · {seconds(planSource.durationMs ?? 0)}s</p> : <p className="notice">The source video is no longer available in this studio.</p>}
+        {planSource && !savedSource && <p className="small">The source no longer matches this saved revision. Copy saved cut list is unavailable.</p>}
+        {savedSource && <><div className="row"><button ref={cutListCopyTrigger} type="button" className="secondary" aria-disabled={currentCutListCopy?.busy === true} aria-describedby={[changed ? cutListCopyScopeId : '', currentCutListCopy?.message ? cutListCopyStatusId : ''].filter(Boolean).join(' ') || undefined} onClick={() => void copySavedCutList()}>Copy saved cut list</button>{changed && <p id={cutListCopyScopeId} className="small">Copies the saved cut list for revision {saved.revision}.</p>}</div>
+        {currentCutListCopy && <p id={cutListCopyStatusId} className="small" role="status" aria-live="polite" aria-atomic="true">{currentCutListCopy.message}</p>}
+        {currentCutListCopy && currentCutListCopy.fallback !== null && <label htmlFor={cutListCopyFallbackId}>Saved cut list — select and copy<textarea id={cutListCopyFallbackId} ref={cutListCopyFallback} readOnly rows={10} value={currentCutListCopy.fallback} spellCheck={false} onFocus={event => event.currentTarget.select()} onClick={event => event.currentTarget.select()} /></label>}</>}
         <fieldset disabled={!canEdit || busy} className="song-editor-fields"><label>Cut map title<input maxLength={80} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label><label>Treatment<textarea maxLength={1200} value={draft.treatment} onChange={e => setDraft({ ...draft, treatment: e.target.value })} placeholder="Describe your intended edit" /></label><label>Frame<select value={draft.aspect} onChange={e => setDraft({ ...draft, aspect: e.target.value })}><option value="16:9">Landscape 16:9</option><option value="9:16">Portrait 9:16</option><option value="1:1">Square 1:1</option></select></label>
         <h4>Source ranges</h4><p className="small">Keep ranges in source order without overlaps. Gaps are allowed; all selected ranges together must stay under 60 seconds.</p><ol className="song-scenes">{draft.scenes.map((scene,index) => <li key={scene.id}><strong>Scene {index + 1}</strong><div className="song-plan-times"><TimeField label="Start" value={scene.sourceStartMs} onCommit={n => changeScene(index, { sourceStartMs:n })}/><TimeField label="End" value={scene.sourceEndMs} onCommit={n => changeScene(index, { sourceEndMs:n })}/></div>{workspaceOpen && planSource && <SourceRangePreview source={planSource} scene={scene} index={index}/>}{workspaceOpen && planSource && saved.scenes[index]?.id === scene.id && <FootageSceneExport key={`${saved.id}:${saved.revision}:${scene.id}`} projectId={projectId} plan={saved} scene={saved.scenes[index]} index={index} disabled={changed || conflict || busy} onAssetSaved={onAssetSaved}/>}<label>Direction<textarea maxLength={1200} value={scene.direction} onChange={e => changeScene(index, { direction:e.target.value })} placeholder="Describe the intended treatment" /></label><div className="song-plan-times"><label>Reference still<select value={scene.referenceAssetId ?? ''} onChange={e => changeScene(index, { referenceAssetId:e.target.value || null })}><option value="">None</option>{images.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></label><label>Selected take<select value={scene.selectedTakeId ?? ''} onChange={e => changeScene(index, { selectedTakeId:e.target.value || null })}><option value="">None</option>{videos.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></label></div><div className="row"><button type="button" className="quiet" disabled={draft.scenes.length >= 6 || scene.sourceEndMs - scene.sourceStartMs < 2} onClick={() => { const middle = scene.sourceStartMs + Math.floor((scene.sourceEndMs - scene.sourceStartMs) / 2); setDraft({ ...draft, scenes: draft.scenes.flatMap((item, i) => i === index ? [{ ...item, sourceEndMs: middle }, { ...item, id: `scn_${crypto.randomUUID().replaceAll('-', '')}`, sourceStartMs: middle, selectedTakeId: null }] : [item]) }); }}>Split scene {index + 1}</button>{draft.scenes.length > 1 && <button type="button" className="quiet" onClick={() => setDraft({ ...draft, scenes:draft.scenes.filter((_,i) => i !== index) })}>Remove scene {index + 1}</button>}</div></li>)}</ol>
         <button type="button" disabled={!changed || conflict || !planSource} onClick={() => void run(async () => { const result = await request(`${base}/${saved.id}`, 'PATCH', { expectedRevision:saved.revision, title:draft.title, treatment:draft.treatment, aspect:draft.aspect, scenes:draft.scenes }); setPlans(current => current.map(p => p.id === result.plan.id ? result.plan : p)); open(result.plan); setMessage('Cut map saved.'); })}>Save cut map</button></fieldset>
