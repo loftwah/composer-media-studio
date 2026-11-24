@@ -7,7 +7,7 @@ import { fullSourceCaptionDownload, fullSourceCaptionSrtVariants } from "./clip-
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
 import { EMPTY_CUE_HISTORY, cueEditHistory, redoLastCueChange, undoLastCueChange, type CueHistory } from "./clip-cue-history";
 import { cueAuditionWindow } from "./clip-cue-audition";
-import { appendManualClipCue, canSplitClipDraftCue, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, nudgeManualCueTimes, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
+import { appendManualClipCue, canSplitClipDraftCue, clipCueSplitFromPlayhead, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, nudgeManualCueTimes, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
 import { clipCropRectangle, cropObjectPosition, type CropAnchor, type CropRectangle } from "./clip-crop";
@@ -1089,6 +1089,15 @@ function VideoClip() {
     if (field === "start") setManualCueStart(seconds);
     else setManualCueEnd(seconds);
   }
+  // Stage a split time from the existing player without moving it. The exact
+  // saved cue supplies the bounds, and only the existing Split cue action writes
+  // the draft; a refusal leaves the manually entered split time untouched.
+  function fillCueSplitFromPlayhead() {
+    const split = clipCueSplitFromPlayhead(editingCue, sourceVideo.current?.currentTime);
+    if ("problem" in split) { setManualCueMessage(split.problem); return; }
+    setCueSplitAt(split.atSeconds);
+    setManualCueMessage(`Staged ${split.atSeconds} seconds from the original video playhead. Choose Split cue to save.`);
+  }
   // Nudge only the two entered source times, together and by exactly one step,
   // through the same whole-millisecond parser and video bound as Add cue / Update
   // cue. The saved draft, its Undo, the offset, trim, other cues, preview and any
@@ -1392,12 +1401,19 @@ function VideoClip() {
               <summary>Split this cue</summary>
               <p id="cue-split-help" className="trim-note">Original-video seconds, before the timing offset.</p>
               <div className="trim-fields">
-                <label>Split at (seconds)<input type="number" min={editingCue.startMs / 1000} max={editingCue.endMs / 1000} step="0.001"
-                  aria-describedby="cue-split-help"
-                  value={cueSplitAt}
-                  disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
-                  onChange={event => setCueSplitAt(event.currentTarget.value)}
-                /></label>
+                <div>
+                  <label>Split at (seconds)<input type="number" min={editingCue.startMs / 1000} max={editingCue.endMs / 1000} step="0.001"
+                    aria-describedby="cue-split-help"
+                    value={cueSplitAt}
+                    disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                    onChange={event => setCueSplitAt(event.currentTarget.value)}
+                  /></label>
+                  <button type="button" className="secondary"
+                    aria-label="Fill split seconds from the original video playhead"
+                    aria-describedby="cue-split-help"
+                    disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                    onClick={fillCueSplitFromPlayhead}>Use playhead</button>
+                </div>
                 <label>Word boundary<select value={cueSplitBoundary}
                   aria-describedby="cue-split-help"
                   disabled={!file || busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
