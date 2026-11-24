@@ -103,7 +103,7 @@ export function parseCaptionDraftFile(text: string, proof: CaptionDraftSource): 
 
   let cues: ImportedCue[];
   try {
-    cues = parseCaptionFile(vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000);
+    cues = parseCaptionFile(vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000, { voices: true });
   } catch {
     return fail("The caption draft's caption file is not valid SRT or WebVTT within the import bounds.");
   }

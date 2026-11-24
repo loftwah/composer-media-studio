@@ -83,8 +83,8 @@ test('an accepted cue follows the existing clamp, rebase, preview and export pro
   assert.equal(sourcePreviewVtt(cues, 10, 0),
     'WEBVTT\n\n00:01.000 --> 00:02.000\nA\n\n00:02.500 --> 00:04.250\nB &amp; &lt;C&gt;\n');
   assert.deepEqual(clipCaptionCues(cues, 2, 5, 500), [
-    { from: 0, to: 500, sourceStartMs: 2000, text: 'A', sourceIndex: 0 },
-    { from: 1000, to: 2750, sourceStartMs: 3000, text: 'B & <C>', sourceIndex: 1 },
+    { from: 0, to: 500, sourceStartMs: 2000, text: 'A', speaker: '', sourceIndex: 0 },
+    { from: 1000, to: 2750, sourceStartMs: 3000, text: 'B & <C>', speaker: '', sourceIndex: 1 },
   ]);
   const vtt = serializeClipCaptions(cues, 2, 5, 500);
   assert.equal(vtt, 'WEBVTT\n\n00:00.000 --> 00:00.500\nA\n\n00:01.000 --> 00:02.750\nB &amp; &lt;C&gt;\n');
@@ -104,8 +104,8 @@ test('a clamped or shifted review row removes its exact draft cue and preserves 
   const projected = clipCaptionCues(cues, 2, 7, 500);
   // The clamped row starts at the trim, and the shifted row starts 500 ms later.
   assert.deepEqual(projected, [
-    { from: 0, to: 1500, sourceStartMs: 2000, text: 'Trimmed', sourceIndex: 1 },
-    { from: 4500, to: 5000, sourceStartMs: 6500, text: 'Shifted', sourceIndex: 2 },
+    { from: 0, to: 1500, sourceStartMs: 2000, text: 'Trimmed', speaker: '', sourceIndex: 1 },
+    { from: 4500, to: 5000, sourceStartMs: 6500, text: 'Shifted', speaker: '', sourceIndex: 2 },
   ]);
   // Either row deletes exactly its own source cue, including the cues outside
   // the trim, so the offset keeps the same meaning for every untouched cue.
@@ -149,8 +149,8 @@ test('All source cues corrects a cue outside the trim without changing either ex
   assert.deepEqual(clipCaptionCues(cues, 5, 7)?.map(row => row.sourceIndex), [1]);
   const rows = sourceCaptionCues(cues);
   assert.deepEqual(rows, [
-    { startMs: 1000, endMs: 2000, text: 'Out of trim', sourceIndex: 0 },
-    { startMs: 5000, endMs: 6000, text: 'In trim', sourceIndex: 1 },
+    { startMs: 1000, endMs: 2000, text: 'Out of trim', speaker: '', sourceIndex: 0 },
+    { startMs: 5000, endMs: 6000, text: 'In trim', speaker: '', sourceIndex: 1 },
   ]);
   // Edit the exact source row. Only that cue's text and original times change;
   // the selected speaker, the other cue, the trim and the offset are untouched.
@@ -182,7 +182,7 @@ test('a clamped or shifted review row edits its exact draft cue and preserves ex
   // The shifted row only shows 4500–5000 after clipping, but its sourceIndex
   // still names the original 6000–8000 cue and its unshifted seconds.
   assert.deepEqual(projected[1], {
-    from: 4500, to: 5000, sourceStartMs: 6500, text: 'Shifted', sourceIndex: 2,
+    from: 4500, to: 5000, sourceStartMs: 6500, text: 'Shifted', speaker: '', sourceIndex: 2,
   });
   const next = accepted(replace(cues, projected[1].sourceIndex, 'Shifted corrected', '5.75', '8.25'));
   assert.deepEqual(next, [
@@ -191,8 +191,8 @@ test('a clamped or shifted review row edits its exact draft cue and preserves ex
   // The untouched cues keep their original times, so the same trim and offset
   // project them exactly as before.
   assert.deepEqual(clipCaptionCues(next, 2, 7, 500), [
-    { from: 0, to: 1500, sourceStartMs: 2000, text: 'Trimmed', sourceIndex: 1 },
-    { from: 4250, to: 5000, sourceStartMs: 6250, text: 'Shifted corrected', sourceIndex: 2 },
+    { from: 0, to: 1500, sourceStartMs: 2000, text: 'Trimmed', speaker: '', sourceIndex: 1 },
+    { from: 4250, to: 5000, sourceStartMs: 6250, text: 'Shifted corrected', speaker: '', sourceIndex: 2 },
   ]);
 });
 
@@ -224,15 +224,15 @@ test('a merge keeps cues hidden by the trim and offset and targets the visible s
   const cues = [before, first, next, after];
   const projected = clipCaptionCues(cues, 2, 7, 500);
   assert.deepEqual(projected, [
-    { from: 0, to: 1500, sourceStartMs: 2000, text: 'First', sourceIndex: 1 },
-    { from: 1500, to: 3500, sourceStartMs: 3500, text: 'Second', sourceIndex: 2 },
+    { from: 0, to: 1500, sourceStartMs: 2000, text: 'First', speaker: '', sourceIndex: 1 },
+    { from: 1500, to: 3500, sourceStartMs: 3500, text: 'Second', speaker: '', sourceIndex: 2 },
   ]);
   const nextCues = accepted(mergeClipDraftCues(cues, projected[0].sourceIndex, projected[1].sourceIndex, 10_000));
   // Hidden cues stay exactly where they were; only the two visible rows merge,
   // and their original start/end survive the clamp and offset.
   assert.deepEqual(nextCues, [before, { startMs: 1000, endMs: 5000, text: 'First Second', speaker: '' }, after]);
   assert.deepEqual(clipCaptionCues(nextCues, 2, 7, 500), [
-    { from: 0, to: 3500, sourceStartMs: 2000, text: 'First Second', sourceIndex: 1 },
+    { from: 0, to: 3500, sourceStartMs: 2000, text: 'First Second', speaker: '', sourceIndex: 1 },
   ]);
 });
 
@@ -311,7 +311,7 @@ test('splitting one cue uses the entered original-video time and chosen word bou
   ]);
   // The exact edited track is the canonical full-source VTT used for its digest.
   assert.equal(manualCaptionTrackVtt(next),
-    'WEBVTT\n\n00:00.500 --> 00:00.900\nBefore\n\n00:01.000 --> 00:02.250\nHello\n\n00:02.250 --> 00:04.000\nbright world\n\n00:05.000 --> 00:06.000\nAfter\n');
+    'WEBVTT\n\n00:00.500 --> 00:00.900\nBefore\n\n00:01.000 --> 00:02.250\n<v Singer>Hello</v>\n\n00:02.250 --> 00:04.000\n<v Singer>bright world</v>\n\n00:05.000 --> 00:06.000\nAfter\n');
   // Atomic: the caller's draft and the selected cue are unchanged.
   assert.deepEqual(cues, snapshot);
   assert.equal(selected.text, 'Hello bright world');
@@ -352,8 +352,8 @@ test('a split keeps cues hidden by the trim and the same offset projection', () 
   // Untouched cues keep their original times, so the selected trim and offset
   // still project the split pair into the same review window.
   assert.deepEqual(clipCaptionCues(next, 2, 7, 500), [
-    { from: 1500, to: 2500, sourceStartMs: 3500, text: 'Hello', sourceIndex: 1 },
-    { from: 2500, to: 3500, sourceStartMs: 4500, text: 'bright world', sourceIndex: 2 },
+    { from: 1500, to: 2500, sourceStartMs: 3500, text: 'Hello', speaker: '', sourceIndex: 1 },
+    { from: 2500, to: 3500, sourceStartMs: 4500, text: 'bright world', speaker: '', sourceIndex: 2 },
   ]);
 });
 
@@ -398,6 +398,26 @@ test('a manual or edited track is named as a local source, not the imported file
   assert.equal(manualCaptionSourceName(null), 'Manual cues in Video Clip');
   assert.equal(manualCaptionSourceName({ name: 'watch.vtt', local: false }), 'watch.vtt (edited in Video Clip)');
   assert.equal(manualCaptionSourceName({ name: 'Manual cues in Video Clip', local: true }), 'Manual cues in Video Clip');
+});
+
+test('a named cue keeps its speaker through text, time, split and merge edits', () => {
+  const named = { startMs: 1000, endMs: 2000, text: 'Hello world', speaker: 'Dean & Jane' };
+  const later = { startMs: 2000, endMs: 3000, text: 'Again', speaker: 'Dean & Jane' };
+  assert.deepEqual(accepted(replace([named], 0, 'Corrected', '1.25', '2.5')), [
+    { startMs: 1250, endMs: 2500, text: 'Corrected', speaker: 'Dean & Jane' },
+  ]);
+  assert.deepEqual(accepted(split([named], 0, '1.5', 1)), [
+    { startMs: 1000, endMs: 1500, text: 'Hello', speaker: 'Dean & Jane' },
+    { startMs: 1500, endMs: 2000, text: 'world', speaker: 'Dean & Jane' },
+  ]);
+  const merged = accepted(mergeClipDraftCues([named, later], 0, 1, 10_000));
+  assert.deepEqual(merged, [
+    { startMs: 1000, endMs: 3000, text: 'Hello world Again', speaker: 'Dean & Jane' },
+  ]);
+  // The canonical full-source output escapes the name and reads back exactly.
+  assert.equal(manualCaptionTrackVtt(merged),
+    'WEBVTT\n\n00:01.000 --> 00:03.000\n<v Dean &amp; Jane>Hello world Again</v>\n');
+  assert.deepEqual(parseCaptionFile(manualCaptionTrackVtt(merged), 0, 10_000, { voices: true }), merged);
 });
 
 test('a nudge moves both entered times by exactly 100 ms and keeps their duration', () => {

@@ -25,7 +25,7 @@ export function fullSourceCaptionDownload(cues: readonly ImportedCue[]): FullSou
     return { problem: `This caption draft is ${Math.ceil(bytes / 1024)} KB as WebVTT, over the ${MAX_CAPTION_BYTES / 1024} KB limit, so it can’t be chosen again. Remove cues or shorten their text.` };
   let reparsed: ImportedCue[];
   try {
-    reparsed = parseCaptionFile(vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000);
+    reparsed = parseCaptionFile(vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000, { voices: true });
   } catch {
     return { problem: UNREADABLE };
   }

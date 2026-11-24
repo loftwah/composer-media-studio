@@ -80,3 +80,14 @@ test('a draft the bounded importer cannot reproduce is refused, and no cues mean
   assert.match(unreadable.problem, /could not be saved as WebVTT/);
   assert.equal(fullSourceCaptionDownload([]), null);
 });
+
+test('the full-source VTT keeps a voice speaker and withholds SRT instead of dropping it', () => {
+  const named = [{ startMs: 0, endMs: 1000, text: 'Hello & <there>', speaker: 'Dean & Jane' }];
+  const full = fullSourceCaptionDownload(named);
+  assert.deepEqual(full, {
+    vtt: 'WEBVTT\n\n00:00.000 --> 00:01.000\n<v Dean &amp; Jane>Hello &amp; &lt;there&gt;</v>\n',
+  });
+  assert.ok('vtt' in full);
+  assert.deepEqual(parseCaptionFile(full.vtt, 0, MAX_PUBLIC_VIDEO_SOURCE_SECONDS * 1000, { voices: true }), named);
+  assert.equal(fullSourceCaptionSrt(full.vtt), null);
+});

@@ -95,8 +95,8 @@ test('cue review rows expose trim-relative times and add trim start for original
   ];
   const trimmed = clipCaptionCues(cues, 2, 10, 1500);
   assert.deepEqual(trimmed, [
-    { from: 500, to: 6500, sourceStartMs: 2500, text: 'A & B', sourceIndex: 0 },
-    { from: 7500, to: 8000, sourceStartMs: 9500, text: '<Next>', sourceIndex: 1 },
+    { from: 500, to: 6500, sourceStartMs: 2500, text: 'A & B', speaker: '', sourceIndex: 0 },
+    { from: 7500, to: 8000, sourceStartMs: 9500, text: '<Next>', speaker: '', sourceIndex: 1 },
   ]);
   assert.deepEqual(trimmed.map(cue => clipTimeStamp(cue.from)), ['00:00.500', '00:07.500']);
   // The same projection still backs the VTT and count.
@@ -105,11 +105,11 @@ test('cue review rows expose trim-relative times and add trim start for original
   // A cue already running before the trim is clamped to the trim start, so its
   // source seek includes the trim start rather than the earlier source time.
   const clipped = clipCaptionCues(cues, 2.0006, 10);
-  assert.deepEqual(clipped?.[0], { from: 0, to: 4999, sourceStartMs: 2001, text: 'A & B', sourceIndex: 0 });
+  assert.deepEqual(clipped?.[0], { from: 0, to: 4999, sourceStartMs: 2001, text: 'A & B', speaker: '', sourceIndex: 0 });
   const earlier = clipCaptionCues(cues, 2, 10, -1500);
   assert.deepEqual(earlier, [
-    { from: 0, to: 3500, sourceStartMs: 2000, text: 'A & B', sourceIndex: 0 },
-    { from: 4500, to: 8000, sourceStartMs: 6500, text: '<Next>', sourceIndex: 1 },
+    { from: 0, to: 3500, sourceStartMs: 2000, text: 'A & B', speaker: '', sourceIndex: 0 },
+    { from: 4500, to: 8000, sourceStartMs: 6500, text: '<Next>', speaker: '', sourceIndex: 1 },
   ]);
   // Invalid values stay indistinguishable from the serializer's null result.
   assert.deepEqual(clipCaptionCues(cues, 12.5, 14), []);
@@ -122,9 +122,9 @@ test('All source cues lists every stored cue at its unshifted original time and 
   const cues = parseCaptionFile('WEBVTT\n\n00:00:00.500 --> 00:00:02.000\nBefore trim\n\n00:00:05.000 --> 00:00:08.000\nOutside the trim\n\n00:00:11.000 --> 00:00:12.500\nAfter\n', 0, 180_000);
   const rows = sourceCaptionCues(cues);
   assert.deepEqual(rows, [
-    { startMs: 500, endMs: 2000, text: 'Before trim', sourceIndex: 0 },
-    { startMs: 5000, endMs: 8000, text: 'Outside the trim', sourceIndex: 1 },
-    { startMs: 11000, endMs: 12500, text: 'After', sourceIndex: 2 },
+    { startMs: 500, endMs: 2000, text: 'Before trim', speaker: '', sourceIndex: 0 },
+    { startMs: 5000, endMs: 8000, text: 'Outside the trim', speaker: '', sourceIndex: 1 },
+    { startMs: 11000, endMs: 12500, text: 'After', speaker: '', sourceIndex: 2 },
   ]);
   // A trim, clamp or offset can hide a cue from the in-trim list, but it can
   // never change or drop the matching source row.
@@ -174,4 +174,35 @@ test('no SRT is exposed when the shared parser cannot cleanly preserve the sourc
   assert.equal(srtForClipVtt('WEBVTT\n\n00:00.000 --> 00:01.000\nSearch &amp;lt; here\n', 5000), null);
   assert.equal(srtForClipVtt(null, 5000), null);
   assert.equal(srtForClipVtt('WEBVTT\n\n00:00.000 --> 00:01.000\nA\n', 0), null);
+});
+test('Video Clip voice output escapes and round-trips while unnamed bytes stay identical', () => {
+  const cues = [
+    { startMs: 1000, endMs: 2000, text: 'A & <B>', speaker: 'Dean & Jane' },
+    { startMs: 2000, endMs: 3000, text: 'Unnamed', speaker: '' },
+  ];
+  const unnamed = 'WEBVTT\n\n00:01.000 --> 00:02.000\nA &amp; &lt;B&gt;\n\n00:02.000 --> 00:03.000\nUnnamed\n';
+  assert.equal(serializeClipCaptions(cues, 0, 3), unnamed);
+  const named = 'WEBVTT\n\n00:01.000 --> 00:02.000\n<v Dean &amp; Jane>A &amp; &lt;B&gt;</v>\n\n00:02.000 --> 00:03.000\nUnnamed\n';
+  assert.equal(serializeClipCaptions(cues, 0, 3, 0, 'default', { voices: true }), named);
+  assert.deepEqual(parseCaptionFile(named, 0, 3000, { voices: true }), cues);
+  // Placement changes only the cue setting; the voice body is shared.
+  assert.equal(sourcePreviewVtt(cues, 3, 0, 'top', { voices: true }),
+    'WEBVTT\n\n00:01.000 --> 00:02.000 line:12%\n<v Dean &amp; Jane>A &amp; &lt;B&gt;</v>\n\n00:02.000 --> 00:03.000 line:12%\nUnnamed\n');
+});
+test('cue review projections keep a supplied speaker separate from the words', () => {
+  const cues = [{ startMs: 1000, endMs: 2000, text: 'A & B', speaker: 'Dean' }];
+  assert.deepEqual(clipCaptionCues(cues, 0, 3), [
+    { from: 1000, to: 2000, sourceStartMs: 1000, text: 'A & B', speaker: 'Dean', sourceIndex: 0 },
+  ]);
+  assert.deepEqual(sourceCaptionCues(cues), [
+    { startMs: 1000, endMs: 2000, text: 'A & B', speaker: 'Dean', sourceIndex: 0 },
+  ]);
+});
+test('SRT is withheld for named cues instead of silently dropping the speaker', () => {
+  const named = { startMs: 0, endMs: 1000, text: 'Hi', speaker: 'Dean' };
+  const namedVtt = serializeClipCaptions([named], 0, 1, 0, 'default', { voices: true });
+  assert.equal(srtForClipVtt(namedVtt, 1000), null);
+  // The prior unnamed SRT stays byte-identical.
+  const unnamedVtt = serializeClipCaptions([{ ...named, speaker: '' }], 0, 1);
+  assert.equal(srtForClipVtt(unnamedVtt, 1000), '1\n00:00:00,000 --> 00:00:01,000\nHi\n');
 });
