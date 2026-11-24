@@ -18,11 +18,15 @@
 .trim-cue-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.35rem; align-items:stretch; }
 .trim-cue-jump { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.75rem; align-items:baseline; width:100%; text-align:left; }
 .trim-cue-actions { display:grid; gap:.35rem; align-content:start; }
-.trim-cue-edit, .trim-cue-merge, .trim-cue-remove { align-self:stretch; }
+.trim-cue-edit, .trim-cue-merge, .trim-cue-remove, .trim-cue-play { align-self:stretch; }
+.trim-cue-play[aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); color:var(--ink); }
+.trim-cue-audition-status { min-height:1.6em; }
 .trim-cue-hidden-merge { grid-column:1/-1; margin:0; }
 .trim-cue-time { font-variant-numeric:tabular-nums; white-space:nowrap; }
 .trim-cue-text { overflow-wrap:anywhere; }
 @media (max-width:600px) {
+  .trim-cue-row { grid-template-columns:minmax(0,1fr); padding-bottom:.4rem; }
+  .trim-cue-actions { display:flex; flex-wrap:wrap; }
   .trim-cue-jump { grid-template-columns:minmax(0,1fr); gap:.25rem; align-content:start; }
   .trim-cue-time { white-space:normal; overflow-wrap:anywhere; }
   .trim-cue-search-controls input[type=search] { flex-basis:100%; }

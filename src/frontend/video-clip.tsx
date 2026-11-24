@@ -5,6 +5,7 @@ import { MAX_CUE_SEARCH_CHARS, cueMergeVisibility, cueSearchQuery, filterCuesByT
 import { fullSourceCaptionDownload } from "./clip-full-source-captions";
 import { MAX_CAPTION_DRAFT_BYTES, captionDraftFileText, parseCaptionDraftFile } from "./clip-caption-draft-file";
 import { EMPTY_CUE_HISTORY, cueEditHistory, redoLastCueChange, undoLastCueChange, type CueHistory } from "./clip-cue-history";
+import { cueAuditionWindow } from "./clip-cue-audition";
 import { appendManualClipCue, canSplitClipDraftCue, clipCueSplitParts, defaultClipCueSplit, manualCaptionSourceName, manualCaptionTrackVtt, mergeClipDraftCues, nudgeManualCueTimes, removeClipDraftCue, replaceClipDraftCue, splitClipDraftCue } from "./clip-manual-cue";
 import { ClipReceiptDownload, type CompletedClip } from "./clip-receipt";
 import { MAX_RECEIPT_BYTES, parseClipReceipt } from "./clip-receipt-open";
@@ -45,6 +46,7 @@ type Quality = keyof typeof sizes;
 type Shape = keyof typeof sizes.standard;
 type Fit = "cover" | "contain";
 type CaptionDraft = Readonly<{ name: string; sourceSha256: string; cues: ImportedCue[]; local: boolean }>;
+type CueAudition = Readonly<{ video: HTMLVideoElement; sourceIndex: number; startMs: number; endMs: number }>;
 
 async function editedCaptionDraft(previous: CaptionDraft | null, cues: ImportedCue[]): Promise<CaptionDraft> {
   const source = manualCaptionTrackVtt(cues);
@@ -155,8 +157,17 @@ function VideoClip() {
   const [showSourceCaptions, setShowSourceCaptions] = useState(false);
   const [sourceCaptionTrack, setSourceCaptionTrack] = useState<{ vtt: string; url: string } | null>(null);
   const [sourceTrackProblem, setSourceTrackProblem] = useState("");
+  // A cue audition is a short, explicitly started play of the existing source
+  // video over exactly one reviewed cue's clipped window. The ref is the live
+  // truth for native media events and frame ticks; state only paints the button
+  // and status. No effect starts playback.
+  const [cueAudition, setCueAudition] = useState<CueAudition | null>(null);
+  const [cueAuditionStatus, setCueAuditionStatus] = useState("");
   const sourceVideo = useRef<HTMLVideoElement>(null);
   const sourceCaptions = useRef<HTMLTrackElement>(null);
+  const cueAuditionRef = useRef<CueAudition | null>(null);
+  const cueAuditionRequest = useRef(0);
+  const cueAuditionFrame = useRef(0);
   const [receiptMessage, setReceiptMessage] = useState("");
   const [receiptLoading, setReceiptLoading] = useState(false);
   const captionRequest = useRef(0);
@@ -217,6 +228,20 @@ function VideoClip() {
     void active.current?.cancel();
     handoff.current?.close();
   }, []);
+  useEffect(() => {
+    const stopWhenHidden = () => {
+      if (document.hidden) stopCueAudition("Cue playback stopped when this tab was hidden.");
+    };
+    document.addEventListener("visibilitychange", stopWhenHidden);
+    return () => {
+      document.removeEventListener("visibilitychange", stopWhenHidden);
+      const active = cueAuditionRef.current;
+      cueAuditionRef.current = null;
+      cueAuditionRequest.current++;
+      cancelAnimationFrame(cueAuditionFrame.current);
+      active?.video.pause();
+    };
+  }, []);
   useEffect(() => () => sourceRequest.current?.abort(), []);
   // Consume only the explicit handoff from the opener that launched this tab.
   // A ready is announced once; the first verified delivery from that exact
@@ -261,6 +286,23 @@ function VideoClip() {
   // the single source for the count, previews, MP4 captions and both sidecars.
   const cueQuery = cueSearchQuery(cueSearchText);
   const visibleCues = trimmedCaptionCues ? filterCuesByText(trimmedCaptionCues, cueSearchText) : [];
+  // A running audition belongs to one exact source, draft, trim and offset. If
+  // any of those change it is no longer the same cue window, so stop and say so
+  // rather than leave the old seconds playing over newer work.
+  const cueAuditionKey = JSON.stringify([
+    source,
+    captionDraft?.sourceSha256 ?? null,
+    captionDraft?.cues.length ?? 0,
+    Number.isFinite(start) ? start : null,
+    Number.isFinite(end) ? end : null,
+    captionOffsetMs,
+  ]);
+  const cueAuditionKeyRef = useRef(cueAuditionKey);
+  useEffect(() => {
+    if (cueAuditionKeyRef.current === cueAuditionKey) return;
+    cueAuditionKeyRef.current = cueAuditionKey;
+    stopCueAudition("Cue audition stopped because the trim, captions or video changed.");
+  }, [cueAuditionKey]);
   // Split reads the saved draft cue, not the unsaved edit fields, so its Undo
   // and digest describe exactly the cue the review row opened. The chosen
   // boundary is clamped for display if a different cue or text replaced it.
@@ -801,11 +843,101 @@ function VideoClip() {
       ? "Reapplied the last cue change. Undo is available below."
       : "Reapplied the removal of the last cue. Undo is available below.");
   }
+  // Clear the short cue play, if one is running. This never touches the draft,
+  // trim, offset, preview, result or native controls. A reason is announced
+  // only when something was actually playing, so an ordinary Jump stays quiet.
+  function stopCueAudition(status = "") {
+    const active = cueAuditionRef.current;
+    if (!active) return;
+    cueAuditionRef.current = null;
+    cueAuditionRequest.current++;
+    cancelAnimationFrame(cueAuditionFrame.current);
+    cueAuditionFrame.current = 0;
+    active.video.pause();
+    setCueAudition(null);
+    setCueAuditionStatus(status);
+  }
+  // The cue window has played through: pause and land exactly on its end so the
+  // next native play starts where the cue really ends, not a frame past it.
+  function finishCueAudition() {
+    const active = cueAuditionRef.current;
+    if (!active) return;
+    stopCueAudition("Cue playback stopped at the cue end.");
+    try { active.video.currentTime = active.endMs / 1000; } catch { /* keep the reached frame */ }
+  }
+  // Play only the selected cue's real source intersection on the existing
+  // source element. The request token makes an older play promise harmless when
+  // a new cue, jump, edit or pause has taken over while it was pending.
+  async function playOriginalCue(cue: { sourceIndex: number; from: number; to: number; sourceStartMs: number }) {
+    if (busy || checking || importing || receiptLoading || captionLoading || captionFileLoading) return;
+    const video = sourceVideo.current;
+    const range = cueAuditionWindow(cue, Math.round(duration * 1000));
+    if (!video || !range) {
+      setCueAuditionStatus("This cue cannot be played from the original video. Check the trim and timing offset.");
+      return;
+    }
+    stopCueAudition();
+    const request = ++cueAuditionRequest.current;
+    const active: CueAudition = { video, sourceIndex: cue.sourceIndex, ...range };
+    cueAuditionRef.current = active;
+    setCueAudition(active);
+    setCueAuditionStatus(`Playing cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)} from the original video.`);
+    video.pause();
+    try {
+      video.currentTime = range.startMs / 1000;
+    } catch {
+      stopCueAudition("Could not move the original video to this cue. Use the original video controls instead.");
+      return;
+    }
+    try {
+      await video.play();
+    } catch {
+      if (request !== cueAuditionRequest.current) return;
+      stopCueAudition("Could not play this cue in this browser. Use the original video controls instead.");
+      return;
+    }
+    if (request !== cueAuditionRequest.current || cueAuditionRef.current !== active) return;
+    const endSeconds = range.endMs / 1000;
+    const tick = () => {
+      if (request !== cueAuditionRequest.current || cueAuditionRef.current !== active) return;
+      if (!Number.isFinite(video.currentTime)) {
+        stopCueAudition("Could not read the original video playhead. Use the original video controls instead.");
+        return;
+      }
+      if (video.currentTime >= endSeconds - 0.004) {
+        finishCueAudition();
+        return;
+      }
+      cueAuditionFrame.current = requestAnimationFrame(tick);
+    };
+    cueAuditionFrame.current = requestAnimationFrame(tick);
+  }
+  function pauseSourceVideo(video: HTMLVideoElement) {
+    if (video.paused && cueAuditionRef.current?.video === video)
+      stopCueAudition("Cue playback paused.");
+  }
+  // A native-control or waveform seek outside the playing cue clears it instead
+  // of silently playing unrelated seconds. The start seek is inside the window.
+  function checkSourceSeek(video: HTMLVideoElement) {
+    const active = cueAuditionRef.current;
+    if (active?.video !== video || !Number.isFinite(video.currentTime)) return;
+    const atMs = Math.round(video.currentTime * 1000);
+    if (atMs < active.startMs - 50 || atMs > active.endMs + 50)
+      stopCueAudition("Cue audition stopped because the playhead moved outside the cue.");
+  }
+  function endSourceVideo(video: HTMLVideoElement) {
+    if (cueAuditionRef.current?.video === video) stopCueAudition("The original video ended.");
+  }
+  function failSourceVideo(video: HTMLVideoElement) {
+    if (cueAuditionRef.current?.video === video)
+      stopCueAudition("Could not play this cue in this browser. Use the original video controls instead.");
+  }
   // One source-seek path for the caption review and the waveform range: pause
   // the existing preview player and move its own clock, never a second decoder.
   function seekOriginalVideo(sourceSeconds: number) {
     const video = sourceVideo.current;
     if (!video || !Number.isFinite(sourceSeconds)) return;
+    stopCueAudition("Cue audition stopped because the playhead moved.");
     video.pause();
     video.currentTime = Math.min(Math.max(sourceSeconds, 0), duration);
   }
@@ -1040,7 +1172,9 @@ function VideoClip() {
       </div>
       <p role="status" className="trim-note">{receiptMessage}</p>
       <label className="video-tool-check"><input type="checkbox" checked={previewFraming} onChange={e => setPreviewFraming(e.target.checked)}/> Preview output framing</label>
-      <video ref={sourceVideo} className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}>
+      <video ref={sourceVideo} className="video-tool-player" src={source} controls playsInline style={previewFraming ? previewStyle : undefined} aria-label={previewFraming ? "Original video, framing preview" : "Original video"}
+        onPause={event => pauseSourceVideo(event.currentTarget)} onSeeking={event => checkSourceSeek(event.currentTarget)}
+        onEnded={event => endSourceVideo(event.currentTarget)} onError={event => failSourceVideo(event.currentTarget)}>
         {sourceCaptionUrl && <track ref={sourceCaptions} kind="captions" label="Draft captions · original video" src={sourceCaptionUrl}/>}
       </video>
       {file && validTrim && <ClipWaveform file={file} startSeconds={start} endSeconds={end} video={sourceVideo} onSeek={seekOriginalVideo}/>}
@@ -1182,7 +1316,7 @@ function VideoClip() {
           {trimmedCaptionCues && trimmedCaptionCues.length > 0 && (
             <details className="trim-cue-review">
               <summary>Review cues in this trim ({trimmedCaptionCues.length})</summary>
-              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position. Edit writes the cue's original-video text and times into the form above; Merge with next joins it with the next adjacent cue, only when both are shown; Remove deletes just that cue. Turn on Preview draft captions on original video to see the original caption there.</p>
+              <p className="trim-note">Times are relative to the trim start. Choose a cue to pause the original video at that source position, or select Play cue to run that section within the current trim and timing offset. Edit writes the cue's original-video text and times into the form above; Merge with next joins it with the next adjacent cue, only when both are shown; Remove deletes just that cue. Turn on Preview draft captions on original video to see the original caption there.</p>
               <div className="trim-cue-search">
                 <label htmlFor="trim-cue-search">Find a caption by its text</label>
                 <div className="trim-cue-search-controls">
@@ -1208,6 +1342,7 @@ function VideoClip() {
               <ol className="trim-cue-list" aria-label="Caption cues in this trim">
                 {visibleCues.map(cue => {
                   const { mergeWith, hiddenMergeWith } = cueMergeVisibility(trimmedCaptionCues, cue, visibleCues, captionDraft.cues);
+                  const thisCuePlaying = cueAudition?.sourceIndex === cue.sourceIndex;
                   return (
                     <li key={cue.sourceIndex} className="trim-cue-row" data-source-index={cue.sourceIndex}>
                       <button type="button" className="secondary trim-cue-jump"
@@ -1218,6 +1353,16 @@ function VideoClip() {
                         <span className="trim-cue-text">{cue.text}</span>
                       </button>
                       <div className="trim-cue-actions">
+                        <button type="button" className="secondary trim-cue-play"
+                          aria-label={thisCuePlaying
+                            ? `Pause cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`
+                            : `Play cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)} from the original video. ${cue.text}`}
+                          aria-pressed={thisCuePlaying}
+                          disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
+                          onClick={() => {
+                            if (thisCuePlaying) stopCueAudition("Cue audition paused.");
+                            else void playOriginalCue(cue);
+                          }}>{thisCuePlaying ? "Pause cue" : "Play cue"}</button>
                         <button type="button" className="secondary trim-cue-edit"
                           aria-label={`Edit cue ${clipTimeStamp(cue.from)}–${clipTimeStamp(cue.to)}. ${cue.text}`}
                           disabled={busy || checking || importing || receiptLoading || captionLoading || captionFileLoading}
@@ -1240,6 +1385,7 @@ function VideoClip() {
                   );
                 })}
               </ol>
+              <p className="trim-note trim-cue-audition-status" role="status" aria-live="polite">{cueAuditionStatus}</p>
             </details>
           )}
           {fullSourceCaptionUrl && (
