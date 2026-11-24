@@ -143,7 +143,7 @@ try {
     720,
     `fillStyle='#c0392b'; fillRect(0,0,640,360); fillStyle='#2e86c1'; fillRect(640,0,640,360); fillStyle='#1e8449'; fillRect(0,360,640,360); fillStyle='#d4ac0d'; fillRect(640,360,640,360);`,
   );
-  await section.getByLabel("Thumbnail A").setInputFiles({
+  await section.getByLabel("Thumbnail A", { exact: true }).setInputFiles({
     name: "wide-quadrants.png",
     mimeType: "image/png",
     buffer: widePng,
@@ -197,14 +197,13 @@ try {
     1080,
     `fillStyle='#c0392b'; fillRect(0,0,1080,360); fillStyle='#1e8449'; fillRect(0,360,1080,360); fillStyle='#2e86c1'; fillRect(0,720,1080,360);`,
   );
-  await section.getByLabel("Thumbnail B").setInputFiles({
+  await section.getByLabel("Thumbnail B", { exact: true }).setInputFiles({
     name: "banded-square.png",
     mimeType: "image/png",
     buffer: bandedPng,
   });
   await section.locator("[data-title-compare-pair='b']").getByText(/1080 × 1080 px/).waitFor({ timeout: 30_000 });
 
-  await section.getByLabel("Preview crop position").selectOption("top");
   await section.getByRole("button", { name: "Export Pair A card thumbnail (640 × 360)" }).click();
   await section.getByRole("link", { name: "Download card PNG" }).waitFor({ timeout: 30_000 });
   const exported = await page.evaluate(async () => {
@@ -274,14 +273,10 @@ try {
   // The banded square on pair B: anchor top must keep the red band, anchor
   // bottom the blue band, in the same pixels the preview shows. Selecting
   // pair B is what aims both export buttons at it.
-  await section.getByLabel("Preview crop position").selectOption("top");
   await section.locator("[data-title-compare-pair='b'] input[type='radio']").check();
+  await section.getByLabel("Preview crop position").selectOption("top");
   await section.getByRole("button", { name: "Export Pair B card thumbnail (640 × 360)" }).click();
-  await page.waitForFunction(
-    () => document.querySelector(".image-title-compare .title-compare-export a")?.getAttribute("download")?.startsWith("Quiet-margin"),
-    null,
-    { timeout: 30_000 },
-  );
+  await section.getByText(/^Card export ready for Pair B · top crop:/).waitFor({ timeout: 30_000 });
   const topBand = await page.evaluate(async () => {
     const link = document.querySelector(".image-title-compare .title-compare-export a");
     const buffer = await (await fetch(link.href)).arrayBuffer();
@@ -308,14 +303,7 @@ try {
 
   await section.getByLabel("Preview crop position").selectOption("bottom");
   await section.getByRole("button", { name: "Export Pair B card thumbnail (640 × 360)" }).click();
-  await page.waitForFunction(
-    () => {
-      const note = document.querySelector(".image-title-compare [role='status']")?.textContent ?? "";
-      return note.includes("Card export ready");
-    },
-    null,
-    { timeout: 30_000 },
-  );
+  await section.getByText(/^Card export ready for Pair B · bottom crop:/).waitFor({ timeout: 30_000 });
   const bottomBand = await page.evaluate(async () => {
     const link = document.querySelector(".image-title-compare .title-compare-export a");
     const buffer = await (await fetch(link.href)).arrayBuffer();
@@ -353,7 +341,7 @@ try {
   record("ArrowUp moves the compared pair back to A", /Pair A selected/.test(afterUp), afterUp);
 
   // A refused file keeps the pair and names the reason.
-  await section.getByLabel("Thumbnail C").setInputFiles({
+  await section.getByLabel("Thumbnail C", { exact: true }).setInputFiles({
     name: "note.html",
     mimeType: "text/html",
     buffer: Buffer.from("<!doctype html><html><body>x</body></html>", "utf8"),
@@ -371,7 +359,7 @@ try {
     360,
     `fillStyle='#7d3c98'; fillRect(0,0,640,360); fillStyle='#f9e79f'; fillRect(0,180,640,180);`,
   );
-  await section.getByLabel("Thumbnail C").setInputFiles({
+  await section.getByLabel("Thumbnail C", { exact: true }).setInputFiles({
     name: "small-exact.png",
     mimeType: "image/png",
     buffer: smallPng,
@@ -441,10 +429,11 @@ try {
     rowTruncation,
   );
 
-  // 200% zoom: a fresh context rendered at device scale 2 — the same CSS
-  // pixels-per-point shift 200% browser zoom produces — checked for clipping.
+  // Equivalent 200% layout: a fresh 640 × 450 CSS px context at device scale 2
+  // reflows like a 1280 × 900 display at 200% browser zoom. This checks the
+  // equivalent layout, not actual browser UI zoom.
   const zoomContext = await browser.newContext({
-    viewport: { width: 1280, height: 900 },
+    viewport: { width: 640, height: 450 },
     deviceScaleFactor: 2,
   });
   const zoomPage = await zoomContext.newPage();
@@ -456,19 +445,19 @@ try {
   const zoomSection = zoomPage.locator(SECTION);
   await zoomSection.waitFor({ timeout: 30_000 });
   await zoomSection.getByLabel("Title A").fill(LONG_TITLE);
-  await zoomSection.getByLabel("Thumbnail A").setInputFiles({
+  await zoomSection.getByLabel("Thumbnail A", { exact: true }).setInputFiles({
     name: "wide-quadrants.png",
     mimeType: "image/png",
     buffer: widePng,
   });
   await zoomSection.locator("[data-title-compare-pair='a']").getByText(/1280 × 720 px/).waitFor({ timeout: 30_000 });
-  await zoomSection.getByLabel("Thumbnail B").setInputFiles({
+  await zoomSection.getByLabel("Thumbnail B", { exact: true }).setInputFiles({
     name: "banded-square.png",
     mimeType: "image/png",
     buffer: bandedPng,
   });
   await zoomSection.locator("[data-title-compare-pair='b']").getByText(/1080 × 1080 px/).waitFor({ timeout: 30_000 });
-  await zoomSection.getByLabel("Thumbnail C").setInputFiles({
+  await zoomSection.getByLabel("Thumbnail C", { exact: true }).setInputFiles({
     name: "small-exact.png",
     mimeType: "image/png",
     buffer: smallPng,
@@ -489,8 +478,11 @@ try {
       .length,
   }));
   record(
-    "200% zoom keeps the section and its thumbs inside the viewport",
-    zoom.scrollWidth === zoom.innerWidth && zoom.clipped === 0 && zoom.devicePixelRatio === 2,
+    "equivalent 200% layout at 640 CSS px keeps the section and its thumbs inside the viewport",
+    zoom.innerWidth === 640 &&
+      zoom.scrollWidth === zoom.innerWidth &&
+      zoom.clipped === 0 &&
+      zoom.devicePixelRatio === 2,
     zoom,
   );
   await zoomContext.close();
@@ -510,24 +502,16 @@ try {
   await section.getByRole("button", { name: "Export Pair A card thumbnail (640 × 360)" }).click();
   await section.locator("[data-title-compare-pair='b'] input[type='radio']").check();
   await section.getByLabel("Preview crop position").selectOption("bottom");
-  await page.waitForFunction(
-    () => {
-      const note = document.querySelector(".image-title-compare [role='status']")?.textContent ?? "";
-      return note.includes("Card export ready for Pair A");
-    },
-    null,
-    { timeout: 30_000 },
-  );
+  const completedA = section.getByText(/^Card export ready for Pair A · left crop:/);
+  await completedA.waitFor({ timeout: 30_000 });
   const switchedExport = await page.evaluate(() => ({
     note: document.querySelector(".image-title-compare .title-compare-export")?.textContent ?? "",
-    status: document.querySelector(".image-title-compare [role='status']")?.textContent ?? "",
     selected: document.querySelector(".image-title-compare .image-section-head span")?.textContent ?? "",
     anchor: document.querySelector(".image-title-compare select")?.value ?? "",
   }));
   record(
     "an in-flight export stays labelled with its own pair and anchor",
     /Pair A · Left crop/.test(switchedExport.note) &&
-      /Pair A · left crop/.test(switchedExport.status) &&
       /Pair B selected/.test(switchedExport.selected) &&
       switchedExport.anchor === "bottom",
     switchedExport,
