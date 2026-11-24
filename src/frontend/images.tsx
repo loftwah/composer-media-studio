@@ -4837,7 +4837,7 @@ function Images() {
               Repeat after the last frame
             </label>
           </div>
-          {items.length > 0 && (
+          {items.length > 0 && items.length <= GIF_MAX_FRAMES && (
             <details className="image-gif-delays">
               <summary>Per-frame delays (optional)</summary>
               <p className="trim-note" id="image-gif-delays-note">
@@ -4847,9 +4847,12 @@ function Images() {
               </p>
               <div className="image-gif-delay-grid">
                 {items.map((item, index) => (
-                  <label className="image-sheet-columns" key={item.id}>
-                    Frame {index + 1} delay (ms)
+                  <div className="image-sheet-columns" key={item.id}>
+                    <label htmlFor={`image-gif-delay-${item.id}`}>
+                      Frame {index + 1} delay (ms)
+                    </label>
                     <input
+                      id={`image-gif-delay-${item.id}`}
                       type="number"
                       min={GIF_MIN_DELAY_MS}
                       max={GIF_MAX_DELAY_MS}
@@ -4863,7 +4866,7 @@ function Images() {
                           : item.gifDelayMsOverride
                       }
                       disabled={gifBusy}
-                      aria-describedby="image-gif-delays-note"
+                      aria-describedby={`image-gif-delays-note image-gif-delay-source-${item.id}`}
                       aria-invalid={
                         item.gifDelayMsOverride !== undefined &&
                         !gifDelayOverrideIsValid(item.gifDelayMsOverride)
@@ -4874,7 +4877,14 @@ function Images() {
                         setGifDelayOverride(item, longEdgeFromControl(event.currentTarget))
                       }
                     />
-                  </label>
+                    <span
+                      className="image-list-name"
+                      id={`image-gif-delay-source-${item.id}`}
+                      title={item.file.name}
+                    >
+                      {item.file.name}
+                    </span>
+                  </div>
                 ))}
               </div>
             </details>

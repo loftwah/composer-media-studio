@@ -251,6 +251,9 @@ test("batch writes a bounded GIF from the ordered source stills", () => {
   assert.match(workbench, /Repeat after the last frame/);
   assert.match(workbench, /<summary>Per-frame delays \(optional\)<\/summary>/);
   assert.match(workbench, /Frame \{index \+ 1\} delay \(ms\)/);
+  assert.match(workbench, /items\.length > 0 && items\.length <= GIF_MAX_FRAMES && \(/);
+  assert.match(workbench, /aria-describedby=\{`image-gif-delays-note image-gif-delay-source-\$\{item\.id\}`\}/);
+  assert.match(workbench, /title=\{item\.file\.name\}\s*>\s*\{item\.file\.name\}\s*<\/span>/);
   assert.match(workbench, /const gifSourceKey = items\.map/);
   assert.match(workbench, /item\.gifDelayMsOverride \?\? gifDelayMs/);
   assert.match(
