@@ -3,6 +3,9 @@
 .video-tool-check { display:flex; gap:.6rem; align-items:center; }
 
 .video-tool-actions { display:flex; flex-wrap:wrap; gap:.75rem; }
+.video-tool-actions .trim-source-file { flex:1 1 12rem; min-width:0; }
+.video-tool-actions .trim-caption-entry-button { flex:0 0 auto; min-height:44px; }
+.trim-caption-entry > summary { scroll-margin-block-start:7rem; }
 
 .clip-poster-preview { display:block; width:auto; height:auto; max-width:min(100%,42rem); max-height:32rem; object-fit:contain; }
 .trim-result .button.secondary, .trim-result .button.secondary:hover { color:var(--ink); }

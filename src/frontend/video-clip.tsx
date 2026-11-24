@@ -172,6 +172,7 @@ function VideoClip() {
   const cueSpeakerSelect = useRef<HTMLSelectElement>(null);
   const manualCueTextInput = useRef<HTMLInputElement>(null);
   const manualCueDetails = useRef<HTMLDetailsElement>(null);
+  const captionDetails = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (cueEditing) manualCueTextInput.current?.focus();
   }, [cueEditing]);
@@ -785,6 +786,16 @@ function VideoClip() {
     const prepared = captionFileFromText(captionText);
     if ("problem" in prepared) { setCaptionMessage(prepared.problem); return; }
     await chooseCaptions(prepared.file);
+  }
+  // Only the explicit entry action opens and focuses the existing native
+  // disclosure. Loading a video or changing cues never moves focus or playback.
+  function openCaptionDetails() {
+    const details = captionDetails.current;
+    const summary = details?.querySelector<HTMLElement>(":scope > summary");
+    if (!details || !summary) return;
+    details.open = true;
+    summary.focus({ preventScroll: true });
+    summary.scrollIntoView({ block: "start", behavior: "instant" });
   }
   // Leave the shared manual-cue form in add mode with no stale text. The trim,
   // offset, loaded track and any finished MP4 are not touched.
@@ -1430,7 +1441,8 @@ function VideoClip() {
   return <main className="trim-page" id="main"><header><a href="/">← Media Studio</a><h1>Clip and frame a video</h1><p>Choose a short video, set its in and out points and save a new MP4. Editing happens on this device without sign-in or generation. You can choose to upload the finished MP4 to Studio afterwards.</p></header>
     <section className="trim-work" aria-labelledby="video-source"><h2 id="video-source">Your video</h2>
       <div className="video-tool-actions">
-        <label className="trim-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing || receiptLoading} onChange={e => void choose(e.target.files?.[0])}/></label>
+        <label className="trim-file trim-source-file">Choose video<input ref={chooser} type="file" accept="video/mp4,video/webm,video/quicktime" disabled={busy || importing || receiptLoading} onChange={e => void choose(e.target.files?.[0])}/></label>
+        {file && <button type="button" className="secondary trim-caption-entry-button" onClick={openCaptionDetails}>{captionDraft?.cues.length ? "Edit captions" : "Add captions"}</button>}
         {sourceHandoff && (!file || loadedHandoff === sourceHandoff.kind) && (
           <button
             type="button"
@@ -1469,7 +1481,7 @@ function VideoClip() {
       <div className="trim-fields"><label>Start (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(start) ? "" : start} onChange={e => {setStart(e.target.value === "" ? NaN : Number(e.target.value));}}/></label><label>End (seconds)<input type="number" min="0" max={duration} step="0.01" disabled={busy || importing || receiptLoading} value={Number.isNaN(end) ? "" : end} onChange={e => {setEnd(e.target.value === "" ? NaN : Number(e.target.value));}}/></label>
       <label>Frame<select value={shape} disabled={busy || importing || receiptLoading} onChange={e => {setShape(e.target.value as Shape);}}><option value="portrait">9:16 · portrait</option><option value="landscape">16:9 · landscape</option><option value="square">1:1 · square</option></select></label><label>Quality<select value={quality} disabled={busy || importing || receiptLoading} onChange={e => {setQuality(e.target.value as Quality);}}><option value="standard">Standard</option><option value="hd">HD · 720p</option></select></label><label>Fit<select value={fit} disabled={busy || importing || receiptLoading} onChange={e => {setFit(e.target.value as Fit);}}><option value="contain">Fit entire picture (bars)</option><option value="cover">Fill frame (crop)</option></select></label>
       {fit === "cover" && <label>Crop position<select value={cropAnchor} disabled={busy || importing || receiptLoading} onChange={e => {setCropAnchor(e.target.value as CropAnchor);}}><option value="center">Center</option><option value="topLeft">Top left</option><option value="bottomRight">Bottom right</option></select></label>}</div>
-      <details>
+      <details ref={captionDetails} className="trim-caption-entry">
         <summary>Use your own captions</summary>
         <p className="trim-note">Choose a plain SRT or WebVTT file, paste the text below, or add one plain-text cue. Cue times are relative to the original video. Preview them on the original video or the finished clip, or save the draft trim captions without making the MP4. A caption draft JSON also saves the editable cues and timing offset so you can reopen them later.</p>
         <label className="trim-file">Choose captions<input type="file" accept=".srt,.vtt,text/vtt" disabled={busy || checking || importing || receiptLoading || captionFileLoading} onChange={event => {
