@@ -777,8 +777,17 @@
 }
 
 .image-gif-delay-grid .image-sheet-columns {
+  display: grid;
+  gap: 0.35rem;
   max-width: 11rem;
+  min-inline-size: 0;
   margin: 0;
+}
+
+.image-gif-delay-grid .image-list-name {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--muted);
 }
 
 .image-gif-preview {
