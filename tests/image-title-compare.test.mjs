@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ALT_MAX_LENGTH,
   FEED_SIZES,
   MANIFEST_SCHEMA,
   MANIFEST_VERSION,
@@ -18,6 +19,7 @@ import {
   exportFileName,
   manifestFileName,
   normalizeCreatorNote,
+  normalizeThumbnailAlt,
   objectPositionFor,
   pairArchiveFileNames,
   pairIsEmpty,
@@ -208,7 +210,7 @@ test("each export captures its pair's anchor before the first await", () => {
   );
   assert.match(
     section,
-    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image \}\];/,
+    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt \}\];/,
   );
   // The set snapshot carries each pair's anchor and the loop encodes with it.
   assert.match(
@@ -422,7 +424,7 @@ test("each pair editor writes a local note that only reaches its manifest", () =
   assert.match(section, /onChange=\{\(event\) => setPair\(index, \{ note: event\.target\.value \}\)\}/);
   // Both note and title are captured before either export's first await.
   assert.match(section, /const title = pair\.title;\s*const note = pair\.note;/);
-  assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image \}\];/);
+  assert.match(section, /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt \}\];/);
   // The single-pair and prepared-set paths feed their captured note to the
   // same builder whose bytes are reused unchanged in the package ZIPs.
   assert.match(section, /pairId: forPair,\s*title,\s*note,\s*source:/);
@@ -430,6 +432,96 @@ test("each pair editor writes a local note that only reaches its manifest", () =
   // The note never enters the PNG pixels or the clipboard title copy.
   assert.doesNotMatch(section, /writeText\([^)]*note/);
   assert.doesNotMatch(section, /context\.[a-z]+\([^)]*note/);
+});
+
+test("thumbnail alt text is bounded plain text and absent when blank", () => {
+  assert.equal(ALT_MAX_LENGTH, 160);
+  assert.equal(normalizeThumbnailAlt(""), undefined);
+  assert.equal(normalizeThumbnailAlt("   \n\t "), undefined);
+  assert.equal(normalizeThumbnailAlt("  Red tram crossing the wet street  "), "Red tram crossing the wet street");
+  assert.equal(normalizeThumbnailAlt("line one\r\nline two"), "line one\nline two");
+  // C0/C1 controls and DEL never reach the JSON as invisible bytes.
+  assert.equal(normalizeThumbnailAlt("a\u0001b\u007fc\u0085d"), "abcd");
+  assert.equal(normalizeThumbnailAlt("x".repeat(ALT_MAX_LENGTH + 20))?.length, ALT_MAX_LENGTH);
+});
+
+test("the manifest carries alt text only when one was captured", () => {
+  const base = noteManifestInput();
+  const without = buildTitlePairManifest(base);
+  assert.equal(Object.hasOwn(without, "alt"), false);
+  // An empty or whitespace-only alt leaves the no-alt manifest bytes exact.
+  for (const empty of ["", "   ", "\n\t "]) {
+    assert.equal(JSON.stringify(buildTitlePairManifest({ ...base, alt: empty })), JSON.stringify(without));
+  }
+  const withAlt = buildTitlePairManifest({ ...base, alt: "  A red tram crossing the wet street  " });
+  assert.equal(withAlt.alt, "A red tram crossing the wet street");
+  const { alt, ...rest } = withAlt;
+  assert.deepEqual(rest, without);
+  assert.equal(withAlt.version, MANIFEST_VERSION);
+  assert.equal(buildTitlePairManifest({ ...base, alt: "x".repeat(ALT_MAX_LENGTH + 10) }).alt?.length, ALT_MAX_LENGTH);
+  // Additive V1 metadata composes with the preference and note fields.
+  const both = buildTitlePairManifest({ ...base, preferredPairId: "a", note: "Keep left", alt: "Red tram" });
+  assert.equal(both.preferredPairId, "a");
+  assert.equal(both.note, "Keep left");
+  assert.equal(both.alt, "Red tram");
+});
+
+test("thumbnail alt text is retained per pair for single and prepared exports", () => {
+  assert.match(section, /const title = pair\.title;\s*const note = pair\.note;\s*const alt = pair\.alt;/);
+  assert.match(
+    section,
+    /return \[\{ id, title: pair\.title, note: pair\.note, anchor: anchors\[id\], image: pair\.image, alt: pair\.alt \}\];/,
+  );
+  // Both export paths pass the captured alt text to the one manifest builder.
+  assert.match(section, /png: \{ fileName: name, bytes: blob\.size, sha256 \},\s*alt,/);
+  assert.match(
+    section,
+    /png: \{ fileName: names\.png, bytes: pngBytes\.byteLength, sha256 \},\s*preferredPairId: preferredForExport,\s*alt: prepared\.alt,/,
+  );
+  assert.match(section, /pairId: prepared\.id,\s*title: prepared\.title,\s*note: prepared\.note,\s*source:/);
+  // The selected-pair control is visible, bounded and named for that pair.
+  assert.match(section, /Thumbnail alt text for \$\{selectedLabel\} \(optional, up to \$\{ALT_MAX_LENGTH\} characters\)/);
+  assert.match(section, /<input\s+type="text"\s+value=\{selected\.alt\}\s+maxLength=\{ALT_MAX_LENGTH\}/);
+  assert.match(section, /data-title-compare-alt-pair=\{selectedId\}/);
+  assert.match(section, /onChange=\{\(event\) => updateAlt\(selectedIndex, event\.target\.value\)\}/);
+});
+
+test("an alt edit retires prepared output and leaves pixels, crop and preference alone", () => {
+  const start = section.indexOf("function updateAlt");
+  const end = section.indexOf("\n  }", start);
+  assert.ok(start >= 0 && end > start);
+  const update = section.slice(start, end);
+  assert.match(update, /setPair\(index, \{ alt: next \}\)/);
+  assert.match(update, /retirePreparedOutput\(\)/);
+  assert.doesNotMatch(
+    update,
+    /clearPreferenceFor|setPreferredId|setAnchors|encodeCropPng|toBlob|createImageBitmap|canvas/,
+  );
+
+  const retireStart = section.indexOf("function retirePreparedOutput");
+  const retireEnd = section.indexOf("\n  }", retireStart);
+  assert.ok(retireStart >= 0 && retireEnd > retireStart);
+  const retire = section.slice(retireStart, retireEnd);
+  assert.match(retire, /exportRun\.current \+= 1/);
+  assert.match(retire, /setExportBusy\(false\)/);
+  assert.match(retire, /setExportMessage\(""\)/);
+  assert.match(retire, /discardExports\(\)/);
+  // Only export state is retired: the pair, crop, preference and selection stay.
+  assert.doesNotMatch(retire, /setPair|setAnchors|setPreferredId|setSelectedId|setTitleFallback/);
+});
+
+test("alt text is independent per pair and the full-size image keeps its fallback", () => {
+  const base = noteManifestInput();
+  const a = buildTitlePairManifest({ ...base, pairId: "a", title: "Same title", alt: "Pair A description" });
+  const b = buildTitlePairManifest({ ...base, pairId: "b", title: "Same title" });
+  assert.equal(a.alt, "Pair A description");
+  assert.equal(Object.hasOwn(b, "alt"), false);
+  assert.match(section, /const selectedAlt = normalizeThumbnailAlt\(selected\.alt\);/);
+  assert.match(section, /alt=\{selectedAlt \?\? `Full-size source thumbnail for \$\{selectedLabel\}`\}/);
+  const empty = { title: "", alt: "", note: "", hasImage: false, busy: false, anchor: "centre" };
+  assert.equal(pairIsEmpty({ ...empty, alt: "Described" }), false);
+  assert.equal(pairIsEmpty({ ...empty, alt: "   " }), true);
+  assert.equal(pairIsEmpty({ ...empty, alt: undefined }), true);
 });
 
 test("the manifest download name is versioned and follows the same stem rules", () => {
@@ -656,7 +748,7 @@ test("the prepared action names the offered image and any thumbnail it replaces"
 });
 
 test("the prepared handoff keeps the pair's text and shares the existing preference rule", () => {
-  assert.match(section, /clearPreferenceFor\(index\);\s*discardExports\(\);/);
+  assert.match(section, /clearPreferenceFor\(index\);\s*retirePreparedOutput\(\);/);
   const start = section.indexOf("function usePreparedImage");
   const end = section.indexOf("function removeImage", start);
   const handoff = section.slice(start, end);
@@ -668,7 +760,7 @@ test("the local picker and drop keep their existing intake rules", () => {
   assert.match(section, /void chooseImage\(index, event\.dataTransfer\.files\[0\]\)/);
   assert.match(section, /void chooseImage\(index, file\);/);
   assert.match(section, /const previous = pairs\[index\]\.image;\s*releaseUrl\(previous\?\.url\);/);
-  assert.match(section, /clearPreferenceFor\(index\);\s*discardExports\(\);/);
+  assert.match(section, /clearPreferenceFor\(index\);\s*retirePreparedOutput\(\);/);
 });
 
 test("the full-size framing preview is a bounded, honest browser-local overlay", () => {
@@ -780,9 +872,9 @@ test("the duplicate action names its target and shows a clear inactive state", (
   assert.match(section, /id="image-title-compare-duplicate-note"/);
   assert.match(section, /onClick=\{duplicateSelectedPair\}/);
   assert.match(section, /Duplicate \$\{selectedLabel\} into Pair \$\{PAIR_LABELS\[duplicateTarget\]\}/);
-  assert.match(section, /To free a pair, clear its title, note and thumbnail and set its crop to Centre/);
+  assert.match(section, /To free a pair, clear its title, alt text, note and thumbnail and set its crop to Centre/);
   assert.match(section, /Add a title and thumbnail to \$\{selectedLabel\} to duplicate it/);
-  assert.match(section, /Copies the title, thumbnail and crop/);
+  assert.match(section, /Copies the title, thumbnail, alt text and crop/);
   assert.match(stylesheet, /\.title-compare-duplicate/);
 });
 
