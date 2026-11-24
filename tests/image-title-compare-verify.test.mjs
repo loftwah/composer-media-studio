@@ -421,9 +421,10 @@ test("normal image intake can guard an empty-only claim until its last await", (
   assert.match(validation, /await createImageBitmap\(file\)/);
   assert.match(intake, /return true;/);
   // Every pair field change advances the occupancy revision, including the
-  // direct note control, crop changes and the existing duplicate path.
+  // note control, crop changes and the existing duplicate path.
   assert.match(section, /function setPair\(index: number, patch: Partial<Pair>\): void \{\s*pairEdits\.current\[index\] \+= 1;/);
-  assert.match(section, /onChange=\{\(event\) => setPair\(index, \{ note: event\.target\.value \}\)\}/);
+  assert.match(section, /onChange=\{\(event\) => updateNote\(index, event\.target\.value\)\}/);
+  assert.match(section, /function updateNote\(index: number, note: string\): void \{[^}]+setPair\(index, \{ note \}\);/);
   assert.match(section, /pairEdits\.current\[index\] \+= 1;\s*setAnchors/);
   assert.match(section, /pairEdits\.current\[targetIndex\] \+= 1;/);
 });
