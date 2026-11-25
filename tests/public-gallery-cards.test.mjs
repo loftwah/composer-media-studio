@@ -88,3 +88,23 @@ test("the gallery leads with a curated film and keeps its full browse path", () 
   assert.ok(html.indexOf("A finished film") < html.indexOf("An image"));
   assert.match(html, /id="gallery-results"/);
 });
+
+test("discovery pages share the versioned LDraw case-study artwork from this installation", () => {
+  const origin = "https://independent.example";
+  const image = `${origin}/films/artwork-to-motion-poster.webp?v=20261125-og1`;
+  for (const options of [{ home: true }, {}]) {
+    const html = publicGallery({ ...options, origin });
+    assert.ok(html.includes(`<meta property="og:image" content="${image}">`), "absolute and explicit version");
+    assert.match(html, /<meta property="og:image:type" content="image\/webp">/);
+    assert.match(html, /<meta property="og:image:width" content="1280">/);
+    assert.match(html, /<meta property="og:image:height" content="720">/);
+    assert.match(html, /<meta property="og:image:alt" content="[^"]*case-study artwork for an LDraw project[^"]*">/);
+    assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
+    assert.ok(html.includes(`<meta name="twitter:image" content="${image}">`));
+    assert.match(html, /<meta name="twitter:image:alt" content="[^"]*case-study artwork for an LDraw project[^"]*">/);
+    assert.doesNotMatch(html, /screenshot|media\.loftwah\.com/i, "honest alt, no hard-coded owner origin");
+  }
+  const bare = publicGallery({ home: true });
+  assert.match(bare, /<meta name="twitter:card" content="summary">/);
+  assert.doesNotMatch(bare, /og:image|twitter:image/);
+});

@@ -574,3 +574,28 @@ test("a gallery feature stops featuring a film when it is unlisted", async () =>
   const unlisted = await (await get(env, "/gallery")).text();
   assert.doesNotMatch(unlisted, /feature-film/);
 });
+
+test("only discovery routes advertise the versioned case-study image from this installation", async () => {
+  const { env } = await setup();
+  const configured = "https://independent.example";
+  env.PUBLIC_ORIGIN = configured;
+  const expected = `${configured}/films/artwork-to-motion-poster.webp?v=20261125-og1`;
+  for (const path of ["/", "/gallery", "/gallery?kind=image"]) {
+    const html = await (await get(env, path)).text();
+    assert.ok(html.includes(`<meta property="og:image" content="${expected}">`), path);
+    assert.match(html, /<meta property="og:image:type" content="image\/webp">/);
+    assert.match(html, /<meta property="og:image:width" content="1280">/);
+    assert.match(html, /<meta property="og:image:height" content="720">/);
+    assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
+    assert.ok(html.includes(`<meta name="twitter:image" content="${expected}">`), path);
+  }
+  // Without a configured origin the request's own origin resolves the image.
+  const { env: requestEnv } = await setup();
+  delete requestEnv.PUBLIC_ORIGIN;
+  const fromRequest = await (await get(requestEnv, "/gallery")).text();
+  assert.ok(fromRequest.includes('<meta property="og:image" content="https://studio.test/films/artwork-to-motion-poster.webp?v=20261125-og1">'));
+  // Tool shells are deliberately outside this scope.
+  const tool = await (await get(env, "/tools/images")).text();
+  assert.doesNotMatch(tool, /og:image|artwork-to-motion-poster/);
+  assert.match(tool, /<meta name="twitter:card" content="summary">/);
+});

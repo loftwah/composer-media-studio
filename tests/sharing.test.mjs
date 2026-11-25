@@ -393,6 +393,7 @@ test("share metadata names the poster and never uses video frame dimensions for 
   assert.match(html, /name="twitter:image:alt" content="The wheel, &lt;late&gt; light"/);
   assert.match(html, /property="og:video" content="https:\/\/media\.loftwah\.com\/p\/JYCl_dWcb2yqya6h\/media"/);
   assert.match(html, /property="video:duration" content="5"/);
+  assert.doesNotMatch(html, /artwork-to-motion-poster|20261125-og1/, "the discovery case-study image never replaces published-piece metadata");
 });
 
 test("a video without a poster has explicit text-only share metadata", () => {
