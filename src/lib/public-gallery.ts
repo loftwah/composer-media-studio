@@ -10,7 +10,30 @@ import { escapeHtml } from "./util.mjs";
 import { composerShare, composerShowcase } from "./composer-share.ts";
 import { galleryPageHref, galleryHasFilters, galleryResultCount, galleryAudioEmpty, galleryActiveFilters, galleryCapabilityLabel, galleryKindLabel, type GalleryQueryState } from "./gallery-query.ts";
 import { galleryCards, galleryDimensions, type GalleryCardItem, type GalleryCardsOptions } from "./gallery-cards.ts";
-import { head, brandMark as mark } from "./page-head.ts";
+import { head, brandMark as mark, type PageHeadOptions } from "./page-head.ts";
+
+/** The committed, inspected case-study poster for the signed-out discovery
+ *  pages. Its query string is an explicit cache version: crawlers that saw an
+ *  older preview refetch when the artwork or this value changes. */
+export const PUBLIC_GALLERY_OG_IMAGE_PATH = "/films/artwork-to-motion-poster.webp?v=20261125-og1";
+export const PUBLIC_GALLERY_OG_IMAGE_ALT = "Media Studio case-study artwork for an LDraw project: an illustrated hand places an orange mountain above a mountain landscape, captioned 'From artwork to motion.'";
+
+/**
+ * Turn one installation's public origin into absolute OpenGraph/Twitter image
+ * fields. This is the committed case-study artwork, not a screenshot claim
+ * about whatever happens to be published right now. It is opt-in: callers
+ * without an origin keep the existing summary-card head exactly as before.
+ */
+export function publicGalleryOgImage(origin?: string | null): Pick<PageHeadOptions, "image" | "imageAlt" | "imageType" | "imageWidth" | "imageHeight"> {
+  const base = origin ? origin.replace(/\/$/, "") : "";
+  return {
+    image: base ? `${base}${PUBLIC_GALLERY_OG_IMAGE_PATH}` : null,
+    imageAlt: base ? PUBLIC_GALLERY_OG_IMAGE_ALT : null,
+    imageType: base ? "image/webp" : null,
+    imageWidth: base ? 1280 : null,
+    imageHeight: base ? 720 : null,
+  };
+}
 
 /** One configured showcase film row, as homeShowcase()/shareShowcaseFilms()
  * select it. `hasPoster` is mapped into the gallery-card contract's
@@ -55,6 +78,8 @@ export interface PublicGalleryOptions {
   project?: string;
   capability?: string;
   order?: string;
+  /** Request/configured origin; only the Worker supplies it for / and /gallery. */
+  origin?: string | null;
 }
 
 function publicStudioHeader({ sourceArtwork = false, active }: { sourceArtwork?: boolean; active?: string }) {
@@ -86,6 +111,7 @@ export function publicGallery({
   project = "",
   capability = "",
   order = "newest",
+  origin = null,
 }: PublicGalleryOptions) {
   const option = (value: string, label: string, selected: boolean) => `<option value="${escapeHtml(value)}"${selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
   const projectOptions = projects.map((entry) => option(entry.value, entry.label, entry.value === project)).join("");
@@ -129,7 +155,7 @@ export function publicGallery({
   // Returning keyboard readers get the exact card they opened. Only the
   // catalogue results opt in, and an empty gallery needs no focus handler.
   const focusScript = !home && items.length ? '<script src="/gallery-focus.js" defer></script>' : "";
-  return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio.", extra: focusScript })}
+  return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio.", ...publicGalleryOgImage(origin), extra: focusScript })}
 <body><a class="skip" href="#main">Skip to content</a>${publicStudioHeader({ sourceArtwork: woodhouseShare, active: home ? undefined : "gallery" })}
 <main id="main" class="public-gallery${home ? "" : " public-gallery--catalogue"}"><section class="gallery-intro${heroArtwork ? " gallery-intro--art" : ""}"><div class="gallery-intro-copy"><h1>${home ? "Made to be seen." : "Media Studio gallery"}</h1><p>${home ? "Explore work made and kept in Media Studio." : "Watch films, see images and listen to audio published from Media Studio."}</p>${home ? `<div class="gallery-actions"><a class="button" href="/gallery">Explore the gallery →</a>${buildUrl ? `<a class="button secondary" href="${escapeHtml(buildUrl)}">Build your own studio</a>` : ""}<a href="/tools/images">Image Tools →</a><a href="/tools/video-clip">Clip and caption video →</a>${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story →</a>` : ""}</div>` : ""}</div>${heroArtwork}</section>
 <section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${activeFilters}${home ? "" : `<p class="gallery-count" id="gallery-results" tabindex="-1" data-total="${total}">${countText}</p>`}${items.length ? `<ul class="gallery-grid"${home ? "" : " data-gallery-cards"}>${cards}</ul>` : audioEmpty ? '<p class="notice calm">No audio work has been published to the gallery yet. You can still <a href="/tools/audio-trim">trim a song in your browser</a>, no sign-in needed. <a href="/gallery">Clear filters</a></p>' : hasFilters ? '<p>No published work matches these filters. <a href="/gallery">Clear filters</a></p>' : '<p>No work has been added to the public gallery yet.</p>'}
