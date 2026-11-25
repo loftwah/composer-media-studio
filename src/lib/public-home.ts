@@ -21,11 +21,13 @@ type PublicHomeEnv = ShowcaseEnv & SharingEnvironment & {
   PUBLIC_STORY_URL?: string | null;
 };
 
-/** The current signed-out `/` catalogue response, including the public cache. */
-export async function publicHomeResponse(env: PublicHomeEnv): Promise<Response> {
+/** The current signed-out `/` catalogue response, including the public cache.
+ *  The Worker supplies the request/configured origin so the shared head can
+ *  emit an absolute, versioned case-study image for crawlers. */
+export async function publicHomeResponse(env: PublicHomeEnv, origin: string): Promise<Response> {
   const catalogue = await publicCatalogue(env, 1, 6, { withFacets: false });
   const featured = catalogue.items.length ? [] : await homeShowcase(env);
-  return new Response(publicGallery({ ...catalogue, ...sharingDestinations(env), featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), {
+  return new Response(publicGallery({ ...catalogue, ...sharingDestinations(env), featured, page: 1, home: true, woodhouseShare: env.WOODHOUSE_SHARE === "true", origin }), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` },
   });
 }

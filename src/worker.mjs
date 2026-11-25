@@ -2101,7 +2101,7 @@ async function handlePublic(request, env, url) {
   if (discovery) return discovery;
   // The pure filter parsing, catalogue/featured reads and public response for
   // /gallery live in gallery-showcase.ts under strict TypeScript.
-  if (path === "/gallery") return handleGallery(env, url.searchParams);
+  if (path === "/gallery") return handleGallery(env, url.searchParams, env.PUBLIC_ORIGIN || url.origin);
   // The signed-out help response assembly lives in public-home.ts under strict
   // TypeScript; the renderer, body and one-hour public cache are unchanged.
   if (path === "/help") return publicHelpResponse(env);
@@ -2124,7 +2124,8 @@ async function handlePublic(request, env, url) {
       if (path === "/studio") return new Response(loginPage({ next: "/", revision: BUILD.revision, bridged: Boolean(env.BRIDGE_SECRET), composerOrigin: env.COMPOSER_ORIGIN, storyUrl: env.PUBLIC_STORY_URL, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
       // Only the signed-out catalogue response moved to public-home.ts; the
       // session read, /studio login branch and authenticated shell stay here.
-      return publicHomeResponse(env);
+      // The origin makes social-preview images absolute for any installation.
+      return publicHomeResponse(env, env.PUBLIC_ORIGIN || url.origin);
     }
     return new Response(shell({
       revision: BUILD.revision,

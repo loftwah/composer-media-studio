@@ -147,13 +147,13 @@ export function parseGalleryQuery(params: GalleryParams): GalleryQueryParams {
 /** The whole public /gallery read and response: catalogue, listed-only featured
  *  films on the unfiltered first page, and the same public cache header. The
  *  Worker keeps route dispatch, so other paths are untouched. */
-export async function handleGallery(env: ShowcaseEnv, params: GalleryParams): Promise<Response> {
+export async function handleGallery(env: ShowcaseEnv, params: GalleryParams, origin: string): Promise<Response> {
   const { page, query, kind, project, capability, order, showFeatured } = parseGalleryQuery(params);
   const [catalogue, featured] = await Promise.all([
     publicCatalogue(env, page, 24, { query, kind, order, project, capability }),
     showFeatured ? homeShowcase(env, { listedOnly: true }) : [],
   ]);
-  return new Response(publicGallery({ ...catalogue, featured, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true" }), {
+  return new Response(publicGallery({ ...catalogue, featured, page, query, kind, order, woodhouseShare: env.WOODHOUSE_SHARE === "true", origin }), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": `public, max-age=${PUBLIC_CACHE_SECONDS}` },
   });
 }
