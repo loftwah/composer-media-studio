@@ -13,6 +13,7 @@ import {
   parseFalModel,
   refreshCapabilities,
 } from "../src/lib/capabilities.ts";
+import { publicDiagnosticsResponse } from "../src/lib/public-diagnostics.ts";
 import { FakeBucket } from "./harness.mjs";
 
 test("a public Workers AI page exposes its retirement date and price", () => {
@@ -42,10 +43,7 @@ test("alerts are stable and deduplicated by model and problem", () => {
     pricing: "$2",
     checkedAt: "2026-11-15T00:00:00.000Z",
   };
-  const alerts = buildAlerts([source], [
-    { ...source, pricing: "$1", alertFirstSeenAt: "2026-11-14T00:00:00.000Z" },
-    { ...source, pricing: "$1", alertFirstSeenAt: "2026-11-14T00:00:00.000Z" },
-  ]);
+  const alerts = buildAlerts([source, source], [{ ...source, pricing: "$1" }]);
   assert.equal(alerts.length, 1);
   assert.equal(alerts[0].id, "pricing:studio-craft");
   assert.equal(alerts[0].previous, "$1");
@@ -63,19 +61,29 @@ test("the manifest names the enabled and retired models with exact endpoints", (
   assert.deepEqual(composer, ["studio-print", "studio-film", "studio-craft", "studio-quick", "hailuo-standard", "kling-standard", "studio-score", "studio-voice"]);
 });
 
+function cloudflareResponse(url, price) {
+  const slug = new URL(url).pathname.split("/").at(-2);
+  const endpoint = capabilityManifest().models.find((model) => model.endpoint.endsWith("/" + slug)).endpoint;
+  return new Response(`# ${slug}\n\nModel ID\n\n\`${endpoint}\` Copy\n\n| Unit Pricing | ${price} |\n`);
+}
+
+function modelsDevResponse() {
+  return Response.json({ fictional: { id: "fictional", name: "Fictional catalogue", models: {} } });
+}
+
 function refreshEnv({ fail = false } = {}) {
   const bucket = new FakeBucket();
   const env = { MEDIA: bucket, AI: { run() { throw new Error("Inference must not run during refresh"); } } };
   let prices = "$1";
   const fetchImpl = async (url) => {
     if (fail && String(url).includes("flux-2-klein-9b")) throw new Error("network down");
-    if (String(url).startsWith("https://models.dev/")) return new Response(JSON.stringify({ openai: {}, anthropic: {} }));
+    if (String(url).startsWith("https://models.dev/")) return modelsDevResponse();
     if (String(url).startsWith("https://fal.ai/api/models")) {
       const endpoint = decodeURIComponent(new URL(url).searchParams.get("keywords"));
       return new Response(JSON.stringify({ items: [{ id: endpoint, deprecated: false, removed: false, status: "public", pricingInfoOverride: prices }] }));
     }
     if (String(url).includes("/workers-ai/models/")) {
-      return new Response("# model\n\n| Unit Pricing | " + prices + " |\n");
+      return cloudflareResponse(url, prices);
     }
     throw new Error("unexpected source " + url);
   };
@@ -118,4 +126,111 @@ test("a provider price change creates one migration item, not a new default", as
   assert.ok(pricing.length > 0);
   assert.ok(pricing.every((alert) => alert.id.startsWith("pricing:")));
   assert.equal(result.manifest.models.find((model) => model.id === "studio-craft").costMicro, 16_000, "the default estimate is unchanged until reviewed");
+});
+
+test("fal lifecycle facts are retained and raise retirement alerts", async () => {
+  const bucket = new FakeBucket();
+  const env = { MEDIA: bucket, AI: { run() { throw new Error("Inference must not run during refresh"); } } };
+  const fetchImpl = async (url) => {
+    if (String(url).startsWith("https://models.dev/")) return modelsDevResponse();
+    if (String(url).startsWith("https://fal.ai/api/models")) {
+      const endpoint = decodeURIComponent(new URL(url).searchParams.get("keywords"));
+      const deprecated = endpoint.includes("hailuo");
+      const removed = endpoint.includes("kling");
+      return Response.json({ items: [{ id: endpoint, deprecated, removed, status: "public", pricingInfoOverride: "$1", updatedAt: "2026-11-01" }] });
+    }
+    if (String(url).includes("/workers-ai/models/")) {
+      return cloudflareResponse(url, "$1");
+    }
+    throw new Error("unexpected source " + url);
+  };
+  const result = await refreshCapabilities(env, { now: Date.parse("2026-11-15T00:00:00Z"), fetchImpl });
+  assert.equal(result.state.outcome, "complete");
+  assert.ok(result.manifest.alerts.some((alert) => alert.id === "retirement:hailuo-standard"));
+  assert.match(result.manifest.alerts.find((alert) => alert.id === "retirement:kling-standard").message, /marked removed/);
+  const source = result.manifest.sources.find((item) => item.model === "hailuo-standard");
+  assert.equal(source.deprecated, true);
+  assert.equal(source.updatedAt, "2026-11-01");
+  assert.equal(result.manifest.sources.find((item) => item.model === "kling-standard").removed, true);
+  const { fetchImpl: recovered } = refreshEnv();
+  const after = await refreshCapabilities(env, { now: Date.parse("2026-11-16T00:00:00Z"), fetchImpl: recovered });
+  assert.equal(after.manifest.alerts.find((alert) => alert.id === "retirement:hailuo-standard").firstSeenAt, result.manifest.checkedAt);
+});
+
+test("an unrelated or wrong-model Cloudflare 200 cannot advance last good", async () => {
+  const { env, fetchImpl } = refreshEnv();
+  const first = await refreshCapabilities(env, { now: Date.parse("2026-11-15T00:00:00Z"), fetchImpl });
+  assert.equal(first.state.outcome, "complete");
+  const lastGoodAt = first.manifest.lastGoodAt;
+  const badFetch = async (url) => {
+    if (String(url).includes("flux-2-klein-9b")) {
+      return new Response("# another model\n\nModel ID: another-model\n\n| Unit Pricing | $9 |\n");
+    }
+    return fetchImpl(url);
+  };
+  const second = await refreshCapabilities(env, { now: Date.parse("2026-11-16T00:00:00Z"), fetchImpl: badFetch });
+  assert.equal(second.state.outcome, "partial");
+  assert.equal(second.manifest.lastGoodAt, lastGoodAt);
+  assert.ok(second.manifest.alerts.some((alert) => alert.id === "schema:studio-craft:cloudflare-workers-ai"));
+});
+
+test("pricing A to B to B carries the unresolved comparison", async () => {
+  const { env, fetchImpl, setPrice } = refreshEnv();
+  await refreshCapabilities(env, { now: Date.parse("2026-11-15T00:00:00Z"), fetchImpl });
+  setPrice("$2");
+  const run2 = await refreshCapabilities(env, { now: Date.parse("2026-11-16T00:00:00Z"), fetchImpl });
+  const pricing2 = run2.manifest.alerts.find((alert) => alert.id === "pricing:studio-craft");
+  assert.ok(pricing2);
+  assert.equal(pricing2.previous, "$1");
+  assert.equal(pricing2.current, "$2");
+  const firstSeen = pricing2.firstSeenAt;
+  const run3 = await refreshCapabilities(env, { now: Date.parse("2026-11-17T00:00:00Z"), fetchImpl });
+  const pricing3 = run3.manifest.alerts.find((alert) => alert.id === "pricing:studio-craft");
+  assert.ok(pricing3);
+  assert.equal(pricing3.previous, "$1");
+  assert.equal(pricing3.current, "$2");
+  assert.equal(pricing3.firstSeenAt, firstSeen);
+});
+
+test("a partial refresh retains facts and unresolved pricing through recovery", async () => {
+  const { env, fetchImpl, setPrice } = refreshEnv();
+  await refreshCapabilities(env, { now: Date.parse("2026-11-15T00:00:00Z"), fetchImpl });
+  setPrice("$2");
+  const change = await refreshCapabilities(env, { now: Date.parse("2026-11-16T00:00:00Z"), fetchImpl });
+  const partialEnv = refreshEnv({ fail: true });
+  partialEnv.setPrice("$2");
+  const partial = await refreshCapabilities(env, { now: Date.parse("2026-11-17T00:00:00Z"), fetchImpl: partialEnv.fetchImpl });
+  assert.equal(partial.state.outcome, "partial");
+  const partialSource = partial.manifest.sources.find((item) => item.model === "studio-craft" && item.provider === "cloudflare-workers-ai");
+  assert.equal(partialSource.status, "unavailable");
+  assert.equal(partialSource.pricing, "$2");
+  assert.equal(partialSource.factsCheckedAt, change.manifest.checkedAt);
+  const recovered = await refreshCapabilities(env, { now: Date.parse("2026-11-18T00:00:00Z"), fetchImpl });
+  assert.equal(recovered.state.outcome, "complete");
+  assert.equal(recovered.manifest.alerts.find((alert) => alert.id === "pricing:studio-craft").firstSeenAt, change.manifest.checkedAt);
+  assert.ok(!recovered.manifest.alerts.some((alert) => alert.kind === "schema"));
+});
+
+test("the public manifest consumer sees retained facts and alerts", async () => {
+  const { env, fetchImpl, setPrice } = refreshEnv();
+  await refreshCapabilities(env, { now: Date.parse("2026-11-15T00:00:00Z"), fetchImpl });
+  setPrice("$2");
+  await refreshCapabilities(env, { now: Date.parse("2026-11-16T00:00:00Z"), fetchImpl });
+  const response = await publicDiagnosticsResponse("/capabilities.json", env, {});
+  const manifest = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(manifest.lastGoodAt, "2026-11-16T00:00:00.000Z");
+  assert.ok(manifest.sources.some((item) => item.model === "studio-craft"));
+  assert.ok(manifest.alerts.some((alert) => alert.id === "pricing:studio-craft" && alert.current === "$2"));
+});
+
+test("pricing returns to the reviewed baseline and resolves", async () => {
+  const { env, fetchImpl, setPrice } = refreshEnv();
+  await refreshCapabilities(env, { now: Date.parse("2026-11-15T00:00:00Z"), fetchImpl });
+  setPrice("$2");
+  const changed = await refreshCapabilities(env, { now: Date.parse("2026-11-16T00:00:00Z"), fetchImpl });
+  assert.ok(changed.manifest.alerts.some((alert) => alert.id === "pricing:studio-craft"));
+  setPrice("$1");
+  const resolved = await refreshCapabilities(env, { now: Date.parse("2026-11-17T00:00:00Z"), fetchImpl });
+  assert.ok(!resolved.manifest.alerts.some((alert) => alert.id === "pricing:studio-craft"));
 });
