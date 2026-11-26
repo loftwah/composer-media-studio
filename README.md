@@ -55,6 +55,10 @@ A render needs the provider to read the participating bytes. The studio mints a 
 
 Every request shows an estimate before submission. The monthly allowance reservation and job admission are committed together in one D1 transaction across the project. Half-finished saves keep the exact provider bytes and can be retried without another inference call. Ambiguous provider outcomes keep their reservation and are never resubmitted automatically. Accepted cancellation requests require explicit reconciliation; normal polling and cron do not advance them. Older admitted jobs without a verifiable atomic admission are held for investigation rather than dispatched or released automatically.
 
+## Local agent editor experiment
+
+The [editor bridge experiment](docs/editor-bridge-experiment.md) renders the existing storyboard contract with installed Python and FFmpeg, checks a one-shot revision, and exports MP4 plus FCPXML and optional OTIO. It can extract selected media from a verified portable Studio project. The recorded synthetic proof passed; native editor control, real-song craft and the Prints production handoff remain separate, untested steps. This is local tooling with no provider calls or application deployment.
+
 ## Private version review rooms
 
 A creator can issue a private review link for one exact saved image or film. The room pins the asset ID and its SHA-256 (and, where a local render receipt records it, the exact storyboard revision the render came from), so feedback is always attached to one saved version. The link is a 256-bit bearer token stored only as a SHA-256 hash in D1, expires after a chosen 1–30 days and can be revoked or replaced immediately. Reviewer pages are `noindex`, `no-store` and `no-referrer`, expose no project name, prompt, caption, source lineage or other project asset, and serve the pinned bytes only through the token-checked media route.
