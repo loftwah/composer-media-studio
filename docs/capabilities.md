@@ -29,11 +29,25 @@ The refresh reads:
 - `https://models.dev/api.json` as a public provider-discovery source.
 
 It never calls inference, changes a production default, buys credit or writes a
-GitHub issue. A failed source keeps the previous manifest as the last good copy
-and records a `schema` alert. A changed price records one `pricing` alert. A
-published retirement records one `retirement` alert. Alert IDs are stable and
+GitHub issue. A failed or unreadable source keeps the previous manifest as the last good copy
+and records a `schema` alert. Cloudflare Markdown must identify the exact model
+endpoint (preferably through its Model ID block); fal and models.dev responses
+must have their expected object shape. A malformed or unrelated HTTP 200 is
+treated as unreadable, cannot advance `lastGoodAt`, and cannot dismiss
+outstanding alerts. A changed price records one `pricing` alert. A published
+retirement records one `retirement` alert. Alert IDs are stable and
 de-duplicated, and the source records preserve the first time the problem was
 seen.
+
+Partial refreshes retain the last valid model facts for unreadable sources.
+`checkedAt` identifies the current attempt, and `factsCheckedAt` identifies
+when the retained facts were read. Outstanding pricing and retirement alerts
+remain visible. A pricing alert stays open
+across A→B→B observations: it keeps the reviewed baseline (A) as `previous`,
+updates `current` to the latest observed price (B), and preserves its original
+`firstSeenAt`. A fresh observation of the baseline price resolves the alert.
+Retirement alerts stay actionable while the same model endpoint stays enabled.
+A recovered source clears its unreadable-source alert when it returns readable evidence.
 
 A person still reviews the alert, qualifies any replacement against the adapter,
 frames, cost and a real output, and ships the change through the normal Studio

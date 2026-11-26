@@ -21,6 +21,7 @@ const MODELS_DEV = "https://models.dev/api.json";
 
 /** The public facts read from a Workers AI model page. */
 export interface CloudflareModelFacts {
+  modelId: string | null;
   retirementDate: string | null;
   pricing: string | null;
   beta: boolean;
@@ -53,6 +54,7 @@ export interface CapabilitySource {
   deprecated?: boolean;
   removed?: boolean;
   updatedAt?: string | null;
+  factsCheckedAt?: string | null;
 }
 
 /** The models.dev provider-count check; it names no model. */
@@ -190,20 +192,26 @@ export function parseCloudflareModelPage(markdown: unknown): CloudflareModelFact
   const planned = /Planned\s+Deprecation\s*\|\s*([0-9/]+)/i.exec(text);
   const pricing = /Unit\s+Pricing\s*\|\s*([^\n]+)/i.exec(text);
   const beta = /(?:^|\n)\s*Beta\s*(?:\n|$)/i.test(text);
+  const title = (/^#\s+(.+)$/m.exec(text)?.[1] ?? "").trim() || null;
+  const modelId = /^Model ID(?:[ \t]*:[ \t]*|[ \t]*\n\s*)`?([^\s`|]+)/mi.exec(text)?.[1] ?? null;
   return {
+    modelId,
     retirementDate: planned ? dateValue(planned[1]) : null,
     pricing: pricing ? boundedText(pricing[1].replace(/\s*\|\s*$/, "")) : null,
     beta,
-    title: (/^#\s+(.+)$/m.exec(text)?.[1] ?? "").trim() || null,
+    title,
   };
 }
 
 /** Read the public fal model search result. */
 export function parseFalModel(item: unknown): FalModelFacts | null {
-  if (!item || typeof item !== "object") return null;
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
   const record = item as Record<string, unknown>;
+  if (typeof record.id !== "string" ||
+    (typeof record.status !== "string" &&
+      typeof record.deprecated !== "boolean" && typeof record.removed !== "boolean")) return null;
   return {
-    id: typeof record.id === "string" ? record.id : null,
+    id: record.id,
     deprecated: record.deprecated === true,
     removed: record.removed === true,
     status: typeof record.status === "string" ? record.status : null,
@@ -238,6 +246,9 @@ function sourceRecord(
     checkedAt: extra.checkedAt ?? null,
     retirementDate: extra.retirementDate ?? null,
     pricing: extra.pricing ?? null,
+    deprecated: extra.deprecated,
+    removed: extra.removed,
+    updatedAt: extra.updatedAt ?? null,
   };
 }
 
@@ -261,13 +272,21 @@ async function checkCloudflare(fetchImpl: FetchLike, model: CatalogueEntry, chec
   try {
     const text = await fetchText(fetchImpl, source);
     const parsed = parseCloudflareModelPage(text);
+    const readable = parsed.modelId === model.endpoint ||
+      (parsed.modelId === null && parsed.title === slug && /^\|\s*Model Info\s*\|/m.test(text));
+    if (!readable) {
+      return sourceRecord(model, source, "unavailable", "schema: Cloudflare model page did not identify the exact model endpoint", {
+        checkedAt,
+      });
+    }
     return sourceRecord(model, source, "ok", parsed.title, {
       checkedAt,
       retirementDate: parsed.retirementDate,
       pricing: parsed.pricing,
     });
   } catch (error) {
-    return sourceRecord(model, source, "unavailable", error instanceof Error ? error.message : String(error), { checkedAt });
+    const detail = error instanceof Error ? error.message : String(error);
+    return sourceRecord(model, source, "unavailable", detail, { checkedAt });
   }
 }
 
@@ -281,14 +300,23 @@ async function checkFal(fetchImpl: FetchLike, model: CatalogueEntry, checkedAt: 
   const source = `${FAL_MODELS}?keywords=${encodeURIComponent(model.endpoint)}`;
   try {
     const text = await fetchText(fetchImpl, source);
-    const payload = JSON.parse(text) as unknown;
-    const items = (payload as { items?: unknown } | null)?.items;
-    const item = Array.isArray(items)
-      ? items.find((candidate) => falModelMatches(model.endpoint, candidate))
-      : null;
-    if (!item) throw new Error("The exact endpoint was not returned by model search");
-    // The match above only succeeds for an object carrying a string id.
-    const parsed = parseFalModel(item)!;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new Error("schema: fal model search response was not valid JSON");
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("schema: fal model search response was not an object");
+    }
+    const items = (payload as { items?: unknown }).items;
+    if (!Array.isArray(items)) {
+      throw new Error("schema: fal model search response did not include an items array");
+    }
+    const item = items.find((candidate) => falModelMatches(model.endpoint, candidate)) ?? null;
+    if (!item) throw new Error("schema: the exact endpoint was not returned by model search");
+    const parsed = parseFalModel(item);
+    if (!parsed) throw new Error("schema: fal model entry did not include a string id");
     return sourceRecord(model, source, "ok", parsed.status, {
       checkedAt,
       retirementDate: parsed.deprecated || parsed.removed ? "withdrawn" : null,
@@ -298,15 +326,34 @@ async function checkFal(fetchImpl: FetchLike, model: CatalogueEntry, checkedAt: 
       updatedAt: parsed.updatedAt,
     });
   } catch (error) {
-    return sourceRecord(model, source, "unavailable", error instanceof Error ? error.message : String(error), { checkedAt });
+    const detail = error instanceof Error ? error.message : String(error);
+    return sourceRecord(model, source, "unavailable", boundedText(detail), { checkedAt });
   }
 }
 
 async function checkModelsDev(fetchImpl: FetchLike, checkedAt: string): Promise<ModelsDevCheck> {
   try {
     const text = await fetchText(fetchImpl, MODELS_DEV);
-    const payload = JSON.parse(text) as unknown;
-    const providers = Object.keys((payload ?? {}) as object);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new Error("schema: models.dev response was not valid JSON");
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("schema: models.dev response was not an object");
+    }
+    const record = payload as Record<string, unknown>;
+    const providers = Object.entries(record).flatMap(([id, entry]) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const provider = entry as Record<string, unknown>;
+      return provider.id === id && typeof provider.name === "string" &&
+        provider.models && typeof provider.models === "object" && !Array.isArray(provider.models)
+        ? [id] : [];
+    });
+    if (!providers.length) {
+      throw new Error("schema: models.dev response did not contain provider entries with models");
+    }
     return {
       source: MODELS_DEV,
       status: "ok",
@@ -315,10 +362,11 @@ async function checkModelsDev(fetchImpl: FetchLike, checkedAt: string): Promise<
       providers,
     };
   } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     return {
       source: MODELS_DEV,
       status: "unavailable",
-      detail: error instanceof Error ? error.message : String(error),
+      detail: boundedText(detail),
       checkedAt,
     };
   }
@@ -331,86 +379,85 @@ const WITHDRAWN = new Set(["deprecated", "removed", "unavailable"]);
  * proposed; no production default is updated by this function. */
 export function buildAlerts(
   sources: readonly CapabilitySource[],
-  previousSources: readonly (CapabilitySource & { alertFirstSeenAt?: string | null })[] = [],
+  previousSources: readonly CapabilitySource[] = [],
+  previousAlerts: readonly CapabilityAlert[] = [],
 ): CapabilityAlert[] {
-  const prior = new Map(previousSources.map((source) => [`${source.model}:${source.source}`, source] as const));
-  const alerts: CapabilityAlert[] = [];
+  const priorSources = new Map(previousSources.map((source) => [sourceKey(source), source]));
+  const priorAlerts = new Map(previousAlerts.map((alert) => [alert.id, alert]));
+  const alerts = new Map<string, CapabilityAlert>();
+
   for (const source of sources) {
-    if (!source.model) continue;
-    const model = models[source.model];
-    const label = model?.label ?? publicRetiredModels().find((item) => item.id === source.model)?.label ?? source.model;
-    const previous = prior.get(`${source.model}:${source.source}`);
-    if (source.status === "unavailable") {
-      alerts.push({
-        id: alertKey("schema", source.model, source.provider),
-        kind: "schema",
-        severity: "high",
-        model: source.model,
-        label,
-        source: source.source,
-        message: "The provider page or exact model search result could not be read. The last good manifest is retained; do not change a default from this run.",
-        action: "Review the endpoint on the provider's current page, then refresh again.",
-        firstSeenAt: previous?.alertFirstSeenAt ?? source.checkedAt,
+    const label = models[source.model]?.label ?? source.model;
+    const idFor = (kind: AlertKind) => alertKey(kind, source.model, kind === "schema" ? source.provider : "");
+    const prior = (kind: AlertKind) => {
+      const alert = priorAlerts.get(idFor(kind));
+      return alert?.source === source.source ? alert : undefined;
+    };
+    const add = (kind: AlertKind, fields: Pick<CapabilityAlert, "message" | "action" | "retirementDate" | "previous" | "current">) => {
+      const id = idFor(kind);
+      alerts.set(id, {
+        id, kind, model: source.model, label, source: source.source,
+        severity: kind === "pricing" ? "medium" : "high",
+        firstSeenAt: prior(kind)?.firstSeenAt ?? source.checkedAt,
         checkedAt: source.checkedAt,
+        ...fields,
       });
+    };
+    const retain = (kind: "retirement" | "pricing") => {
+      const alert = prior(kind);
+      if (alert) alerts.set(alert.id, alert);
+    };
+
+    if (source.status !== "ok") {
+      add("schema", {
+        message: "The provider page or exact model search result could not be read. The last good evidence is retained.",
+        action: "Review the endpoint on the provider's current page, then refresh again.",
+      });
+      retain("retirement");
+      retain("pricing");
       continue;
     }
+
     if (source.provider === "cloudflare-workers-ai" && source.retirementDate) {
-      alerts.push({
-        id: alertKey("retirement", source.model),
-        kind: "retirement",
-        severity: "high",
-        model: source.model,
-        label,
-        source: source.source,
+      add("retirement", {
         retirementDate: source.retirementDate,
         message: `${label} has a published retirement date of ${source.retirementDate}.`,
-        action: "Qualify the named replacement against the Studio adapter, frames, cost and a real output; then update Studio, Composer Init, the spec and the agent handoff together.",
-        firstSeenAt: previous?.alertFirstSeenAt ?? source.checkedAt,
-        checkedAt: source.checkedAt,
+        action: "Qualify the named replacement against the Studio adapter, frames and cost, then update Studio and its consumers together.",
       });
-    }
-    if (source.provider === "fal" && (source.deprecated || source.removed)) {
-      alerts.push({
-        id: alertKey("retirement", source.model),
-        kind: "retirement",
-        severity: "high",
-        model: source.model,
-        label,
-        source: source.source,
+    } else if (source.provider === "fal" && (source.deprecated || source.removed)) {
+      add("retirement", {
         retirementDate: source.retirementDate,
         message: `${label} is marked ${source.removed ? "removed" : "deprecated"} by fal model search.`,
-        action: "Stop offering it for new work after checking the saved jobs, then qualify a replacement and keep old attribution.",
-        firstSeenAt: previous?.alertFirstSeenAt ?? source.checkedAt,
-        checkedAt: source.checkedAt,
+        action: "Check saved jobs, qualify a replacement and preserve old attribution.",
       });
+    } else {
+      // A readable response alone does not review previous retirement evidence.
+      retain("retirement");
     }
-    if (previous?.pricing && source.pricing && previous.pricing !== source.pricing) {
-      alerts.push({
-        id: alertKey("pricing", source.model),
-        kind: "pricing",
-        severity: "medium",
-        model: source.model,
-        label,
-        source: source.source,
-        previous: previous.pricing,
+
+    const baseline = prior("pricing")?.previous ?? priorSources.get(sourceKey(source))?.pricing;
+    if (!source.pricing) {
+      retain("pricing");
+    } else if (baseline && source.pricing !== baseline) {
+      add("pricing", {
+        previous: baseline,
         current: source.pricing,
         message: `${label} has a changed public price description.`,
-        action: "Recheck the estimate against the current provider price, then update the model's cost basis. Allocated estimates remain distinct from provider charges.",
-        firstSeenAt: previous?.alertFirstSeenAt ?? source.checkedAt,
-        checkedAt: source.checkedAt,
+        action: "Check Studio's estimate against the current provider price and review the cost basis.",
       });
     }
   }
-  // One item per stable id; keep the earliest first-seen time.
-  const deduped = new Map<string, CapabilityAlert>();
-  for (const alert of alerts) {
-    const existing = deduped.get(alert.id);
-    if (!existing) deduped.set(alert.id, alert);
-    // Both timestamps are ISO strings on the refresh path.
-    else if (existing.firstSeenAt! > alert.firstSeenAt!) deduped.set(alert.id, { ...alert, firstSeenAt: existing.firstSeenAt });
-  }
-  return [...deduped.values()].sort((left, right) => left.id.localeCompare(right.id));
+  return [...alerts.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function sourceKey(source: CapabilitySource): string {
+  return `${source.model}:${source.source}`;
+}
+
+function modelSources(manifest: CapabilityManifest | null): CapabilitySource[] {
+  return Array.isArray(manifest?.sources)
+    ? manifest.sources.filter((source): source is CapabilitySource => Boolean(source?.model))
+    : [];
 }
 
 export function capabilityManifest({
@@ -476,16 +523,16 @@ export async function refreshCapabilities(
   if (!force && state?.nextDueAt && Date.parse(state.nextDueAt) > now) {
     return { skipped: true, reason: "not-due", state };
   }
-  const previous = ((await readJson(env.MEDIA, CAPABILITIES_KEY)) ?? capabilityManifest()) as CapabilityManifest;
+  const lastGood = (await readJson(env.MEDIA, CAPABILITIES_LAST_GOOD_KEY)) as CapabilityManifest | null;
+  const latest = (await readJson(env.MEDIA, CAPABILITIES_KEY)) as CapabilityManifest | null;
+  const previous = (latest ?? lastGood ?? capabilityManifest()) as CapabilityManifest;
   const previousAlerts: CapabilityAlert[] = Array.isArray(previous.alerts) ? previous.alerts : [];
-  // The stored list may also hold the models.dev check; it names no model and is
-  // skipped by buildAlerts, exactly as before.
-  const storedSources = (Array.isArray(previous.sources) ? previous.sources : []) as CapabilitySource[];
-  const previousSources = storedSources.map((source) => ({
-    ...source,
-    alertFirstSeenAt:
-      previousAlerts.find((alert) => alert.model === source.model && alert.source === source.source)?.firstSeenAt ?? null,
-  }));
+  const priorSources = new Map(modelSources(lastGood).map((source) => [sourceKey(source), source]));
+  for (const source of modelSources(previous)) {
+    if (source.status === "ok" || source.factsCheckedAt || !priorSources.has(sourceKey(source))) {
+      priorSources.set(sourceKey(source), source);
+    }
+  }
   const checkedAt = iso(now);
   const workersAi = Object.values(models).filter((model) => CLOUDFLARE_ENDPOINT.test(model.endpoint));
   const fal = Object.values(models).filter((model) => model.provider === "fal");
@@ -494,13 +541,27 @@ export async function refreshCapabilities(
     ...fal.map((model) => checkFal(fetchImpl, model, checkedAt)),
     checkModelsDev(fetchImpl, checkedAt),
   ]);
-  const sources = results.filter((result) => result.model) as CapabilitySource[];
+  const rawSources = results.filter((result) => result.model) as CapabilitySource[];
+  const sources = rawSources.map((source) => {
+    if (source.status !== "unavailable") return source;
+    const prior = priorSources.get(sourceKey(source));
+    if (!prior) return source;
+    return {
+      ...source,
+      retirementDate: source.retirementDate ?? prior.retirementDate ?? null,
+      pricing: source.pricing ?? prior.pricing ?? null,
+      deprecated: source.deprecated ?? prior.deprecated,
+      removed: source.removed ?? prior.removed,
+      updatedAt: source.updatedAt ?? prior.updatedAt ?? null,
+      factsCheckedAt: prior.factsCheckedAt ?? (prior.status === "ok" ? prior.checkedAt : null),
+    };
+  });
   const modelsDev = results.find((result) => !result.model) as ModelsDevCheck | undefined;
-  const alerts = buildAlerts(sources, previousSources);
+  const alerts = buildAlerts(sources, [...priorSources.values()], previousAlerts);
   const complete = sources.every((source) => source.status === "ok") && modelsDev?.status === "ok";
   const manifest = capabilityManifest({
     checkedAt,
-    lastGoodAt: complete ? checkedAt : previous.lastGoodAt ?? null,
+    lastGoodAt: complete ? checkedAt : previous.lastGoodAt ?? lastGood?.lastGoodAt ?? null,
     alerts,
     sources: [...sources, modelsDev].filter(Boolean) as ManifestSource[],
   });
