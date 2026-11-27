@@ -243,6 +243,10 @@ dialog h2 { margin: 0; }
 @media (max-width: 900px) { .viewer { grid-template-columns: 1fr; } }
 .viewer .stage { min-width: 0; background: #1d201c; border-radius: var(--radius); display: grid; place-items: center; min-height: 200px; overflow: hidden; }
 .viewer .stage img, .viewer .stage video { max-width: 100%; max-height: 68vh; width: auto; height: auto; object-fit: contain; display: block; }
+/* Reserve the same visual stage for a pending, portrait or landscape asset.
+   The media fits inside the stage; its intrinsic dimensions never move the inspector. */
+.viewer .stage > img, .viewer .stage > video { width: 100%; height: clamp(200px, 55vh, 560px); max-height: none; }
+@media (max-width: 900px) { .viewer .stage > img, .viewer .stage > video { height: clamp(200px, 45vh, 420px); } }
 .viewer .card { min-width: 0; overflow-wrap: anywhere; }
 .viewer .card .row > * { max-width: 100%; }
 .viewer .card .kv { grid-template-columns: max-content minmax(0, 1fr); }
