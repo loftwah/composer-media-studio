@@ -1,5 +1,11 @@
 # Agent instructions
 
+## Portfolio design bar
+
+Apply the [portfolio design direction](https://github.com/loftwah/app-composer/blob/main/docs/visual-direction.md#portfolio-design-bar) and [owner brief](https://github.com/loftwah/app-composer/issues/1422) to anything a user sees, reads or touches. Start from a sharp, modern, bright, playful direction. Use confident, vivid colour and make the first serious proposal bold enough to dial back. Compare several successful external products at the same task and inspect their real output. Treat current work as context, and keep the product’s own identity. The highest expressive option still has to meet readability, keyboard, privacy and task needs.
+
+On the project and creation surfaces, give the actual work a strong focal point and keep the next action and editing tools easy to find. Verify the live creation and review paths with real media. [Local follow-through](https://github.com/loftwah/composer-media-studio/issues/183).
+
 <!-- woodhouse-impeccable-required:start -->
 ## Required Impeccable design workflow
 
