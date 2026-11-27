@@ -157,7 +157,24 @@ export function publicGallery({
   const focusScript = !home && items.length ? '<script src="/gallery-focus.js" defer></script>' : "";
   return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio.", ...publicGalleryOgImage(origin), extra: focusScript })}
 <body><a class="skip" href="#main">Skip to content</a>${publicStudioHeader({ sourceArtwork: woodhouseShare, active: home ? undefined : "gallery" })}
-<main id="main" class="public-gallery${home ? "" : " public-gallery--catalogue"}"><section class="gallery-intro${heroArtwork ? " gallery-intro--art" : ""}"><div class="gallery-intro-copy"><h1>${home ? "Made to be seen." : "Media Studio gallery"}</h1><p>${home ? "Explore work made and kept in Media Studio." : "Watch films, see images and listen to audio published from Media Studio."}</p>${home ? `<div class="gallery-actions"><a class="button" href="/gallery">Explore the gallery →</a>${buildUrl ? `<a class="button secondary" href="${escapeHtml(buildUrl)}">Build your own studio</a>` : ""}<a href="/tools/images">Image Tools →</a><a href="/tools/video-clip">Clip and caption video →</a>${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story →</a>` : ""}</div>` : ""}</div>${heroArtwork}</section>
+<main id="main" class="public-gallery${home ? " public-gallery--home" : " public-gallery--catalogue"}">
+<section class="gallery-intro${heroArtwork ? " gallery-intro--art" : ""}">
+  <div class="gallery-intro-copy">
+    <h1>${home ? "Made to be seen." : "Media Studio gallery"}</h1>
+    <p>${home ? "Watch, listen and explore work published from Media Studio." : "Watch films, see images and listen to audio published from Media Studio."}</p>
+    ${home ? `<div class="gallery-actions">
+      <a class="button" href="/gallery">Explore the gallery</a>
+      <a class="button secondary" href="/studio">Open Studio</a>
+    </div>` : ""}
+  </div>
+  ${heroArtwork}
+</section>
+${home ? `<nav class="gallery-tool-links" aria-label="Media Studio tools">
+  <a href="/tools/images">Image Tools →</a>
+  <a href="/tools/video-clip">Clip and caption video <span aria-hidden="true">→</span></a>
+  ${buildUrl ? `<a href="${escapeHtml(buildUrl)}">Build your own studio <span aria-hidden="true">→</span></a>` : ""}
+  ${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story <span aria-hidden="true">→</span></a>` : ""}
+</nav>` : ""}
 <section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${activeFilters}${home ? "" : `<p class="gallery-count" id="gallery-results" tabindex="-1" data-total="${total}">${countText}</p>`}${items.length ? `<ul class="gallery-grid"${home ? "" : " data-gallery-cards"}>${cards}</ul>` : audioEmpty ? '<p class="notice calm">No audio work has been published to the gallery yet. You can still <a href="/tools/audio-trim">trim a song in your browser</a>, no sign-in needed. <a href="/gallery">Clear filters</a></p>' : hasFilters ? '<p>No published work matches these filters. <a href="/gallery">Clear filters</a></p>' : '<p>No work has been added to the public gallery yet.</p>'}
 ${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(galleryPageHref(queryState, page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(galleryPageHref(queryState, page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? `<p><a href="${composerShowcase}">See more featured films →</a></p>` : ""}</section>` : ""}</main></body></html>`;
 }

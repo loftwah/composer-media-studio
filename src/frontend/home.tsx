@@ -63,10 +63,10 @@ function Home({
     <div className="creative-home">
       <header className="creative-intro">
         <div>
-          <h1>Make something worth keeping.</h1>
-          <p>Your images, films and sound, in one place.</p>
+          <h1>Your studios</h1>
+          <p>Open a studio to pick up your images, films and sound.</p>
         </div>
-        {canEdit && (
+        {canEdit && projects.length > 0 && (
           <button type="button" className="button" data-action="new-project">
             New studio
           </button>
@@ -87,7 +87,6 @@ function Home({
             )}
           </div>
           <div className="creative-stage-copy">
-            <p className="creative-stage-label">Continue in your studio</p>
             <h2 id="creative-stage-title">{recent.name}</h2>
             {recent.creativeDirection && (
               <p className="creative-direction">{recent.creativeDirection}</p>
@@ -103,25 +102,20 @@ function Home({
                 Open library
               </a>
               {canEdit && (
-                <a className="button secondary" href={path(recent, "create")}>
-                  Create &amp; refine
-                </a>
+                <>
+                  <a className="button secondary" href={path(recent, "create")}>Create &amp; refine</a>
+                  <a className="creative-assemble" href={path(recent, "assemble")}>Build a storyboard</a>
+                </>
               )}
             </div>
-            {canEdit && (
-              <a className="creative-assemble" href={path(recent, "assemble")}>
-                Build a storyboard →
-              </a>
-            )}
           </div>
         </section>
       ) : projects.length === 0 ? (
         <section className="creative-blank">
           <h2>Start with an idea</h2>
-          <p>
-            Add your own images, video or sound, then create and save new work
-            alongside them.
-          </p>
+          <p>{canEdit
+            ? "Add your own images, video or sound, then create and save new work alongside them."
+            : "There are no studios available for this account yet."}</p>
           {canEdit && (
             <button type="button" className="button" data-action="new-project">
               Create your first studio
@@ -129,23 +123,15 @@ function Home({
           )}
         </section>
       ) : null}
-      <section aria-labelledby="creative-projects">
+      {projects.length > 0 && <section aria-labelledby="creative-projects">
         <div className="creative-section-head">
-          <h2 id="creative-projects">Your studios</h2>
+          <h2 id="creative-projects">All studios</h2>
           <span>{count(projects.length, "project")}</span>
         </div>
-        {projects.length ? (
-          <div className="creative-grid">
-            {projects.map((p) => (
-              <ProjectCard key={p.id} project={p} />
-            ))}
-          </div>
-        ) : (
-          <p className="creative-meta">
-            There are no studios available for this account yet.
-          </p>
-        )}
-      </section>
+        <div className="creative-grid">
+          {projects.map((p) => <ProjectCard key={p.id} project={p} />)}
+        </div>
+      </section>}
       {showcase.length > 0 && (
         <section
           className="creative-showcase"
