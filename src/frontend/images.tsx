@@ -3887,6 +3887,16 @@ function Images() {
                     </>
                   )}
                 </p>
+                {selected.result.target && (
+                  <p className={selected.result.target.met ? "notice calm" : "notice warn"} role="status">
+                    Target {formatBytes(selected.result.target.requestedBytes)}:{" "}
+                    {selected.result.target.met ? "met" : "not met"} — actual result{" "}
+                    {formatBytes(selected.result.bytes)}
+                    {selected.result.target.met
+                      ? "."
+                      : `, ${formatBytes(selected.result.bytes - selected.result.target.requestedBytes)} over. Lower the output size or choose a different format.`}
+                  </p>
+                )}
                 <a
                   className="button"
                   href={selected.result.url}
@@ -3947,16 +3957,6 @@ function Images() {
                     <p className="trim-note">
                       Sharpen edges changed {selected.result.sharpenChanged.toLocaleString()} pixel
                       {selected.result.sharpenChanged === 1 ? "" : "s"} in the exported result.
-                    </p>
-                  )}
-                  {selected.result.target && (
-                    <p className={selected.result.target.met ? "notice calm" : "notice warn"} role="status">
-                      Target {formatBytes(selected.result.target.requestedBytes)}:{" "}
-                      {selected.result.target.met ? "met" : "not met"} — actual result{" "}
-                      {formatBytes(selected.result.bytes)}
-                      {selected.result.target.met
-                        ? "."
-                        : `, ${formatBytes(selected.result.bytes - selected.result.target.requestedBytes)} over. Lower the output size or choose a different format.`}
                     </p>
                   )}
                   {selected.result.mime === "image/png" && canCopyPng && (
