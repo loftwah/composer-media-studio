@@ -1078,6 +1078,7 @@ function Images() {
   const [selectedId, setSelectedId] = useState("");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [actualOutputPixels, setActualOutputPixels] = useState(false);
+  const [phonePreview, setPhonePreview] = useState<"before" | "after">("after");
   const [previewBackdrop, setPreviewBackdrop] = useState<PreviewBackdrop>("checkerboard");
   const [message, setMessage] = useState("");
   const [base64Text, setBase64Text] = useState("");
@@ -3790,6 +3791,7 @@ function Images() {
                 aria-disabled={running}
                 onClick={() => {
                   if (running) return;
+                  setPhonePreview("after");
                   void runItems([selected]);
                 }}
               >
@@ -3836,13 +3838,25 @@ function Images() {
               </fieldset>
             )}
 
-            <div className="image-compare">
-              <figure>
+            {selected.result && (
+              <div className="image-preview-switch" role="group" aria-label="Comparison image">
+                <button type="button" className="secondary" aria-pressed={phonePreview === "before"}
+                  onClick={() => setPhonePreview("before")}>
+                  Original
+                </button>
+                <button type="button" className="secondary" aria-pressed={phonePreview === "after"}
+                  onClick={() => setPhonePreview("after")}>
+                  Output
+                </button>
+              </div>
+            )}
+            <div className="image-compare" data-phone-preview={selected.result ? phonePreview : undefined}>
+              <figure data-compare-pane="before">
                 <figcaption>Before · {selected.source.orientedWidth} × {selected.source.orientedHeight} · {formatBytes(selected.file.size)}</figcaption>
                 <img src={selected.url} alt={`Original ${selected.file.name}`} />
               </figure>
               {selected.result && (
-                <figure>
+                <figure data-compare-pane="after">
                   <figcaption>
                     After · {selected.result.width} × {selected.result.height} · {formatBytes(selected.result.bytes)} · {selected.result.mime}
                   </figcaption>
