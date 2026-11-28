@@ -502,6 +502,53 @@
   pointer-events: none;
 }
 
+.image-workbench-stage {
+  display: grid;
+  min-width: 0;
+  gap: 0.9rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.image-reuse-note {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.image-technicals {
+  margin-top: 0.6rem;
+}
+
+.image-technicals summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.image-preview-scale {
+  justify-self: start;
+}
+
+.image-output-pixels {
+  overflow: auto;
+  max-height: min(56vh, 34rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.image-output-pixels:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.image-compare .image-output-pixels img {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+
 .image-compare {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -523,6 +570,7 @@
 .image-compare img {
   display: block;
   width: 100%;
+  height: auto;
   max-height: min(56vh, 34rem);
   object-fit: contain;
   border: 1px solid var(--line);
