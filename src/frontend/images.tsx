@@ -2141,6 +2141,7 @@ function Images() {
             return { ...candidate, status: "done", result: { ...rendered, url }, error: undefined };
           }),
         );
+        if (list.length === 1) setPhonePreview("after");
         completed += 1;
       } catch (error) {
         if (isAbort(error)) {
@@ -3791,7 +3792,6 @@ function Images() {
                 aria-disabled={running}
                 onClick={() => {
                   if (running) return;
-                  setPhonePreview("after");
                   void runItems([selected]);
                 }}
               >
