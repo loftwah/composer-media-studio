@@ -1077,6 +1077,7 @@ function Images() {
   const [items, setItems] = useState<WorkItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [actualOutputPixels, setActualOutputPixels] = useState(false);
   const [previewBackdrop, setPreviewBackdrop] = useState<PreviewBackdrop>("checkerboard");
   const [message, setMessage] = useState("");
   const [base64Text, setBase64Text] = useState("");
@@ -3774,6 +3775,255 @@ function Images() {
               Public poster from <a href={sourceFilmPath(selected.publicSource.path) ?? undefined}>the source film</a>.
             </p>
           )}
+          <section className="image-workbench-stage" aria-label="Image preview and export">
+            <p id="image-output-plan" tabIndex={-1} className={`image-plan${plan && !plan.ok ? " is-error" : ""}`}>
+              {plan?.ok
+                ? `Planned result: ${plan.outputWidth} × ${plan.outputHeight} px${activeManualCrop ? ` · manual crop ${activeManualCrop.width} × ${activeManualCrop.height} px from left ${activeManualCrop.x}, top ${activeManualCrop.y}` : activeTrim ? ` · trimmed from ${plan.rotatedWidth} × ${plan.rotatedHeight} px` : ""}${plan.aspectDistorted ? " · exact dimensions change the aspect" : ""}${plan.upscaled ? " · enlarged by resampling; no detail is invented" : ""}.`
+                : plan?.error ?? "Choose a usable size."}
+            </p>
+            {targetProblem && <p className="image-plan is-error" role="alert">{targetProblem}</p>}
+            {selected.error && <p className="notice warn" role="alert">{selected.error}</p>}
+            <div className="image-control-actions">
+              <button
+                type="button"
+                disabled={socialBusy || adding || sheetBusy || importing || !plan?.ok || Boolean(targetProblem)}
+                aria-disabled={running}
+                onClick={() => {
+                  if (running) return;
+                  void runItems([selected]);
+                }}
+              >
+                {selected.status === "working" ? "Processing…" : "Make this image"}
+              </button>
+              <a className="button secondary" href="#image-edit-settings">Edit settings</a>
+              {selected.status === "error" && (
+                <button type="button" className="secondary" disabled={running || sheetBusy || importing} onClick={() => void runItems([selected])}>Retry</button>
+              )}
+              <button
+                type="button"
+                className="quiet"
+                disabled={running || adding || controlsAreOriginal}
+                aria-describedby="image-reset-note"
+                onClick={resetControls}
+              >
+                Reset controls
+              </button>
+            </div>
+            <p className="trim-note" id="image-reset-note">
+              Reset controls restores the original values for this batch. Images,
+              completed downloads and source Files are unchanged.
+            </p>
+
+            {selected.result && selected.source.alpha && selected.result.mime !== "image/jpeg" && (
+              <fieldset className="image-controls">
+                <legend>Preview backdrop</legend>
+                <label>
+                  Preview background
+                  <select
+                    value={previewBackdrop}
+                    onChange={(event) => setPreviewBackdrop(event.target.value as PreviewBackdrop)}
+                    aria-describedby="image-backdrop-note"
+                  >
+                    <option value="checkerboard">Checkerboard</option>
+                    <option value="white">White</option>
+                    <option value="black">Black</option>
+                  </select>
+                </label>
+                <p className="trim-note" id="image-backdrop-note">
+                  Use white or black to check for halos around transparent edges.
+                  This changes the previews on screen. Your download stays the same.
+                </p>
+              </fieldset>
+            )}
+
+            <div className="image-compare">
+              <figure>
+                <figcaption>Before · {selected.source.orientedWidth} × {selected.source.orientedHeight} · {formatBytes(selected.file.size)}</figcaption>
+                <img src={selected.url} alt={`Original ${selected.file.name}`} />
+              </figure>
+              {selected.result && (
+                <figure>
+                  <figcaption>
+                    After · {selected.result.width} × {selected.result.height} · {formatBytes(selected.result.bytes)} · {selected.result.mime}
+                  </figcaption>
+                  <button
+                    type="button"
+                    className="secondary image-preview-scale"
+                    aria-pressed={actualOutputPixels}
+                    onClick={() => setActualOutputPixels((actual) => !actual)}
+                  >
+                    Actual output pixels
+                  </button>
+                  {actualOutputPixels && (
+                    <p className="trim-note" id="image-output-scale">
+                      One CSS pixel per output pixel. Scroll to inspect edges.
+                    </p>
+                  )}
+                  <div
+                    className={actualOutputPixels ? "image-output-pixels" : undefined}
+                    tabIndex={actualOutputPixels ? 0 : undefined}
+                    role={actualOutputPixels ? "region" : undefined}
+                    aria-label={actualOutputPixels ? "Output at actual pixels" : undefined}
+                    aria-describedby={actualOutputPixels ? "image-output-scale" : undefined}
+                  >
+                    <img
+                      src={selected.result.url}
+                      alt={`Processed ${selected.file.name}`}
+                      width={selected.result.width}
+                      height={selected.result.height}
+                      data-backdrop={previewBackdrop}
+                    />
+                  </div>
+                </figure>
+              )}
+            </div>
+            {selected.result && (
+              <div className="image-result" id="image-downloads" tabIndex={-1}>
+                <p className={freshResult ? "sr-only" : "notice calm"} role="status" aria-atomic="true">
+                  {!freshResult && (
+                    <>
+                      The settings changed since this result. Make the image again to match the
+                      current controls. The existing download still uses the earlier settings.
+                    </>
+                  )}
+                </p>
+                <a
+                  className="button"
+                  href={selected.result.url}
+                  download={renderedFileName(selected.file.name, selected.result)}
+                >
+                  Download {selected.result.mime.replace("image/", "").toUpperCase()}
+                </a>
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={running || importing || socialBusy || Boolean(batchExport) ||
+                    items.length >= MAX_BATCH_IMAGES || selected.result.bytes > MAX_IMAGE_INPUT_BYTES}
+                  aria-disabled={adding}
+                  aria-describedby="image-reuse-note"
+                  onClick={(event) => reuseResultAsInput(selected, event.currentTarget)}
+                >
+                  Use as new input
+                </button>
+                <p className="image-reuse-note" id="image-reuse-note">
+                  {selected.result.bytes > MAX_IMAGE_INPUT_BYTES
+                    ? `New inputs must be ${formatBytes(MAX_IMAGE_INPUT_BYTES)} or smaller.`
+                    : items.length >= MAX_BATCH_IMAGES
+                      ? "Remove an image before adding this result."
+                      : "Continue editing from this file. The source and its result stay in the batch."}
+                </p>
+                <details className="image-technicals">
+                  <summary>Result details</summary>
+                  <p>
+                    <strong>Your result</strong> · SHA-256 <code title={selected.result.sha256}>{shortHash(selected.result.sha256)}</code> · original unchanged.
+                  </p>
+                  <p className="trim-note">
+                    {describeTransform({
+                      rotate: selected.result.settings.rotate,
+                      flipH: selected.result.settings.flipH,
+                      flipV: selected.result.settings.flipV,
+                      straighten: selected.result.settings.straighten,
+                      cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
+                      cropAnchor: selected.result.settings.cropAnchor,
+                      trimmed: selected.result.trimmed,
+                      manualCrop: selected.result.crop?.kind === "manual" ? selected.result.crop.rect : null,
+                      resize: resizeFor(selected.result.settings),
+                      resample: selected.result.settings.resample,
+                      sharpen: selected.result.settings.sharpen,
+                      adjustments: describeAdjustments(selected.result.settings.adjust),
+                      format: selected.result.settings.format,
+                      quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
+                      metadata: "canvas re-encode",
+                    })}
+                  </p>
+                  {selected.result.adjustChanged > 0 && (
+                    <p className="trim-note">
+                      Adjustments changed {selected.result.adjustChanged.toLocaleString()} pixel
+                      {selected.result.adjustChanged === 1 ? "" : "s"} in the exported result.
+                      Fully transparent pixels kept their colour and every alpha value is unchanged.
+                    </p>
+                  )}
+                  {selected.result.sharpenChanged > 0 && (
+                    <p className="trim-note">
+                      Sharpen edges changed {selected.result.sharpenChanged.toLocaleString()} pixel
+                      {selected.result.sharpenChanged === 1 ? "" : "s"} in the exported result.
+                    </p>
+                  )}
+                  {selected.result.target && (
+                    <p className={selected.result.target.met ? "notice calm" : "notice warn"} role="status">
+                      Target {formatBytes(selected.result.target.requestedBytes)}:{" "}
+                      {selected.result.target.met ? "met" : "not met"} — actual result{" "}
+                      {formatBytes(selected.result.bytes)}
+                      {selected.result.target.met
+                        ? "."
+                        : `, ${formatBytes(selected.result.bytes - selected.result.target.requestedBytes)} over. Lower the output size or choose a different format.`}
+                    </p>
+                  )}
+                  {selected.result.mime === "image/png" && canCopyPng && (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => void copyResultPng(selected)}
+                    >
+                      Copy PNG
+                    </button>
+                  )}
+                  <a
+                    className="button secondary"
+                    href={imageReceiptHref}
+                    download="studio-image-receipt.json"
+                  >
+                    Download image receipt (.json)
+                  </a>
+                  {outputHash && (
+                    <div className="image-hash-copy">
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={(event) => void copyOutputHash(event.currentTarget, outputResultKey, outputHash)}
+                      >
+                        Copy output SHA-256
+                      </button>
+                      {outputHashFallback?.key === outputResultKey && (
+                        <label className="image-copy-fallback">
+                          Exact output SHA-256 — select and copy
+                          <input
+                            readOnly
+                            ref={outputHashFallbackField}
+                            value={outputHashFallback.hash}
+                            spellCheck={false}
+                            aria-label="Exact output SHA-256 value to copy"
+                            onFocus={(event) => event.currentTarget.select()}
+                            onClick={(event) => event.currentTarget.select()}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
+                  <p className="trim-note" role="status">
+                    {outputCopy?.key === outputResultKey ? outputCopy?.message : ""}
+                  </p>
+                  <p className="trim-note">
+                    Keep the hashes and settings for this finished image. Later
+                    edits to the controls leave this receipt tied to the download.
+                  </p>
+                  <ImageCover
+                    key={`${selected.id}:${selected.result.sha256}`}
+                    source={selected.result}
+                    encodePng={canvas => canvasToBlob(canvas, "image/png")}
+                    addToBatch={async (file) => {
+                      let added = false;
+                      await addFiles([file], false, undefined, () => { added = true; });
+                      return added;
+                    }}
+                    canAddToBatch={!adding && !running && !importing && !socialBusy && !batchExport}
+                    batchFull={items.length >= MAX_BATCH_IMAGES}
+                  />
+                </details>
+              </div>
+            )}
+          </section>
+
           <dl className="image-facts">
             <div><dt>Source</dt><dd>{selected.source.width} × {selected.source.height} px</dd></div>
             <div><dt>Displayed</dt><dd>{selected.source.orientedWidth} × {selected.source.orientedHeight} px</dd></div>
@@ -3783,7 +4033,7 @@ function Images() {
             <div><dt>SHA-256</dt><dd title={selected.sourceHash}><code>{shortHash(selected.sourceHash)}</code></dd></div>
           </dl>
 
-          <fieldset className="image-controls">
+          <fieldset className="image-controls" id="image-edit-settings" tabIndex={-1}>
             <legend>Web-ready image</legend>
             <div className="image-control-actions">
               <button
@@ -4353,43 +4603,6 @@ function Images() {
             )}
           </fieldset>
 
-          <p id="image-output-plan" tabIndex={-1} className={`image-plan${plan && !plan.ok ? " is-error" : ""}`}>
-            {plan?.ok
-              ? `Planned result: ${plan.outputWidth} × ${plan.outputHeight} px${activeManualCrop ? ` · manual crop ${activeManualCrop.width} × ${activeManualCrop.height} px from left ${activeManualCrop.x}, top ${activeManualCrop.y}` : activeTrim ? ` · trimmed from ${plan.rotatedWidth} × ${plan.rotatedHeight} px` : ""}${plan.aspectDistorted ? " · exact dimensions change the aspect" : ""}${plan.upscaled ? " · enlarged by resampling; no detail is invented" : ""}.`
-              : plan?.error ?? "Choose a usable size."}
-          </p>
-          {targetProblem && <p className="image-plan is-error" role="alert">{targetProblem}</p>}
-          <div className="image-control-actions">
-            <button
-              type="button"
-              disabled={socialBusy || adding || sheetBusy || importing || !plan?.ok || Boolean(targetProblem)}
-              aria-disabled={running}
-              onClick={() => {
-                if (running) return;
-                void runItems([selected]);
-              }}
-            >
-              {selected.status === "working" ? "Processing…" : "Make this image"}
-            </button>
-            {selected.result && <a className="button secondary" href="#image-downloads">Go to downloads</a>}
-            {selected.status === "error" && (
-              <button type="button" className="secondary" disabled={running || sheetBusy || importing} onClick={() => void runItems([selected])}>Retry</button>
-            )}
-            <button
-              type="button"
-              className="quiet"
-              disabled={running || adding || controlsAreOriginal}
-              aria-describedby="image-reset-note"
-              onClick={resetControls}
-            >
-              Reset controls
-            </button>
-          </div>
-          <p className="trim-note" id="image-reset-note">
-            Reset controls restores the original values for this batch. Images,
-            completed downloads and source Files are unchanged.
-          </p>
-
           {plan?.ok && keptArea ? (
             <figure className="image-keep">
               <div className="image-keep-stage">
@@ -4438,185 +4651,7 @@ function Images() {
             </p>
           )}
 
-          {selected.result && selected.source.alpha && selected.result.mime !== "image/jpeg" && (
-            <fieldset className="image-controls">
-              <legend>Preview backdrop</legend>
-              <label>
-                Preview background
-                <select
-                  value={previewBackdrop}
-                  onChange={(event) => setPreviewBackdrop(event.target.value as PreviewBackdrop)}
-                  aria-describedby="image-backdrop-note"
-                >
-                  <option value="checkerboard">Checkerboard</option>
-                  <option value="white">White</option>
-                  <option value="black">Black</option>
-                </select>
-              </label>
-              <p className="trim-note" id="image-backdrop-note">
-                Use white or black to check for halos around transparent edges.
-                This changes the previews on screen. Your download stays the same.
-              </p>
-            </fieldset>
-          )}
-
-          <div className="image-compare">
-            <figure>
-              <figcaption>Before · {selected.source.orientedWidth} × {selected.source.orientedHeight} · {formatBytes(selected.file.size)}</figcaption>
-              <img src={selected.url} alt={`Original ${selected.file.name}`} />
-            </figure>
-            {selected.result && (
-              <figure>
-                <figcaption>
-                  After · {selected.result.width} × {selected.result.height} · {formatBytes(selected.result.bytes)} · {selected.result.mime}
-                </figcaption>
-                <img src={selected.result.url} alt={`Processed ${selected.file.name}`} data-backdrop={previewBackdrop} />
-              </figure>
-            )}
-          </div>
-          {selected.result && (
-            <div id="image-downloads" tabIndex={-1} className="image-result">
-              <p>
-                <strong>Your result</strong> · SHA-256 <code title={selected.result.sha256}>{shortHash(selected.result.sha256)}</code> · original unchanged.
-              </p>
-              <p className="trim-note">
-                {describeTransform({
-                  rotate: selected.result.settings.rotate,
-                  flipH: selected.result.settings.flipH,
-                  flipV: selected.result.settings.flipV,
-                  straighten: selected.result.settings.straighten,
-                  cropAspect: selected.result.settings.cropAspect === "original" ? null : CROP_ASPECTS[selected.result.settings.cropAspect],
-                  cropAnchor: selected.result.settings.cropAnchor,
-                  trimmed: selected.result.trimmed,
-                  manualCrop: selected.result.crop?.kind === "manual" ? selected.result.crop.rect : null,
-                  resize: resizeFor(selected.result.settings),
-                  resample: selected.result.settings.resample,
-                  sharpen: selected.result.settings.sharpen,
-                  adjustments: describeAdjustments(selected.result.settings.adjust),
-                  format: selected.result.settings.format,
-                  quality: selected.result.settings.format === "png" ? null : selected.result.settings.quality,
-                  metadata: "canvas re-encode",
-                })}
-              </p>
-              {selected.result.adjustChanged > 0 && (
-                <p className="trim-note">
-                  Adjustments changed {selected.result.adjustChanged.toLocaleString()} pixel
-                  {selected.result.adjustChanged === 1 ? "" : "s"} in the exported result.
-                  Fully transparent pixels kept their colour and every alpha value is unchanged.
-                </p>
-              )}
-              {selected.result.sharpenChanged > 0 && (
-                <p className="trim-note">
-                  Sharpen edges changed {selected.result.sharpenChanged.toLocaleString()} pixel
-                  {selected.result.sharpenChanged === 1 ? "" : "s"} in the exported result.
-                </p>
-              )}
-              {selected.result.target && (
-                <p className={selected.result.target.met ? "notice calm" : "notice warn"} role="status">
-                  Target {formatBytes(selected.result.target.requestedBytes)}:{" "}
-                  {selected.result.target.met ? "met" : "not met"} — actual result{" "}
-                  {formatBytes(selected.result.bytes)}
-                  {selected.result.target.met
-                    ? "."
-                    : `, ${formatBytes(selected.result.bytes - selected.result.target.requestedBytes)} over. Lower the output size or choose a different format.`}
-                </p>
-              )}
-              <p className={freshResult ? "sr-only" : "notice calm"} role="status" aria-atomic="true">
-                {!freshResult && (
-                  <>
-                    The settings changed since this result. Make the image again to match the
-                    current controls. The existing download still uses the earlier settings.
-                  </>
-                )}
-              </p>
-              <a
-                className="button"
-                href={selected.result.url}
-                download={renderedFileName(selected.file.name, selected.result)}
-              >
-                Download {selected.result.mime.replace("image/", "").toUpperCase()}
-              </a>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={running || importing || socialBusy || Boolean(batchExport) ||
-                  items.length >= MAX_BATCH_IMAGES || selected.result.bytes > MAX_IMAGE_INPUT_BYTES}
-                aria-disabled={adding}
-                aria-describedby="image-reuse-note"
-                onClick={(event) => reuseResultAsInput(selected, event.currentTarget)}
-              >
-                Use as new input
-              </button>
-              <p className="trim-note" id="image-reuse-note">
-                {selected.result.bytes > MAX_IMAGE_INPUT_BYTES
-                  ? `New inputs must be ${formatBytes(MAX_IMAGE_INPUT_BYTES)} or smaller.`
-                  : items.length >= MAX_BATCH_IMAGES
-                    ? "Remove an image before adding this result."
-                    : "Continue editing from this file. The source and its result stay in the batch."}
-              </p>
-              {selected.result.mime === "image/png" && canCopyPng && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => void copyResultPng(selected)}
-                >
-                  Copy PNG
-                </button>
-              )}
-              <a
-                className="button secondary"
-                href={imageReceiptHref}
-                download="studio-image-receipt.json"
-              >
-                Download image receipt (.json)
-              </a>
-              {outputHash && (
-                <div className="image-hash-copy">
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={(event) => void copyOutputHash(event.currentTarget, outputResultKey, outputHash)}
-                  >
-                    Copy output SHA-256
-                  </button>
-                  {outputHashFallback?.key === outputResultKey && (
-                    <label className="image-copy-fallback">
-                      Exact output SHA-256 — select and copy
-                      <input
-                        readOnly
-                        ref={outputHashFallbackField}
-                        value={outputHashFallback.hash}
-                        spellCheck={false}
-                        aria-label="Exact output SHA-256 value to copy"
-                        onFocus={(event) => event.currentTarget.select()}
-                        onClick={(event) => event.currentTarget.select()}
-                      />
-                    </label>
-                  )}
-                </div>
-              )}
-              <p className="trim-note" role="status">
-                {outputCopy?.key === outputResultKey ? outputCopy?.message : ""}
-              </p>
-              <p className="trim-note">
-                Keep the hashes and settings for this finished image. Later
-                edits to the controls leave this receipt tied to the download.
-              </p>
-              <ImageCover
-                key={`${selected.id}:${selected.result.sha256}`}
-                source={selected.result}
-                encodePng={canvas => canvasToBlob(canvas, "image/png")}
-                addToBatch={async (file) => {
-                  let added = false;
-                  await addFiles([file], false, undefined, () => { added = true; });
-                  return added;
-                }}
-                canAddToBatch={!adding && !running && !importing && !socialBusy && !batchExport}
-                batchFull={items.length >= MAX_BATCH_IMAGES}
-              />
-            </div>
-          )}
-          {selected.error && <p className="notice warn" role="alert">{selected.error}</p>}
+          <a className="button secondary" href="#image-output-plan">Review and make image</a>
         </section>
       )}
 
