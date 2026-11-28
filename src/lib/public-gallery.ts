@@ -166,17 +166,18 @@ export function publicGallery({
       <a class="button" href="/gallery">Explore the gallery</a>
       <a class="button secondary" href="/studio">Open Studio</a>
     </div>` : ""}
-  </div>
-  ${home ? `<nav class="studio-workbench-links" aria-label="Start editing">
+    ${home ? `<nav class="studio-workbench-links" aria-label="Start editing">
     <a href="/tools/images"><strong>Edit an image</strong><span>Crop, resize or export a social kit.</span><b aria-hidden="true">↗</b></a>
     <a href="/tools/video-clip"><strong>Cut a clip</strong><span>Trim footage, add captions or save a frame.</span><b aria-hidden="true">↗</b></a>
     <a href="/tools/audio-trim"><strong>Trim audio</strong><span>Keep the part of the track you need.</span><b aria-hidden="true">↗</b></a>
-  </nav>` : heroArtwork}
+    </nav>` : ""}
+  </div>
+  ${heroArtwork}
 </section>
 ${home ? `<nav class="gallery-tool-links" aria-label="Media Studio tools">
   ${buildUrl ? `<a href="${escapeHtml(buildUrl)}">Build your own studio <span aria-hidden="true">→</span></a>` : ""}
   ${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story <span aria-hidden="true">→</span></a>` : ""}
-</nav>${heroArtwork ? `<div class="studio-featured-work">${heroArtwork}</div>` : ""}` : ""}
+</nav>` : ""}
 <section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${activeFilters}${home ? "" : `<p class="gallery-count" id="gallery-results" tabindex="-1" data-total="${total}">${countText}</p>`}${items.length ? `<ul class="gallery-grid"${home ? "" : " data-gallery-cards"}>${cards}</ul>` : audioEmpty ? '<p class="notice calm">No audio work has been published to the gallery yet. You can still <a href="/tools/audio-trim">trim a song in your browser</a>, no sign-in needed. <a href="/gallery">Clear filters</a></p>' : hasFilters ? '<p>No published work matches these filters. <a href="/gallery">Clear filters</a></p>' : '<p>No work has been added to the public gallery yet.</p>'}
 ${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(galleryPageHref(queryState, page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(galleryPageHref(queryState, page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? `<p><a href="${composerShowcase}">See more featured films →</a></p>` : ""}</section>` : ""}</main></body></html>`;
 }
