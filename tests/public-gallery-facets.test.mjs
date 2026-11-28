@@ -575,17 +575,17 @@ test("a gallery feature stops featuring a film when it is unlisted", async () =>
   assert.doesNotMatch(unlisted, /feature-film/);
 });
 
-test("only discovery routes advertise the versioned case-study image from this installation", async () => {
+test("only discovery routes advertise the versioned editing card from this installation", async () => {
   const { env } = await setup();
   const configured = "https://independent.example";
   env.PUBLIC_ORIGIN = configured;
-  const expected = `${configured}/films/artwork-to-motion-poster.webp?v=20261125-og1`;
+  const expected = `${configured}/media-studio-next-cut-20261128.png`;
   for (const path of ["/", "/gallery", "/gallery?kind=image"]) {
     const html = await (await get(env, path)).text();
     assert.ok(html.includes(`<meta property="og:image" content="${expected}">`), path);
-    assert.match(html, /<meta property="og:image:type" content="image\/webp">/);
-    assert.match(html, /<meta property="og:image:width" content="1280">/);
-    assert.match(html, /<meta property="og:image:height" content="720">/);
+    assert.match(html, /<meta property="og:image:type" content="image\/png">/);
+    assert.match(html, /<meta property="og:image:width" content="1200">/);
+    assert.match(html, /<meta property="og:image:height" content="630">/);
     assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
     assert.ok(html.includes(`<meta name="twitter:image" content="${expected}">`), path);
   }
@@ -593,9 +593,9 @@ test("only discovery routes advertise the versioned case-study image from this i
   const { env: requestEnv } = await setup();
   delete requestEnv.PUBLIC_ORIGIN;
   const fromRequest = await (await get(requestEnv, "/gallery")).text();
-  assert.ok(fromRequest.includes('<meta property="og:image" content="https://studio.test/films/artwork-to-motion-poster.webp?v=20261125-og1">'));
+  assert.ok(fromRequest.includes('<meta property="og:image" content="https://studio.test/media-studio-next-cut-20261128.png">'));
   // Tool shells are deliberately outside this scope.
   const tool = await (await get(env, "/tools/images")).text();
-  assert.doesNotMatch(tool, /og:image|artwork-to-motion-poster/);
+  assert.doesNotMatch(tool, /og:image|media-studio-next-cut/);
   assert.match(tool, /<meta name="twitter:card" content="summary">/);
 });
