@@ -4033,7 +4033,7 @@ function Images() {
             <div><dt>SHA-256</dt><dd title={selected.sourceHash}><code>{shortHash(selected.sourceHash)}</code></dd></div>
           </dl>
 
-          <fieldset className="image-controls" id="image-edit-settings" tabIndex={-1}>
+          <fieldset className="image-controls">
             <legend>Web-ready image</legend>
             <div className="image-control-actions">
               <button
@@ -4260,7 +4260,7 @@ function Images() {
             </div>
           )}
 
-          <fieldset className="image-controls">
+          <fieldset className="image-controls" id="image-edit-settings" tabIndex={-1}>
             <legend>Resize and crop</legend>
             <label>Resize by
               <select value={settings.resizeMode} disabled={running} onChange={(event) => setSettings((previous) => ({ ...previous, resizeMode: event.target.value as ResizeMode }))}>
