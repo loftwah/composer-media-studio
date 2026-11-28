@@ -39,7 +39,7 @@ test('public home offers configured next steps while standalone installations om
 
 test('public home links free Image Tools once without changing Owner sign-in or the catalogue', () => {
   const home = publicGallery({home: true});
-  assert.match(home, /href="\/tools\/images">Image Tools →/);
+  assert.match(home, /href="\/tools\/images"><strong>Edit an image<\/strong>/);
   assert.equal((home.match(/href="\/tools\/images"/g) ?? []).length, 1);
   assert.match(home, /class="button secondary" href="\/studio">Open Studio/);
   assert.doesNotMatch(publicGallery({}), /href="\/tools\/images"/);
@@ -89,19 +89,19 @@ test("the gallery leads with a curated film and keeps its full browse path", () 
   assert.match(html, /id="gallery-results"/);
 });
 
-test("discovery pages share the versioned LDraw case-study artwork from this installation", () => {
+test("discovery pages share the versioned editing card from this installation", () => {
   const origin = "https://independent.example";
-  const image = `${origin}/films/artwork-to-motion-poster.webp?v=20261125-og1`;
+  const image = `${origin}/media-studio-next-cut-20261128.png`;
   for (const options of [{ home: true }, {}]) {
     const html = publicGallery({ ...options, origin });
     assert.ok(html.includes(`<meta property="og:image" content="${image}">`), "absolute and explicit version");
-    assert.match(html, /<meta property="og:image:type" content="image\/webp">/);
-    assert.match(html, /<meta property="og:image:width" content="1280">/);
-    assert.match(html, /<meta property="og:image:height" content="720">/);
-    assert.match(html, /<meta property="og:image:alt" content="[^"]*case-study artwork for an LDraw project[^"]*">/);
+    assert.match(html, /<meta property="og:image:type" content="image\/png">/);
+    assert.match(html, /<meta property="og:image:width" content="1200">/);
+    assert.match(html, /<meta property="og:image:height" content="630">/);
+    assert.match(html, /<meta property="og:image:alt" content="[^"]*Make the next cut[^"]*">/);
     assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
     assert.ok(html.includes(`<meta name="twitter:image" content="${image}">`));
-    assert.match(html, /<meta name="twitter:image:alt" content="[^"]*case-study artwork for an LDraw project[^"]*">/);
+    assert.match(html, /<meta name="twitter:image:alt" content="[^"]*Make the next cut[^"]*">/);
     assert.doesNotMatch(html, /screenshot|media\.loftwah\.com/i, "honest alt, no hard-coded owner origin");
   }
   const bare = publicGallery({ home: true });

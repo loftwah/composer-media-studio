@@ -15,8 +15,8 @@ import { head, brandMark as mark, type PageHeadOptions } from "./page-head.ts";
 /** The committed, inspected case-study poster for the signed-out discovery
  *  pages. Its query string is an explicit cache version: crawlers that saw an
  *  older preview refetch when the artwork or this value changes. */
-export const PUBLIC_GALLERY_OG_IMAGE_PATH = "/films/artwork-to-motion-poster.webp?v=20261125-og1";
-export const PUBLIC_GALLERY_OG_IMAGE_ALT = "Media Studio case-study artwork for an LDraw project: an illustrated hand places an orange mountain above a mountain landscape, captioned 'From artwork to motion.'";
+export const PUBLIC_GALLERY_OG_IMAGE_PATH = "/media-studio-next-cut-20261128.png";
+export const PUBLIC_GALLERY_OG_IMAGE_ALT = "Media Studio. Make the next cut. Edit images, clip video and trim audio.";
 
 /**
  * Turn one installation's public origin into absolute OpenGraph/Twitter image
@@ -29,9 +29,9 @@ export function publicGalleryOgImage(origin?: string | null): Pick<PageHeadOptio
   return {
     image: base ? `${base}${PUBLIC_GALLERY_OG_IMAGE_PATH}` : null,
     imageAlt: base ? PUBLIC_GALLERY_OG_IMAGE_ALT : null,
-    imageType: base ? "image/webp" : null,
-    imageWidth: base ? 1280 : null,
-    imageHeight: base ? 720 : null,
+    imageType: base ? "image/png" : null,
+    imageWidth: base ? 1200 : null,
+    imageHeight: base ? 630 : null,
   };
 }
 
@@ -155,26 +155,28 @@ export function publicGallery({
   // Returning keyboard readers get the exact card they opened. Only the
   // catalogue results opt in, and an empty gallery needs no focus handler.
   const focusScript = !home && items.length ? '<script src="/gallery-focus.js" defer></script>' : "";
-  return `${head({ title: home ? "Media Studio — work worth keeping" : "Public gallery — Media Studio", description: "Explore images, films and sound deliberately published from Media Studio.", ...publicGalleryOgImage(origin), extra: focusScript })}
+  return `${head({ title: home ? "Media Studio — edit images, video and audio" : "Public gallery — Media Studio", description: home ? "Edit images, clip video or trim audio in your browser. Explore published work or open your Studio." : "Explore images, films and sound deliberately published from Media Studio.", ...publicGalleryOgImage(origin), extra: focusScript })}
 <body><a class="skip" href="#main">Skip to content</a>${publicStudioHeader({ sourceArtwork: woodhouseShare, active: home ? undefined : "gallery" })}
 <main id="main" class="public-gallery${home ? " public-gallery--home" : " public-gallery--catalogue"}">
-<section class="gallery-intro${heroArtwork ? " gallery-intro--art" : ""}">
+<section class="gallery-intro${home ? " gallery-intro--tools" : heroArtwork ? " gallery-intro--art" : ""}">
   <div class="gallery-intro-copy">
-    <h1>${home ? "Made to be seen." : "Media Studio gallery"}</h1>
-    <p>${home ? "Watch, listen and explore work published from Media Studio." : "Watch films, see images and listen to audio published from Media Studio."}</p>
+    <h1>${home ? "Make the next cut." : "Media Studio gallery"}</h1>
+    <p>${home ? "Edit an image, cut a clip or trim a track in your browser." : "Watch films, see images and listen to audio published from Media Studio."}</p>
     ${home ? `<div class="gallery-actions">
       <a class="button" href="/gallery">Explore the gallery</a>
       <a class="button secondary" href="/studio">Open Studio</a>
     </div>` : ""}
   </div>
-  ${heroArtwork}
+  ${home ? `<nav class="studio-workbench-links" aria-label="Start editing">
+    <a href="/tools/images"><strong>Edit an image</strong><span>Crop, resize or export a social kit.</span><b aria-hidden="true">↗</b></a>
+    <a href="/tools/video-clip"><strong>Cut a clip</strong><span>Trim footage, add captions or save a frame.</span><b aria-hidden="true">↗</b></a>
+    <a href="/tools/audio-trim"><strong>Trim audio</strong><span>Keep the part of the track you need.</span><b aria-hidden="true">↗</b></a>
+  </nav>` : heroArtwork}
 </section>
 ${home ? `<nav class="gallery-tool-links" aria-label="Media Studio tools">
-  <a href="/tools/images">Image Tools →</a>
-  <a href="/tools/video-clip">Clip and caption video <span aria-hidden="true">→</span></a>
   ${buildUrl ? `<a href="${escapeHtml(buildUrl)}">Build your own studio <span aria-hidden="true">→</span></a>` : ""}
   ${storyUrl ? `<a href="${escapeHtml(storyUrl)}">Read the story <span aria-hidden="true">→</span></a>` : ""}
-</nav>` : ""}
+</nav>${heroArtwork ? `<div class="studio-featured-work">${heroArtwork}</div>` : ""}` : ""}
 <section aria-labelledby="gallery-title"><div class="spread gallery-heading"><div><h2 id="gallery-title">${home ? "From the studio" : "Published work"}</h2></div>${home ? '<a href="/gallery">View all →</a>' : ""}</div>${home ? "" : controls}${activeFilters}${home ? "" : `<p class="gallery-count" id="gallery-results" tabindex="-1" data-total="${total}">${countText}</p>`}${items.length ? `<ul class="gallery-grid"${home ? "" : " data-gallery-cards"}>${cards}</ul>` : audioEmpty ? '<p class="notice calm">No audio work has been published to the gallery yet. You can still <a href="/tools/audio-trim">trim a song in your browser</a>, no sign-in needed. <a href="/gallery">Clear filters</a></p>' : hasFilters ? '<p>No published work matches these filters. <a href="/gallery">Clear filters</a></p>' : '<p>No work has been added to the public gallery yet.</p>'}
 ${!home && (page > 1 || hasMore) ? `<nav class="row gallery-pages" aria-label="Gallery pages">${page > 1 ? `<a class="button secondary" href="${escapeHtml(galleryPageHref(queryState, page - 1))}">← Previous</a>` : ""}<span>Page ${page}</span>${hasMore ? `<a class="button secondary" href="${escapeHtml(galleryPageHref(queryState, page + 1))}">Next →</a>` : ""}</nav>` : ""}</section>${featuredCards ? `<section class="gallery-featured" aria-labelledby="featured-title"><div class="gallery-heading"><p class="eyebrow">Selected public films</p><h2 id="featured-title">Made in Media Studio</h2><p>Explore a selection of published films made in Media Studio.</p></div><ul class="gallery-grid">${featuredCards}</ul>${woodhouseShare ? `<p><a href="${composerShowcase}">See more featured films →</a></p>` : ""}</section>` : ""}</main></body></html>`;
 }
