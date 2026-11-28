@@ -72,6 +72,12 @@ function Home({
           </button>
         )}
       </header>
+      <nav className="creative-local-tools" aria-label="Edit files on this device">
+        <a href="/tools/images">Edit images</a>
+        <a href="/tools/video-clip">Clip video</a>
+        <a href="/tools/audio-trim">Trim audio</a>
+        <a href="/tools/add-music">Add music</a>
+      </nav>
       {recent ? (
         <section
           className="creative-stage"
@@ -195,18 +201,6 @@ function Home({
               Browse Share artwork
             </a>
           )}
-          <a className="button secondary" href="/tools/images">
-            Edit images locally
-          </a>
-          <a className="button secondary" href="/tools/audio-trim">
-            Trim audio locally
-          </a>
-          <a className="button secondary" href="/tools/video-clip">
-            Clip video locally
-          </a>
-          <a className="button secondary" href="/tools/add-music">
-            Add music locally
-          </a>
           <a className="button secondary" href="/help">
             Explore studio tools
           </a>
